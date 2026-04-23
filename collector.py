@@ -1,5 +1,5 @@
-import csv
 import os
+import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,10 +16,39 @@ INTERVAL = "1m"
 LIMIT = 1000
 MAX_WORKERS = 10
 
-DATA_DIR = f"data/{INTERVAL}"
+DATA_DIR = "data"
+DB_PATH = f"{DATA_DIR}/klines_{INTERVAL}.db"
+TABLE_NAME = f"klines_{INTERVAL}"
 
 is_running = False
 lock = threading.Lock()
+
+
+# ================= SQLite 初始化 =================
+def init_db():
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
+                symbol TEXT NOT NULL,
+                open_time INTEGER NOT NULL,
+                open REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                close REAL NOT NULL,
+                volume REAL NOT NULL,
+                close_time INTEGER NOT NULL,
+                PRIMARY KEY (symbol, open_time)
+            )
+            """
+        )
+        conn.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_symbol_time "
+            f"ON {TABLE_NAME}(symbol, open_time)"
+        )
 
 
 # ================= 1. U本位合约 =================
@@ -62,16 +91,14 @@ def build_universe():
     return universe
 
 
-# ================= 4. 获取CSV最后时间 =================
-def get_last_timestamp(file_path):
-    if not os.path.exists(file_path):
-        return None
+# ================= 4. 获取SQLite最后时间 =================
+def get_last_timestamp(symbol):
+    with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        row = conn.execute(
+            f"SELECT MAX(open_time) FROM {TABLE_NAME} WHERE symbol = ?", (symbol,)
+        ).fetchone()
 
-    try:
-        with open(file_path, "r") as f:
-            return int(list(csv.reader(f))[-1][0])
-    except Exception:
-        return None
+    return row[0] if row and row[0] is not None else None
 
 
 # ================= 5. K线请求 =================
@@ -98,36 +125,36 @@ def fetch_klines(symbol, start_time=None):
         return []
 
 
-# ================= 6. 写CSV =================
-def save_to_csv(symbol, klines):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    file_path = f"{DATA_DIR}/{symbol}.csv"
+# ================= 6. 写SQLite =================
+def save_to_sqlite(symbol, klines):
+    rows = [
+        (
+            symbol,
+            int(k[0]),
+            float(k[1]),
+            float(k[2]),
+            float(k[3]),
+            float(k[4]),
+            float(k[5]),
+            int(k[6]),
+        )
+        for k in klines
+    ]
 
-    write_header = not os.path.exists(file_path)
-
-    with open(file_path, "a", newline="") as f:
-        writer = csv.writer(f)
-
-        if write_header:
-            writer.writerow([
-                "open_time",
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-                "close_time",
-            ])
-
-        for k in klines:
-            writer.writerow([k[0], k[1], k[2], k[3], k[4], k[5], k[6]])
+    with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        conn.executemany(
+            f"""
+            INSERT OR IGNORE INTO {TABLE_NAME}
+            (symbol, open_time, open, high, low, close, volume, close_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
 
 
 # ================= 7. 单symbol处理 =================
 def process_symbol(symbol):
-    file_path = f"{DATA_DIR}/{symbol}.csv"
-
-    last_ts = get_last_timestamp(file_path)
+    last_ts = get_last_timestamp(symbol)
     start_time = last_ts + 1 if last_ts else None
 
     all_klines = []
@@ -148,7 +175,7 @@ def process_symbol(symbol):
         time.sleep(0.05)
 
     if all_klines:
-        save_to_csv(symbol, all_klines)
+        save_to_sqlite(symbol, all_klines)
 
     return symbol, len(all_klines)
 
@@ -201,10 +228,13 @@ UNIVERSE = None
 
 # ================= 启动 =================
 if __name__ == "__main__":
+    init_db()
+
     scheduler = BlockingScheduler()
 
     scheduler.add_job(job, "cron", second=0)
 
-    print("🚀 Alpha ∩ Futures Kline System started (1m)")
+    print(f"🚀 Alpha ∩ Futures Kline System started ({INTERVAL}, SQLite)")
+    print(f"🗄️ DB Path: {DB_PATH}")
 
     scheduler.start()
