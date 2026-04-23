@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -30,33 +31,6 @@ def get_db_conn():
     conn.execute("PRAGMA busy_timeout=30000;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     return conn
-
-
-# ================= SQLite 初始化 =================
-def init_db():
-    os.makedirs(DATA_DIR, exist_ok=True)
-
-    with get_db_conn() as conn:
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
-                symbol TEXT NOT NULL,
-                open_time INTEGER NOT NULL,
-                open REAL NOT NULL,
-                high REAL NOT NULL,
-                low REAL NOT NULL,
-                close REAL NOT NULL,
-                volume REAL NOT NULL,
-                close_time INTEGER NOT NULL,
-                PRIMARY KEY (symbol, open_time)
-            )
-            """
-        )
-        conn.execute(
-            f"CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_symbol_time "
-            f"ON {TABLE_NAME}(symbol, open_time)"
-        )
 
 
 # ================= SQLite 初始化 =================
@@ -127,21 +101,51 @@ def build_universe():
 
 
 # ================= 4. 获取SQLite最后时间 =================
-def get_last_timestamp(symbol):
+def get_last_kline_record(symbol):
     with get_db_conn() as conn:
         row = conn.execute(
-            f"SELECT MAX(open_time) FROM {TABLE_NAME} WHERE symbol = ?", (symbol,)
+            f"""
+            SELECT open_time, close_time
+            FROM {TABLE_NAME}
+            WHERE symbol = ?
+            ORDER BY close_time DESC
+            LIMIT 1
+            """,
+            (symbol,),
         ).fetchone()
 
-    return row[0] if row and row[0] is not None else None
+    if not row:
+        return None, None
+
+    return int(row[0]), int(row[1])
+
+
+def interval_to_ms(interval):
+    matched = re.fullmatch(r"(\d+)([mhdw])", interval)
+    if not matched:
+        raise ValueError(f"Unsupported interval: {interval}")
+
+    value = int(matched.group(1))
+    unit = matched.group(2)
+    unit_ms = {
+        "m": 60_000,
+        "h": 3_600_000,
+        "d": 86_400_000,
+        "w": 604_800_000,
+    }[unit]
+    return value * unit_ms
+
+
+def get_latest_closed_close_time(now_ms, interval_ms):
+    return (now_ms // interval_ms) * interval_ms - 1
 
 
 # ================= 5. K线请求 =================
-def fetch_klines(symbol, start_time=None):
+def fetch_klines(symbol, start_time=None, limit=LIMIT):
     params = {
         "symbol": f"{symbol}USDT",
         "interval": INTERVAL,
-        "limit": LIMIT,
+        "limit": limit,
     }
 
     if start_time:
@@ -210,22 +214,44 @@ def save_to_sqlite(symbol, klines):
 
 # ================= 7. 单symbol处理 =================
 def process_symbol(symbol):
-    last_ts = get_last_timestamp(symbol)
-    start_time = last_ts + 1 if last_ts else None
+    interval_ms = interval_to_ms(INTERVAL)
+    now_ms = int(time.time() * 1000)
+    latest_closed_close_time = get_latest_closed_close_time(now_ms, interval_ms)
+    _, last_close_time = get_last_kline_record(symbol)
+
+    if last_close_time is not None and last_close_time >= latest_closed_close_time:
+        return symbol, 0, 0
+
+    start_time = last_close_time + 1 if last_close_time is not None else None
+    missing_klines = None
+    if last_close_time is not None:
+        missing_klines = (latest_closed_close_time - last_close_time) // interval_ms
 
     all_klines = []
 
     while True:
-        klines = fetch_klines(symbol, start_time)
+        request_limit = LIMIT
+        if missing_klines is not None:
+            remaining = missing_klines - len(all_klines)
+            if remaining <= 0:
+                break
+            request_limit = min(LIMIT, remaining)
+
+        klines = fetch_klines(symbol, start_time, limit=request_limit)
 
         if not klines:
             break
 
-        all_klines.extend(filter_closed_klines(klines))
+        closed_klines = filter_closed_klines(klines)
+        if missing_klines is not None:
+            remaining = missing_klines - len(all_klines)
+            closed_klines = closed_klines[:remaining]
+
+        all_klines.extend(closed_klines)
 
         start_time = klines[-1][0] + 1
 
-        if len(klines) < LIMIT:
+        if len(klines) < request_limit:
             break
 
         time.sleep(0.05)
