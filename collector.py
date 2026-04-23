@@ -22,6 +22,41 @@ TABLE_NAME = f"klines_{INTERVAL}"
 
 is_running = False
 lock = threading.Lock()
+db_write_lock = threading.Lock()
+
+
+def get_db_conn():
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.execute("PRAGMA busy_timeout=30000;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    return conn
+
+
+# ================= SQLite 初始化 =================
+def init_db():
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    with get_db_conn() as conn:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
+                symbol TEXT NOT NULL,
+                open_time INTEGER NOT NULL,
+                open REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                close REAL NOT NULL,
+                volume REAL NOT NULL,
+                close_time INTEGER NOT NULL,
+                PRIMARY KEY (symbol, open_time)
+            )
+            """
+        )
+        conn.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_symbol_time "
+            f"ON {TABLE_NAME}(symbol, open_time)"
+        )
 
 
 # ================= SQLite 初始化 =================
@@ -93,7 +128,7 @@ def build_universe():
 
 # ================= 4. 获取SQLite最后时间 =================
 def get_last_timestamp(symbol):
-    with sqlite3.connect(DB_PATH, timeout=30) as conn:
+    with get_db_conn() as conn:
         row = conn.execute(
             f"SELECT MAX(open_time) FROM {TABLE_NAME} WHERE symbol = ?", (symbol,)
         ).fetchone()
@@ -114,14 +149,19 @@ def fetch_klines(symbol, start_time=None):
 
     try:
         res = requests.get(BASE_URL, params=params, timeout=10)
+        res.raise_for_status()
         data = res.json()
 
         if isinstance(data, dict):
+            print(
+                f"⚠️ {symbol}: API error code={data.get('code')} msg={data.get('msg')}"
+            )
             return []
 
         return data
 
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ {symbol}: request failed: {e}")
         return []
 
 
@@ -141,15 +181,26 @@ def save_to_sqlite(symbol, klines):
         for k in klines
     ]
 
-    with sqlite3.connect(DB_PATH, timeout=30) as conn:
-        conn.executemany(
-            f"""
-            INSERT OR IGNORE INTO {TABLE_NAME}
-            (symbol, open_time, open, high, low, close, volume, close_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            rows,
-        )
+    for attempt in range(5):
+        try:
+            with db_write_lock:
+                with get_db_conn() as conn:
+                    before = conn.total_changes
+                    conn.executemany(
+                        f"""
+                        INSERT OR IGNORE INTO {TABLE_NAME}
+                        (symbol, open_time, open, high, low, close, volume, close_time)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        rows,
+                    )
+                    inserted = conn.total_changes - before
+            return inserted
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e).lower() and attempt < 4:
+                time.sleep(0.2 * (attempt + 1))
+                continue
+            raise
 
 
 # ================= 7. 单symbol处理 =================
@@ -174,10 +225,11 @@ def process_symbol(symbol):
 
         time.sleep(0.05)
 
+    inserted_count = 0
     if all_klines:
-        save_to_sqlite(symbol, all_klines)
+        inserted_count = save_to_sqlite(symbol, all_klines)
 
-    return symbol, len(all_klines)
+    return symbol, len(all_klines), inserted_count
 
 
 # ================= 8. 主任务 =================
@@ -186,9 +238,13 @@ def main(universe):
         futures = [executor.submit(process_symbol, s) for s in universe]
 
         for future in as_completed(futures):
-            symbol, count = future.result()
-            if count == 0:
-                print(f"{symbol}: {count}")
+            try:
+                symbol, fetched_count, inserted_count = future.result()
+                print(
+                    f"✅ {symbol}: fetched={fetched_count}, inserted={inserted_count}"
+                )
+            except Exception as e:
+                print(f"❌ symbol task failed: {e}")
 
 
 # ================= 9. 定时任务 =================
@@ -229,6 +285,7 @@ UNIVERSE = None
 # ================= 启动 =================
 if __name__ == "__main__":
     init_db()
+    job()
 
     scheduler = BlockingScheduler()
 
