@@ -160,7 +160,8 @@ def main(universe):
 
         for future in as_completed(futures):
             symbol, count = future.result()
-            print(f"✅ {symbol}: {count}")
+            if count == 0:
+                print(f"{symbol}: {count}")
 
 
 # ================= 9. 定时任务 =================
