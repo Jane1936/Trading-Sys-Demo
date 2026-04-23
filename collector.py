@@ -165,6 +165,11 @@ def fetch_klines(symbol, start_time=None):
         return []
 
 
+def filter_closed_klines(klines):
+    now_ms = int(time.time() * 1000)
+    return [k for k in klines if int(k[6]) <= now_ms]
+
+
 # ================= 6. 写SQLite =================
 def save_to_sqlite(symbol, klines):
     rows = [
@@ -216,7 +221,7 @@ def process_symbol(symbol):
         if not klines:
             break
 
-        all_klines.extend(klines)
+        all_klines.extend(filter_closed_klines(klines))
 
         start_time = klines[-1][0] + 1
 
@@ -285,7 +290,6 @@ UNIVERSE = None
 # ================= 启动 =================
 if __name__ == "__main__":
     init_db()
-    job()
 
     scheduler = BlockingScheduler()
 
@@ -293,5 +297,6 @@ if __name__ == "__main__":
 
     print(f"🚀 Alpha ∩ Futures Kline System started ({INTERVAL}, SQLite)")
     print(f"🗄️ DB Path: {DB_PATH}")
+    print("⏰ First run will start at the next full minute (second=00).")
 
     scheduler.start()
