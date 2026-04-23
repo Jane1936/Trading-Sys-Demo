@@ -59,6 +59,33 @@ def init_db():
         )
 
 
+# ================= SQLite 初始化 =================
+def init_db():
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
+                symbol TEXT NOT NULL,
+                open_time INTEGER NOT NULL,
+                open REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                close REAL NOT NULL,
+                volume REAL NOT NULL,
+                close_time INTEGER NOT NULL,
+                PRIMARY KEY (symbol, open_time)
+            )
+            """
+        )
+        conn.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_symbol_time "
+            f"ON {TABLE_NAME}(symbol, open_time)"
+        )
+
+
 # ================= 1. U本位合约 =================
 def get_um_symbols():
     client = Client()
