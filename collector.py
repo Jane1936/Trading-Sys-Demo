@@ -26,9 +26,12 @@ DB_PATH = f"{DATA_DIR}/klines.db"
 
 kline_job_running = False
 oi_job_running = False
+funding_job_running = False
 kline_job_lock = threading.Lock()
 oi_job_lock = threading.Lock()
+funding_job_lock = threading.Lock()
 db_write_lock = threading.Lock()
+last_funding_update_hour = None
 
 
 def table_name(interval):
@@ -186,22 +189,26 @@ def fetch_klines(symbol, start_time=None, limit=LIMIT):
     if start_time:
         params["startTime"] = start_time
 
-    try:
-        res = requests.get(BASE_URL, params=params, timeout=10)
-        res.raise_for_status()
-        data = res.json()
+    for attempt in range(2):
+        try:
+            res = requests.get(BASE_URL, params=params, timeout=(3, 10))
+            res.raise_for_status()
+            data = res.json()
 
-        if isinstance(data, dict):
-            print(
-                f"⚠️ {symbol}: API error code={data.get('code')} msg={data.get('msg')}"
-            )
+            if isinstance(data, dict):
+                print(
+                    f"⚠️ {symbol}: API error code={data.get('code')} msg={data.get('msg')}"
+                )
+                return []
+
+            return data
+
+        except Exception as e:
+            if attempt == 0:
+                time.sleep(0.2)
+                continue
+            print(f"⚠️ {symbol}: request failed: {e}")
             return []
-
-        return data
-
-    except Exception as e:
-        print(f"⚠️ {symbol}: request failed: {e}")
-        return []
 
 
 def filter_closed_klines(klines):
@@ -234,23 +241,27 @@ def fetch_all_funding_rates():
 
 
 def fetch_open_interest(symbol):
-    try:
-        res = requests.get(
-            OPEN_INTEREST_URL,
-            params={"symbol": f"{symbol}USDT"},
-            timeout=10,
-        )
-        res.raise_for_status()
-        data = res.json()
-        if not isinstance(data, dict):
+    for attempt in range(2):
+        try:
+            res = requests.get(
+                OPEN_INTEREST_URL,
+                params={"symbol": f"{symbol}USDT"},
+                timeout=(3, 8),
+            )
+            res.raise_for_status()
+            data = res.json()
+            if not isinstance(data, dict):
+                return None
+            open_interest = data.get("openInterest")
+            if open_interest is None:
+                return None
+            return float(open_interest)
+        except Exception as e:
+            if attempt == 0:
+                time.sleep(0.2)
+                continue
+            print(f"⚠️ {symbol}: open interest request failed: {e}")
             return None
-        open_interest = data.get("openInterest")
-        if open_interest is None:
-            return None
-        return float(open_interest)
-    except Exception as e:
-        print(f"⚠️ {symbol}: open interest request failed: {e}")
-        return None
 
 
 def save_open_interest(symbol, open_interest):
@@ -274,20 +285,17 @@ def save_open_interest(symbol, open_interest):
             return conn.total_changes - before
 
 
-def save_funding_rates_to_1h(universe, funding_rates):
-    if not universe or not funding_rates:
+def save_funding_rates_to_1h(universe, funding_rates, target_open_times):
+    if not universe or not funding_rates or not target_open_times:
         return 0
-
-    now_ms = int(time.time() * 1000)
-    hour_ms = interval_to_ms("1h")
-    target_open_time = (now_ms // hour_ms) * hour_ms - hour_ms
 
     values = []
     for symbol in universe:
         usdt_symbol = f"{symbol}USDT"
         if usdt_symbol not in funding_rates:
             continue
-        values.append((funding_rates[usdt_symbol], symbol, target_open_time))
+        for target_open_time in target_open_times:
+            values.append((funding_rates[usdt_symbol], symbol, target_open_time))
 
     if not values:
         return 0
@@ -304,6 +312,46 @@ def save_funding_rates_to_1h(universe, funding_rates):
                 values,
             )
             return conn.total_changes - before
+
+
+def get_recent_target_open_times(hours=3):
+    hour_ms = interval_to_ms("1h")
+    now_ms = int(time.time() * 1000)
+    current_hour_open = (now_ms // hour_ms) * hour_ms
+    return [current_hour_open - hour_ms * i for i in range(1, hours + 1)]
+
+
+def should_run_funding_update(now_ms):
+    global last_funding_update_hour
+
+    hour_ms = interval_to_ms("1h")
+    current_hour_open = (now_ms // hour_ms) * hour_ms
+
+    if last_funding_update_hour is None:
+        return True
+
+    return (current_hour_open - last_funding_update_hour) >= hour_ms
+
+
+def run_funding_update(universe, backfill_hours=3):
+    global last_funding_update_hour
+
+    now_ms = int(time.time() * 1000)
+    if not should_run_funding_update(now_ms):
+        return 0
+
+    funding_rates = fetch_all_funding_rates()
+    if not funding_rates:
+        print("⚠️ funding rates empty, skip update")
+        return 0
+
+    target_open_times = get_recent_target_open_times(hours=backfill_hours)
+    updated = save_funding_rates_to_1h(universe, funding_rates, target_open_times)
+
+    hour_ms = interval_to_ms("1h")
+    last_funding_update_hour = (now_ms // hour_ms) * hour_ms
+    print(f"💰 funding_rate updated rows(1h): {updated}, targets={len(target_open_times)}h")
+    return updated
 
 
 # ================= 6. 写SQLite =================
@@ -579,10 +627,6 @@ def kline_job():
             UNIVERSE = build_universe()
 
         run_kline_main(UNIVERSE)
-        if time.gmtime().tm_min == 0:
-            funding_rates = fetch_all_funding_rates()
-            updated = save_funding_rates_to_1h(UNIVERSE, funding_rates)
-            print(f"💰 funding_rate updated rows(1h): {updated}")
 
     except Exception as e:
         print("❌ error:", e)
@@ -621,6 +665,35 @@ def oi_job():
     oi_job_running = False
 
 
+def funding_job():
+    global funding_job_running
+
+    if funding_job_running:
+        print("⚠️ Skip funding job (still running)")
+        return
+
+    with funding_job_lock:
+        funding_job_running = True
+
+    print("\n🟣 Funding job start:", time.strftime("%Y-%m-%d %H:%M:%S"))
+
+    start = time.time()
+
+    try:
+        global UNIVERSE
+
+        if UNIVERSE is None:
+            UNIVERSE = build_universe()
+
+        run_funding_update(UNIVERSE, backfill_hours=3)
+    except Exception as e:
+        print("❌ funding error:", e)
+
+    print(f"⏱ funding cost: {round(time.time() - start, 2)}s")
+
+    funding_job_running = False
+
+
 # ================= 全局 =================
 UNIVERSE = None
 
@@ -632,7 +705,8 @@ if __name__ == "__main__":
     scheduler = BlockingScheduler()
 
     scheduler.add_job(kline_job, "cron", second=0)
-    scheduler.add_job(oi_job, "cron", second=0)
+    scheduler.add_job(oi_job, "cron", second=20)
+    scheduler.add_job(funding_job, "cron", minute=1, second=40)
 
     print(
         f"🚀 Alpha ∩ Futures Kline System started (source={BASE_INTERVAL}, aggregates={AGG_INTERVALS}, SQLite)"
