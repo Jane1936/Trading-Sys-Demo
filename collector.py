@@ -13,6 +13,7 @@ from binance.client import Client
 # ================= 配置 =================
 BASE_URL = "https://fapi.binance.com/fapi/v1/klines"
 FUNDING_RATE_URL = "https://fapi.binance.com/fapi/v1/premiumIndex"
+OPEN_INTEREST_URL = "https://fapi.binance.com/fapi/v1/openInterest"
 
 BASE_INTERVAL = "1m"
 AGG_INTERVALS = ["5m", "15m", "30m", "1h", "4h", "1d"]
@@ -74,6 +75,21 @@ def init_db():
         column_names = {col[1] for col in columns}
         if "funding_rate" not in column_names:
             conn.execute(f"ALTER TABLE {tbl_1h} ADD COLUMN funding_rate REAL")
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS open_interest_1m (
+                symbol TEXT NOT NULL,
+                snapshot_time INTEGER NOT NULL,
+                open_interest REAL NOT NULL,
+                PRIMARY KEY (symbol, snapshot_time)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_open_interest_1m_symbol_time "
+            "ON open_interest_1m(symbol, snapshot_time)"
+        )
 
 
 # ================= 1. U本位合约 =================
@@ -213,6 +229,47 @@ def fetch_all_funding_rates():
     except Exception as e:
         print(f"⚠️ funding rate request failed: {e}")
         return {}
+
+
+def fetch_open_interest(symbol):
+    try:
+        res = requests.get(
+            OPEN_INTEREST_URL,
+            params={"symbol": f"{symbol}USDT"},
+            timeout=10,
+        )
+        res.raise_for_status()
+        data = res.json()
+        if not isinstance(data, dict):
+            return None
+        open_interest = data.get("openInterest")
+        if open_interest is None:
+            return None
+        return float(open_interest)
+    except Exception as e:
+        print(f"⚠️ {symbol}: open interest request failed: {e}")
+        return None
+
+
+def save_open_interest(symbol, open_interest):
+    if open_interest is None:
+        return 0
+
+    now_ms = int(time.time() * 1000)
+    snapshot_time = (now_ms // 60_000) * 60_000
+
+    with db_write_lock:
+        with get_db_conn() as conn:
+            before = conn.total_changes
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO open_interest_1m
+                (symbol, snapshot_time, open_interest)
+                VALUES (?, ?, ?)
+                """,
+                (symbol, snapshot_time, open_interest),
+            )
+            return conn.total_changes - before
 
 
 def save_funding_rates_to_1h(universe, funding_rates):
@@ -408,7 +465,9 @@ def process_symbol(symbol):
     _, last_close_time = get_last_kline_record(symbol, BASE_INTERVAL)
 
     if last_close_time is not None and last_close_time >= latest_closed_close_time:
-        return symbol, 0, 0, {}
+        open_interest = fetch_open_interest(symbol)
+        oi_inserted = save_open_interest(symbol, open_interest)
+        return symbol, 0, 0, {}, oi_inserted
 
     start_time = last_close_time + 1 if last_close_time is not None else None
     missing_klines = None
@@ -454,7 +513,10 @@ def process_symbol(symbol):
             source_end_close_time=int(all_klines[-1][6]),
         )
 
-    return symbol, len(all_klines), inserted_count, agg_stat
+    open_interest = fetch_open_interest(symbol)
+    oi_inserted = save_open_interest(symbol, open_interest)
+
+    return symbol, len(all_klines), inserted_count, agg_stat, oi_inserted
 
 
 # ================= 8. 主任务 =================
@@ -464,7 +526,7 @@ def main(universe):
 
         for future in as_completed(futures):
             try:
-                symbol, fetched_count, inserted_count, agg_stat = future.result()
+                symbol, fetched_count, inserted_count, agg_stat, oi_inserted = future.result()
                 agg_summary = ", ".join(
                     [
                         f"{k}:buckets={v['buckets']},changed={v['changed']}"
@@ -474,7 +536,7 @@ def main(universe):
                 if not agg_summary:
                     agg_summary = "-"
                 print(
-                    f"✅ {symbol}: fetched={fetched_count}, inserted_1m={inserted_count}, agg=({agg_summary})"
+                    f"✅ {symbol}: fetched={fetched_count}, inserted_1m={inserted_count}, inserted_oi_1m={oi_inserted}, agg=({agg_summary})"
                 )
             except Exception as e:
                 print(f"❌ symbol task failed: {e}")
