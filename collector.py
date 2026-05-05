@@ -189,22 +189,26 @@ def fetch_klines(symbol, start_time=None, limit=LIMIT):
     if start_time:
         params["startTime"] = start_time
 
-    try:
-        res = requests.get(BASE_URL, params=params, timeout=10)
-        res.raise_for_status()
-        data = res.json()
+    for attempt in range(2):
+        try:
+            res = requests.get(BASE_URL, params=params, timeout=(3, 10))
+            res.raise_for_status()
+            data = res.json()
 
-        if isinstance(data, dict):
-            print(
-                f"⚠️ {symbol}: API error code={data.get('code')} msg={data.get('msg')}"
-            )
+            if isinstance(data, dict):
+                print(
+                    f"⚠️ {symbol}: API error code={data.get('code')} msg={data.get('msg')}"
+                )
+                return []
+
+            return data
+
+        except Exception as e:
+            if attempt == 0:
+                time.sleep(0.2)
+                continue
+            print(f"⚠️ {symbol}: request failed: {e}")
             return []
-
-        return data
-
-    except Exception as e:
-        print(f"⚠️ {symbol}: request failed: {e}")
-        return []
 
 
 def filter_closed_klines(klines):
@@ -237,23 +241,27 @@ def fetch_all_funding_rates():
 
 
 def fetch_open_interest(symbol):
-    try:
-        res = requests.get(
-            OPEN_INTEREST_URL,
-            params={"symbol": f"{symbol}USDT"},
-            timeout=10,
-        )
-        res.raise_for_status()
-        data = res.json()
-        if not isinstance(data, dict):
+    for attempt in range(2):
+        try:
+            res = requests.get(
+                OPEN_INTEREST_URL,
+                params={"symbol": f"{symbol}USDT"},
+                timeout=(3, 8),
+            )
+            res.raise_for_status()
+            data = res.json()
+            if not isinstance(data, dict):
+                return None
+            open_interest = data.get("openInterest")
+            if open_interest is None:
+                return None
+            return float(open_interest)
+        except Exception as e:
+            if attempt == 0:
+                time.sleep(0.2)
+                continue
+            print(f"⚠️ {symbol}: open interest request failed: {e}")
             return None
-        open_interest = data.get("openInterest")
-        if open_interest is None:
-            return None
-        return float(open_interest)
-    except Exception as e:
-        print(f"⚠️ {symbol}: open interest request failed: {e}")
-        return None
 
 
 def save_open_interest(symbol, open_interest):
@@ -697,8 +705,8 @@ if __name__ == "__main__":
     scheduler = BlockingScheduler()
 
     scheduler.add_job(kline_job, "cron", second=0)
-    scheduler.add_job(oi_job, "cron", second=0)
-    scheduler.add_job(funding_job, "cron", minute=1, second=0)
+    scheduler.add_job(oi_job, "cron", second=20)
+    scheduler.add_job(funding_job, "cron", minute=1, second=40)
 
     print(
         f"🚀 Alpha ∩ Futures Kline System started (source={BASE_INTERVAL}, aggregates={AGG_INTERVALS}, SQLite)"
