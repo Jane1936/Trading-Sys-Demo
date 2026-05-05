@@ -24,8 +24,10 @@ MAX_WORKERS = 10
 DATA_DIR = "data"
 DB_PATH = f"{DATA_DIR}/klines.db"
 
-is_running = False
-lock = threading.Lock()
+kline_job_running = False
+oi_job_running = False
+kline_job_lock = threading.Lock()
+oi_job_lock = threading.Lock()
 db_write_lock = threading.Lock()
 
 
@@ -458,16 +460,14 @@ def aggregate_symbol(symbol, source_start_open_time, source_end_close_time):
 
 
 # ================= 7. 单symbol处理 =================
-def process_symbol(symbol):
+def process_symbol_kline(symbol):
     interval_ms = interval_to_ms(BASE_INTERVAL)
     now_ms = int(time.time() * 1000)
     latest_closed_close_time = get_latest_closed_close_time(now_ms, interval_ms)
     _, last_close_time = get_last_kline_record(symbol, BASE_INTERVAL)
 
     if last_close_time is not None and last_close_time >= latest_closed_close_time:
-        open_interest = fetch_open_interest(symbol)
-        oi_inserted = save_open_interest(symbol, open_interest)
-        return symbol, 0, 0, {}, oi_inserted
+        return symbol, 0, 0, {}
 
     start_time = last_close_time + 1 if last_close_time is not None else None
     missing_klines = None
@@ -513,20 +513,23 @@ def process_symbol(symbol):
             source_end_close_time=int(all_klines[-1][6]),
         )
 
+    return symbol, len(all_klines), inserted_count, agg_stat
+
+
+def process_symbol_oi(symbol):
     open_interest = fetch_open_interest(symbol)
     oi_inserted = save_open_interest(symbol, open_interest)
-
-    return symbol, len(all_klines), inserted_count, agg_stat, oi_inserted
+    return symbol, oi_inserted
 
 
 # ================= 8. 主任务 =================
-def main(universe):
+def run_kline_main(universe):
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(process_symbol, s) for s in universe]
+        futures = [executor.submit(process_symbol_kline, s) for s in universe]
 
         for future in as_completed(futures):
             try:
-                symbol, fetched_count, inserted_count, agg_stat, oi_inserted = future.result()
+                symbol, fetched_count, inserted_count, agg_stat = future.result()
                 agg_summary = ", ".join(
                     [
                         f"{k}:buckets={v['buckets']},changed={v['changed']}"
@@ -536,24 +539,36 @@ def main(universe):
                 if not agg_summary:
                     agg_summary = "-"
                 print(
-                    f"✅ {symbol}: fetched={fetched_count}, inserted_1m={inserted_count}, inserted_oi_1m={oi_inserted}, agg=({agg_summary})"
+                    f"✅ {symbol}: fetched={fetched_count}, inserted_1m={inserted_count}, agg=({agg_summary})"
                 )
             except Exception as e:
                 print(f"❌ symbol task failed: {e}")
 
 
-# ================= 9. 定时任务 =================
-def job():
-    global is_running
+def run_oi_main(universe):
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = [executor.submit(process_symbol_oi, s) for s in universe]
 
-    if is_running:
-        print("⚠️ Skip (still running)")
+        for future in as_completed(futures):
+            try:
+                symbol, oi_inserted = future.result()
+                print(f"✅ {symbol}: inserted_oi_1m={oi_inserted}")
+            except Exception as e:
+                print(f"❌ oi symbol task failed: {e}")
+
+
+# ================= 9. 定时任务 =================
+def kline_job():
+    global kline_job_running
+
+    if kline_job_running:
+        print("⚠️ Skip kline job (still running)")
         return
 
-    with lock:
-        is_running = True
+    with kline_job_lock:
+        kline_job_running = True
 
-    print("\n🟢 Job start:", time.strftime("%Y-%m-%d %H:%M:%S"))
+    print("\n🟢 Kline job start:", time.strftime("%Y-%m-%d %H:%M:%S"))
 
     start = time.time()
 
@@ -563,7 +578,7 @@ def job():
         if UNIVERSE is None:
             UNIVERSE = build_universe()
 
-        main(UNIVERSE)
+        run_kline_main(UNIVERSE)
         if time.gmtime().tm_min == 0:
             funding_rates = fetch_all_funding_rates()
             updated = save_funding_rates_to_1h(UNIVERSE, funding_rates)
@@ -574,7 +589,36 @@ def job():
 
     print(f"⏱ cost: {round(time.time() - start, 2)}s")
 
-    is_running = False
+    kline_job_running = False
+
+
+def oi_job():
+    global oi_job_running
+
+    if oi_job_running:
+        print("⚠️ Skip oi job (still running)")
+        return
+
+    with oi_job_lock:
+        oi_job_running = True
+
+    print("\n🔵 OI job start:", time.strftime("%Y-%m-%d %H:%M:%S"))
+
+    start = time.time()
+
+    try:
+        global UNIVERSE
+
+        if UNIVERSE is None:
+            UNIVERSE = build_universe()
+
+        run_oi_main(UNIVERSE)
+    except Exception as e:
+        print("❌ oi error:", e)
+
+    print(f"⏱ oi cost: {round(time.time() - start, 2)}s")
+
+    oi_job_running = False
 
 
 # ================= 全局 =================
@@ -587,7 +631,8 @@ if __name__ == "__main__":
 
     scheduler = BlockingScheduler()
 
-    scheduler.add_job(job, "cron", second=0)
+    scheduler.add_job(kline_job, "cron", second=0)
+    scheduler.add_job(oi_job, "cron", second=0)
 
     print(
         f"🚀 Alpha ∩ Futures Kline System started (source={BASE_INTERVAL}, aggregates={AGG_INTERVALS}, SQLite)"
