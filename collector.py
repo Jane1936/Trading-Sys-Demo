@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from apscheduler.schedulers.blocking import BlockingScheduler
 from binance.client import Client
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 # ================= 配置 =================
@@ -20,6 +22,7 @@ AGG_INTERVALS = ["5m", "15m", "30m", "1h", "4h", "1d"]
 ALL_INTERVALS = [BASE_INTERVAL, *AGG_INTERVALS]
 LIMIT = 1000
 MAX_WORKERS = 10
+OI_MAX_WORKERS = 4
 
 DATA_DIR = "data"
 DB_PATH = f"{DATA_DIR}/klines.db"
@@ -32,6 +35,27 @@ oi_job_lock = threading.Lock()
 funding_job_lock = threading.Lock()
 db_write_lock = threading.Lock()
 last_funding_update_hour = None
+
+
+def build_http_session(pool_size=MAX_WORKERS, total_retries=2):
+    session = requests.Session()
+    retry = Retry(
+        total=total_retries,
+        connect=total_retries,
+        read=total_retries,
+        status=total_retries,
+        backoff_factor=0.3,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset(["GET"]),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(pool_connections=pool_size, pool_maxsize=pool_size, max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+HTTP_SESSION = build_http_session()
 
 
 def table_name(interval):
@@ -191,7 +215,7 @@ def fetch_klines(symbol, start_time=None, limit=LIMIT):
 
     for attempt in range(2):
         try:
-            res = requests.get(BASE_URL, params=params, timeout=(3, 10))
+            res = HTTP_SESSION.get(BASE_URL, params=params, timeout=(3, 10))
             res.raise_for_status()
             data = res.json()
 
@@ -218,7 +242,7 @@ def filter_closed_klines(klines):
 
 def fetch_all_funding_rates():
     try:
-        res = requests.get(FUNDING_RATE_URL, timeout=10)
+        res = HTTP_SESSION.get(FUNDING_RATE_URL, timeout=(3, 10))
         res.raise_for_status()
         data = res.json()
         if not isinstance(data, list):
@@ -241,12 +265,12 @@ def fetch_all_funding_rates():
 
 
 def fetch_open_interest(symbol):
-    for attempt in range(2):
+    for attempt in range(4):
         try:
-            res = requests.get(
+            res = HTTP_SESSION.get(
                 OPEN_INTEREST_URL,
                 params={"symbol": f"{symbol}USDT"},
-                timeout=(3, 8),
+                timeout=(3, 15),
             )
             res.raise_for_status()
             data = res.json()
@@ -257,8 +281,8 @@ def fetch_open_interest(symbol):
                 return None
             return float(open_interest)
         except Exception as e:
-            if attempt == 0:
-                time.sleep(0.2)
+            if attempt < 3:
+                time.sleep(0.5 * (attempt + 1))
                 continue
             print(f"⚠️ {symbol}: open interest request failed: {e}")
             return None
@@ -594,7 +618,7 @@ def run_kline_main(universe):
 
 
 def run_oi_main(universe):
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=OI_MAX_WORKERS) as executor:
         futures = [executor.submit(process_symbol_oi, s) for s in universe]
 
         for future in as_completed(futures):
