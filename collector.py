@@ -12,6 +12,7 @@ from binance.client import Client
 
 # ================= 配置 =================
 BASE_URL = "https://fapi.binance.com/fapi/v1/klines"
+FUNDING_RATE_URL = "https://fapi.binance.com/fapi/v1/premiumIndex"
 
 BASE_INTERVAL = "1m"
 AGG_INTERVALS = ["5m", "15m", "30m", "1h", "4h", "1d"]
@@ -58,6 +59,7 @@ def init_db():
                     close REAL NOT NULL,
                     volume REAL NOT NULL,
                     close_time INTEGER NOT NULL,
+                    funding_rate REAL,
                     PRIMARY KEY (symbol, open_time)
                 )
                 """
@@ -66,6 +68,12 @@ def init_db():
                 f"CREATE INDEX IF NOT EXISTS idx_{tbl}_symbol_time "
                 f"ON {tbl}(symbol, open_time)"
             )
+
+        tbl_1h = table_name("1h")
+        columns = conn.execute(f"PRAGMA table_info({tbl_1h})").fetchall()
+        column_names = {col[1] for col in columns}
+        if "funding_rate" not in column_names:
+            conn.execute(f"ALTER TABLE {tbl_1h} ADD COLUMN funding_rate REAL")
 
 
 # ================= 1. U本位合约 =================
@@ -181,6 +189,62 @@ def fetch_klines(symbol, start_time=None, limit=LIMIT):
 def filter_closed_klines(klines):
     now_ms = int(time.time() * 1000)
     return [k for k in klines if int(k[6]) <= now_ms]
+
+
+def fetch_all_funding_rates():
+    try:
+        res = requests.get(FUNDING_RATE_URL, timeout=10)
+        res.raise_for_status()
+        data = res.json()
+        if not isinstance(data, list):
+            return {}
+
+        rates = {}
+        for row in data:
+            symbol = row.get("symbol")
+            funding_rate = row.get("lastFundingRate")
+            if not symbol or funding_rate is None:
+                continue
+            try:
+                rates[symbol] = float(funding_rate)
+            except (TypeError, ValueError):
+                continue
+        return rates
+    except Exception as e:
+        print(f"⚠️ funding rate request failed: {e}")
+        return {}
+
+
+def save_funding_rates_to_1h(universe, funding_rates):
+    if not universe or not funding_rates:
+        return 0
+
+    now_ms = int(time.time() * 1000)
+    hour_ms = interval_to_ms("1h")
+    target_open_time = (now_ms // hour_ms) * hour_ms - hour_ms
+
+    values = []
+    for symbol in universe:
+        usdt_symbol = f"{symbol}USDT"
+        if usdt_symbol not in funding_rates:
+            continue
+        values.append((funding_rates[usdt_symbol], symbol, target_open_time))
+
+    if not values:
+        return 0
+
+    with db_write_lock:
+        with get_db_conn() as conn:
+            before = conn.total_changes
+            conn.executemany(
+                f"""
+                UPDATE {table_name("1h")}
+                SET funding_rate = ?
+                WHERE symbol = ? AND open_time = ?
+                """,
+                values,
+            )
+            return conn.total_changes - before
 
 
 # ================= 6. 写SQLite =================
@@ -438,6 +502,10 @@ def job():
             UNIVERSE = build_universe()
 
         main(UNIVERSE)
+        if time.gmtime().tm_min == 0:
+            funding_rates = fetch_all_funding_rates()
+            updated = save_funding_rates_to_1h(UNIVERSE, funding_rates)
+            print(f"💰 funding_rate updated rows(1h): {updated}")
 
     except Exception as e:
         print("❌ error:", e)
