@@ -1,0 +1,4 @@
+requests
+apscheduler
+python-binance
+urllib3
