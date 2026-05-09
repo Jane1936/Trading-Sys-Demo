@@ -24,8 +24,8 @@ LIMIT = 1000
 MAX_WORKERS = 10
 OI_MAX_WORKERS = 4
 
-DATA_DIR = "data"
-DB_PATH = f"{DATA_DIR}/klines.db"
+DATA_DIR = os.getenv("DATA_DIR", "data")
+DB_PATH = os.getenv("DB_PATH", f"{DATA_DIR}/klines.db")
 
 kline_job_running = False
 oi_job_running = False
