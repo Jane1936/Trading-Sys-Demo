@@ -8,6 +8,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY collector.py ./
+COPY collector.py data_processor.py app.py ./
 
-CMD ["python", "collector.py"]
+RUN mkdir -p /app/data
+
+VOLUME ["/app/data"]
+
+CMD ["python", "app.py"]
