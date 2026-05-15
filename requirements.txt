@@ -2,3 +2,6 @@ requests
 apscheduler
 python-binance
 urllib3
+
+flask
+gunicorn

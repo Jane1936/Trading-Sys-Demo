@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Abnormal Wick Events</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 8px; font-size: 13px; }
+    th { background: #f5f5f5; position: sticky; top: 0; }
+    .toolbar { margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <h2>异常插针记录</h2>
+  <div class="toolbar">
+    <form method="get" action="/safety/abnormal-wicks">
+      <label>limit:
+        <input type="number" name="limit" value="{{ limit }}" min="1" max="1000" />
+      </label>
+      <button type="submit">刷新</button>
+      <span style="margin-left: 12px; color:#666;">建议直接用浏览器自动刷新插件或手动F5</span>
+    </form>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>symbol</th>
+        <th>decision_round_ts</th>
+        <th>first_candle_open_time</th>
+        <th>first_candle_close_time</th>
+        <th>open</th>
+        <th>high</th>
+        <th>low</th>
+        <th>close</th>
+        <th>cond1_ratio</th>
+        <th>cond2_ratio</th>
+        <th>detected_at</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in events %}
+      <tr>
+        <td>{{ e.symbol }}</td>
+        <td>{{ e.decision_round_ts }}</td>
+        <td>{{ e.first_candle_open_time }}</td>
+        <td>{{ e.first_candle_close_time }}</td>
+        <td>{{ '%.6f'|format(e.open) }}</td>
+        <td>{{ '%.6f'|format(e.high) }}</td>
+        <td>{{ '%.6f'|format(e.low) }}</td>
+        <td>{{ '%.6f'|format(e.close) }}</td>
+        <td>{{ '%.6f'|format(e.cond1_ratio) }}</td>
+        <td>{{ '%.6f'|format(e.cond2_ratio) }}</td>
+        <td>{{ e.detected_at }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="11">暂无异常插针记录</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>
