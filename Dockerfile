@@ -8,10 +8,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY collector.py data_processor.py app.py ./
+COPY collector.py data_processor.py pre_safety_module.py app.py web_app.py ./
+COPY templates ./templates
+COPY docker_entrypoint.sh ./docker_entrypoint.sh
 
-RUN mkdir -p /app/data
+RUN chmod +x /app/docker_entrypoint.sh && mkdir -p /app/data
 
 VOLUME ["/app/data"]
 
-CMD ["python", "app.py"]
+EXPOSE 5000
+
+ENTRYPOINT ["/app/docker_entrypoint.sh"]
+CMD ["worker"]
