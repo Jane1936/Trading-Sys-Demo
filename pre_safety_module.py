@@ -226,6 +226,51 @@ class PreSafetyModule:
             for row in rows
         ]
 
+    def get_recent_events_by_symbol(self, symbol: str, limit: int = 50) -> List[AbnormalWickEvent]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT symbol, decision_round_ts,
+                       first_candle_open_time, first_candle_close_time,
+                       open, high, low, close,
+                       cond1_ratio, cond2_ratio,
+                       detected_at
+                FROM abnormal_wick_events
+                WHERE symbol = ?
+                ORDER BY detected_at DESC
+                LIMIT ?
+                """,
+                (symbol, limit),
+            ).fetchall()
+
+        return [
+            AbnormalWickEvent(
+                symbol=row["symbol"],
+                decision_round_ts=int(row["decision_round_ts"]),
+                first_candle_open_time=int(row["first_candle_open_time"]),
+                first_candle_close_time=int(row["first_candle_close_time"]),
+                open=float(row["open"]),
+                high=float(row["high"]),
+                low=float(row["low"]),
+                close=float(row["close"]),
+                cond1_ratio=float(row["cond1_ratio"]),
+                cond2_ratio=float(row["cond2_ratio"]),
+                detected_at=int(row["detected_at"]),
+            )
+            for row in rows
+        ]
+
+    def get_event_symbols(self) -> List[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT symbol
+                FROM abnormal_wick_events
+                ORDER BY symbol ASC
+                """
+            ).fetchall()
+        return [str(row["symbol"]) for row in rows]
+
 
 def render_events_html(events: List[AbnormalWickEvent]) -> str:
     """Render a simple HTML table for web display."""
