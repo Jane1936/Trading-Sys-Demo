@@ -5,25 +5,65 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Abnormal Wick Events</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border: 1px solid #ddd; padding: 8px; font-size: 13px; }
-    th { background: #f5f5f5; position: sticky; top: 0; }
-    .toolbar { margin-bottom: 12px; }
+    :root {
+      --sky: #38bdf8;
+      --sky-soft: #e0f2fe;
+      --black: #111827;
+      --white: #ffffff;
+      --line: #bae6fd;
+    }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: var(--black);
+      background: linear-gradient(135deg, var(--white) 0%, #f8fbff 100%);
+    }
+    .container { max-width: 1220px; margin: 24px auto; padding: 0 16px; }
+    .card { background: var(--white); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 24px rgba(14, 116, 144, 0.10); overflow: hidden; }
+    .header { padding: 18px 20px; background: var(--sky-soft); border-bottom: 1px solid var(--line); }
+    .header h2 { margin: 0; font-size: 22px; letter-spacing: .5px; }
+    .toolbar { padding: 14px 20px; display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+    .field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+    .field input, .field select { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 160px; }
+    .actions { display: flex; gap: 8px; }
+    .btn { border: none; border-radius: 8px; padding: 9px 14px; cursor: pointer; font-weight: 600; }
+    .btn-primary { background: var(--sky); color: var(--white); }
+    .btn-secondary { background: var(--black); color: var(--white); text-decoration: none; display: inline-flex; align-items: center; }
+    .tip { padding: 0 20px 12px; color: #4b5563; font-size: 12px; }
+    .table-wrap { overflow: auto; border-top: 1px solid var(--line); }
+    table { border-collapse: collapse; width: 100%; min-width: 980px; }
+    th, td { padding: 10px 9px; font-size: 13px; border-bottom: 1px solid #e6f6ff; text-align: left; white-space: nowrap; }
+    th { background: #f0f9ff; position: sticky; top: 0; }
+    tbody tr:hover { background: #f8fdff; }
+    .empty { text-align: center; color: #6b7280; padding: 22px; }
   </style>
 </head>
 <body>
-  <h2>异常插针记录</h2>
+  <div class="container">
+  <div class="card">
+  <div class="header"><h2>异常插针记录</h2></div>
   <div class="toolbar">
-    <form method="get" action="/safety/abnormal-wicks">
-      <label>limit:
+    <form method="get" action="/safety/abnormal-wicks" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;">
+      <label class="field">记录数量
         <input type="number" name="limit" value="{{ limit }}" min="1" max="1000" />
       </label>
-      <button type="submit">刷新</button>
-      <span style="margin-left: 12px; color:#666;">建议直接用浏览器自动刷新插件或手动F5</span>
+      <label class="field">Symbol筛选
+        <select name="symbol">
+          <option value="" {% if not selected_symbol %}selected{% endif %}>全部</option>
+          {% for s in symbols %}
+            <option value="{{ s }}" {% if selected_symbol == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="actions">
+        <button class="btn btn-primary" type="submit">筛选/刷新</button>
+        <a class="btn btn-secondary" href="/safety/abnormal-wicks">重置</a>
+      </div>
     </form>
   </div>
+  <div class="tip">时间字段均已转换为日期格式（UTC）。建议结合浏览器自动刷新或手动 F5 查看最新数据。</div>
 
+  <div class="table-wrap">
   <table>
     <thead>
       <tr>
@@ -44,23 +84,26 @@
       {% for e in events %}
       <tr>
         <td>{{ e.symbol }}</td>
-        <td>{{ e.decision_round_ts }}</td>
-        <td>{{ e.first_candle_open_time }}</td>
-        <td>{{ e.first_candle_close_time }}</td>
+        <td>{{ e.decision_round_ts|fmt_ms_datetime }}</td>
+        <td>{{ e.first_candle_open_time|fmt_ms_datetime }}</td>
+        <td>{{ e.first_candle_close_time|fmt_ms_datetime }}</td>
         <td>{{ '%.6f'|format(e.open) }}</td>
         <td>{{ '%.6f'|format(e.high) }}</td>
         <td>{{ '%.6f'|format(e.low) }}</td>
         <td>{{ '%.6f'|format(e.close) }}</td>
         <td>{{ '%.6f'|format(e.cond1_ratio) }}</td>
         <td>{{ '%.6f'|format(e.cond2_ratio) }}</td>
-        <td>{{ e.detected_at }}</td>
+        <td>{{ e.detected_at|fmt_ms_datetime }}</td>
       </tr>
       {% else %}
       <tr>
-        <td colspan="11">暂无异常插针记录</td>
+        <td class="empty" colspan="11">暂无异常插针记录</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
+  </div>
+  </div>
 </body>
 </html>
