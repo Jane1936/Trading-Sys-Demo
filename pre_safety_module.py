@@ -2,7 +2,8 @@
 
 Scan rule (per 15-minute decision round):
 - Read the latest 3 closed 5m candles in the latest 15-minute window.
-- If the first 5m candle (oldest among the 3) satisfies both:
+- For each candle among the first/second/third 5m candle (oldest -> newest),
+  if it satisfies both:
   1) (high - max(open, close)) / (high - low) >= 0.6 OR
      (min(open, close) - low) / (high - low) >= 0.6
   2) (high - low) / open >= 0.06
@@ -33,6 +34,7 @@ class Candle5m:
 class AbnormalWickEvent:
     symbol: str
     decision_round_ts: int
+    candle_index: int
     first_candle_open_time: int
     first_candle_close_time: int
     open: float
@@ -62,6 +64,7 @@ class PreSafetyModule:
                 CREATE TABLE IF NOT EXISTS abnormal_wick_events (
                     symbol TEXT NOT NULL,
                     decision_round_ts INTEGER NOT NULL,
+                    candle_index INTEGER NOT NULL,
                     first_candle_open_time INTEGER NOT NULL,
                     first_candle_close_time INTEGER NOT NULL,
                     open REAL NOT NULL,
@@ -71,14 +74,64 @@ class PreSafetyModule:
                     cond1_ratio REAL NOT NULL,
                     cond2_ratio REAL NOT NULL,
                     detected_at INTEGER NOT NULL,
-                    PRIMARY KEY (symbol, decision_round_ts)
+                    PRIMARY KEY (symbol, decision_round_ts, candle_index)
                 )
                 """
             )
+            self._migrate_table_if_needed(conn)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_abnormal_wick_detected_at "
                 "ON abnormal_wick_events(detected_at DESC)"
             )
+
+    @staticmethod
+    def _migrate_table_if_needed(conn: sqlite3.Connection) -> None:
+        cols = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(abnormal_wick_events)").fetchall()
+        }
+        if "candle_index" in cols:
+            return
+
+        conn.execute("ALTER TABLE abnormal_wick_events RENAME TO abnormal_wick_events_old")
+        conn.execute(
+            """
+            CREATE TABLE abnormal_wick_events (
+                symbol TEXT NOT NULL,
+                decision_round_ts INTEGER NOT NULL,
+                candle_index INTEGER NOT NULL,
+                first_candle_open_time INTEGER NOT NULL,
+                first_candle_close_time INTEGER NOT NULL,
+                open REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                close REAL NOT NULL,
+                cond1_ratio REAL NOT NULL,
+                cond2_ratio REAL NOT NULL,
+                detected_at INTEGER NOT NULL,
+                PRIMARY KEY (symbol, decision_round_ts, candle_index)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO abnormal_wick_events (
+                symbol, decision_round_ts, candle_index,
+                first_candle_open_time, first_candle_close_time,
+                open, high, low, close,
+                cond1_ratio, cond2_ratio,
+                detected_at
+            )
+            SELECT
+                symbol, decision_round_ts, 1,
+                first_candle_open_time, first_candle_close_time,
+                open, high, low, close,
+                cond1_ratio, cond2_ratio,
+                detected_at
+            FROM abnormal_wick_events_old
+            """
+        )
+        conn.execute("DROP TABLE abnormal_wick_events_old")
 
     def _get_latest_3_closed_5m(self, symbol: str) -> List[Candle5m]:
         with self._connect() as conn:
@@ -128,32 +181,38 @@ class PreSafetyModule:
         is_hit = (upper_wick_ratio >= 0.6 or lower_wick_ratio >= 0.6) and cond2_ratio >= 0.06
         return is_hit, cond1_ratio, cond2_ratio
 
-    def detect_for_symbol(self, symbol: str, now_ms: Optional[int] = None) -> Optional[AbnormalWickEvent]:
+    def detect_for_symbol(self, symbol: str, now_ms: Optional[int] = None) -> List[AbnormalWickEvent]:
         candles = self._get_latest_3_closed_5m(symbol)
         if len(candles) < 3:
-            return None
+            return []
 
-        first = candles[0]
-        hit, cond1_ratio, cond2_ratio = self._is_abnormal(first)
-        if not hit:
-            return None
-
+        events: List[AbnormalWickEvent] = []
+        decision_round_ts = self._decision_round_ts_ms(now_ms=now_ms)
         detected_at = int(time.time() * 1000)
-        event = AbnormalWickEvent(
-            symbol=symbol,
-            decision_round_ts=self._decision_round_ts_ms(now_ms=now_ms),
-            first_candle_open_time=first.open_time,
-            first_candle_close_time=first.close_time,
-            open=first.open,
-            high=first.high,
-            low=first.low,
-            close=first.close,
-            cond1_ratio=cond1_ratio,
-            cond2_ratio=cond2_ratio,
-            detected_at=detected_at,
-        )
-        self._save_event(event)
-        return event
+
+        for idx, candle in enumerate(candles, start=1):
+            hit, cond1_ratio, cond2_ratio = self._is_abnormal(candle)
+            if not hit:
+                continue
+
+            event = AbnormalWickEvent(
+                symbol=symbol,
+                decision_round_ts=decision_round_ts,
+                candle_index=idx,
+                first_candle_open_time=candle.open_time,
+                first_candle_close_time=candle.close_time,
+                open=candle.open,
+                high=candle.high,
+                low=candle.low,
+                close=candle.close,
+                cond1_ratio=cond1_ratio,
+                cond2_ratio=cond2_ratio,
+                detected_at=detected_at,
+            )
+            self._save_event(event)
+            events.append(event)
+
+        return events
 
     def _save_event(self, event: AbnormalWickEvent) -> None:
         with self._connect() as conn:
@@ -161,13 +220,14 @@ class PreSafetyModule:
                 """
                 INSERT INTO abnormal_wick_events (
                     symbol, decision_round_ts,
+                    candle_index,
                     first_candle_open_time, first_candle_close_time,
                     open, high, low, close,
                     cond1_ratio, cond2_ratio,
                     detected_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, decision_round_ts, candle_index) DO UPDATE SET
                     first_candle_open_time=excluded.first_candle_open_time,
                     first_candle_close_time=excluded.first_candle_close_time,
                     open=excluded.open,
@@ -181,6 +241,7 @@ class PreSafetyModule:
                 (
                     event.symbol,
                     event.decision_round_ts,
+                    event.candle_index,
                     event.first_candle_open_time,
                     event.first_candle_close_time,
                     event.open,
@@ -198,6 +259,7 @@ class PreSafetyModule:
             rows = conn.execute(
                 """
                 SELECT symbol, decision_round_ts,
+                       candle_index,
                        first_candle_open_time, first_candle_close_time,
                        open, high, low, close,
                        cond1_ratio, cond2_ratio,
@@ -213,6 +275,7 @@ class PreSafetyModule:
             AbnormalWickEvent(
                 symbol=row["symbol"],
                 decision_round_ts=int(row["decision_round_ts"]),
+                candle_index=int(row["candle_index"]),
                 first_candle_open_time=int(row["first_candle_open_time"]),
                 first_candle_close_time=int(row["first_candle_close_time"]),
                 open=float(row["open"]),
@@ -231,6 +294,7 @@ class PreSafetyModule:
             rows = conn.execute(
                 """
                 SELECT symbol, decision_round_ts,
+                       candle_index,
                        first_candle_open_time, first_candle_close_time,
                        open, high, low, close,
                        cond1_ratio, cond2_ratio,
@@ -247,6 +311,7 @@ class PreSafetyModule:
             AbnormalWickEvent(
                 symbol=row["symbol"],
                 decision_round_ts=int(row["decision_round_ts"]),
+                candle_index=int(row["candle_index"]),
                 first_candle_open_time=int(row["first_candle_open_time"]),
                 first_candle_close_time=int(row["first_candle_close_time"]),
                 open=float(row["open"]),
@@ -277,7 +342,7 @@ def render_events_html(events: List[AbnormalWickEvent]) -> str:
     header = (
         "<table border='1' cellpadding='6' cellspacing='0'>"
         "<thead><tr>"
-        "<th>symbol</th><th>decision_round_ts</th><th>first_open_time</th>"
+        "<th>symbol</th><th>decision_round_ts</th><th>candle_index</th><th>first_open_time</th>"
         "<th>open</th><th>high</th><th>low</th><th>close</th>"
         "<th>cond1</th><th>cond2</th><th>detected_at</th>"
         "</tr></thead><tbody>"
@@ -286,6 +351,7 @@ def render_events_html(events: List[AbnormalWickEvent]) -> str:
         "<tr>"
         f"<td>{e.symbol}</td>"
         f"<td>{e.decision_round_ts}</td>"
+        f"<td>{e.candle_index}</td>"
         f"<td>{e.first_candle_open_time}</td>"
         f"<td>{e.open:.6f}</td>"
         f"<td>{e.high:.6f}</td>"
