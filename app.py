@@ -53,11 +53,12 @@ def start_pre_safety_task(symbols: List[str]) -> None:
         if round_ts != last_round_ts:
             for symbol in symbols:
                 try:
-                    event = module.detect_for_symbol(symbol, now_ms=now_ms)
-                    if event is not None:
+                    events = module.detect_for_symbol(symbol, now_ms=now_ms)
+                    for event in events:
                         print(
                             f"🚨 abnormal wick {event.symbol} "
                             f"round={event.decision_round_ts} "
+                            f"candle_index={event.candle_index} "
                             f"first_open={event.first_candle_open_time} "
                             f"cond1={event.cond1_ratio:.6f} cond2={event.cond2_ratio:.6f}"
                         )

@@ -69,6 +69,7 @@
       <tr>
         <th>symbol</th>
         <th>decision_round_ts</th>
+        <th>candle_index</th>
         <th>first_candle_open_time</th>
         <th>first_candle_close_time</th>
         <th>open</th>
@@ -85,6 +86,7 @@
       <tr>
         <td>{{ e.symbol }}</td>
         <td>{{ e.decision_round_ts|fmt_ms_datetime }}</td>
+        <td>{{ e.candle_index }}</td>
         <td>{{ e.first_candle_open_time|fmt_ms_datetime }}</td>
         <td>{{ e.first_candle_close_time|fmt_ms_datetime }}</td>
         <td>{{ '%.6f'|format(e.open) }}</td>
@@ -97,7 +99,7 @@
       </tr>
       {% else %}
       <tr>
-        <td class="empty" colspan="11">暂无异常插针记录</td>
+        <td class="empty" colspan="12">暂无异常插针记录</td>
       </tr>
       {% endfor %}
     </tbody>
