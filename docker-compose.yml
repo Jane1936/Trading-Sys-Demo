@@ -1,0 +1,35 @@
+services:
+  worker:
+    build: .
+    image: trading-sys-demo:latest
+    container_name: trade
+    command: ["worker"]
+    restart: always
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+
+  web:
+    image: trading-sys-demo:latest
+    container_name: trade-web
+    command: ["web"]
+    restart: always
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      - worker
+
+  sqlite-web:
+    image: coleifer/sqlite-web:latest
+    container_name: sqlite-web
+    restart: always
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    command: ["sqlite_web", "/data/klines.db", "--host", "0.0.0.0"]
+    depends_on:
+      - worker

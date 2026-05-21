@@ -1,56 +1,111 @@
-# Docker 公网 IP 部署（无 HTTPS）
+# Docker 云服务器部署指南
 
-你当前项目建议拆成两个容器：
-- `worker`：运行 `app.py`（collector + pre_safety + processor）
-- `web`：运行 `web_app.py`（Flask 页面）
+你当前的部署目标是 3 个容器：
+- `trade`：运行项目主进程（`worker`）
+- `trade-web`：运行交易数据 Web 平台（`web`）
+- `sqlite-web`：运行 SQLite 可视化 Web
 
-两个容器挂载同一个 `data` 卷，保证网页能读到检测结果。
+下面给你两种方案：**推荐用 Docker Compose（一条命令管理 3 个容器）**；也保留优化后的 `docker run` 版本。
 
-## 1) 构建镜像
+## 1) 拉取最新代码
+
+```bash
+git clone <你的仓库地址>
+cd Trading-Sys-Demo
+```
+
+如果仓库已存在：
+
+```bash
+git pull --rebase
+```
+
+## 2) 目录准备
+
+```bash
+mkdir -p ./data ./logs
+```
+
+---
+
+## 方案 A（推荐）：Docker Compose
+
+### 启动（构建并后台运行）
+
+```bash
+docker compose up -d --build
+```
+
+### 查看状态与日志
+
+```bash
+docker compose ps
+docker compose logs -f worker
+docker compose logs -f web
+docker compose logs -f sqlite-web
+```
+
+### 访问地址
+
+- 交易数据平台：`http://YOUR_PUBLIC_IP:5000/`
+- SQLite 可视化：`http://YOUR_PUBLIC_IP:8080/`
+
+---
+
+## 方案 B：优化后的 docker run（对应你给的 3 条命令）
+
+> 先构建镜像：
 
 ```bash
 docker build -t trading-sys-demo:latest .
 ```
 
-## 2) 启动 worker（后台任务）
+### 1) 运行项目（worker）
 
 ```bash
 docker run -d \
-  --name trading-worker \
-  -v $(pwd)/data:/app/data \
-  --restart unless-stopped \
+  --name trade \
+  -v /root/trade/data:/app/data \
+  -v /root/trade/logs:/app/logs \
+  --restart=always \
   trading-sys-demo:latest worker
 ```
 
-## 3) 启动 web（网页）
+### 2) 运行可视化数据库 web（sqlite-web）
 
 ```bash
 docker run -d \
-  --name trading-web \
-  -v $(pwd)/data:/app/data \
+  --name sqlite-web \
+  -p 8080:8080 \
+  -v /root/trade/data:/data \
+  --restart=always \
+  coleifer/sqlite-web:latest \
+  sqlite_web /data/klines.db --host 0.0.0.0
+```
+
+### 3) 运行交易数据 web 平台（trade-web）
+
+```bash
+docker run -d \
+  --name trade-web \
+  -v /root/trade/data:/app/data \
+  -v /root/trade/logs:/app/logs \
   -p 5000:5000 \
-  --restart unless-stopped \
+  --restart=always \
   trading-sys-demo:latest web
 ```
 
-## 4) 访问地址
+---
 
-- `http://YOUR_PUBLIC_IP:5000/`
-- `http://YOUR_PUBLIC_IP:5000/safety/abnormal-wicks`
-- `http://YOUR_PUBLIC_IP:5000/safety/abnormal-wicks?limit=200`
-
-## 5) 常用排障
+## 升级流程
 
 ```bash
-docker ps
-docker logs -f trading-worker
-docker logs -f trading-web
+git pull --rebase
+docker compose up -d --build
 ```
 
-## 6) 停止与重启
+## 防火墙与安全组
 
-```bash
-docker restart trading-worker trading-web
-docker stop trading-worker trading-web
-docker rm trading-worker trading-web
-```
+请在云平台安全组和服务器防火墙放行：
+- TCP `5000`（交易数据平台）
+- TCP `8080`（sqlite-web）
