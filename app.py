@@ -92,7 +92,7 @@ def start_pre_safety_task(symbols: List[str]) -> None:
                     print(f"⚠️ pre-safety detect failed symbol={symbol}: {exc}")
 
             try:
-                _, abnormal_symbols = module.get_latest_round_abnormal_symbols()
+                _, abnormal_symbols = module.get_latest_round_abnormal_symbols(decision_round_ts=round_ts)
                 scored = scoring.score_round(
                     decision_round_ts=round_ts,
                     all_symbols=symbols,
