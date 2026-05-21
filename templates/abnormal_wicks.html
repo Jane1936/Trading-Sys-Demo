@@ -70,15 +70,19 @@
   <div class="header"><h2>异常插针记录</h2></div>
   <div class="symbol-strip">
     <div><strong>本轮异常插针symbol（15分钟更新）</strong></div>
-    {% if latest_round_symbols %}
+    {% if latest_round_ts %}
       <div class="muted">扫描轮次：{{ latest_round_ts|fmt_ms_datetime }}</div>
+    {% endif %}
+    {% if latest_round_symbols %}
       <div class="chips">
         {% for s in latest_round_symbols %}
           <span class="chip">{{ s }}</span>
         {% endfor %}
       </div>
     {% else %}
-      <div class="muted">当前暂无本轮异常插针symbol。</div>
+      <div class="chips">
+        <span class="chip">无</span>
+      </div>
     {% endif %}
   </div>
   <div class="toolbar">

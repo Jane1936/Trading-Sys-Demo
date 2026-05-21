@@ -336,16 +336,21 @@ class PreSafetyModule:
             ).fetchall()
         return [str(row["symbol"]) for row in rows]
 
-    def get_latest_round_abnormal_symbols(self) -> tuple[int | None, List[str]]:
-        """Return symbols detected in the latest decision round only."""
+    def get_latest_round_abnormal_symbols(self, decision_round_ts: int | None = None) -> tuple[int | None, List[str]]:
+        """Return symbols detected in a decision round.
+
+        If ``decision_round_ts`` is None, use the latest round that exists in DB.
+        """
         with self._connect() as conn:
-            latest_round_row = conn.execute(
-                """
-                SELECT MAX(decision_round_ts) AS latest_round_ts
-                FROM abnormal_wick_events
-                """
-            ).fetchone()
-            latest_round_ts = latest_round_row["latest_round_ts"]
+            latest_round_ts = decision_round_ts
+            if latest_round_ts is None:
+                latest_round_row = conn.execute(
+                    """
+                    SELECT MAX(decision_round_ts) AS latest_round_ts
+                    FROM abnormal_wick_events
+                    """
+                ).fetchone()
+                latest_round_ts = latest_round_row["latest_round_ts"]
             if latest_round_ts is None:
                 return None, []
 
