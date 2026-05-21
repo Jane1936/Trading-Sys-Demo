@@ -41,6 +41,8 @@
     .k-down { color: #22c55e; font-weight: 600; }
     .chart-wrap { padding: 12px 20px 8px; border-top: 1px solid var(--line); }
     #btc-kline-chart { width: 100%; height: 280px; }
+    .pager { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
+    .pager-info { color: #4b5563; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -114,7 +116,7 @@
 
   <div class="card" style="margin-top:16px;">
     <div class="header"><h2>BTC 5分钟K线</h2></div>
-    <div class="tip">红涨绿跌（close >= open 为红色，close &lt; open 为绿色），按开盘时间倒序展示。</div>
+    <div class="tip">仅展示最近7天数据。红涨绿跌（close >= open 为红色，close &lt; open 为绿色），按开盘时间倒序展示，每页最多24条。</div>
     <div class="chart-wrap">
       <div id="btc-kline-chart"></div>
     </div>
@@ -150,6 +152,13 @@
           {% endfor %}
         </tbody>
       </table>
+    </div>
+    <div class="pager">
+      <div class="actions">
+        <a class="btn btn-secondary" href="/safety/abnormal-wicks?limit={{ limit }}&symbol={{ selected_symbol|urlencode }}&btc_page={{ btc_page - 1 if btc_page > 1 else 1 }}">上一页</a>
+        <a class="btn btn-secondary" href="/safety/abnormal-wicks?limit={{ limit }}&symbol={{ selected_symbol|urlencode }}&btc_page={{ btc_page + 1 if btc_page < btc_total_pages else btc_total_pages }}">下一页</a>
+      </div>
+      <div class="pager-info">第 {{ btc_page }} / {{ btc_total_pages }} 页，共 {{ btc_total_rows }} 条（最近7天）</div>
     </div>
   </div>
   </div>
