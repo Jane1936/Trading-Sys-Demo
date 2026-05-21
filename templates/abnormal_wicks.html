@@ -204,7 +204,7 @@
   <section id="tab-score" class="panel">
     <div class="card">
       <div class="header"><h2>评分系统</h2></div>
-      <div class="tip">评分对象：Universe 扣除本轮异常插针symbol。规则：最近3条1h MA20满足 第1条&gt;第2条&gt;第3条，本轮得4分，否则0分。每15分钟更新。</div>
+      <div class="tip">评分对象：Universe 扣除本轮异常插针symbol。规则：最近3条15m MA20满足 第1条&gt;第2条&gt;第3条，本轮得4分，否则0分。每15分钟更新。</div>
       {% if score_round_ts %}
       <div class="tip">当前评分轮次：{{ score_round_ts|fmt_ms_datetime }}</div>
       {% endif %}

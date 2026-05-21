@@ -21,7 +21,7 @@ class SymbolScore:
 
 
 class ScoringSystem:
-    """Score symbols after pre-safety using latest 3 rows of 1h MA20."""
+    """Score symbols after pre-safety using latest 3 rows of 15m MA20."""
 
     def __init__(self, db_path: str = "data/klines.db") -> None:
         self.db_path = db_path
@@ -52,13 +52,13 @@ class ScoringSystem:
                 "CREATE INDEX IF NOT EXISTS idx_symbol_scores_round ON symbol_scores(decision_round_ts DESC)"
             )
 
-    def _latest_three_ma20_1h(self, symbol: str) -> tuple[float, float, float] | None:
+    def _latest_three_ma20_15m(self, symbol: str) -> tuple[float, float, float] | None:
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT ma20
                 FROM ma20_indicators
-                WHERE symbol = ? AND interval = '1h'
+                WHERE symbol = ? AND interval = '15m'
                 ORDER BY open_time DESC
                 LIMIT 3
                 """,
@@ -79,13 +79,13 @@ class ScoringSystem:
         now_ms = int(time.time() * 1000)
         results: List[SymbolScore] = []
         for symbol in candidates:
-            ma20s = self._latest_three_ma20_1h(symbol)
+            ma20s = self._latest_three_ma20_15m(symbol)
             if ma20s is None:
                 continue
             m1, m2, m3 = ma20s
             hit = m1 > m2 > m3
             score = 4 if hit else 0
-            reason = "ma20_1h_desc_3bars" if hit else "ma20_1h_rule_not_met"
+            reason = "ma20_15m_desc_3bars" if hit else "ma20_15m_rule_not_met"
             rec = SymbolScore(symbol, decision_round_ts, score, reason, m1, m2, m3, now_ms)
             results.append(rec)
             self._save_score(rec)
