@@ -336,6 +336,30 @@ class PreSafetyModule:
             ).fetchall()
         return [str(row["symbol"]) for row in rows]
 
+    def get_latest_round_abnormal_symbols(self) -> tuple[int | None, List[str]]:
+        """Return symbols detected in the latest decision round only."""
+        with self._connect() as conn:
+            latest_round_row = conn.execute(
+                """
+                SELECT MAX(decision_round_ts) AS latest_round_ts
+                FROM abnormal_wick_events
+                """
+            ).fetchone()
+            latest_round_ts = latest_round_row["latest_round_ts"]
+            if latest_round_ts is None:
+                return None, []
+
+            rows = conn.execute(
+                """
+                SELECT DISTINCT symbol
+                FROM abnormal_wick_events
+                WHERE decision_round_ts = ?
+                ORDER BY symbol ASC
+                """,
+                (int(latest_round_ts),),
+            ).fetchall()
+        return int(latest_round_ts), [str(row["symbol"]) for row in rows]
+
 
 def render_events_html(events: List[AbnormalWickEvent]) -> str:
     """Render a simple HTML table for web display."""
