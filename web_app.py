@@ -44,6 +44,7 @@ def abnormal_wicks():
     scoring = ScoringSystem(db_path=DB_PATH)
     scoring.init_table()
     score_round_ts, round_scores = scoring.get_latest_round_scores()
+    score_rule2_round_ts, round_scores_rule2 = scoring.get_latest_round_scores_close_gt_ma20()
 
     btc_5m_rows = []
     btc_chart_rows = []
@@ -97,6 +98,8 @@ def abnormal_wicks():
         latest_round_symbols=latest_round_symbols,
         score_round_ts=score_round_ts,
         round_scores=round_scores,
+        score_rule2_round_ts=score_rule2_round_ts,
+        round_scores_rule2=round_scores_rule2,
         selected_symbol=symbol,
         btc_5m_rows=btc_5m_rows,
         btc_chart_rows=btc_chart_rows,

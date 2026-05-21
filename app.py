@@ -93,6 +93,12 @@ def start_pre_safety_task(symbols: List[str]) -> None:
 
             try:
                 _, abnormal_symbols = module.get_latest_round_abnormal_symbols(decision_round_ts=round_ts)
+                # 评分严格依赖15m MA20：先等待该轮对应已收盘15m K线的MA20写入完成，再打分。
+                # 当前轮次 round_ts 对应的最新已收盘15m K线 open_time=round_ts-15m。
+                if not scoring.is_15m_ma20_ready_for_round(decision_round_ts=round_ts, symbols=symbols):
+                    print(f"⏳ scoring round={round_ts} waiting MA20 readiness")
+                    time.sleep(5)
+                    continue
                 scored = scoring.score_round(
                     decision_round_ts=round_ts,
                     all_symbols=symbols,
