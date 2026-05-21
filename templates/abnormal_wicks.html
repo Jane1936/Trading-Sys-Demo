@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Abnormal Wick Events</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
   <style>
     :root {
       --sky: #38bdf8;
@@ -36,6 +37,10 @@
     th { background: #f0f9ff; position: sticky; top: 0; }
     tbody tr:hover { background: #f8fdff; }
     .empty { text-align: center; color: #6b7280; padding: 22px; }
+    .k-up { color: #ef4444; font-weight: 600; }
+    .k-down { color: #22c55e; font-weight: 600; }
+    .chart-wrap { padding: 12px 20px 8px; border-top: 1px solid var(--line); }
+    #btc-kline-chart { width: 100%; height: 280px; }
   </style>
 </head>
 <body>
@@ -106,6 +111,104 @@
   </table>
   </div>
   </div>
+
+  <div class="card" style="margin-top:16px;">
+    <div class="header"><h2>BTC 5分钟K线</h2></div>
+    <div class="tip">红涨绿跌（close >= open 为红色，close &lt; open 为绿色），按开盘时间倒序展示。</div>
+    <div class="chart-wrap">
+      <div id="btc-kline-chart"></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>open_time</th>
+            <th>close_time</th>
+            <th>open</th>
+            <th>high</th>
+            <th>low</th>
+            <th>close</th>
+            <th>volume</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for k in btc_5m_rows %}
+          {% set up = k[4] >= k[1] %}
+          <tr>
+            <td>{{ k[0]|fmt_ms_datetime }}</td>
+            <td>{{ k[6]|fmt_ms_datetime }}</td>
+            <td class="{{ 'k-up' if up else 'k-down' }}">{{ '%.6f'|format(k[1]) }}</td>
+            <td class="{{ 'k-up' if up else 'k-down' }}">{{ '%.6f'|format(k[2]) }}</td>
+            <td class="{{ 'k-up' if up else 'k-down' }}">{{ '%.6f'|format(k[3]) }}</td>
+            <td class="{{ 'k-up' if up else 'k-down' }}">{{ '%.6f'|format(k[4]) }}</td>
+            <td>{{ '%.6f'|format(k[5]) }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td class="empty" colspan="7">暂无 BTC 5分钟K线数据</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </div>
+  </div>
+  <script>
+    (function renderBtcKlineChart() {
+      const rawRowsDesc = [
+        {% for k in btc_5m_rows %}
+          [{{ k[0] }}, {{ k[1] }}, {{ k[2] }}, {{ k[3] }}, {{ k[4] }}, {{ k[5] }}, {{ k[6] }}],
+        {% endfor %}
+      ];
+      if (!rawRowsDesc.length || !window.echarts) return;
+
+      const rows = rawRowsDesc.slice().reverse();
+      const categoryData = rows.map(r => new Date(r[0]).toISOString().slice(5, 16).replace('T', ' '));
+      const values = rows.map(r => [r[1], r[4], r[3], r[2]]);
+      const volumes = rows.map(r => r[5]);
+
+      const chartEl = document.getElementById('btc-kline-chart');
+      const chart = echarts.init(chartEl);
+      chart.setOption({
+        animation: false,
+        grid: [
+          { left: 50, right: 20, top: 12, height: '62%' },
+          { left: 50, right: 20, top: '78%', height: '14%' }
+        ],
+        tooltip: { trigger: 'axis' },
+        xAxis: [
+          { type: 'category', data: categoryData, boundaryGap: true, axisLine: { onZero: false } },
+          { type: 'category', gridIndex: 1, data: categoryData, boundaryGap: true, axisLabel: { show: false }, axisTick: { show: false } }
+        ],
+        yAxis: [
+          { scale: true, splitArea: { show: true } },
+          { scale: true, gridIndex: 1, splitNumber: 2, axisLabel: { show: false }, splitLine: { show: false } }
+        ],
+        dataZoom: [{ type: 'inside', xAxisIndex: [0, 1], start: 40, end: 100 }],
+        series: [
+          {
+            name: 'BTCUSDT 5m',
+            type: 'candlestick',
+            data: values,
+            itemStyle: {
+              color: '#ef4444',
+              color0: '#22c55e',
+              borderColor: '#ef4444',
+              borderColor0: '#22c55e'
+            }
+          },
+          {
+            name: 'Volume',
+            type: 'bar',
+            xAxisIndex: 1,
+            yAxisIndex: 1,
+            data: volumes,
+            itemStyle: { color: '#93c5fd' }
+          }
+        ]
+      });
+      window.addEventListener('resize', () => chart.resize());
+    })();
+  </script>
 </body>
 </html>
