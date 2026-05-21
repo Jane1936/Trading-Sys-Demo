@@ -45,6 +45,7 @@ def abnormal_wicks():
     score_round_ts, round_scores = scoring.get_latest_round_scores()
 
     btc_5m_rows = []
+    btc_chart_rows = []
     btc_total_rows = 0
     seven_days_ago_ms = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp() * 1000)
     try:
@@ -70,9 +71,19 @@ def abnormal_wicks():
                 """,
                 (seven_days_ago_ms, btc_page_size, btc_offset),
             ).fetchall()
+            btc_chart_rows = conn.execute(
+                f"""
+                SELECT open_time, open, high, low, close, volume, close_time
+                FROM {collector.BTC_5M_TABLE}
+                WHERE open_time >= ?
+                ORDER BY open_time DESC
+                """,
+                (seven_days_ago_ms,),
+            ).fetchall()
     except sqlite3.OperationalError:
         # table may not exist before collector.init_db() first run
         btc_5m_rows = []
+        btc_chart_rows = []
         btc_total_rows = 0
         btc_total_pages = 1
 
@@ -87,6 +98,7 @@ def abnormal_wicks():
         round_scores=round_scores,
         selected_symbol=symbol,
         btc_5m_rows=btc_5m_rows,
+        btc_chart_rows=btc_chart_rows,
         btc_page=btc_page,
         btc_page_size=btc_page_size,
         btc_total_rows=btc_total_rows,
