@@ -24,7 +24,12 @@ git pull --rebase
 
 ```bash
 mkdir -p ./data ./logs
+sudo chown -R 1000:1000 ./data ./logs
+sudo chmod -R u+rwX ./data ./logs
 ```
+
+> 如果出现 `sqlite3.OperationalError: attempt to write a readonly database`，
+> 基本都是宿主机挂载目录权限导致容器内 `appuser` 无法写入 `/app/data`。
 
 ---
 
