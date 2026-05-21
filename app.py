@@ -86,6 +86,7 @@ def start_collector_task(symbols: List[str]) -> None:
     scheduler.add_job(collector.kline_job, "cron", second=0)
     scheduler.add_job(collector.oi_job, "cron", second=20)
     scheduler.add_job(collector.funding_job, "cron", minute=1, second=40)
+    scheduler.add_job(collector.btc_5m_job, "cron", minute="*/5", second=10)
 
     print("🚀 Collector task started")
     scheduler.start()

@@ -7,6 +7,7 @@ Run:
 from __future__ import annotations
 
 import os
+import sqlite3
 from datetime import datetime, timezone
 
 from flask import Flask, render_template, request
@@ -35,7 +36,30 @@ def abnormal_wicks():
     events = module.get_recent_events_by_symbol(symbol=symbol, limit=limit) if symbol else module.get_recent_events(limit=limit)
     symbols = module.get_event_symbols()
 
-    return render_template("abnormal_wicks.html", events=events, limit=limit, symbols=symbols, selected_symbol=symbol)
+    btc_5m_rows = []
+    try:
+        with sqlite3.connect(DB_PATH, timeout=30) as conn:
+            btc_5m_rows = conn.execute(
+                f"""
+                SELECT open_time, open, high, low, close, volume, close_time
+                FROM {collector.BTC_5M_TABLE}
+                ORDER BY open_time DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        # table may not exist before collector.init_db() first run
+        btc_5m_rows = []
+
+    return render_template(
+        "abnormal_wicks.html",
+        events=events,
+        limit=limit,
+        symbols=symbols,
+        selected_symbol=symbol,
+        btc_5m_rows=btc_5m_rows,
+    )
 
 
 @app.template_filter("fmt_ms_datetime")
