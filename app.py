@@ -21,6 +21,7 @@ from data_processor import (
     save_ma20_result,
 )
 from pre_safety_module import PreSafetyModule
+from scoring_system import ScoringSystem
 
 _universe_lock = threading.Lock()
 
@@ -41,6 +42,8 @@ def start_pre_safety_task(symbols: List[str]) -> None:
     """
     module = PreSafetyModule(db_path=collector.DB_PATH)
     module.init_table()
+    scoring = ScoringSystem(db_path=collector.DB_PATH)
+    scoring.init_table()
 
     last_round_ts = None
     round_ms = 15 * 60_000
@@ -64,6 +67,20 @@ def start_pre_safety_task(symbols: List[str]) -> None:
                         )
                 except Exception as exc:  # keep this side-task isolated
                     print(f"⚠️ pre-safety detect failed symbol={symbol}: {exc}")
+
+            try:
+                _, abnormal_symbols = module.get_latest_round_abnormal_symbols()
+                scored = scoring.score_round(
+                    decision_round_ts=round_ts,
+                    all_symbols=symbols,
+                    abnormal_symbols=abnormal_symbols,
+                )
+                print(
+                    f"🧮 scoring round={round_ts} universe={len(symbols)} "
+                    f"abnormal={len(set(abnormal_symbols))} scored={len(scored)}"
+                )
+            except Exception as exc:
+                print(f"⚠️ scoring failed round={round_ts}: {exc}")
 
             last_round_ts = round_ts
 

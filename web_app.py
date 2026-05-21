@@ -14,6 +14,7 @@ from flask import Flask, render_template, request
 
 import collector
 from pre_safety_module import PreSafetyModule
+from scoring_system import ScoringSystem
 
 app = Flask(__name__)
 
@@ -38,6 +39,10 @@ def abnormal_wicks():
     module.init_table()
     events = module.get_recent_events_by_symbol(symbol=symbol, limit=limit) if symbol else module.get_recent_events(limit=limit)
     symbols = module.get_event_symbols()
+    latest_round_ts, latest_round_symbols = module.get_latest_round_abnormal_symbols()
+    scoring = ScoringSystem(db_path=DB_PATH)
+    scoring.init_table()
+    score_round_ts, round_scores = scoring.get_latest_round_scores()
 
     btc_5m_rows = []
     btc_total_rows = 0
@@ -76,6 +81,10 @@ def abnormal_wicks():
         events=events,
         limit=limit,
         symbols=symbols,
+        latest_round_ts=latest_round_ts,
+        latest_round_symbols=latest_round_symbols,
+        score_round_ts=score_round_ts,
+        round_scores=round_scores,
         selected_symbol=symbol,
         btc_5m_rows=btc_5m_rows,
         btc_page=btc_page,
