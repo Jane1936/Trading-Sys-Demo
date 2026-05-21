@@ -13,7 +13,7 @@ RUN apt-get update \
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
-COPY collector.py data_processor.py pre_safety_module.py app.py web_app.py ./
+COPY *.py ./
 COPY templates ./templates
 COPY docker_entrypoint.sh ./docker_entrypoint.sh
 
