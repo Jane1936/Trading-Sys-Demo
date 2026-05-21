@@ -8,7 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY collector.py data_processor.py pre_safety_module.py app.py web_app.py ./
+COPY collector.py data_processor.py pre_safety_module.py scoring_system.py app.py web_app.py ./
 COPY templates ./templates
 COPY docker_entrypoint.sh ./docker_entrypoint.sh
 

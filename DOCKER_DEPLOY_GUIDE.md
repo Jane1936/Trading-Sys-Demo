@@ -8,6 +8,17 @@
 
 ## 1) 构建镜像
 
+先更新代码（在你的服务器项目目录）：
+
+```bash
+git pull
+```
+
+> 如果当前分支没有 tracking（例如你本地是 `work` 分支），请先切到有远端跟踪的分支再 pull：
+> `git checkout main && git pull`
+
+然后构建镜像：
+
 ```bash
 docker build -t trading-sys-demo:latest .
 ```
