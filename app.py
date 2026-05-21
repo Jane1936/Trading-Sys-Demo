@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import os
+import sqlite3
 import threading
 import time
 from typing import List
@@ -24,6 +26,27 @@ from pre_safety_module import PreSafetyModule
 from scoring_system import ScoringSystem
 
 _universe_lock = threading.Lock()
+
+
+def verify_db_writable(db_path: str) -> None:
+    """Fail fast with actionable diagnostics when DB path is not writable."""
+    data_dir = collector.DATA_DIR
+
+    try:
+        collector.init_db()
+    except sqlite3.OperationalError as exc:
+        if "readonly" not in str(exc).lower():
+            raise
+        dir_writable = os.access(data_dir, os.W_OK)
+        file_exists = os.path.exists(db_path)
+        file_writable = os.access(db_path, os.W_OK) if file_exists else False
+        raise RuntimeError(
+            "Database is readonly. "
+            f"db_path={db_path}, data_dir={data_dir}, "
+            f"data_dir_writable={dir_writable}, "
+            f"db_exists={file_exists}, db_writable={file_writable}. "
+            "Check host volume permissions (chown/chmod) for the mounted ./data directory."
+        ) from exc
 
 
 def ensure_universe() -> List[str]:
@@ -125,6 +148,7 @@ def start_processor_task(symbols: List[str]) -> None:
 
 
 if __name__ == "__main__":
+    verify_db_writable(collector.DB_PATH)
     # 预先构建一次 universe，避免多线程重复构建造成耦合
     symbols = ensure_universe()
 
