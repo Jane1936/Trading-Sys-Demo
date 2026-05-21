@@ -7,8 +7,8 @@ services:
     user: "${PUID:-1000}:${PGID:-1000}"
     restart: always
     volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
+      - /root/trade/data:/app/data
+      - /root/trade/logs:/app/logs
 
   web:
     image: trading-sys-demo:latest
@@ -19,8 +19,8 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
+      - /root/trade/data:/app/data
+      - /root/trade/logs:/app/logs
     depends_on:
       - worker
 
