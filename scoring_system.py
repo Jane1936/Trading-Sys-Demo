@@ -20,6 +20,15 @@ class SymbolScore:
     updated_at: int
 
 
+@dataclass
+class SymbolTotalScore:
+    symbol: str
+    decision_round_ts: int
+    rule1_score: int
+    rule2_score: int
+    total_score: int
+
+
 class ScoringSystem:
     """Score symbols after pre-safety using latest 3 rows of 15m MA20."""
 
@@ -193,6 +202,18 @@ class ScoringSystem:
             ).fetchall()
         return round_ts, rows
 
+    def _get_round_scores_close_gt_ma20(self, round_ts: int) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT symbol, decision_round_ts, score, reason, latest_1m_close, latest_15m_ma20, updated_at
+                FROM symbol_scores_close_gt_ma20
+                WHERE decision_round_ts = ?
+                ORDER BY symbol ASC
+                """,
+                (round_ts,),
+            ).fetchall()
+
     def _save_score(self, rec: SymbolScore) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -239,3 +260,55 @@ class ScoringSystem:
             )
             for r in rows
         ]
+
+    def _get_round_scores(self, round_ts: int) -> List[SymbolScore]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT symbol, decision_round_ts, score, reason, ma20_latest, ma20_prev1, ma20_prev2, updated_at
+                FROM symbol_scores
+                WHERE decision_round_ts = ?
+                ORDER BY symbol ASC
+                """,
+                (round_ts,),
+            ).fetchall()
+        return [
+            SymbolScore(
+                symbol=str(r["symbol"]),
+                decision_round_ts=int(r["decision_round_ts"]),
+                score=int(r["score"]),
+                reason=str(r["reason"]),
+                ma20_latest=float(r["ma20_latest"]),
+                ma20_prev1=float(r["ma20_prev1"]),
+                ma20_prev2=float(r["ma20_prev2"]),
+                updated_at=int(r["updated_at"]),
+            )
+            for r in rows
+        ]
+
+    def get_latest_round_total_scores(self) -> tuple[int | None, list[SymbolTotalScore]]:
+        rule1_ts, _ = self.get_latest_round_scores()
+        rule2_ts, _ = self.get_latest_round_scores_close_gt_ma20()
+        if rule1_ts is None or rule2_ts is None:
+            return None, []
+
+        round_ts = min(rule1_ts, rule2_ts)
+        rule1_rows = self._get_round_scores(round_ts)
+        rule2_rows = self._get_round_scores_close_gt_ma20(round_ts)
+
+        rule1_map = {r.symbol: r.score for r in rule1_rows}
+        rule2_map = {str(r["symbol"]): int(r["score"]) for r in rule2_rows}
+        symbols = sorted(set(rule1_map.keys()) | set(rule2_map.keys()))
+
+        totals = [
+            SymbolTotalScore(
+                symbol=s,
+                decision_round_ts=round_ts,
+                rule1_score=rule1_map.get(s, 0),
+                rule2_score=rule2_map.get(s, 0),
+                total_score=rule1_map.get(s, 0) + rule2_map.get(s, 0),
+            )
+            for s in symbols
+        ]
+        totals.sort(key=lambda x: (-x.total_score, x.symbol))
+        return round_ts, totals
