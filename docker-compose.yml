@@ -4,6 +4,7 @@ services:
     image: trading-sys-demo:latest
     container_name: trade
     command: ["worker"]
+    user: "${PUID:-1000}:${PGID:-1000}"
     restart: always
     volumes:
       - ./data:/app/data
@@ -13,6 +14,7 @@ services:
     image: trading-sys-demo:latest
     container_name: trade-web
     command: ["web"]
+    user: "${PUID:-1000}:${PGID:-1000}"
     restart: always
     ports:
       - "5000:5000"

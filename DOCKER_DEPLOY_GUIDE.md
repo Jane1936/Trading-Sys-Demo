@@ -38,8 +38,12 @@ sudo chmod -R u+rwX ./data ./logs
 ### 启动（构建并后台运行）
 
 ```bash
+export PUID=$(id -u)
+export PGID=$(id -g)
 docker compose up -d --build
 ```
+
+`docker-compose.yml` 已支持 `user: "${PUID:-1000}:${PGID:-1000}"`，会让 `worker/web` 进程直接使用宿主机当前用户 UID/GID，避免挂载 `./data`、`./logs` 时出现只读权限问题。
 
 ### 查看状态与日志
 
