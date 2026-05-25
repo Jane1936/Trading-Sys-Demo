@@ -26,6 +26,7 @@ class SymbolTotalScore:
     decision_round_ts: int
     rule1_score: int
     rule2_score: int
+    rule3_score: int
     total_score: int
 
 
@@ -77,6 +78,23 @@ class ScoringSystem:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_symbol_scores_close_gt_ma20_round ON symbol_scores_close_gt_ma20(decision_round_ts DESC)"
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS symbol_scores_1h_close_gt_prev (
+                    symbol TEXT NOT NULL,
+                    decision_round_ts INTEGER NOT NULL,
+                    score INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    latest_1h_close REAL NOT NULL,
+                    prev_1h_close REAL NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY(symbol, decision_round_ts)
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_symbol_scores_1h_close_gt_prev_round ON symbol_scores_1h_close_gt_prev(decision_round_ts DESC)"
+            )
 
     def _latest_three_ma20_15m(self, symbol: str) -> tuple[float, float, float] | None:
         with self._connect() as conn:
@@ -106,6 +124,7 @@ class ScoringSystem:
         results: List[SymbolScore] = []
         for symbol in candidates:
             self._save_close_gt_ma20_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_1h_close_gt_prev_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
             ma20s = self._latest_three_ma20_15m(symbol)
             if ma20s is None:
                 continue
@@ -167,7 +186,7 @@ class ScoringSystem:
             return
         close_1m, ma20_15m = values
         hit = close_1m > ma20_15m
-        score = 5 if hit else 0
+        score = 6 if hit else 0
         reason = "close_1m_gt_15m_ma20" if hit else "close_1m_rule_not_met"
         with self._connect() as conn:
             conn.execute(
@@ -183,6 +202,46 @@ class ScoringSystem:
                     updated_at=excluded.updated_at
                 """,
                 (symbol, decision_round_ts, score, reason, close_1m, ma20_15m, updated_at),
+            )
+
+    def _latest_two_1h_close(self, symbol: str) -> tuple[float, float] | None:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT close
+                FROM klines_1h
+                WHERE symbol = ?
+                ORDER BY open_time DESC
+                LIMIT 2
+                """,
+                (symbol,),
+            ).fetchall()
+        if len(rows) < 2:
+            return None
+        return float(rows[0]["close"]), float(rows[1]["close"])
+
+    def _save_1h_close_gt_prev_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
+        values = self._latest_two_1h_close(symbol)
+        if values is None:
+            return
+        latest_close_1h, prev_close_1h = values
+        hit = latest_close_1h > prev_close_1h
+        score = 6 if hit else 0
+        reason = "close_1h_gt_prev_1h" if hit else "close_1h_rule_not_met"
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO symbol_scores_1h_close_gt_prev
+                (symbol, decision_round_ts, score, reason, latest_1h_close, prev_1h_close, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
+                    score=excluded.score,
+                    reason=excluded.reason,
+                    latest_1h_close=excluded.latest_1h_close,
+                    prev_1h_close=excluded.prev_1h_close,
+                    updated_at=excluded.updated_at
+                """,
+                (symbol, decision_round_ts, score, reason, latest_close_1h, prev_close_1h, updated_at),
             )
 
     def get_latest_round_scores_close_gt_ma20(self) -> tuple[int | None, list[sqlite3.Row]]:
@@ -208,6 +267,35 @@ class ScoringSystem:
                 """
                 SELECT symbol, decision_round_ts, score, reason, latest_1m_close, latest_15m_ma20, updated_at
                 FROM symbol_scores_close_gt_ma20
+                WHERE decision_round_ts = ?
+                ORDER BY symbol ASC
+                """,
+                (round_ts,),
+            ).fetchall()
+
+    def get_latest_round_scores_1h_close_gt_prev(self) -> tuple[int | None, list[sqlite3.Row]]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_1h_close_gt_prev").fetchone()
+            if row["ts"] is None:
+                return None, []
+            round_ts = int(row["ts"])
+            rows = conn.execute(
+                """
+                SELECT symbol, decision_round_ts, score, reason, latest_1h_close, prev_1h_close, updated_at
+                FROM symbol_scores_1h_close_gt_prev
+                WHERE decision_round_ts = ?
+                ORDER BY score DESC, symbol ASC
+                """,
+                (round_ts,),
+            ).fetchall()
+        return round_ts, rows
+
+    def _get_round_scores_1h_close_gt_prev(self, round_ts: int) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT symbol, decision_round_ts, score, reason, latest_1h_close, prev_1h_close, updated_at
+                FROM symbol_scores_1h_close_gt_prev
                 WHERE decision_round_ts = ?
                 ORDER BY symbol ASC
                 """,
@@ -289,16 +377,19 @@ class ScoringSystem:
     def get_latest_round_total_scores(self) -> tuple[int | None, list[SymbolTotalScore]]:
         rule1_ts, _ = self.get_latest_round_scores()
         rule2_ts, _ = self.get_latest_round_scores_close_gt_ma20()
-        if rule1_ts is None or rule2_ts is None:
+        rule3_ts, _ = self.get_latest_round_scores_1h_close_gt_prev()
+        if rule1_ts is None or rule2_ts is None or rule3_ts is None:
             return None, []
 
-        round_ts = min(rule1_ts, rule2_ts)
+        round_ts = min(rule1_ts, rule2_ts, rule3_ts)
         rule1_rows = self._get_round_scores(round_ts)
         rule2_rows = self._get_round_scores_close_gt_ma20(round_ts)
+        rule3_rows = self._get_round_scores_1h_close_gt_prev(round_ts)
 
         rule1_map = {r.symbol: r.score for r in rule1_rows}
         rule2_map = {str(r["symbol"]): int(r["score"]) for r in rule2_rows}
-        symbols = sorted(set(rule1_map.keys()) | set(rule2_map.keys()))
+        rule3_map = {str(r["symbol"]): int(r["score"]) for r in rule3_rows}
+        symbols = sorted(set(rule1_map.keys()) | set(rule2_map.keys()) | set(rule3_map.keys()))
 
         totals = [
             SymbolTotalScore(
@@ -306,7 +397,8 @@ class ScoringSystem:
                 decision_round_ts=round_ts,
                 rule1_score=rule1_map.get(s, 0),
                 rule2_score=rule2_map.get(s, 0),
-                total_score=rule1_map.get(s, 0) + rule2_map.get(s, 0),
+                rule3_score=rule3_map.get(s, 0),
+                total_score=rule1_map.get(s, 0) + rule2_map.get(s, 0) + rule3_map.get(s, 0),
             )
             for s in symbols
         ]
