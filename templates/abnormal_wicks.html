@@ -299,12 +299,12 @@
         {% endif %}
         <div class="table-wrap">
           <table>
-            <thead><tr><th>symbol</th><th>score</th><th>increasing_pairs_count</th><th>reason</th><th>updated_at</th></tr></thead>
+            <thead><tr><th>symbol</th><th>score</th><th>reason</th><th>updated_at</th></tr></thead>
             <tbody>
               {% for r in round_scores_rule5 %}
-              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ r.increasing_pairs_count }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
               {% else %}
-              <tr><td class="empty" colspan="5">暂无规则5评分数据</td></tr>
+              <tr><td class="empty" colspan="4">暂无规则5评分数据</td></tr>
               {% endfor %}
             </tbody>
           </table>
