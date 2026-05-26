@@ -345,8 +345,21 @@ class ScoringSystem:
             for j in range(i + 1, len(closes)):
                 if closes[j] > closes[i]:
                     increasing_pairs_count += 1
-        # 至少存在3条数据可以按时间顺序递增（不要求连续）
-        hit = increasing_pairs_count >= 3
+
+        increasing_triplet_exists = False
+        for i in range(len(closes)):
+            for j in range(i + 1, len(closes)):
+                for k in range(j + 1, len(closes)):
+                    if closes[i] < closes[j] < closes[k]:
+                        increasing_triplet_exists = True
+                        break
+                if increasing_triplet_exists:
+                    break
+            if increasing_triplet_exists:
+                break
+
+        # 4选3：至少存在一个三元组满足按时间顺序递增（不要求连续）
+        hit = increasing_triplet_exists
         score = 4 if hit else 0
         reason = "close_15m_increasing_3of4" if hit else "close_15m_increasing_rule_not_met"
         with self._connect() as conn:
