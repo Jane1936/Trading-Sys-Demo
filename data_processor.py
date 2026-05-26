@@ -152,14 +152,20 @@ def run_loop(
     processor: MA20Processor,
     scheduler: MA20Scheduler,
     on_result: Callable[[MACalcResult], None],
+    symbol_provider: Optional[Callable[[], List[str]]] = None,
     poll_seconds: int = 20,
 ) -> None:
     """Run MA20 calculation on schedule and dispatch latest results."""
     last_bar_open_time: Dict[str, Dict[str, int]] = {s: {} for s in symbols}
 
     while True:
+        active_symbols = symbol_provider() if symbol_provider is not None else symbols
+        for s in active_symbols:
+            if s not in last_bar_open_time:
+                last_bar_open_time[s] = {}
+
         due_intervals = scheduler.due_intervals()
-        for symbol in symbols:
+        for symbol in active_symbols:
             for interval in due_intervals:
                 latest = processor.get_latest_ma20(symbol, interval)
                 if latest is None or latest.ma20 is None:
