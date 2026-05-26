@@ -220,6 +220,8 @@
         <button class="tab-btn score-rule-tab" data-score-tab="score-rule-4" style="width:auto;">规则4：最近4条15m中≥3条收涨（6分）</button>
         <button class="tab-btn score-rule-tab" data-score-tab="score-rule-5" style="width:auto;">规则5：最近4条15m收盘至少3条递增（4分）</button>
         <button class="tab-btn score-rule-tab" data-score-tab="score-rule-6" style="width:auto;">规则6：1m收盘&gt;5m MA20（6分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-7" style="width:auto;">规则7：最近4条15m有≥2条收盘位置≥0.55（3分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-8" style="width:auto;">规则8：最近1条1h最高价&gt;前24条最高价（5分）</button>
         <button class="tab-btn score-rule-tab" data-score-tab="score-total" style="width:auto;">总分</button>
       </div>
 
@@ -333,19 +335,55 @@
         </div>
       </div>
 
+      <div id="score-rule-7" class="score-rule-panel">
+        {% if score_rule7_round_ts %}
+        <div class="tip">规则7轮次：{{ score_rule7_round_ts|fmt_ms_datetime }}</div>
+        {% endif %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>symbol</th><th>score</th><th>qualified_count</th><th>reason</th><th>updated_at</th></tr></thead>
+            <tbody>
+              {% for r in round_scores_rule7 %}
+              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ r.qualified_count }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+              {% else %}
+              <tr><td class="empty" colspan="5">暂无规则7评分数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="score-rule-8" class="score-rule-panel">
+        {% if score_rule8_round_ts %}
+        <div class="tip">规则8轮次：{{ score_rule8_round_ts|fmt_ms_datetime }}</div>
+        {% endif %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>symbol</th><th>score</th><th>latest_high</th><th>prev_24_max_high</th><th>reason</th><th>updated_at</th></tr></thead>
+            <tbody>
+              {% for r in round_scores_rule8 %}
+              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_high) }}</td><td>{{ '%.6f'|format(r.prev_24_max_high) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+              {% else %}
+              <tr><td class="empty" colspan="6">暂无规则8评分数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div id="score-total" class="score-rule-panel">
         {% if score_total_round_ts %}
         <div class="tip">总分轮次：{{ score_total_round_ts|fmt_ms_datetime }}</div>
         {% endif %}
         <div class="table-wrap">
           <table>
-            <thead><tr><th>rank</th><th>symbol</th><th>rule1_score</th><th>rule2_score</th><th>rule3_score</th><th>rule4_score</th><th>rule5_score</th><th>rule6_score</th><th>total_score</th></tr></thead>
+            <thead><tr><th>rank</th><th>symbol</th><th>rule1_score</th><th>rule2_score</th><th>rule3_score</th><th>rule4_score</th><th>rule5_score</th><th>rule6_score</th><th>rule7_score</th><th>rule8_score</th><th>total_score</th></tr></thead>
             <tbody>
               {% set top_score = round_scores_total[0].total_score if round_scores_total else none %}
               {% for r in round_scores_total %}
-              <tr class="{{ 'top-score-row' if top_score is not none and r.total_score == top_score else '' }}"><td>{{ loop.index }}</td><td>{{ r.symbol }}{% if top_score is not none and r.total_score == top_score %}<span class="top-score-badge">最高分</span>{% endif %}</td><td>{{ r.rule1_score }}</td><td>{{ r.rule2_score }}</td><td>{{ r.rule3_score }}</td><td>{{ r.rule4_score }}</td><td>{{ r.rule5_score }}</td><td>{{ r.rule6_score }}</td><td>{{ r.total_score }}</td></tr>
+              <tr class="{{ 'top-score-row' if top_score is not none and r.total_score == top_score else '' }}"><td>{{ loop.index }}</td><td>{{ r.symbol }}{% if top_score is not none and r.total_score == top_score %}<span class="top-score-badge">最高分</span>{% endif %}</td><td>{{ r.rule1_score }}</td><td>{{ r.rule2_score }}</td><td>{{ r.rule3_score }}</td><td>{{ r.rule4_score }}</td><td>{{ r.rule5_score }}</td><td>{{ r.rule6_score }}</td><td>{{ r.rule7_score }}</td><td>{{ r.rule8_score }}</td><td>{{ r.total_score }}</td></tr>
               {% else %}
-              <tr><td class="empty" colspan="9">暂无总分数据</td></tr>
+              <tr><td class="empty" colspan="11">暂无总分数据</td></tr>
               {% endfor %}
             </tbody>
           </table>
