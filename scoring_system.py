@@ -340,11 +340,8 @@ class ScoringSystem:
         closes = self._latest_four_15m_close(symbol)
         if closes is None:
             return
+        # 历史字段 increasing_pairs_count 仅为兼容旧表结构保留，不再参与规则判定
         increasing_pairs_count = 0
-        for i in range(len(closes)):
-            for j in range(i + 1, len(closes)):
-                if closes[j] > closes[i]:
-                    increasing_pairs_count += 1
 
         increasing_triplet_exists = False
         for i in range(len(closes)):
@@ -385,7 +382,7 @@ class ScoringSystem:
                 return None, []
             round_ts = int(row["ts"])
             rows = conn.execute(
-                "SELECT symbol, decision_round_ts, score, reason, increasing_pairs_count, updated_at FROM symbol_scores_15m_close_increasing_3of4 WHERE decision_round_ts = ? ORDER BY score DESC, symbol ASC",
+                "SELECT symbol, decision_round_ts, score, reason, updated_at FROM symbol_scores_15m_close_increasing_3of4 WHERE decision_round_ts = ? ORDER BY score DESC, symbol ASC",
                 (round_ts,),
             ).fetchall()
         return round_ts, rows
@@ -393,7 +390,7 @@ class ScoringSystem:
     def _get_round_scores_15m_close_increasing_3of4(self, round_ts: int) -> list[sqlite3.Row]:
         with self._connect() as conn:
             return conn.execute(
-                "SELECT symbol, decision_round_ts, score, reason, increasing_pairs_count, updated_at FROM symbol_scores_15m_close_increasing_3of4 WHERE decision_round_ts = ? ORDER BY symbol ASC",
+                "SELECT symbol, decision_round_ts, score, reason, updated_at FROM symbol_scores_15m_close_increasing_3of4 WHERE decision_round_ts = ? ORDER BY symbol ASC",
                 (round_ts,),
             ).fetchall()
 
