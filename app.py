@@ -26,6 +26,8 @@ from pre_safety_module import PreSafetyModule
 from scoring_system import ScoringSystem
 
 _universe_lock = threading.Lock()
+_universe_refresh_interval_sec = 12 * 60 * 60
+_universe_last_refresh_ts = 0.0
 
 
 def verify_db_writable(db_path: str) -> None:
@@ -50,14 +52,18 @@ def verify_db_writable(db_path: str) -> None:
 
 
 def ensure_universe() -> List[str]:
-    """Build universe once and return a stable symbol list snapshot."""
+    """Return current universe snapshot and refresh it every 12 hours."""
+    global _universe_last_refresh_ts
     with _universe_lock:
-        if collector.UNIVERSE is None:
+        now_ts = time.time()
+        should_refresh = collector.UNIVERSE is None or (now_ts - _universe_last_refresh_ts) >= _universe_refresh_interval_sec
+        if should_refresh:
             collector.UNIVERSE = collector.build_universe()
+            _universe_last_refresh_ts = now_ts
         return list(collector.UNIVERSE)
 
 
-def start_pre_safety_task(symbols: List[str]) -> None:
+def start_pre_safety_task() -> None:
     """Run pre-safety abnormal wick detection in an isolated daemon thread.
 
     This task only reads existing 5m candle data and writes its own event table,
@@ -71,8 +77,9 @@ def start_pre_safety_task(symbols: List[str]) -> None:
     last_round_ts = None
     round_ms = 15 * 60_000
 
-    print(f"🛡️ Pre-safety task started, symbols={len(symbols)}")
+    print("🛡️ Pre-safety task started")
     while True:
+        symbols = ensure_universe()
         now_ms = int(time.time() * 1000)
         round_ts = (now_ms // round_ms) * round_ms
 
@@ -128,11 +135,16 @@ def start_collector_task(symbols: List[str]) -> None:
     collector.init_db()
     collector.UNIVERSE = list(symbols)
 
+    def _run_with_fresh_universe(job_func):
+        ensure_universe()
+        job_func()
+
     scheduler = collector.BlockingScheduler()
-    scheduler.add_job(collector.kline_job, "cron", second=0)
-    scheduler.add_job(collector.oi_job, "cron", second=20)
-    scheduler.add_job(collector.funding_job, "cron", minute=1, second=40)
-    scheduler.add_job(collector.btc_5m_job, "cron", minute="*/5", second=10)
+    scheduler.add_job(ensure_universe, "interval", hours=12)
+    scheduler.add_job(lambda: _run_with_fresh_universe(collector.kline_job), "cron", second=0)
+    scheduler.add_job(lambda: _run_with_fresh_universe(collector.oi_job), "cron", second=20)
+    scheduler.add_job(lambda: _run_with_fresh_universe(collector.funding_job), "cron", minute=1, second=40)
+    scheduler.add_job(lambda: _run_with_fresh_universe(collector.btc_5m_job), "cron", minute="*/5", second=10)
 
     print("🚀 Collector task started")
     scheduler.start()
@@ -149,20 +161,21 @@ def start_processor_task(symbols: List[str]) -> None:
         processor=processor,
         scheduler=scheduler,
         on_result=on_ma20_result,
+        symbol_provider=ensure_universe,
         poll_seconds=20,
     )
 
 
 if __name__ == "__main__":
     verify_db_writable(collector.DB_PATH)
-    # 预先构建一次 universe，避免多线程重复构建造成耦合
+    # 预先构建一次 universe，并按12小时周期刷新
     symbols = ensure_universe()
 
     # 三个独立 task：collector / pre_safety / data_processor
     collector_thread = threading.Thread(target=start_collector_task, args=(symbols,), daemon=True)
     collector_thread.start()
 
-    pre_safety_thread = threading.Thread(target=start_pre_safety_task, args=(symbols,), daemon=True)
+    pre_safety_thread = threading.Thread(target=start_pre_safety_task, daemon=True)
     pre_safety_thread.start()
 
     # 主线程跑 processor task
