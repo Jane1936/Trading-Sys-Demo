@@ -24,7 +24,7 @@ class MACalcResult:
 
 
 def _interval_to_ms(interval: str) -> int:
-    mapping = {"15m": 15 * 60_000, "1h": 60 * 60_000}
+    mapping = {"5m": 5 * 60_000, "15m": 15 * 60_000, "1h": 60 * 60_000}
     if interval not in mapping:
         raise ValueError(f"Unsupported interval: {interval}")
     return mapping[interval]
@@ -43,7 +43,7 @@ class MA20Processor:
         average close of latest 20 candles
     """
 
-    SUPPORTED_INTERVALS = ("15m", "1h")
+    SUPPORTED_INTERVALS = ("5m", "15m", "1h")
 
     def __init__(self, db_path: str = "data/klines.db") -> None:
         self.db_path = db_path
@@ -113,11 +113,12 @@ class MA20Scheduler:
     """Simple timer for MA20 processing jobs.
 
     Trigger rule:
+    - 5m  MA20: run at hh:mm where mm % 5 == 0 + ``grace_seconds``
     - 15m MA20: run at hh:00/15/30/45 + ``grace_seconds``
     - 1h  MA20: run at hh:00 + ``grace_seconds``
     """
 
-    INTERVAL_SECONDS = {"15m": 15 * 60, "1h": 60 * 60}
+    INTERVAL_SECONDS = {"5m": 5 * 60, "15m": 15 * 60, "1h": 60 * 60}
 
     def __init__(self, grace_seconds: int = 5) -> None:
         self.grace_seconds = grace_seconds
@@ -164,7 +165,7 @@ def run_loop(
                 if latest is None or latest.ma20 is None:
                     continue
 
-                # Explicit trigger rule for 15m/1h: new and closed aggregated candle only.
+                # Explicit trigger rule for 5m/15m/1h: new and closed aggregated candle only.
                 if not _is_closed_bar_for_interval(latest):
                     continue
 
