@@ -216,6 +216,7 @@
         <button class="tab-btn score-rule-tab" data-score-tab="score-rule-2" style="width:auto;">规则2：1m收盘&gt;15m MA20（6分）</button>
         <button class="tab-btn score-rule-tab" data-score-tab="score-rule-3" style="width:auto;">规则3：最近1h收盘&gt;前1h收盘（6分）</button>
         <button class="tab-btn score-rule-tab" data-score-tab="score-rule-4" style="width:auto;">规则4：最近4条15m中≥3条收涨（6分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-5" style="width:auto;">规则5：最近4条15m收盘至少3条递增（4分）</button>
         <button class="tab-btn score-rule-tab" data-score-tab="score-total" style="width:auto;">总分</button>
       </div>
 
@@ -292,18 +293,36 @@
         </div>
       </div>
 
+      <div id="score-rule-5" class="score-rule-panel">
+        {% if score_rule5_round_ts %}
+        <div class="tip">规则5轮次：{{ score_rule5_round_ts|fmt_ms_datetime }}</div>
+        {% endif %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>symbol</th><th>score</th><th>increasing_pairs_count</th><th>reason</th><th>updated_at</th></tr></thead>
+            <tbody>
+              {% for r in round_scores_rule5 %}
+              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ r.increasing_pairs_count }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+              {% else %}
+              <tr><td class="empty" colspan="5">暂无规则5评分数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div id="score-total" class="score-rule-panel">
         {% if score_total_round_ts %}
         <div class="tip">总分轮次：{{ score_total_round_ts|fmt_ms_datetime }}</div>
         {% endif %}
         <div class="table-wrap">
           <table>
-            <thead><tr><th>rank</th><th>symbol</th><th>rule1_score</th><th>rule2_score</th><th>rule3_score</th><th>rule4_score</th><th>total_score</th></tr></thead>
+            <thead><tr><th>rank</th><th>symbol</th><th>rule1_score</th><th>rule2_score</th><th>rule3_score</th><th>rule4_score</th><th>rule5_score</th><th>total_score</th></tr></thead>
             <tbody>
               {% for r in round_scores_total %}
-              <tr><td>{{ loop.index }}</td><td>{{ r.symbol }}</td><td>{{ r.rule1_score }}</td><td>{{ r.rule2_score }}</td><td>{{ r.rule3_score }}</td><td>{{ r.rule4_score }}</td><td>{{ r.total_score }}</td></tr>
+              <tr><td>{{ loop.index }}</td><td>{{ r.symbol }}</td><td>{{ r.rule1_score }}</td><td>{{ r.rule2_score }}</td><td>{{ r.rule3_score }}</td><td>{{ r.rule4_score }}</td><td>{{ r.rule5_score }}</td><td>{{ r.total_score }}</td></tr>
               {% else %}
-              <tr><td class="empty" colspan="7">暂无总分数据</td></tr>
+              <tr><td class="empty" colspan="8">暂无总分数据</td></tr>
               {% endfor %}
             </tbody>
           </table>
