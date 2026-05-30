@@ -852,7 +852,7 @@ class ScoringSystem:
         funding_rates = self._latest_four_15m_funding_rates(symbol)
         if funding_rates is None:
             return
-        hit = all(rate is not None and 0.01 < rate < 0.1 for rate in funding_rates)
+        hit = all(rate is not None and 0.0001 < rate < 0.001 for rate in funding_rates)
         score = 5 if hit else 0
         reason = "funding_rate_15m_4bars_between_0.01_and_0.1" if hit else "rule12_not_met"
         with self._connect() as conn:
