@@ -106,11 +106,12 @@ def init_db():
                 f"ON {tbl}(symbol, open_time)"
             )
 
-        tbl_1h = table_name("1h")
-        columns = conn.execute(f"PRAGMA table_info({tbl_1h})").fetchall()
-        column_names = {col[1] for col in columns}
-        if "funding_rate" not in column_names:
-            conn.execute(f"ALTER TABLE {tbl_1h} ADD COLUMN funding_rate REAL")
+        for funding_interval in ("15m", "1h"):
+            tbl = table_name(funding_interval)
+            columns = conn.execute(f"PRAGMA table_info({tbl})").fetchall()
+            column_names = {col[1] for col in columns}
+            if "funding_rate" not in column_names:
+                conn.execute(f"ALTER TABLE {tbl} ADD COLUMN funding_rate REAL")
 
         conn.execute(
             """
@@ -432,7 +433,10 @@ def save_open_interest(symbol, open_interest):
             return conn.total_changes - before
 
 
-def save_funding_rates_to_1h(universe, funding_rates, target_open_times):
+FUNDING_INTERVALS = ("15m", "1h")
+
+
+def save_funding_rates_to_interval(universe, funding_rates, interval, target_open_times):
     if not universe or not funding_rates or not target_open_times:
         return 0
 
@@ -452,7 +456,7 @@ def save_funding_rates_to_1h(universe, funding_rates, target_open_times):
             before = conn.total_changes
             conn.executemany(
                 f"""
-                UPDATE {table_name("1h")}
+                UPDATE {table_name(interval)}
                 SET funding_rate = ?
                 WHERE symbol = ? AND open_time = ?
                 """,
@@ -461,11 +465,28 @@ def save_funding_rates_to_1h(universe, funding_rates, target_open_times):
             return conn.total_changes - before
 
 
-def get_recent_target_open_times(hours=3):
-    hour_ms = interval_to_ms("1h")
+def save_funding_rates_to_1h(universe, funding_rates, target_open_times):
+    return save_funding_rates_to_interval(
+        universe, funding_rates, "1h", target_open_times
+    )
+
+
+def get_recent_target_open_times(interval="1h", count=None, hours=None):
+    interval_ms = interval_to_ms(interval)
     now_ms = int(time.time() * 1000)
-    current_hour_open = (now_ms // hour_ms) * hour_ms
-    return [current_hour_open - hour_ms * i for i in range(1, hours + 1)]
+    current_interval_open = (now_ms // interval_ms) * interval_ms
+
+    if count is None:
+        count = hours if hours is not None else 3
+
+    return [current_interval_open - interval_ms * i for i in range(1, count + 1)]
+
+
+def get_funding_backfill_counts(backfill_hours):
+    return {
+        interval: max(1, backfill_hours * interval_to_ms("1h") // interval_to_ms(interval))
+        for interval in FUNDING_INTERVALS
+    }
 
 
 def should_run_funding_update(now_ms):
@@ -480,7 +501,7 @@ def should_run_funding_update(now_ms):
     return (current_hour_open - last_funding_update_hour) >= hour_ms
 
 
-def run_funding_update(universe, backfill_hours=3):
+def run_funding_update(universe, backfill_hours=3, backfill_counts=None):
     global last_funding_update_hour
 
     now_ms = int(time.time() * 1000)
@@ -492,13 +513,27 @@ def run_funding_update(universe, backfill_hours=3):
         print("⚠️ funding rates empty, skip update")
         return 0
 
-    target_open_times = get_recent_target_open_times(hours=backfill_hours)
-    updated = save_funding_rates_to_1h(universe, funding_rates, target_open_times)
+    counts = backfill_counts or get_funding_backfill_counts(backfill_hours)
+    updated_by_interval = {}
+    for interval, count in counts.items():
+        target_open_times = get_recent_target_open_times(interval, count=count)
+        updated = save_funding_rates_to_interval(
+            universe, funding_rates, interval, target_open_times
+        )
+        updated_by_interval[interval] = {
+            "updated": updated,
+            "targets": len(target_open_times),
+        }
 
     hour_ms = interval_to_ms("1h")
     last_funding_update_hour = (now_ms // hour_ms) * hour_ms
-    print(f"💰 funding_rate updated rows(1h): {updated}, targets={len(target_open_times)}h")
-    return updated
+    summary = ", ".join(
+        f"{interval}: rows={stat['updated']}, targets={stat['targets']}"
+        for interval, stat in updated_by_interval.items()
+    )
+    total_updated = sum(stat["updated"] for stat in updated_by_interval.values())
+    print(f"💰 funding_rate updated ({summary})")
+    return total_updated
 
 
 # ================= 6. 写SQLite =================
@@ -832,7 +867,7 @@ def funding_job():
         if UNIVERSE is None:
             UNIVERSE = build_universe()
 
-        run_funding_update(UNIVERSE, backfill_hours=3)
+        run_funding_update(UNIVERSE)
     except Exception as e:
         print("❌ funding error:", e)
 
