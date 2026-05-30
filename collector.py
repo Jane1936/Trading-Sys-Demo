@@ -433,10 +433,13 @@ def save_open_interest(symbol, open_interest):
             return conn.total_changes - before
 
 
-FUNDING_INTERVALS = ("15m", "1h")
+FUNDING_INTERVALS = ("1h",)
+REALTIME_15M_FUNDING_BACKFILL_BARS = 12
 
 
-def save_funding_rates_to_interval(universe, funding_rates, interval, target_open_times):
+def save_funding_rates_to_interval(
+    universe, funding_rates, interval, target_open_times, only_missing=False
+):
     if not universe or not funding_rates or not target_open_times:
         return 0
 
@@ -454,11 +457,12 @@ def save_funding_rates_to_interval(universe, funding_rates, interval, target_ope
     with db_write_lock:
         with get_db_conn() as conn:
             before = conn.total_changes
+            missing_clause = " AND funding_rate IS NULL" if only_missing else ""
             conn.executemany(
                 f"""
                 UPDATE {table_name(interval)}
                 SET funding_rate = ?
-                WHERE symbol = ? AND open_time = ?
+                WHERE symbol = ? AND open_time = ?{missing_clause}
                 """,
                 values,
             )
@@ -468,6 +472,15 @@ def save_funding_rates_to_interval(universe, funding_rates, interval, target_ope
 def save_funding_rates_to_1h(universe, funding_rates, target_open_times):
     return save_funding_rates_to_interval(
         universe, funding_rates, "1h", target_open_times
+    )
+
+
+def save_realtime_15m_funding_rates(universe, funding_rates):
+    target_open_times = get_recent_target_open_times(
+        "15m", count=REALTIME_15M_FUNDING_BACKFILL_BARS
+    )
+    return save_funding_rates_to_interval(
+        universe, funding_rates, "15m", target_open_times, only_missing=True
     )
 
 
@@ -575,24 +588,50 @@ def save_to_sqlite(symbol, klines, interval):
             raise
 
 
-def upsert_aggregated_rows(symbol, interval, rows):
+def upsert_aggregated_rows(symbol, interval, rows, funding_rate=None):
     if not rows:
         return 0
 
     tbl = table_name(interval)
-    values = [
-        (
-            symbol,
-            r["open_time"],
-            r["open"],
-            r["high"],
-            r["low"],
-            r["close"],
-            r["volume"],
-            r["close_time"],
+    include_funding_rate = interval == "15m" and funding_rate is not None
+
+    if include_funding_rate:
+        values = [
+            (
+                symbol,
+                r["open_time"],
+                r["open"],
+                r["high"],
+                r["low"],
+                r["close"],
+                r["volume"],
+                r["close_time"],
+                funding_rate,
+            )
+            for r in rows
+        ]
+        insert_columns = (
+            "symbol, open_time, open, high, low, close, volume, close_time, funding_rate"
         )
-        for r in rows
-    ]
+        placeholders = "?, ?, ?, ?, ?, ?, ?, ?, ?"
+        funding_update = ",\n                    funding_rate=excluded.funding_rate"
+    else:
+        values = [
+            (
+                symbol,
+                r["open_time"],
+                r["open"],
+                r["high"],
+                r["low"],
+                r["close"],
+                r["volume"],
+                r["close_time"],
+            )
+            for r in rows
+        ]
+        insert_columns = "symbol, open_time, open, high, low, close, volume, close_time"
+        placeholders = "?, ?, ?, ?, ?, ?, ?, ?"
+        funding_update = ""
 
     with db_write_lock:
         with get_db_conn() as conn:
@@ -600,22 +639,24 @@ def upsert_aggregated_rows(symbol, interval, rows):
             conn.executemany(
                 f"""
                 INSERT INTO {tbl}
-                (symbol, open_time, open, high, low, close, volume, close_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ({insert_columns})
+                VALUES ({placeholders})
                 ON CONFLICT(symbol, open_time) DO UPDATE SET
                     open=excluded.open,
                     high=excluded.high,
                     low=excluded.low,
                     close=excluded.close,
                     volume=excluded.volume,
-                    close_time=excluded.close_time
+                    close_time=excluded.close_time{funding_update}
                 """,
                 values,
             )
             return conn.total_changes - before
 
 
-def aggregate_symbol(symbol, source_start_open_time, source_end_close_time):
+def aggregate_symbol(
+    symbol, source_start_open_time, source_end_close_time, funding_rate=None
+):
     source_interval_ms = interval_to_ms(BASE_INTERVAL)
 
     with get_db_conn() as conn:
@@ -680,7 +721,9 @@ def aggregate_symbol(symbol, source_start_open_time, source_end_close_time):
                     }
                 )
 
-            changed = upsert_aggregated_rows(symbol, interval, complete_target_rows)
+            changed = upsert_aggregated_rows(
+                symbol, interval, complete_target_rows, funding_rate=funding_rate
+            )
             aggregated_stat[interval] = {
                 "buckets": len(complete_target_rows),
                 "changed": changed,
@@ -690,7 +733,7 @@ def aggregate_symbol(symbol, source_start_open_time, source_end_close_time):
 
 
 # ================= 7. 单symbol处理 =================
-def process_symbol_kline(symbol):
+def process_symbol_kline(symbol, funding_rates=None):
     interval_ms = interval_to_ms(BASE_INTERVAL)
     now_ms = int(time.time() * 1000)
     latest_closed_close_time = get_latest_closed_close_time(now_ms, interval_ms)
@@ -737,10 +780,14 @@ def process_symbol_kline(symbol):
     agg_stat = {}
     if all_klines:
         inserted_count = save_to_sqlite(symbol, all_klines, BASE_INTERVAL)
+        funding_rate = None
+        if funding_rates:
+            funding_rate = funding_rates.get(f"{symbol}USDT")
         agg_stat = aggregate_symbol(
             symbol,
             source_start_open_time=int(all_klines[0][0]),
             source_end_close_time=int(all_klines[-1][6]),
+            funding_rate=funding_rate,
         )
 
     return symbol, len(all_klines), inserted_count, agg_stat
@@ -754,8 +801,14 @@ def process_symbol_oi(symbol):
 
 # ================= 8. 主任务 =================
 def run_kline_main(universe):
+    funding_rates = fetch_all_funding_rates()
+    if not funding_rates:
+        print("⚠️ realtime 15m funding rates empty, 15m klines keep existing funding_rate")
+
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(process_symbol_kline, s) for s in universe]
+        futures = [
+            executor.submit(process_symbol_kline, s, funding_rates) for s in universe
+        ]
 
         for future in as_completed(futures):
             try:
@@ -773,6 +826,10 @@ def run_kline_main(universe):
                 )
             except Exception as e:
                 print(f"❌ symbol task failed: {e}")
+
+    if funding_rates:
+        updated_15m = save_realtime_15m_funding_rates(universe, funding_rates)
+        print(f"💰 realtime 15m funding_rate updated rows={updated_15m}")
 
 
 def run_oi_main(universe):
