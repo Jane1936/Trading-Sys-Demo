@@ -59,6 +59,12 @@
     .muted { color: #6b7280; font-size: 12px; }
     .top-score-row { background: #fff7cc; font-weight: 700; }
     .top-score-badge { display:inline-block; margin-left:6px; padding:2px 8px; border-radius:999px; background:#f59e0b; color:white; font-size:11px; }
+    .score-band-badge { display:inline-flex; align-items:center; justify-content:center; min-width:86px; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:700; border:1px solid transparent; }
+    .score-band-na { background:#f3f4f6; color:#6b7280; border-color:#d1d5db; }
+    .score-band-low-trial { background:#ecfeff; color:#0e7490; border-color:#67e8f9; }
+    .score-band-standard-trial { background:#eef2ff; color:#4338ca; border-color:#a5b4fc; }
+    .score-band-trend-standard { background:#f0fdf4; color:#15803d; border-color:#86efac; }
+    .score-band-strong-trend { background:#fff7ed; color:#c2410c; border-color:#fdba74; }
     .score-tab-group { display:flex; gap:8px; flex-wrap:wrap; width:100%; margin-top:8px; }
     .score-tab-group-label { font-size:12px; font-weight:700; padding:4px 10px; border-radius:999px; }
     .score-tab-group.trend .score-tab-group-label { background:#dbeafe; color:#1e3a8a; }
@@ -496,13 +502,30 @@
         {% endif %}
         <div class="table-wrap">
           <table>
-            <thead><tr><th>rank</th><th>symbol</th><th>rule1_score</th><th>rule2_score</th><th>rule3_score</th><th>rule4_score</th><th>rule5_score</th><th>rule6_score</th><th>rule7_score</th><th>rule8_score</th><th>rule9_score</th><th>rule10_score</th><th>rule11_score</th><th>rule12_score</th><th>rule13_score</th><th>rule14_score</th><th>rule15_score</th><th>total_score</th></tr></thead>
+            <thead><tr><th>rank</th><th>symbol</th><th>评分档位</th><th>rule1_score</th><th>rule2_score</th><th>rule3_score</th><th>rule4_score</th><th>rule5_score</th><th>rule6_score</th><th>rule7_score</th><th>rule8_score</th><th>rule9_score</th><th>rule10_score</th><th>rule11_score</th><th>rule12_score</th><th>rule13_score</th><th>rule14_score</th><th>rule15_score</th><th>total_score</th></tr></thead>
             <tbody>
               {% set top_score = round_scores_total[0].total_score if round_scores_total else none %}
               {% for r in round_scores_total %}
-              <tr class="{{ 'top-score-row' if top_score is not none and r.total_score == top_score else '' }}"><td>{{ loop.index }}</td><td>{{ r.symbol }}{% if top_score is not none and r.total_score == top_score %}<span class="top-score-badge">最高分</span>{% endif %}</td><td>{{ r.rule1_score }}</td><td>{{ r.rule2_score }}</td><td>{{ r.rule3_score }}</td><td>{{ r.rule4_score }}</td><td>{{ r.rule5_score }}</td><td>{{ r.rule6_score }}</td><td>{{ r.rule7_score }}</td><td>{{ r.rule8_score }}</td><td>{{ r.rule9_score }}</td><td>{{ r.rule10_score }}</td><td>{{ r.rule11_score }}</td><td>{{ r.rule12_score }}</td><td>{{ r.rule13_score }}</td><td>{{ r.rule14_score }}</td><td>{{ r.rule15_score }}</td><td>{{ r.total_score }}</td></tr>
+                {% set total_score_value = r.total_score|int %}
+                {% if total_score_value >= 89 %}
+                  {% set band_label = '确定性强趋势单' %}
+                  {% set band_class = 'score-band-strong-trend' %}
+                {% elif total_score_value >= 81 %}
+                  {% set band_label = '趋势标准单' %}
+                  {% set band_class = 'score-band-trend-standard' %}
+                {% elif total_score_value >= 73 %}
+                  {% set band_label = '标准试错单' %}
+                  {% set band_class = 'score-band-standard-trial' %}
+                {% elif total_score_value >= 65 %}
+                  {% set band_label = '低档试错单' %}
+                  {% set band_class = 'score-band-low-trial' %}
+                {% else %}
+                  {% set band_label = 'NA' %}
+                  {% set band_class = 'score-band-na' %}
+                {% endif %}
+              <tr class="{{ 'top-score-row' if top_score is not none and r.total_score == top_score else '' }}"><td>{{ loop.index }}</td><td>{{ r.symbol }}{% if top_score is not none and r.total_score == top_score %}<span class="top-score-badge">最高分</span>{% endif %}</td><td><span class="score-band-badge {{ band_class }}">{{ band_label }}</span></td><td>{{ r.rule1_score }}</td><td>{{ r.rule2_score }}</td><td>{{ r.rule3_score }}</td><td>{{ r.rule4_score }}</td><td>{{ r.rule5_score }}</td><td>{{ r.rule6_score }}</td><td>{{ r.rule7_score }}</td><td>{{ r.rule8_score }}</td><td>{{ r.rule9_score }}</td><td>{{ r.rule10_score }}</td><td>{{ r.rule11_score }}</td><td>{{ r.rule12_score }}</td><td>{{ r.rule13_score }}</td><td>{{ r.rule14_score }}</td><td>{{ r.rule15_score }}</td><td>{{ r.total_score }}</td></tr>
               {% else %}
-              <tr><td class="empty" colspan="18">暂无总分数据</td></tr>
+              <tr><td class="empty" colspan="19">暂无总分数据</td></tr>
               {% endfor %}
             </tbody>
           </table>
