@@ -36,6 +36,7 @@ class SymbolTotalScore:
     rule10_score: int
     rule11_score: int
     rule12_score: int
+    rule13_score: int
     total_score: int
 
 
@@ -262,6 +263,26 @@ class ScoringSystem:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_symbol_scores_15m_funding_rate_4bars_round ON symbol_scores_15m_funding_rate_4bars(decision_round_ts DESC)"
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS symbol_scores_15m_bullish_volume_breakout (
+                    symbol TEXT NOT NULL,
+                    decision_round_ts INTEGER NOT NULL,
+                    score INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    latest_open REAL NOT NULL,
+                    latest_close REAL NOT NULL,
+                    prev_close REAL NOT NULL,
+                    latest_volume REAL NOT NULL,
+                    volume_avg REAL NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY(symbol, decision_round_ts)
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_symbol_scores_15m_bullish_volume_breakout_round ON symbol_scores_15m_bullish_volume_breakout(decision_round_ts DESC)"
+            )
 
     def _latest_three_ma20_15m(self, symbol: str) -> tuple[float, float, float] | None:
         with self._connect() as conn:
@@ -301,6 +322,7 @@ class ScoringSystem:
             self._save_1m_close_gt_60m_open_with_oi_60m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
             self._save_oi_loss_rate_240m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
             self._save_15m_funding_rate_4bars_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_15m_bullish_volume_breakout_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
             ma20s = self._latest_three_ma20_15m(symbol)
             if ma20s is None:
                 continue
@@ -873,6 +895,91 @@ class ScoringSystem:
                 (symbol, decision_round_ts, score, reason, *funding_rates, updated_at),
             )
 
+
+    def _latest_17_15m_ohlcv(self, symbol: str) -> list[sqlite3.Row] | None:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT open, close, volume
+                FROM klines_15m
+                WHERE symbol = ?
+                ORDER BY open_time DESC
+                LIMIT 17
+                """,
+                (symbol,),
+            ).fetchall()
+        if len(rows) < 17:
+            return None
+        return rows
+
+    def _save_15m_bullish_volume_breakout_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
+        rows = self._latest_17_15m_ohlcv(symbol)
+        if rows is None:
+            return
+        latest_open = float(rows[0]["open"])
+        latest_close = float(rows[0]["close"])
+        prev_close = float(rows[1]["close"])
+        latest_volume = float(rows[0]["volume"])
+        volume_avg = sum(float(row["volume"]) for row in rows[1:17]) / 16
+
+        price_hit = latest_close > latest_open and latest_close > prev_close
+        volume_hit = price_hit and latest_volume > 1.8 * volume_avg
+        score = 10 if volume_hit else 0
+        if volume_hit:
+            reason = "latest_15m_bullish_close_up_and_volume_gt_1_8_avg"
+        elif price_hit:
+            reason = "rule13_volume_not_met"
+        else:
+            reason = "rule13_price_not_met"
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO symbol_scores_15m_bullish_volume_breakout
+                (symbol, decision_round_ts, score, reason, latest_open, latest_close, prev_close, latest_volume, volume_avg, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
+                    score=excluded.score,
+                    reason=excluded.reason,
+                    latest_open=excluded.latest_open,
+                    latest_close=excluded.latest_close,
+                    prev_close=excluded.prev_close,
+                    latest_volume=excluded.latest_volume,
+                    volume_avg=excluded.volume_avg,
+                    updated_at=excluded.updated_at
+                """,
+                (symbol, decision_round_ts, score, reason, latest_open, latest_close, prev_close, latest_volume, volume_avg, updated_at),
+            )
+
+    def get_latest_round_scores_15m_bullish_volume_breakout(self) -> tuple[int | None, list[sqlite3.Row]]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_15m_bullish_volume_breakout").fetchone()
+            if row["ts"] is None:
+                return None, []
+            round_ts = int(row["ts"])
+            rows = conn.execute(
+                """
+                SELECT symbol, decision_round_ts, score, reason, latest_open, latest_close, prev_close, latest_volume, volume_avg, updated_at
+                FROM symbol_scores_15m_bullish_volume_breakout
+                WHERE decision_round_ts = ?
+                ORDER BY score DESC, symbol ASC
+                """,
+                (round_ts,),
+            ).fetchall()
+        return round_ts, rows
+
+    def _get_round_scores_15m_bullish_volume_breakout(self, round_ts: int) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT symbol, decision_round_ts, score, reason, latest_open, latest_close, prev_close, latest_volume, volume_avg, updated_at
+                FROM symbol_scores_15m_bullish_volume_breakout
+                WHERE decision_round_ts = ?
+                ORDER BY symbol ASC
+                """,
+                (round_ts,),
+            ).fetchall()
+
     def get_latest_round_scores_15m_funding_rate_4bars(self) -> tuple[int | None, list[sqlite3.Row]]:
         with self._connect() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_15m_funding_rate_4bars").fetchone()
@@ -1157,9 +1264,10 @@ class ScoringSystem:
         rule10_ts, _ = self.get_latest_round_scores_1m_close_gt_60m_open_with_oi_60m()
         rule11_ts, _ = self.get_latest_round_scores_oi_loss_rate_240m()
         rule12_ts, _ = self.get_latest_round_scores_15m_funding_rate_4bars()
-        if rule1_ts is None or rule2_ts is None or rule3_ts is None or rule4_ts is None or rule5_ts is None or rule6_ts is None or rule7_ts is None or rule8_ts is None or rule9_ts is None or rule10_ts is None or rule11_ts is None or rule12_ts is None:
+        rule13_ts, _ = self.get_latest_round_scores_15m_bullish_volume_breakout()
+        if rule1_ts is None or rule2_ts is None or rule3_ts is None or rule4_ts is None or rule5_ts is None or rule6_ts is None or rule7_ts is None or rule8_ts is None or rule9_ts is None or rule10_ts is None or rule11_ts is None or rule12_ts is None or rule13_ts is None:
             return None, []
-        round_ts = min(rule1_ts, rule2_ts, rule3_ts, rule4_ts, rule5_ts, rule6_ts, rule7_ts, rule8_ts, rule9_ts, rule10_ts, rule11_ts, rule12_ts)
+        round_ts = min(rule1_ts, rule2_ts, rule3_ts, rule4_ts, rule5_ts, rule6_ts, rule7_ts, rule8_ts, rule9_ts, rule10_ts, rule11_ts, rule12_ts, rule13_ts)
         rule1_rows = self._get_round_scores(round_ts)
         rule2_rows = self._get_round_scores_close_gt_ma20(round_ts)
         rule3_rows = self._get_round_scores_1h_close_gt_prev(round_ts)
@@ -1172,6 +1280,7 @@ class ScoringSystem:
         rule10_rows = self._get_round_scores_1m_close_gt_60m_open_with_oi_60m(round_ts)
         rule11_rows = self._get_round_scores_oi_loss_rate_240m(round_ts)
         rule12_rows = self._get_round_scores_15m_funding_rate_4bars(round_ts)
+        rule13_rows = self._get_round_scores_15m_bullish_volume_breakout(round_ts)
 
         rule1_map = {r.symbol: r.score for r in rule1_rows}
         rule2_map = {str(r["symbol"]): int(r["score"]) for r in rule2_rows}
@@ -1185,7 +1294,8 @@ class ScoringSystem:
         rule10_map = {str(r["symbol"]): int(r["score"]) for r in rule10_rows}
         rule11_map = {str(r["symbol"]): int(r["score"]) for r in rule11_rows}
         rule12_map = {str(r["symbol"]): int(r["score"]) for r in rule12_rows}
-        symbols = sorted(set(rule1_map.keys()) | set(rule2_map.keys()) | set(rule3_map.keys()) | set(rule4_map.keys()) | set(rule5_map.keys()) | set(rule6_map.keys()) | set(rule7_map.keys()) | set(rule8_map.keys()) | set(rule9_map.keys()) | set(rule10_map.keys()) | set(rule11_map.keys()) | set(rule12_map.keys()))
+        rule13_map = {str(r["symbol"]): int(r["score"]) for r in rule13_rows}
+        symbols = sorted(set(rule1_map.keys()) | set(rule2_map.keys()) | set(rule3_map.keys()) | set(rule4_map.keys()) | set(rule5_map.keys()) | set(rule6_map.keys()) | set(rule7_map.keys()) | set(rule8_map.keys()) | set(rule9_map.keys()) | set(rule10_map.keys()) | set(rule11_map.keys()) | set(rule12_map.keys()) | set(rule13_map.keys()))
 
         totals = [
             SymbolTotalScore(
@@ -1203,7 +1313,8 @@ class ScoringSystem:
                 rule10_score=rule10_map.get(s, 0),
                 rule11_score=rule11_map.get(s, 0),
                 rule12_score=rule12_map.get(s, 0),
-                total_score=rule1_map.get(s, 0) + rule2_map.get(s, 0) + rule3_map.get(s, 0) + rule4_map.get(s, 0) + rule5_map.get(s, 0) + rule6_map.get(s, 0) + rule7_map.get(s, 0) + rule8_map.get(s, 0) + rule9_map.get(s, 0) + rule10_map.get(s, 0) + rule11_map.get(s, 0) + rule12_map.get(s, 0),
+                rule13_score=rule13_map.get(s, 0),
+                total_score=rule1_map.get(s, 0) + rule2_map.get(s, 0) + rule3_map.get(s, 0) + rule4_map.get(s, 0) + rule5_map.get(s, 0) + rule6_map.get(s, 0) + rule7_map.get(s, 0) + rule8_map.get(s, 0) + rule9_map.get(s, 0) + rule10_map.get(s, 0) + rule11_map.get(s, 0) + rule12_map.get(s, 0) + rule13_map.get(s, 0),
             )
             for s in symbols
         ]

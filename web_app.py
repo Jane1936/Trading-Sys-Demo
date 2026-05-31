@@ -55,6 +55,7 @@ def abnormal_wicks():
     score_rule10_round_ts, round_scores_rule10 = scoring.get_latest_round_scores_1m_close_gt_60m_open_with_oi_60m()
     score_rule11_round_ts, round_scores_rule11 = scoring.get_latest_round_scores_oi_loss_rate_240m()
     score_rule12_round_ts, round_scores_rule12 = scoring.get_latest_round_scores_15m_funding_rate_4bars()
+    score_rule13_round_ts, round_scores_rule13 = scoring.get_latest_round_scores_15m_bullish_volume_breakout()
     score_total_round_ts, round_scores_total = scoring.get_latest_round_total_scores()
 
     btc_5m_rows = []
@@ -131,6 +132,8 @@ def abnormal_wicks():
         round_scores_rule11=round_scores_rule11,
         score_rule12_round_ts=score_rule12_round_ts,
         round_scores_rule12=round_scores_rule12,
+        score_rule13_round_ts=score_rule13_round_ts,
+        round_scores_rule13=round_scores_rule13,
         score_total_round_ts=score_total_round_ts,
         round_scores_total=round_scores_total,
         selected_symbol=symbol,
