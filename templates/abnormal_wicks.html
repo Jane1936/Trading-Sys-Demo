@@ -63,11 +63,14 @@
     .score-tab-group-label { font-size:12px; font-weight:700; padding:4px 10px; border-radius:999px; }
     .score-tab-group.trend .score-tab-group-label { background:#dbeafe; color:#1e3a8a; }
     .score-tab-group.oi .score-tab-group-label { background:#dcfce7; color:#166534; }
+    .score-tab-group.volume .score-tab-group-label { background:#fee2e2; color:#991b1b; }
     .score-tab-group.trend .score-rule-tab { border-color:#93c5fd; background:#eff6ff; color:#1e3a8a; }
     .score-tab-group.oi .score-rule-tab { border-color:#86efac; background:#f0fdf4; color:#166534; }
+    .score-tab-group.volume .score-rule-tab { border-color:#fca5a5; background:#fff1f2; color:#991b1b; }
     .score-tab-group .score-rule-tab.active { color:#fff; }
     .score-tab-group.trend .score-rule-tab.active { background:#2563eb; border-color:#2563eb; }
     .score-tab-group.oi .score-rule-tab.active { background:#16a34a; border-color:#16a34a; }
+    .score-tab-group.volume .score-rule-tab.active { background:#dc2626; border-color:#dc2626; }
   </style>
 </head>
 <body>
@@ -240,6 +243,10 @@
           <button class="tab-btn score-rule-tab" data-score-tab="score-rule-10" style="width:auto;">规则10：1m close&gt;60m前open 且 OI(1m)&gt;60m前（10分）</button>
           <button class="tab-btn score-rule-tab" data-score-tab="score-rule-11" style="width:auto;">规则11：OI(1m)≥240m前 或 OI流失率≤3%（5分）</button>
           <button class="tab-btn score-rule-tab" data-score-tab="score-rule-12" style="width:auto;">规则12：最近4条15m资金费率均在(0.01, 0.1)（5分）</button>
+        </div>
+        <div class="score-tab-group volume">
+          <span class="score-tab-group-label">成交量评分</span>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-13" style="width:auto;">规则13：15m阳线放量突破（10分）</button>
         </div>
         <button class="tab-btn score-rule-tab" data-score-tab="score-total" style="width:auto;">总分</button>
       </div>
@@ -445,19 +452,31 @@
         </table></div>
       </div>
 
+      <div id="score-rule-13" class="score-rule-panel">
+        {% if score_rule13_round_ts %}
+        <div class="tip">规则13轮次：{{ score_rule13_round_ts|fmt_ms_datetime }}。要求最近第1条15m K线 close&gt;open 且 close&gt;最近第2条close；满足后，若最近第1条volume &gt; 1.8 × 最近第17条到第2条volume平均值则得10分。</div>
+        {% endif %}
+        <div class="table-wrap"><table>
+          <thead><tr><th>symbol</th><th>score</th><th>latest_open</th><th>latest_close</th><th>prev_close</th><th>latest_volume</th><th>volume_avg</th><th>1.8×volume_avg</th><th>reason</th><th>updated_at</th></tr></thead>
+          <tbody>{% for r in round_scores_rule13 %}
+            <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_open) }}</td><td>{{ '%.6f'|format(r.latest_close) }}</td><td>{{ '%.6f'|format(r.prev_close) }}</td><td>{{ '%.6f'|format(r.latest_volume) }}</td><td>{{ '%.6f'|format(r.volume_avg) }}</td><td>{{ '%.6f'|format(r.volume_avg * 1.8) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+          {% else %}<tr><td class="empty" colspan="10">暂无规则13评分数据</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </div>
+
       <div id="score-total" class="score-rule-panel">
         {% if score_total_round_ts %}
         <div class="tip">总分轮次：{{ score_total_round_ts|fmt_ms_datetime }}</div>
         {% endif %}
         <div class="table-wrap">
           <table>
-            <thead><tr><th>rank</th><th>symbol</th><th>rule1_score</th><th>rule2_score</th><th>rule3_score</th><th>rule4_score</th><th>rule5_score</th><th>rule6_score</th><th>rule7_score</th><th>rule8_score</th><th>rule9_score</th><th>rule10_score</th><th>rule11_score</th><th>rule12_score</th><th>total_score</th></tr></thead>
+            <thead><tr><th>rank</th><th>symbol</th><th>rule1_score</th><th>rule2_score</th><th>rule3_score</th><th>rule4_score</th><th>rule5_score</th><th>rule6_score</th><th>rule7_score</th><th>rule8_score</th><th>rule9_score</th><th>rule10_score</th><th>rule11_score</th><th>rule12_score</th><th>rule13_score</th><th>total_score</th></tr></thead>
             <tbody>
               {% set top_score = round_scores_total[0].total_score if round_scores_total else none %}
               {% for r in round_scores_total %}
-              <tr class="{{ 'top-score-row' if top_score is not none and r.total_score == top_score else '' }}"><td>{{ loop.index }}</td><td>{{ r.symbol }}{% if top_score is not none and r.total_score == top_score %}<span class="top-score-badge">最高分</span>{% endif %}</td><td>{{ r.rule1_score }}</td><td>{{ r.rule2_score }}</td><td>{{ r.rule3_score }}</td><td>{{ r.rule4_score }}</td><td>{{ r.rule5_score }}</td><td>{{ r.rule6_score }}</td><td>{{ r.rule7_score }}</td><td>{{ r.rule8_score }}</td><td>{{ r.rule9_score }}</td><td>{{ r.rule10_score }}</td><td>{{ r.rule11_score }}</td><td>{{ r.rule12_score }}</td><td>{{ r.total_score }}</td></tr>
+              <tr class="{{ 'top-score-row' if top_score is not none and r.total_score == top_score else '' }}"><td>{{ loop.index }}</td><td>{{ r.symbol }}{% if top_score is not none and r.total_score == top_score %}<span class="top-score-badge">最高分</span>{% endif %}</td><td>{{ r.rule1_score }}</td><td>{{ r.rule2_score }}</td><td>{{ r.rule3_score }}</td><td>{{ r.rule4_score }}</td><td>{{ r.rule5_score }}</td><td>{{ r.rule6_score }}</td><td>{{ r.rule7_score }}</td><td>{{ r.rule8_score }}</td><td>{{ r.rule9_score }}</td><td>{{ r.rule10_score }}</td><td>{{ r.rule11_score }}</td><td>{{ r.rule12_score }}</td><td>{{ r.rule13_score }}</td><td>{{ r.total_score }}</td></tr>
               {% else %}
-              <tr><td class="empty" colspan="15">暂无总分数据</td></tr>
+              <tr><td class="empty" colspan="16">暂无总分数据</td></tr>
               {% endfor %}
             </tbody>
           </table>
