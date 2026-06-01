@@ -65,18 +65,24 @@
     .score-band-standard-trial { background:#eef2ff; color:#4338ca; border-color:#a5b4fc; }
     .score-band-trend-standard { background:#f0fdf4; color:#15803d; border-color:#86efac; }
     .score-band-strong-trend { background:#fff7ed; color:#c2410c; border-color:#fdba74; }
-    .score-tab-group { display:flex; gap:8px; flex-wrap:wrap; width:100%; margin-top:8px; }
-    .score-tab-group-label { font-size:12px; font-weight:700; padding:4px 10px; border-radius:999px; }
-    .score-tab-group.trend .score-tab-group-label { background:#dbeafe; color:#1e3a8a; }
-    .score-tab-group.oi .score-tab-group-label { background:#dcfce7; color:#166534; }
-    .score-tab-group.volume .score-tab-group-label { background:#fee2e2; color:#991b1b; }
+    .score-tab-group { display:flex; gap:8px; flex-wrap:wrap; width:100%; margin-top:8px; align-items:stretch; }
+    .score-tab-group-label { display:inline-flex; align-items:center; justify-content:center; min-width:128px; min-height:38px; box-sizing:border-box; text-align:center; font-size:12px; font-weight:700; padding:8px 14px; border:1px solid transparent; border-radius:12px; box-shadow:0 2px 8px rgba(17, 24, 39, 0.06); }
+    .score-tab-group.trend .score-tab-group-label { background:#dbeafe; color:#1e3a8a; border-color:#93c5fd; }
+    .score-tab-group.oi .score-tab-group-label { background:#dcfce7; color:#166534; border-color:#86efac; }
+    .score-tab-group.volume .score-tab-group-label { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+    .score-tab-group.rhythm .score-tab-group-label { background:#fef3c7; color:#92400e; border-color:#fbbf24; }
     .score-tab-group.trend .score-rule-tab { border-color:#93c5fd; background:#eff6ff; color:#1e3a8a; }
     .score-tab-group.oi .score-rule-tab { border-color:#86efac; background:#f0fdf4; color:#166534; }
     .score-tab-group.volume .score-rule-tab { border-color:#fca5a5; background:#fff1f2; color:#991b1b; }
+    .score-tab-group.rhythm .score-rule-tab { border-color:#fbbf24; background:#fffbeb; color:#92400e; }
+    .score-total-tab { display:inline-flex; align-items:center; justify-content:center; min-width:132px; padding:14px 26px; font-size:16px; font-weight:800; text-align:center; color:#fff; background:linear-gradient(135deg, #f59e0b 0%, #ef4444 100%); border:1px solid #f97316; border-radius:14px; box-shadow:0 8px 18px rgba(239, 68, 68, 0.24); }
+    .score-total-tab:hover { transform:translateY(-1px); box-shadow:0 10px 22px rgba(239, 68, 68, 0.30); }
     .score-tab-group .score-rule-tab.active { color:#fff; }
     .score-tab-group.trend .score-rule-tab.active { background:#2563eb; border-color:#2563eb; }
     .score-tab-group.oi .score-rule-tab.active { background:#16a34a; border-color:#16a34a; }
     .score-tab-group.volume .score-rule-tab.active { background:#dc2626; border-color:#dc2626; }
+    .score-tab-group.rhythm .score-rule-tab.active { background:#d97706; border-color:#d97706; color:#fff; }
+    .score-total-tab.active { background:linear-gradient(135deg, #ea580c 0%, #dc2626 100%); border-color:#dc2626; color:#fff; }
   </style>
 </head>
 <body>
@@ -261,7 +267,7 @@
           <span class="score-tab-group-label">开仓位置与节奏评分</span>
           <button class="tab-btn score-rule-tab" data-score-tab="score-rule-17" style="width:auto;">规则17：15m低点反弹≥6%（5分）</button>
         </div>
-        <button class="tab-btn score-rule-tab" data-score-tab="score-total" style="width:auto;">总分</button>
+        <button class="tab-btn score-rule-tab score-total-tab" data-score-tab="score-total" style="width:auto;">总分</button>
       </div>
 
       <div id="score-rule-1" class="score-rule-panel active">
