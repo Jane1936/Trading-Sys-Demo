@@ -40,6 +40,7 @@ class SymbolTotalScore:
     rule14_score: int
     rule15_score: int
     rule16_score: int
+    rule17_score: int
     total_score: int
 
 
@@ -348,6 +349,30 @@ class ScoringSystem:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_symbol_scores_15m_pullback_low_volume_round ON symbol_scores_15m_pullback_low_volume(decision_round_ts DESC)"
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS symbol_scores_15m_low_rebound_3bars (
+                    symbol TEXT NOT NULL,
+                    decision_round_ts INTEGER NOT NULL,
+                    score INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    latest_low REAL NOT NULL,
+                    latest_close REAL NOT NULL,
+                    prev1_low REAL NOT NULL,
+                    prev1_close REAL NOT NULL,
+                    prev2_low REAL NOT NULL,
+                    prev2_close REAL NOT NULL,
+                    lowest_low REAL NOT NULL,
+                    prev1_rebound_ratio REAL NOT NULL,
+                    latest_rebound_ratio REAL NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY(symbol, decision_round_ts)
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_symbol_scores_15m_low_rebound_3bars_round ON symbol_scores_15m_low_rebound_3bars(decision_round_ts DESC)"
+            )
 
     def _latest_three_ma20_15m(self, symbol: str) -> tuple[float, float, float] | None:
         with self._connect() as conn:
@@ -391,6 +416,7 @@ class ScoringSystem:
             self._save_15m_volume_spike_2of3_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
             self._save_1h_volume_spike_latest_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
             self._save_15m_pullback_low_volume_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_15m_low_rebound_3bars_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
             ma20s = self._latest_three_ma20_15m(symbol)
             if ma20s is None:
                 continue
@@ -1319,6 +1345,122 @@ class ScoringSystem:
                 (round_ts,),
             ).fetchall()
 
+    def _latest_3_15m_low_close(self, symbol: str) -> list[sqlite3.Row] | None:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT low, close
+                FROM klines_15m
+                WHERE symbol = ?
+                ORDER BY open_time DESC
+                LIMIT 3
+                """,
+                (symbol,),
+            ).fetchall()
+        if len(rows) < 3:
+            return None
+        return rows
+
+    def _save_15m_low_rebound_3bars_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
+        rows = self._latest_3_15m_low_close(symbol)
+        if rows is None:
+            return
+
+        latest_low = float(rows[0]["low"])
+        latest_close = float(rows[0]["close"])
+        prev1_low = float(rows[1]["low"])
+        prev1_close = float(rows[1]["close"])
+        prev2_low = float(rows[2]["low"])
+        prev2_close = float(rows[2]["close"])
+        lowest_low = min(latest_low, prev1_low, prev2_low)
+        if lowest_low <= 0:
+            prev1_rebound_ratio = 0.0
+            latest_rebound_ratio = 0.0
+            hit = False
+            reason = "rule17_invalid_lowest_low"
+        else:
+            prev1_rebound_ratio = (prev1_close - lowest_low) / lowest_low
+            latest_rebound_ratio = (latest_close - lowest_low) / lowest_low
+            prev2_low_is_lowest = prev2_low == lowest_low
+            prev1_low_is_lowest = prev1_low == lowest_low
+            if prev2_low_is_lowest:
+                hit = prev1_rebound_ratio >= 0.06 or latest_rebound_ratio >= 0.06
+                reason = "third_15m_lowest_and_rebound_ge_6pct" if hit else "rule17_third_lowest_rebound_not_met"
+            elif prev1_low_is_lowest:
+                hit = latest_rebound_ratio >= 0.06
+                reason = "second_15m_lowest_and_latest_rebound_ge_6pct" if hit else "rule17_second_lowest_rebound_not_met"
+            else:
+                hit = False
+                reason = "rule17_latest_lowest_or_no_qualified_lowest"
+        score = 5 if hit else 0
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO symbol_scores_15m_low_rebound_3bars
+                (symbol, decision_round_ts, score, reason, latest_low, latest_close, prev1_low, prev1_close, prev2_low, prev2_close, lowest_low, prev1_rebound_ratio, latest_rebound_ratio, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
+                    score=excluded.score,
+                    reason=excluded.reason,
+                    latest_low=excluded.latest_low,
+                    latest_close=excluded.latest_close,
+                    prev1_low=excluded.prev1_low,
+                    prev1_close=excluded.prev1_close,
+                    prev2_low=excluded.prev2_low,
+                    prev2_close=excluded.prev2_close,
+                    lowest_low=excluded.lowest_low,
+                    prev1_rebound_ratio=excluded.prev1_rebound_ratio,
+                    latest_rebound_ratio=excluded.latest_rebound_ratio,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    symbol,
+                    decision_round_ts,
+                    score,
+                    reason,
+                    latest_low,
+                    latest_close,
+                    prev1_low,
+                    prev1_close,
+                    prev2_low,
+                    prev2_close,
+                    lowest_low,
+                    prev1_rebound_ratio,
+                    latest_rebound_ratio,
+                    updated_at,
+                ),
+            )
+
+    def get_latest_round_scores_15m_low_rebound_3bars(self) -> tuple[int | None, list[sqlite3.Row]]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_15m_low_rebound_3bars").fetchone()
+            if row["ts"] is None:
+                return None, []
+            round_ts = int(row["ts"])
+            rows = conn.execute(
+                """
+                SELECT symbol, decision_round_ts, score, reason, latest_low, latest_close, prev1_low, prev1_close, prev2_low, prev2_close, lowest_low, prev1_rebound_ratio, latest_rebound_ratio, updated_at
+                FROM symbol_scores_15m_low_rebound_3bars
+                WHERE decision_round_ts = ?
+                ORDER BY score DESC, symbol ASC
+                """,
+                (round_ts,),
+            ).fetchall()
+        return round_ts, rows
+
+    def _get_round_scores_15m_low_rebound_3bars(self, round_ts: int) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT symbol, decision_round_ts, score, reason, latest_low, latest_close, prev1_low, prev1_close, prev2_low, prev2_close, lowest_low, prev1_rebound_ratio, latest_rebound_ratio, updated_at
+                FROM symbol_scores_15m_low_rebound_3bars
+                WHERE decision_round_ts = ?
+                ORDER BY symbol ASC
+                """,
+                (round_ts,),
+            ).fetchall()
+
     def get_latest_round_scores_15m_funding_rate_4bars(self) -> tuple[int | None, list[sqlite3.Row]]:
         with self._connect() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_15m_funding_rate_4bars").fetchone()
@@ -1607,9 +1749,10 @@ class ScoringSystem:
         rule14_ts, _ = self.get_latest_round_scores_15m_volume_spike_2of3()
         rule15_ts, _ = self.get_latest_round_scores_1h_volume_spike_latest()
         rule16_ts, _ = self.get_latest_round_scores_15m_pullback_low_volume()
-        if rule1_ts is None or rule2_ts is None or rule3_ts is None or rule4_ts is None or rule5_ts is None or rule6_ts is None or rule7_ts is None or rule8_ts is None or rule9_ts is None or rule10_ts is None or rule11_ts is None or rule12_ts is None or rule13_ts is None or rule14_ts is None or rule15_ts is None or rule16_ts is None:
+        rule17_ts, _ = self.get_latest_round_scores_15m_low_rebound_3bars()
+        if rule1_ts is None or rule2_ts is None or rule3_ts is None or rule4_ts is None or rule5_ts is None or rule6_ts is None or rule7_ts is None or rule8_ts is None or rule9_ts is None or rule10_ts is None or rule11_ts is None or rule12_ts is None or rule13_ts is None or rule14_ts is None or rule15_ts is None or rule16_ts is None or rule17_ts is None:
             return None, []
-        round_ts = min(rule1_ts, rule2_ts, rule3_ts, rule4_ts, rule5_ts, rule6_ts, rule7_ts, rule8_ts, rule9_ts, rule10_ts, rule11_ts, rule12_ts, rule13_ts, rule14_ts, rule15_ts, rule16_ts)
+        round_ts = min(rule1_ts, rule2_ts, rule3_ts, rule4_ts, rule5_ts, rule6_ts, rule7_ts, rule8_ts, rule9_ts, rule10_ts, rule11_ts, rule12_ts, rule13_ts, rule14_ts, rule15_ts, rule16_ts, rule17_ts)
         rule1_rows = self._get_round_scores(round_ts)
         rule2_rows = self._get_round_scores_close_gt_ma20(round_ts)
         rule3_rows = self._get_round_scores_1h_close_gt_prev(round_ts)
@@ -1626,6 +1769,7 @@ class ScoringSystem:
         rule14_rows = self._get_round_scores_15m_volume_spike_2of3(round_ts)
         rule15_rows = self._get_round_scores_1h_volume_spike_latest(round_ts)
         rule16_rows = self._get_round_scores_15m_pullback_low_volume(round_ts)
+        rule17_rows = self._get_round_scores_15m_low_rebound_3bars(round_ts)
 
         rule1_map = {r.symbol: r.score for r in rule1_rows}
         rule2_map = {str(r["symbol"]): int(r["score"]) for r in rule2_rows}
@@ -1643,7 +1787,8 @@ class ScoringSystem:
         rule14_map = {str(r["symbol"]): int(r["score"]) for r in rule14_rows}
         rule15_map = {str(r["symbol"]): int(r["score"]) for r in rule15_rows}
         rule16_map = {str(r["symbol"]): int(r["score"]) for r in rule16_rows}
-        symbols = sorted(set(rule1_map.keys()) | set(rule2_map.keys()) | set(rule3_map.keys()) | set(rule4_map.keys()) | set(rule5_map.keys()) | set(rule6_map.keys()) | set(rule7_map.keys()) | set(rule8_map.keys()) | set(rule9_map.keys()) | set(rule10_map.keys()) | set(rule11_map.keys()) | set(rule12_map.keys()) | set(rule13_map.keys()) | set(rule14_map.keys()) | set(rule15_map.keys()) | set(rule16_map.keys()))
+        rule17_map = {str(r["symbol"]): int(r["score"]) for r in rule17_rows}
+        symbols = sorted(set(rule1_map.keys()) | set(rule2_map.keys()) | set(rule3_map.keys()) | set(rule4_map.keys()) | set(rule5_map.keys()) | set(rule6_map.keys()) | set(rule7_map.keys()) | set(rule8_map.keys()) | set(rule9_map.keys()) | set(rule10_map.keys()) | set(rule11_map.keys()) | set(rule12_map.keys()) | set(rule13_map.keys()) | set(rule14_map.keys()) | set(rule15_map.keys()) | set(rule16_map.keys()) | set(rule17_map.keys()))
 
         totals = [
             SymbolTotalScore(
@@ -1665,7 +1810,8 @@ class ScoringSystem:
                 rule14_score=rule14_map.get(s, 0),
                 rule15_score=rule15_map.get(s, 0),
                 rule16_score=rule16_map.get(s, 0),
-                total_score=rule1_map.get(s, 0) + rule2_map.get(s, 0) + rule3_map.get(s, 0) + rule4_map.get(s, 0) + rule5_map.get(s, 0) + rule6_map.get(s, 0) + rule7_map.get(s, 0) + rule8_map.get(s, 0) + rule9_map.get(s, 0) + rule10_map.get(s, 0) + rule11_map.get(s, 0) + rule12_map.get(s, 0) + rule13_map.get(s, 0) + rule14_map.get(s, 0) + rule15_map.get(s, 0) + rule16_map.get(s, 0),
+                rule17_score=rule17_map.get(s, 0),
+                total_score=rule1_map.get(s, 0) + rule2_map.get(s, 0) + rule3_map.get(s, 0) + rule4_map.get(s, 0) + rule5_map.get(s, 0) + rule6_map.get(s, 0) + rule7_map.get(s, 0) + rule8_map.get(s, 0) + rule9_map.get(s, 0) + rule10_map.get(s, 0) + rule11_map.get(s, 0) + rule12_map.get(s, 0) + rule13_map.get(s, 0) + rule14_map.get(s, 0) + rule15_map.get(s, 0) + rule16_map.get(s, 0) + rule17_map.get(s, 0),
             )
             for s in symbols
         ]
