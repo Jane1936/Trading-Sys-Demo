@@ -41,6 +41,7 @@ class SymbolTotalScore:
     rule15_score: int
     rule16_score: int
     rule17_score: int
+    rule18_score: int
     total_score: int
 
 
@@ -375,6 +376,26 @@ class ScoringSystem:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS symbol_scores_structural_stop_loss_distance (
+                    symbol TEXT NOT NULL,
+                    decision_round_ts INTEGER NOT NULL,
+                    score INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    structural_stop_loss REAL NOT NULL,
+                    latest_1m_close REAL NOT NULL,
+                    stop_loss_distance_ratio REAL NOT NULL,
+                    latest_15m_close REAL NOT NULL,
+                    prev_15m_close REAL NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY(symbol, decision_round_ts)
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_symbol_scores_structural_stop_loss_distance_round ON symbol_scores_structural_stop_loss_distance(decision_round_ts DESC)"
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS symbol_structural_stop_losses (
                     symbol TEXT NOT NULL,
                     decision_round_ts INTEGER NOT NULL,
@@ -461,6 +482,7 @@ class ScoringSystem:
             self._save_15m_pullback_low_volume_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
             self._save_15m_low_rebound_3bars_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
             self._save_structural_stop_loss(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_structural_stop_loss_distance_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
             ma20s = self._latest_three_ma20_15m(symbol)
             if ma20s is None:
                 continue
@@ -1738,6 +1760,135 @@ class ScoringSystem:
             ).fetchall()
         return round_ts, rows
 
+    def _structural_stop_loss_for_round(self, symbol: str, decision_round_ts: int) -> float:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT structural_stop_loss
+                FROM symbol_structural_stop_losses
+                WHERE symbol = ? AND decision_round_ts = ?
+                """,
+                (symbol, decision_round_ts),
+            ).fetchone()
+        if not row:
+            return 0.0
+        return float(row["structural_stop_loss"])
+
+    def _latest_1m_close_and_two_15m_close(self, symbol: str) -> tuple[float, float, float] | None:
+        with self._connect() as conn:
+            close_1m_row = conn.execute(
+                """
+                SELECT close
+                FROM klines_1m
+                WHERE symbol = ?
+                ORDER BY open_time DESC
+                LIMIT 1
+                """,
+                (symbol,),
+            ).fetchone()
+            close_15m_rows = conn.execute(
+                """
+                SELECT close
+                FROM klines_15m
+                WHERE symbol = ?
+                ORDER BY open_time DESC
+                LIMIT 2
+                """,
+                (symbol,),
+            ).fetchall()
+        if not close_1m_row or len(close_15m_rows) < 2:
+            return None
+        return float(close_1m_row["close"]), float(close_15m_rows[0]["close"]), float(close_15m_rows[1]["close"])
+
+    def _save_structural_stop_loss_distance_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
+        structural_stop_loss = self._structural_stop_loss_for_round(symbol, decision_round_ts)
+        latest_1m_close = 0.0
+        stop_loss_distance_ratio = 0.0
+        latest_15m_close = 0.0
+        prev_15m_close = 0.0
+        score = 0
+
+        if structural_stop_loss <= 0:
+            reason = "rule18_structural_stop_loss_not_positive"
+        else:
+            values = self._latest_1m_close_and_two_15m_close(symbol)
+            if values is None:
+                reason = "rule18_insufficient_kline_data"
+            else:
+                latest_1m_close, latest_15m_close, prev_15m_close = values
+                if latest_1m_close <= 0:
+                    reason = "rule18_invalid_latest_1m_close"
+                else:
+                    stop_loss_distance_ratio = (latest_1m_close - structural_stop_loss) / latest_1m_close
+                    distance_hit = stop_loss_distance_ratio <= 0.035
+                    rhythm_hit = latest_15m_close >= prev_15m_close
+                    if distance_hit and rhythm_hit:
+                        score = 5
+                        reason = "structural_stop_loss_distance_qualified_and_15m_close_not_down"
+                    elif distance_hit:
+                        reason = "rule18_15m_close_not_met"
+                    else:
+                        reason = "rule18_stop_loss_distance_not_met"
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO symbol_scores_structural_stop_loss_distance
+                (symbol, decision_round_ts, score, reason, structural_stop_loss, latest_1m_close, stop_loss_distance_ratio, latest_15m_close, prev_15m_close, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
+                    score=excluded.score,
+                    reason=excluded.reason,
+                    structural_stop_loss=excluded.structural_stop_loss,
+                    latest_1m_close=excluded.latest_1m_close,
+                    stop_loss_distance_ratio=excluded.stop_loss_distance_ratio,
+                    latest_15m_close=excluded.latest_15m_close,
+                    prev_15m_close=excluded.prev_15m_close,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    symbol,
+                    decision_round_ts,
+                    score,
+                    reason,
+                    structural_stop_loss,
+                    latest_1m_close,
+                    stop_loss_distance_ratio,
+                    latest_15m_close,
+                    prev_15m_close,
+                    updated_at,
+                ),
+            )
+
+    def get_latest_round_scores_structural_stop_loss_distance(self) -> tuple[int | None, list[sqlite3.Row]]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_structural_stop_loss_distance").fetchone()
+            if row["ts"] is None:
+                return None, []
+            round_ts = int(row["ts"])
+            rows = conn.execute(
+                """
+                SELECT symbol, decision_round_ts, score, reason, structural_stop_loss, latest_1m_close, stop_loss_distance_ratio, latest_15m_close, prev_15m_close, updated_at
+                FROM symbol_scores_structural_stop_loss_distance
+                WHERE decision_round_ts = ?
+                ORDER BY score DESC, symbol ASC
+                """,
+                (round_ts,),
+            ).fetchall()
+        return round_ts, rows
+
+    def _get_round_scores_structural_stop_loss_distance(self, round_ts: int) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT symbol, decision_round_ts, score, reason, structural_stop_loss, latest_1m_close, stop_loss_distance_ratio, latest_15m_close, prev_15m_close, updated_at
+                FROM symbol_scores_structural_stop_loss_distance
+                WHERE decision_round_ts = ?
+                ORDER BY symbol ASC
+                """,
+                (round_ts,),
+            ).fetchall()
+
     def get_latest_round_scores_15m_funding_rate_4bars(self) -> tuple[int | None, list[sqlite3.Row]]:
         with self._connect() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_15m_funding_rate_4bars").fetchone()
@@ -2027,9 +2178,10 @@ class ScoringSystem:
         rule15_ts, _ = self.get_latest_round_scores_1h_volume_spike_latest()
         rule16_ts, _ = self.get_latest_round_scores_15m_pullback_low_volume()
         rule17_ts, _ = self.get_latest_round_scores_15m_low_rebound_3bars()
-        if rule1_ts is None or rule2_ts is None or rule3_ts is None or rule4_ts is None or rule5_ts is None or rule6_ts is None or rule7_ts is None or rule8_ts is None or rule9_ts is None or rule10_ts is None or rule11_ts is None or rule12_ts is None or rule13_ts is None or rule14_ts is None or rule15_ts is None or rule16_ts is None or rule17_ts is None:
+        rule18_ts, _ = self.get_latest_round_scores_structural_stop_loss_distance()
+        if rule1_ts is None or rule2_ts is None or rule3_ts is None or rule4_ts is None or rule5_ts is None or rule6_ts is None or rule7_ts is None or rule8_ts is None or rule9_ts is None or rule10_ts is None or rule11_ts is None or rule12_ts is None or rule13_ts is None or rule14_ts is None or rule15_ts is None or rule16_ts is None or rule17_ts is None or rule18_ts is None:
             return None, []
-        round_ts = min(rule1_ts, rule2_ts, rule3_ts, rule4_ts, rule5_ts, rule6_ts, rule7_ts, rule8_ts, rule9_ts, rule10_ts, rule11_ts, rule12_ts, rule13_ts, rule14_ts, rule15_ts, rule16_ts, rule17_ts)
+        round_ts = min(rule1_ts, rule2_ts, rule3_ts, rule4_ts, rule5_ts, rule6_ts, rule7_ts, rule8_ts, rule9_ts, rule10_ts, rule11_ts, rule12_ts, rule13_ts, rule14_ts, rule15_ts, rule16_ts, rule17_ts, rule18_ts)
         rule1_rows = self._get_round_scores(round_ts)
         rule2_rows = self._get_round_scores_close_gt_ma20(round_ts)
         rule3_rows = self._get_round_scores_1h_close_gt_prev(round_ts)
@@ -2047,6 +2199,7 @@ class ScoringSystem:
         rule15_rows = self._get_round_scores_1h_volume_spike_latest(round_ts)
         rule16_rows = self._get_round_scores_15m_pullback_low_volume(round_ts)
         rule17_rows = self._get_round_scores_15m_low_rebound_3bars(round_ts)
+        rule18_rows = self._get_round_scores_structural_stop_loss_distance(round_ts)
 
         rule1_map = {r.symbol: r.score for r in rule1_rows}
         rule2_map = {str(r["symbol"]): int(r["score"]) for r in rule2_rows}
@@ -2065,7 +2218,8 @@ class ScoringSystem:
         rule15_map = {str(r["symbol"]): int(r["score"]) for r in rule15_rows}
         rule16_map = {str(r["symbol"]): int(r["score"]) for r in rule16_rows}
         rule17_map = {str(r["symbol"]): int(r["score"]) for r in rule17_rows}
-        symbols = sorted(set(rule1_map.keys()) | set(rule2_map.keys()) | set(rule3_map.keys()) | set(rule4_map.keys()) | set(rule5_map.keys()) | set(rule6_map.keys()) | set(rule7_map.keys()) | set(rule8_map.keys()) | set(rule9_map.keys()) | set(rule10_map.keys()) | set(rule11_map.keys()) | set(rule12_map.keys()) | set(rule13_map.keys()) | set(rule14_map.keys()) | set(rule15_map.keys()) | set(rule16_map.keys()) | set(rule17_map.keys()))
+        rule18_map = {str(r["symbol"]): int(r["score"]) for r in rule18_rows}
+        symbols = sorted(set(rule1_map.keys()) | set(rule2_map.keys()) | set(rule3_map.keys()) | set(rule4_map.keys()) | set(rule5_map.keys()) | set(rule6_map.keys()) | set(rule7_map.keys()) | set(rule8_map.keys()) | set(rule9_map.keys()) | set(rule10_map.keys()) | set(rule11_map.keys()) | set(rule12_map.keys()) | set(rule13_map.keys()) | set(rule14_map.keys()) | set(rule15_map.keys()) | set(rule16_map.keys()) | set(rule17_map.keys()) | set(rule18_map.keys()))
 
         totals = [
             SymbolTotalScore(
@@ -2088,7 +2242,8 @@ class ScoringSystem:
                 rule15_score=rule15_map.get(s, 0),
                 rule16_score=rule16_map.get(s, 0),
                 rule17_score=rule17_map.get(s, 0),
-                total_score=rule1_map.get(s, 0) + rule2_map.get(s, 0) + rule3_map.get(s, 0) + rule4_map.get(s, 0) + rule5_map.get(s, 0) + rule6_map.get(s, 0) + rule7_map.get(s, 0) + rule8_map.get(s, 0) + rule9_map.get(s, 0) + rule10_map.get(s, 0) + rule11_map.get(s, 0) + rule12_map.get(s, 0) + rule13_map.get(s, 0) + rule14_map.get(s, 0) + rule15_map.get(s, 0) + rule16_map.get(s, 0) + rule17_map.get(s, 0),
+                rule18_score=rule18_map.get(s, 0),
+                total_score=rule1_map.get(s, 0) + rule2_map.get(s, 0) + rule3_map.get(s, 0) + rule4_map.get(s, 0) + rule5_map.get(s, 0) + rule6_map.get(s, 0) + rule7_map.get(s, 0) + rule8_map.get(s, 0) + rule9_map.get(s, 0) + rule10_map.get(s, 0) + rule11_map.get(s, 0) + rule12_map.get(s, 0) + rule13_map.get(s, 0) + rule14_map.get(s, 0) + rule15_map.get(s, 0) + rule16_map.get(s, 0) + rule17_map.get(s, 0) + rule18_map.get(s, 0),
             )
             for s in symbols
         ]
