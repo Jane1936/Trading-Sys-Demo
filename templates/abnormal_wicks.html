@@ -240,33 +240,33 @@
       <div class="toolbar" style="padding-top:0;">
         <div class="score-tab-group trend">
           <span class="score-tab-group-label">趋势评分</span>
-          <button class="tab-btn score-rule-tab active" data-score-tab="score-rule-1" style="width:auto;">规则1：15m MA20三连降（4分）</button>
-        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-2" style="width:auto;">规则2：1m收盘&gt;15m MA20（6分）</button>
-        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-3" style="width:auto;">规则3：最近1h收盘&gt;前1h收盘（6分）</button>
-        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-4" style="width:auto;">规则4：最近4条15m中≥3条收涨（6分）</button>
-        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-5" style="width:auto;">规则5：最近4条15m收盘至少3条递增（4分）</button>
-        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-6" style="width:auto;">规则6：1m收盘&gt;5m MA20（6分）</button>
-        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-7" style="width:auto;">规则7：最近4条15m有≥2条收盘位置≥0.55（3分）</button>
-        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-8" style="width:auto;">规则8：最近1条1h最高价&gt;前24条最高价（5分）</button>
+          <button class="tab-btn score-rule-tab active" data-score-tab="score-rule-1" style="width:auto;">规则1：15m MA20三连降（{{ rule_score_weights[1] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-2" style="width:auto;">规则2：1m收盘&gt;15m MA20（{{ rule_score_weights[2] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-3" style="width:auto;">规则3：最近1h收盘&gt;前1h收盘（{{ rule_score_weights[3] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-4" style="width:auto;">规则4：最近4条15m中≥3条收涨（{{ rule_score_weights[4] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-5" style="width:auto;">规则5：最近4条15m收盘至少3条递增（{{ rule_score_weights[5] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-6" style="width:auto;">规则6：1m收盘&gt;5m MA20（{{ rule_score_weights[6] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-7" style="width:auto;">规则7：最近4条15m有≥2条收盘位置≥0.55（{{ rule_score_weights[7] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-8" style="width:auto;">规则8：最近1条1h最高价&gt;前24条最高价（{{ rule_score_weights[8] }}分）</button>
         </div>
         <div class="score-tab-group oi">
           <span class="score-tab-group-label">OI/资金费率评分</span>
-          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-9" style="width:auto;">规则9：3根15m close递减 + OI(1m)&gt;45m前（10分）</button>
-          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-10" style="width:auto;">规则10：1m close&gt;60m前open 且 OI(1m)&gt;60m前（10分）</button>
-          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-11" style="width:auto;">规则11：OI(1m)≥240m前 或 OI流失率≤3%（5分）</button>
-          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-12" style="width:auto;">规则12：最近4条15m资金费率均在(0.01, 0.1)（5分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-9" style="width:auto;">规则9：3根15m close递减 + OI(1m)&gt;45m前（{{ rule_score_weights[9] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-10" style="width:auto;">规则10：1m close&gt;60m前open 且 OI(1m)&gt;60m前（{{ rule_score_weights[10] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-11" style="width:auto;">规则11：OI(1m)≥240m前 或 OI流失率≤3%（{{ rule_score_weights[11] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-12" style="width:auto;">规则12：最近4条15m资金费率均在(0.01, 0.1)（{{ rule_score_weights[12] }}分）</button>
         </div>
         <div class="score-tab-group volume">
           <span class="score-tab-group-label">成交量评分</span>
-          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-13" style="width:auto;">规则13：15m阳线放量突破（10分）</button>
-          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-14" style="width:auto;">规则14：最近3条15m有≥2条量能达标（6分）</button>
-          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-15" style="width:auto;">规则15：1h最新量&gt;前12条均量1.5倍（2分）</button>
-          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-16" style="width:auto;">规则16：15m缩量回落/实体缩小（2分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-13" style="width:auto;">规则13：15m阳线放量突破（{{ rule_score_weights[13] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-14" style="width:auto;">规则14：最近3条15m有≥2条量能达标（{{ rule_score_weights[14] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-15" style="width:auto;">规则15：1h最新量&gt;前12条均量1.5倍（{{ rule_score_weights[15] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-16" style="width:auto;">规则16：15m缩量回落/实体缩小（{{ rule_score_weights[16] }}分）</button>
         </div>
         <div class="score-tab-group rhythm">
           <span class="score-tab-group-label">开仓位置与节奏评分</span>
-          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-17" style="width:auto;">规则17：15m低点反弹≥6%（5分）</button>
-          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-18" style="width:auto;">规则18：结构止损位距离+15m节奏（5分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-17" style="width:auto;">规则17：15m低点反弹≥6%（{{ rule_score_weights[17] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-18" style="width:auto;">规则18：结构止损位距离+15m节奏（{{ rule_score_weights[18] }}分）</button>
         </div>
         <button class="tab-btn score-rule-tab score-total-tab" data-score-tab="score-total" style="width:auto;">总分</button>
       </div>
@@ -474,7 +474,7 @@
 
       <div id="score-rule-13" class="score-rule-panel">
         {% if score_rule13_round_ts %}
-        <div class="tip">规则13轮次：{{ score_rule13_round_ts|fmt_ms_datetime }}。要求最近第1条15m K线 close&gt;open 且 close&gt;最近第2条close；满足后，若最近第1条volume &gt; 1.8 × 最近第17条到第2条volume平均值则得10分。</div>
+        <div class="tip">规则13轮次：{{ score_rule13_round_ts|fmt_ms_datetime }}。要求最近第1条15m K线 close&gt;open 且 close&gt;最近第2条close；满足后，若最近第1条volume &gt; 1.8 × 最近第17条到第2条volume平均值则得{{ rule_score_weights[13] }}分。</div>
         {% endif %}
         <div class="table-wrap"><table>
           <thead><tr><th>symbol</th><th>score</th><th>latest_open</th><th>latest_close</th><th>prev_close</th><th>latest_volume</th><th>volume_avg</th><th>1.8×volume_avg</th><th>reason</th><th>updated_at</th></tr></thead>
@@ -486,7 +486,7 @@
 
       <div id="score-rule-14" class="score-rule-panel">
         {% if score_rule14_round_ts %}
-        <div class="tip">规则14轮次：{{ score_rule14_round_ts|fmt_ms_datetime }}。查询最近3条15m K线；对每条K线，使用其前16条15m K线volume均值作为volume_avg，若volume_cur &gt; 1.5 × volume_avg 则量能达标；3条中至少2条达标得6分。</div>
+        <div class="tip">规则14轮次：{{ score_rule14_round_ts|fmt_ms_datetime }}。查询最近3条15m K线；对每条K线，使用其前16条15m K线volume均值作为volume_avg，若volume_cur &gt; 1.5 × volume_avg 则量能达标；3条中至少2条达标得{{ rule_score_weights[14] }}分。</div>
         {% endif %}
         <div class="table-wrap"><table>
           <thead><tr><th>symbol</th><th>score</th><th>qualified_count</th><th>volume_latest</th><th>avg_latest</th><th>1.5×avg_latest</th><th>volume_prev1</th><th>avg_prev1</th><th>1.5×avg_prev1</th><th>volume_prev2</th><th>avg_prev2</th><th>1.5×avg_prev2</th><th>reason</th><th>updated_at</th></tr></thead>

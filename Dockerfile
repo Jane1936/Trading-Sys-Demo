@@ -14,6 +14,7 @@ COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
 COPY *.py ./
+COPY scoring_rule_weights.json ./
 COPY templates ./templates
 COPY docker_entrypoint.sh ./docker_entrypoint.sh
 
