@@ -161,6 +161,7 @@ def abnormal_wicks():
         round_scores_rule18=round_scores_rule18,
         score_total_round_ts=score_total_round_ts,
         round_scores_total=round_scores_total,
+        rule_score_weights=scoring.rule_score_weights,
         score_trend_symbols=score_trend_symbols,
         score_trend_symbol=score_trend_symbol,
         score_trend_rows=score_trend_rows,

@@ -33,6 +33,17 @@ sudo chmod -R u+rwX ./data ./logs
 
 ---
 
+
+## 3) 评分权重配置
+
+本项目的评分规则权重现在由仓库根目录的 `scoring_rule_weights.json` 管理，Docker 镜像构建时会把该文件复制到 `/app/scoring_rule_weights.json`。
+
+如果你只修改评分权重配置，请在服务器上重新构建并重启容器，让新镜像包含最新配置：
+
+```bash
+docker compose up -d --build
+```
+
 ## 方案 A（推荐）：Docker Compose
 
 ### 启动（构建并后台运行）

@@ -2,10 +2,59 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Iterable, List
+
+
+DEFAULT_RULE_SCORE_WEIGHTS: dict[int, int] = {
+    1: 4,
+    2: 6,
+    3: 6,
+    4: 6,
+    5: 4,
+    6: 6,
+    7: 3,
+    8: 10,
+    9: 10,
+    10: 10,
+    11: 5,
+    12: 3,
+    13: 8,
+    14: 5,
+    15: 2,
+    16: 2,
+    17: 5,
+    18: 5,
+}
+
+RULE_SCORE_WEIGHTS_PATH = Path(__file__).with_name("scoring_rule_weights.json")
+
+
+def load_rule_score_weights(config_path: str | Path = RULE_SCORE_WEIGHTS_PATH) -> dict[int, int]:
+    """Load rule score weights from JSON config, falling back to defaults."""
+    weights = DEFAULT_RULE_SCORE_WEIGHTS.copy()
+    path = Path(config_path)
+    if not path.exists():
+        return weights
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    rules = data.get("rules", data)
+    if not isinstance(rules, dict):
+        raise ValueError("Rule score config must be a JSON object or contain a 'rules' object")
+
+    for rule_id_text, raw_weight in rules.items():
+        rule_id = int(rule_id_text)
+        if rule_id not in weights:
+            raise ValueError(f"Unknown scoring rule id in config: {rule_id}")
+        weight = int(raw_weight)
+        if weight < 0:
+            raise ValueError(f"Scoring rule {rule_id} weight must be non-negative")
+        weights[rule_id] = weight
+    return weights
 
 
 @dataclass
@@ -48,8 +97,12 @@ class SymbolTotalScore:
 class ScoringSystem:
     """Score symbols after pre-safety using latest 3 rows of 15m MA20."""
 
-    def __init__(self, db_path: str = "data/klines.db") -> None:
+    def __init__(self, db_path: str = "data/klines.db", rule_weights_path: str | Path = RULE_SCORE_WEIGHTS_PATH) -> None:
         self.db_path = db_path
+        self.rule_score_weights = load_rule_score_weights(rule_weights_path)
+
+    def _score_weight(self, rule_id: int) -> int:
+        return self.rule_score_weights[rule_id]
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -523,7 +576,7 @@ class ScoringSystem:
                 continue
             m1, m2, m3 = ma20s
             hit = m1 > m2 > m3
-            score = 4 if hit else 0
+            score = self._score_weight(1) if hit else 0
             reason = "ma20_15m_desc_3bars" if hit else "ma20_15m_rule_not_met"
             rec = SymbolScore(symbol, decision_round_ts, score, reason, m1, m2, m3, now_ms)
             results.append(rec)
@@ -580,7 +633,7 @@ class ScoringSystem:
             return
         close_1m, ma20_15m = values
         hit = close_1m > ma20_15m
-        score = 6 if hit else 0
+        score = self._score_weight(2) if hit else 0
         reason = "close_1m_gt_15m_ma20" if hit else "close_1m_rule_not_met"
         with self._connect() as conn:
             conn.execute(
@@ -631,7 +684,7 @@ class ScoringSystem:
             return
         close_1m, ma20_5m = values
         hit = close_1m > ma20_5m
-        score = 6 if hit else 0
+        score = self._score_weight(6) if hit else 0
         reason = "close_1m_gt_5m_ma20" if hit else "close_1m_gt_5m_ma20_rule_not_met"
         with self._connect() as conn:
             conn.execute(
@@ -671,7 +724,7 @@ class ScoringSystem:
             return
         latest_close_1h, prev_close_1h = values
         hit = latest_close_1h > prev_close_1h
-        score = 6 if hit else 0
+        score = self._score_weight(3) if hit else 0
         reason = "close_1h_gt_prev_1h" if hit else "close_1h_rule_not_met"
         with self._connect() as conn:
             conn.execute(
@@ -728,7 +781,7 @@ class ScoringSystem:
             return
         bullish_count = sum(1 for open_price, close_price in rows if close_price > open_price)
         hit = bullish_count >= 3
-        score = 6 if hit else 0
+        score = self._score_weight(4) if hit else 0
         reason = "kline_15m_bullish_3of4" if hit else "kline_15m_bullish_rule_not_met"
         with self._connect() as conn:
             conn.execute(
@@ -766,7 +819,7 @@ class ScoringSystem:
 
         # 4选3：至少存在一个三元组满足按时间顺序递增（不要求连续）
         hit = increasing_triplet_exists
-        score = 4 if hit else 0
+        score = self._score_weight(5) if hit else 0
         reason = "close_15m_increasing_3of4" if hit else "close_15m_increasing_rule_not_met"
         with self._connect() as conn:
             conn.execute(
@@ -810,7 +863,7 @@ class ScoringSystem:
             if (close - low) / (high - low) >= 0.55:
                 qualified_count += 1
         hit = qualified_count >= 2
-        score = 3 if hit else 0
+        score = self._score_weight(7) if hit else 0
         reason = "close_pos_15m_ge_0.55_2of4" if hit else "close_pos_15m_rule_not_met"
         with self._connect() as conn:
             conn.execute(
@@ -850,7 +903,7 @@ class ScoringSystem:
         latest_high = highs[0]
         prev_23_max_high = max(highs[1:])
         hit = latest_high > prev_23_max_high
-        score = 5 if hit else 0
+        score = self._score_weight(8) if hit else 0
         reason = "latest_1h_high_gt_prev_23_high" if hit else "latest_1h_high_rule_not_met"
         with self._connect() as conn:
             conn.execute(
@@ -936,7 +989,7 @@ class ScoringSystem:
             return
         close_latest, close_prev1, close_prev2, latest_oi, oi_45m_ago = values
         hit = (close_latest > close_prev1 > close_prev2) and (latest_oi > oi_45m_ago)
-        score = 10 if hit else 0
+        score = self._score_weight(9) if hit else 0
         reason = "close_15m_desc_3_and_oi_1m_gt_45m" if hit else "rule9_not_met"
         with self._connect() as conn:
             conn.execute(
@@ -1003,7 +1056,7 @@ class ScoringSystem:
         latest_oi = float(oi_rows[0]["open_interest"])
         oi_60m_ago = float(oi_rows[59]["open_interest"])
         hit = (latest_close > open_60m_ago) and (latest_oi > oi_60m_ago)
-        score = 10 if hit else 0
+        score = self._score_weight(10) if hit else 0
         reason = "close_1m_gt_60m_open_and_oi_gt_60m" if hit else "rule10_not_met"
         with self._connect() as conn:
             conn.execute("""
@@ -1034,7 +1087,7 @@ class ScoringSystem:
         else:
             loss_rate = (oi_240m_ago - latest_oi) / oi_240m_ago
             hit = loss_rate <= 0.03
-        score = 5 if hit else 0
+        score = self._score_weight(11) if hit else 0
         reason = "oi_1m_gte_240m_or_loss_le_3pct" if hit else "rule11_not_met"
         with self._connect() as conn:
             conn.execute("""
@@ -1071,7 +1124,7 @@ class ScoringSystem:
         if funding_rates is None:
             return
         hit = all(rate is not None and 0.0001 < rate < 0.001 for rate in funding_rates)
-        score = 5 if hit else 0
+        score = self._score_weight(12) if hit else 0
         reason = "funding_rate_15m_4bars_between_0.01_and_0.1" if hit else "rule12_not_met"
         with self._connect() as conn:
             conn.execute(
@@ -1120,7 +1173,7 @@ class ScoringSystem:
 
         price_hit = latest_close > latest_open and latest_close > prev_close
         volume_hit = price_hit and latest_volume > 1.8 * volume_avg
-        score = 10 if volume_hit else 0
+        score = self._score_weight(13) if volume_hit else 0
         if volume_hit:
             reason = "latest_15m_bullish_close_up_and_volume_gt_1_8_avg"
         elif price_hit:
@@ -1202,7 +1255,7 @@ class ScoringSystem:
         volume_avgs = [sum(volumes[i + 1 : i + 17]) / 16 for i in range(3)]
         qualified_count = sum(1 for i in range(3) if volumes[i] > 1.5 * volume_avgs[i])
         hit = qualified_count >= 2
-        score = 6 if hit else 0
+        score = self._score_weight(14) if hit else 0
         reason = "volume_15m_spike_2of3" if hit else "rule14_not_met"
 
         with self._connect() as conn:
@@ -1292,7 +1345,7 @@ class ScoringSystem:
         latest_volume = volumes[0]
         volume_avg = sum(volumes[1:13]) / 12
         hit = latest_volume > 1.5 * volume_avg
-        score = 2 if hit else 0
+        score = self._score_weight(15) if hit else 0
         reason = "latest_1h_volume_gt_1_5_avg_prev_12" if hit else "rule15_not_met"
 
         with self._connect() as conn:
@@ -1374,7 +1427,7 @@ class ScoringSystem:
         price_or_body_hit = latest_close < prev_close or latest_body < prev_body
         volume_hit = latest_volume < 0.7 * prev_volume
         hit = price_or_body_hit and volume_hit
-        score = 2 if hit else 0
+        score = self._score_weight(16) if hit else 0
         if hit:
             reason = "latest_15m_pullback_or_smaller_body_with_low_volume"
         elif price_or_body_hit:
@@ -1494,7 +1547,7 @@ class ScoringSystem:
             else:
                 hit = False
                 reason = "rule17_latest_lowest_or_no_qualified_lowest"
-        score = 5 if hit else 0
+        score = self._score_weight(17) if hit else 0
 
         with self._connect() as conn:
             conn.execute(
@@ -1859,7 +1912,7 @@ class ScoringSystem:
                     distance_hit = stop_loss_distance_ratio <= 0.035
                     rhythm_hit = latest_15m_close >= prev_15m_close
                     if distance_hit and rhythm_hit:
-                        score = 5
+                        score = self._score_weight(18)
                         reason = "structural_stop_loss_distance_qualified_and_15m_close_not_down"
                     elif distance_hit:
                         reason = "rule18_15m_close_not_met"
