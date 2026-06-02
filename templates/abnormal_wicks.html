@@ -591,10 +591,10 @@
       <div class="header"><h2>评分变化趋势</h2></div>
       <div class="tip">展示所选 symbol 最近3天内已入库的总分变化趋势。默认选中当前总分最高的 symbol；若多个并列第一，则按 symbol 字母升序取第一个。</div>
       <div class="toolbar">
-        <form method="get" action="/safety/abnormal-wicks" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;">
+        <form id="score-trend-form" method="get" action="/safety/abnormal-wicks" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;">
           <input type="hidden" name="active_tab" value="tab-score-trend" />
           <label class="field">Symbol
-            <select name="score_trend_symbol">
+            <select id="score-trend-symbol" name="score_trend_symbol">
               {% for s in score_trend_symbols %}
                 <option value="{{ s }}" {% if score_trend_symbol == s %}selected{% endif %}>{{ s }}</option>
               {% endfor %}
@@ -605,12 +605,16 @@
           </div>
         </form>
       </div>
-      {% if score_trend_symbol %}
-        <div class="tip">当前 symbol：{{ score_trend_symbol }}；数据点数量：{{ score_trend_rows|length }}。</div>
-      {% endif %}
+      <div id="score-trend-status" class="tip">
+        {% if score_trend_symbol %}
+          当前 symbol：<span id="score-trend-current-symbol">{{ score_trend_symbol }}</span>；数据点数量：<span id="score-trend-count">{{ score_trend_rows|length }}</span>。
+        {% else %}
+          当前暂无可查询 symbol。
+        {% endif %}
+      </div>
       <div class="chart-wrap score-trend-chart-wrap">
         <div class="chart-meta">
-          <span>横轴：评分轮次（UTC）；纵轴：总分。</span>
+          <span>横轴：评分轮次（UTC）；纵轴：总分与单型区间。</span>
           <span>时间范围：最近3天。</span>
         </div>
         <div id="score-trend-chart"></div>
@@ -665,33 +669,53 @@
       });
     })();
 
-    (function renderScoreTrendChart() {
-      const rawRows = [
-        {% for r in score_trend_rows %}
-          [{{ r.decision_round_ts }}, {{ r.total_score }}],
-        {% endfor %}
-      ];
-      const chartEl = document.getElementById('score-trend-chart');
-      if (!chartEl || !window.echarts) return;
-      scoreTrendChart = echarts.init(chartEl);
+    const SCORE_BANDS = [
+      { min: 89, max: 100, name: '确定性强趋势单', color: 'rgba(249, 115, 22, 0.14)', borderColor: 'rgba(249, 115, 22, 0.38)' },
+      { min: 81, max: 88, name: '趋势标准单', color: 'rgba(34, 197, 94, 0.13)', borderColor: 'rgba(34, 197, 94, 0.34)' },
+      { min: 73, max: 80, name: '标准试错单', color: 'rgba(99, 102, 241, 0.13)', borderColor: 'rgba(99, 102, 241, 0.34)' },
+      { min: 65, max: 72, name: '低档试错单', color: 'rgba(6, 182, 212, 0.14)', borderColor: 'rgba(6, 182, 212, 0.35)' },
+    ];
 
-      if (!rawRows.length) {
-        scoreTrendChart.setOption({
-          title: { text: '暂无总分趋势数据', left: 'center', top: 'middle', textStyle: { color: '#6b7280', fontSize: 16 } },
-          xAxis: { type: 'category', data: [] },
-          yAxis: { type: 'value' },
-          series: [{ type: 'line', data: [] }]
-        });
-        window.addEventListener('resize', refreshScoreTrendChartLayout);
-        requestAnimationFrame(refreshScoreTrendChartLayout);
-        return;
-      }
-
+    function buildScoreTrendOption(rawRows, symbolName) {
+      const hasRows = rawRows.length > 0;
       const labels = rawRows.map(r => new Date(r[0]).toISOString().slice(5, 16).replace('T', ' '));
       const values = rawRows.map(r => r[1]);
-      scoreTrendChart.setOption({
+      const bandMarkAreas = SCORE_BANDS.map((band) => ([
+        {
+          yAxis: band.min,
+          itemStyle: { color: band.color, borderColor: band.borderColor, borderWidth: 1 },
+          label: {
+            show: true,
+            position: 'insideRight',
+            color: '#374151',
+            fontWeight: 700,
+            fontSize: 12,
+            formatter: `${band.name}\n${band.min}-${band.max === 100 ? '100+' : band.max}分`,
+          },
+        },
+        { yAxis: band.max + 1 },
+      ]));
+
+      if (!hasRows) {
+        return {
+          title: { text: '暂无总分趋势数据', left: 'center', top: 'middle', textStyle: { color: '#6b7280', fontSize: 16 } },
+          grid: { left: 62, right: 142, top: 28, bottom: 58 },
+          xAxis: { type: 'category', data: [] },
+          yAxis: {
+            type: 'value',
+            name: '总分 / 单型区间',
+            min: 60,
+            max: 101,
+            interval: 4,
+            splitLine: { lineStyle: { color: '#e5e7eb', type: 'dashed' } },
+          },
+          series: [{ type: 'line', data: [], markArea: { silent: true, data: bandMarkAreas } }]
+        };
+      }
+
+      return {
         animation: false,
-        grid: { left: 50, right: 24, top: 28, bottom: 58 },
+        grid: { left: 62, right: 142, top: 28, bottom: 58 },
         tooltip: {
           trigger: 'axis',
           formatter: function (params) {
@@ -701,25 +725,104 @@
           }
         },
         xAxis: { type: 'category', data: labels, boundaryGap: false },
-        yAxis: { type: 'value', name: '总分', scale: true },
+        yAxis: {
+          type: 'value',
+          name: '总分 / 单型区间',
+          min: function (value) { return Math.min(60, Math.floor(value.min / 5) * 5); },
+          max: function (value) { return Math.max(101, Math.ceil(value.max / 5) * 5); },
+          interval: 4,
+          axisLabel: { color: '#374151', fontWeight: 600 },
+          axisLine: { show: true, lineStyle: { color: '#94a3b8' } },
+          splitLine: { lineStyle: { color: '#e5e7eb', type: 'dashed' } },
+        },
         dataZoom: [
           { type: 'inside', start: 0, end: 100 },
           { type: 'slider', bottom: 12, height: 18, start: 0, end: 100 }
         ],
         series: [{
-          name: '{{ score_trend_symbol }} 总分',
+          name: `${symbolName || 'Symbol'} 总分`,
           type: 'line',
           data: values,
           smooth: true,
           symbol: 'circle',
           symbolSize: 7,
           lineStyle: { width: 3, color: '#2563eb' },
-          itemStyle: { color: '#2563eb' },
-          areaStyle: { color: 'rgba(37, 99, 235, 0.12)' }
+          itemStyle: { color: '#2563eb', borderColor: '#ffffff', borderWidth: 2 },
+          areaStyle: { color: 'rgba(37, 99, 235, 0.12)' },
+          markArea: { silent: true, data: bandMarkAreas },
+          markLine: {
+            silent: true,
+            symbol: 'none',
+            lineStyle: { color: '#94a3b8', type: 'dashed', width: 1 },
+            label: { show: false },
+            data: [{ yAxis: 65 }, { yAxis: 73 }, { yAxis: 81 }, { yAxis: 89 }]
+          }
         }]
-      });
-      window.addEventListener('resize', refreshScoreTrendChartLayout);
+      };
+    }
+
+    function setScoreTrendStatus(symbolName, count, isLoading) {
+      const statusEl = document.getElementById('score-trend-status');
+      if (!statusEl) return;
+      if (isLoading) {
+        statusEl.textContent = `正在加载 ${symbolName || ''} 的趋势数据...`;
+        return;
+      }
+      statusEl.innerHTML = symbolName
+        ? `当前 symbol：<span id="score-trend-current-symbol"></span>；数据点数量：<span id="score-trend-count"></span>。`
+        : '当前暂无可查询 symbol。';
+      const symbolEl = document.getElementById('score-trend-current-symbol');
+      const countEl = document.getElementById('score-trend-count');
+      if (symbolEl) symbolEl.textContent = symbolName;
+      if (countEl) countEl.textContent = count;
+    }
+
+    function updateScoreTrendChart(rawRows, symbolName) {
+      const chartEl = document.getElementById('score-trend-chart');
+      if (!chartEl || !window.echarts) return;
+      if (!scoreTrendChart) {
+        scoreTrendChart = echarts.init(chartEl);
+        window.addEventListener('resize', refreshScoreTrendChartLayout);
+      }
+      scoreTrendChart.setOption(buildScoreTrendOption(rawRows, symbolName), true);
       requestAnimationFrame(refreshScoreTrendChartLayout);
+    }
+
+    (function initScoreTrendChart() {
+      const rawRows = [
+        {% for r in score_trend_rows %}
+          [{{ r.decision_round_ts }}, {{ r.total_score }}],
+        {% endfor %}
+      ];
+      updateScoreTrendChart(rawRows, {{ score_trend_symbol|tojson }});
+    })();
+
+    (function initScoreTrendAjax() {
+      const form = document.getElementById('score-trend-form');
+      const select = document.getElementById('score-trend-symbol');
+      if (!form || !select) return;
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const symbolName = select.value;
+        setScoreTrendStatus(symbolName, 0, true);
+        try {
+          const response = await fetch(`/api/safety/score-trend?symbol=${encodeURIComponent(symbolName)}&days=3`, {
+            headers: { 'Accept': 'application/json' },
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const payload = await response.json();
+          const rows = (payload.rows || []).map(row => [row.decision_round_ts, row.total_score]);
+          updateScoreTrendChart(rows, payload.symbol || symbolName);
+          setScoreTrendStatus(payload.symbol || symbolName, payload.count || rows.length, false);
+          const url = new URL(window.location.href);
+          url.searchParams.set('active_tab', 'tab-score-trend');
+          if (symbolName) url.searchParams.set('score_trend_symbol', symbolName);
+          window.history.replaceState({}, '', url.toString());
+        } catch (error) {
+          setScoreTrendStatus(symbolName, 0, false);
+          alert(`趋势数据加载失败：${error.message}`);
+        }
+      });
     })();
 
     (function renderBtcKlineChart() {
