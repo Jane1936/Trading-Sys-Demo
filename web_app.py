@@ -62,6 +62,16 @@ def abnormal_wicks():
     score_rule17_round_ts, round_scores_rule17 = scoring.get_latest_round_scores_15m_low_rebound_3bars()
     score_rule18_round_ts, round_scores_rule18 = scoring.get_latest_round_scores_structural_stop_loss_distance()
     score_total_round_ts, round_scores_total = scoring.get_latest_round_total_scores()
+    score_trend_symbols = scoring.get_total_score_symbols()
+    requested_score_trend_symbol = request.args.get("score_trend_symbol", default="", type=str).strip()
+    default_score_trend_symbol = round_scores_total[0].symbol if round_scores_total else ""
+    score_trend_symbol = requested_score_trend_symbol or default_score_trend_symbol
+    if score_trend_symbol and score_trend_symbol not in score_trend_symbols:
+        score_trend_symbols = sorted(set(score_trend_symbols) | {score_trend_symbol})
+    score_trend_rows = scoring.get_total_score_trend(score_trend_symbol, days=3) if score_trend_symbol else []
+    active_tab = request.args.get("active_tab", default="", type=str).strip()
+    if requested_score_trend_symbol:
+        active_tab = "tab-score-trend"
 
     btc_5m_rows = []
     btc_chart_rows = []
@@ -152,6 +162,10 @@ def abnormal_wicks():
         score_total_round_ts=score_total_round_ts,
         round_scores_total=round_scores_total,
         rule_score_weights=scoring.rule_score_weights,
+        score_trend_symbols=score_trend_symbols,
+        score_trend_symbol=score_trend_symbol,
+        score_trend_rows=score_trend_rows,
+        active_tab=active_tab,
         selected_symbol=symbol,
         btc_5m_rows=btc_5m_rows,
         btc_chart_rows=btc_chart_rows,

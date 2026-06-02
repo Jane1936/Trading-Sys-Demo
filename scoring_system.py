@@ -449,6 +449,41 @@ class ScoringSystem:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS symbol_total_scores (
+                    symbol TEXT NOT NULL,
+                    decision_round_ts INTEGER NOT NULL,
+                    rule1_score INTEGER NOT NULL,
+                    rule2_score INTEGER NOT NULL,
+                    rule3_score INTEGER NOT NULL,
+                    rule4_score INTEGER NOT NULL,
+                    rule5_score INTEGER NOT NULL,
+                    rule6_score INTEGER NOT NULL,
+                    rule7_score INTEGER NOT NULL,
+                    rule8_score INTEGER NOT NULL,
+                    rule9_score INTEGER NOT NULL,
+                    rule10_score INTEGER NOT NULL,
+                    rule11_score INTEGER NOT NULL,
+                    rule12_score INTEGER NOT NULL,
+                    rule13_score INTEGER NOT NULL,
+                    rule14_score INTEGER NOT NULL,
+                    rule15_score INTEGER NOT NULL,
+                    rule16_score INTEGER NOT NULL,
+                    rule17_score INTEGER NOT NULL,
+                    rule18_score INTEGER NOT NULL,
+                    total_score INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY(symbol, decision_round_ts)
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_symbol_total_scores_round ON symbol_total_scores(decision_round_ts DESC, total_score DESC, symbol ASC)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_symbol_total_scores_symbol_round ON symbol_total_scores(symbol, decision_round_ts DESC)"
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS symbol_structural_stop_losses (
                     symbol TEXT NOT NULL,
                     decision_round_ts INTEGER NOT NULL,
@@ -546,6 +581,7 @@ class ScoringSystem:
             rec = SymbolScore(symbol, decision_round_ts, score, reason, m1, m2, m3, now_ms)
             results.append(rec)
             self._save_score(rec)
+        self.persist_total_scores_for_round(decision_round_ts=decision_round_ts, updated_at=now_ms)
         return results
 
     def is_15m_ma20_ready_for_round(self, decision_round_ts: int, symbols: Iterable[str]) -> bool:
@@ -2213,28 +2249,32 @@ class ScoringSystem:
             for r in rows
         ]
 
-    def get_latest_round_total_scores(self) -> tuple[int | None, list[SymbolTotalScore]]:
-        rule1_ts, _ = self.get_latest_round_scores()
-        rule2_ts, _ = self.get_latest_round_scores_close_gt_ma20()
-        rule3_ts, _ = self.get_latest_round_scores_1h_close_gt_prev()
-        rule4_ts, _ = self.get_latest_round_scores_15m_bullish_3of4()
-        rule5_ts, _ = self.get_latest_round_scores_15m_close_increasing_3of4()
-        rule6_ts, _ = self.get_latest_round_scores_1m_close_gt_5m_ma20()
-        rule7_ts, _ = self.get_latest_round_scores_15m_close_near_high_2of4()
-        rule8_ts, _ = self.get_latest_round_scores_1h_latest_highest_24()
-        rule9_ts, _ = self.get_latest_round_scores_15m_close_desc_3_with_oi_45m()
-        rule10_ts, _ = self.get_latest_round_scores_1m_close_gt_60m_open_with_oi_60m()
-        rule11_ts, _ = self.get_latest_round_scores_oi_loss_rate_240m()
-        rule12_ts, _ = self.get_latest_round_scores_15m_funding_rate_4bars()
-        rule13_ts, _ = self.get_latest_round_scores_15m_bullish_volume_breakout()
-        rule14_ts, _ = self.get_latest_round_scores_15m_volume_spike_2of3()
-        rule15_ts, _ = self.get_latest_round_scores_1h_volume_spike_latest()
-        rule16_ts, _ = self.get_latest_round_scores_15m_pullback_low_volume()
-        rule17_ts, _ = self.get_latest_round_scores_15m_low_rebound_3bars()
-        rule18_ts, _ = self.get_latest_round_scores_structural_stop_loss_distance()
-        if rule1_ts is None or rule2_ts is None or rule3_ts is None or rule4_ts is None or rule5_ts is None or rule6_ts is None or rule7_ts is None or rule8_ts is None or rule9_ts is None or rule10_ts is None or rule11_ts is None or rule12_ts is None or rule13_ts is None or rule14_ts is None or rule15_ts is None or rule16_ts is None or rule17_ts is None or rule18_ts is None:
-            return None, []
-        round_ts = min(rule1_ts, rule2_ts, rule3_ts, rule4_ts, rule5_ts, rule6_ts, rule7_ts, rule8_ts, rule9_ts, rule10_ts, rule11_ts, rule12_ts, rule13_ts, rule14_ts, rule15_ts, rule16_ts, rule17_ts, rule18_ts)
+    def _row_to_total_score(self, row: sqlite3.Row) -> SymbolTotalScore:
+        return SymbolTotalScore(
+            symbol=str(row["symbol"]),
+            decision_round_ts=int(row["decision_round_ts"]),
+            rule1_score=int(row["rule1_score"]),
+            rule2_score=int(row["rule2_score"]),
+            rule3_score=int(row["rule3_score"]),
+            rule4_score=int(row["rule4_score"]),
+            rule5_score=int(row["rule5_score"]),
+            rule6_score=int(row["rule6_score"]),
+            rule7_score=int(row["rule7_score"]),
+            rule8_score=int(row["rule8_score"]),
+            rule9_score=int(row["rule9_score"]),
+            rule10_score=int(row["rule10_score"]),
+            rule11_score=int(row["rule11_score"]),
+            rule12_score=int(row["rule12_score"]),
+            rule13_score=int(row["rule13_score"]),
+            rule14_score=int(row["rule14_score"]),
+            rule15_score=int(row["rule15_score"]),
+            rule16_score=int(row["rule16_score"]),
+            rule17_score=int(row["rule17_score"]),
+            rule18_score=int(row["rule18_score"]),
+            total_score=int(row["total_score"]),
+        )
+
+    def _build_total_scores_for_round(self, round_ts: int) -> list[SymbolTotalScore]:
         rule1_rows = self._get_round_scores(round_ts)
         rule2_rows = self._get_round_scores_close_gt_ma20(round_ts)
         rule3_rows = self._get_round_scores_1h_close_gt_prev(round_ts)
@@ -2272,33 +2312,151 @@ class ScoringSystem:
         rule16_map = {str(r["symbol"]): int(r["score"]) for r in rule16_rows}
         rule17_map = {str(r["symbol"]): int(r["score"]) for r in rule17_rows}
         rule18_map = {str(r["symbol"]): int(r["score"]) for r in rule18_rows}
-        symbols = sorted(set(rule1_map.keys()) | set(rule2_map.keys()) | set(rule3_map.keys()) | set(rule4_map.keys()) | set(rule5_map.keys()) | set(rule6_map.keys()) | set(rule7_map.keys()) | set(rule8_map.keys()) | set(rule9_map.keys()) | set(rule10_map.keys()) | set(rule11_map.keys()) | set(rule12_map.keys()) | set(rule13_map.keys()) | set(rule14_map.keys()) | set(rule15_map.keys()) | set(rule16_map.keys()) | set(rule17_map.keys()) | set(rule18_map.keys()))
+        symbols = sorted(
+            set(rule1_map.keys())
+            | set(rule2_map.keys())
+            | set(rule3_map.keys())
+            | set(rule4_map.keys())
+            | set(rule5_map.keys())
+            | set(rule6_map.keys())
+            | set(rule7_map.keys())
+            | set(rule8_map.keys())
+            | set(rule9_map.keys())
+            | set(rule10_map.keys())
+            | set(rule11_map.keys())
+            | set(rule12_map.keys())
+            | set(rule13_map.keys())
+            | set(rule14_map.keys())
+            | set(rule15_map.keys())
+            | set(rule16_map.keys())
+            | set(rule17_map.keys())
+            | set(rule18_map.keys())
+        )
 
-        totals = [
-            SymbolTotalScore(
-                symbol=s,
-                decision_round_ts=round_ts,
-                rule1_score=rule1_map.get(s, 0),
-                rule2_score=rule2_map.get(s, 0),
-                rule3_score=rule3_map.get(s, 0),
-                rule4_score=rule4_map.get(s, 0),
-                rule5_score=rule5_map.get(s, 0),
-                rule6_score=rule6_map.get(s, 0),
-                rule7_score=rule7_map.get(s, 0),
-                rule8_score=rule8_map.get(s, 0),
-                rule9_score=rule9_map.get(s, 0),
-                rule10_score=rule10_map.get(s, 0),
-                rule11_score=rule11_map.get(s, 0),
-                rule12_score=rule12_map.get(s, 0),
-                rule13_score=rule13_map.get(s, 0),
-                rule14_score=rule14_map.get(s, 0),
-                rule15_score=rule15_map.get(s, 0),
-                rule16_score=rule16_map.get(s, 0),
-                rule17_score=rule17_map.get(s, 0),
-                rule18_score=rule18_map.get(s, 0),
-                total_score=rule1_map.get(s, 0) + rule2_map.get(s, 0) + rule3_map.get(s, 0) + rule4_map.get(s, 0) + rule5_map.get(s, 0) + rule6_map.get(s, 0) + rule7_map.get(s, 0) + rule8_map.get(s, 0) + rule9_map.get(s, 0) + rule10_map.get(s, 0) + rule11_map.get(s, 0) + rule12_map.get(s, 0) + rule13_map.get(s, 0) + rule14_map.get(s, 0) + rule15_map.get(s, 0) + rule16_map.get(s, 0) + rule17_map.get(s, 0) + rule18_map.get(s, 0),
-            )
-            for s in symbols
-        ]
+        totals: list[SymbolTotalScore] = []
+        for s in symbols:
+            rule_scores = [
+                rule1_map.get(s, 0), rule2_map.get(s, 0), rule3_map.get(s, 0),
+                rule4_map.get(s, 0), rule5_map.get(s, 0), rule6_map.get(s, 0),
+                rule7_map.get(s, 0), rule8_map.get(s, 0), rule9_map.get(s, 0),
+                rule10_map.get(s, 0), rule11_map.get(s, 0), rule12_map.get(s, 0),
+                rule13_map.get(s, 0), rule14_map.get(s, 0), rule15_map.get(s, 0),
+                rule16_map.get(s, 0), rule17_map.get(s, 0), rule18_map.get(s, 0),
+            ]
+            totals.append(SymbolTotalScore(s, round_ts, *rule_scores, total_score=sum(rule_scores)))
         totals.sort(key=lambda x: (-x.total_score, x.symbol))
+        return totals
+
+    def _save_total_scores(self, totals: list[SymbolTotalScore], updated_at: int) -> None:
+        if not totals:
+            return
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO symbol_total_scores
+                (symbol, decision_round_ts, rule1_score, rule2_score, rule3_score, rule4_score, rule5_score, rule6_score, rule7_score, rule8_score, rule9_score, rule10_score, rule11_score, rule12_score, rule13_score, rule14_score, rule15_score, rule16_score, rule17_score, rule18_score, total_score, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
+                    rule1_score=excluded.rule1_score,
+                    rule2_score=excluded.rule2_score,
+                    rule3_score=excluded.rule3_score,
+                    rule4_score=excluded.rule4_score,
+                    rule5_score=excluded.rule5_score,
+                    rule6_score=excluded.rule6_score,
+                    rule7_score=excluded.rule7_score,
+                    rule8_score=excluded.rule8_score,
+                    rule9_score=excluded.rule9_score,
+                    rule10_score=excluded.rule10_score,
+                    rule11_score=excluded.rule11_score,
+                    rule12_score=excluded.rule12_score,
+                    rule13_score=excluded.rule13_score,
+                    rule14_score=excluded.rule14_score,
+                    rule15_score=excluded.rule15_score,
+                    rule16_score=excluded.rule16_score,
+                    rule17_score=excluded.rule17_score,
+                    rule18_score=excluded.rule18_score,
+                    total_score=excluded.total_score,
+                    updated_at=excluded.updated_at
+                """,
+                [
+                    (
+                        t.symbol, t.decision_round_ts, t.rule1_score, t.rule2_score, t.rule3_score,
+                        t.rule4_score, t.rule5_score, t.rule6_score, t.rule7_score, t.rule8_score,
+                        t.rule9_score, t.rule10_score, t.rule11_score, t.rule12_score, t.rule13_score,
+                        t.rule14_score, t.rule15_score, t.rule16_score, t.rule17_score, t.rule18_score,
+                        t.total_score, updated_at,
+                    )
+                    for t in totals
+                ],
+            )
+
+    def persist_total_scores_for_round(self, decision_round_ts: int, updated_at: int | None = None) -> list[SymbolTotalScore]:
+        totals = self._build_total_scores_for_round(decision_round_ts)
+        self._save_total_scores(totals, updated_at or int(time.time() * 1000))
+        return totals
+
+    def get_latest_round_total_scores(self) -> tuple[int | None, list[SymbolTotalScore]]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_total_scores").fetchone()
+            if row["ts"] is not None:
+                round_ts = int(row["ts"])
+                rows = conn.execute(
+                    """
+                    SELECT symbol, decision_round_ts, rule1_score, rule2_score, rule3_score, rule4_score, rule5_score, rule6_score, rule7_score, rule8_score, rule9_score, rule10_score, rule11_score, rule12_score, rule13_score, rule14_score, rule15_score, rule16_score, rule17_score, rule18_score, total_score
+                    FROM symbol_total_scores
+                    WHERE decision_round_ts = ?
+                    ORDER BY total_score DESC, symbol ASC
+                    """,
+                    (round_ts,),
+                ).fetchall()
+                return round_ts, [self._row_to_total_score(r) for r in rows]
+
+        rule_timestamps = [
+            self.get_latest_round_scores()[0],
+            self.get_latest_round_scores_close_gt_ma20()[0],
+            self.get_latest_round_scores_1h_close_gt_prev()[0],
+            self.get_latest_round_scores_15m_bullish_3of4()[0],
+            self.get_latest_round_scores_15m_close_increasing_3of4()[0],
+            self.get_latest_round_scores_1m_close_gt_5m_ma20()[0],
+            self.get_latest_round_scores_15m_close_near_high_2of4()[0],
+            self.get_latest_round_scores_1h_latest_highest_24()[0],
+            self.get_latest_round_scores_15m_close_desc_3_with_oi_45m()[0],
+            self.get_latest_round_scores_1m_close_gt_60m_open_with_oi_60m()[0],
+            self.get_latest_round_scores_oi_loss_rate_240m()[0],
+            self.get_latest_round_scores_15m_funding_rate_4bars()[0],
+            self.get_latest_round_scores_15m_bullish_volume_breakout()[0],
+            self.get_latest_round_scores_15m_volume_spike_2of3()[0],
+            self.get_latest_round_scores_1h_volume_spike_latest()[0],
+            self.get_latest_round_scores_15m_pullback_low_volume()[0],
+            self.get_latest_round_scores_15m_low_rebound_3bars()[0],
+            self.get_latest_round_scores_structural_stop_loss_distance()[0],
+        ]
+        if any(ts is None for ts in rule_timestamps):
+            return None, []
+        round_ts = min(int(ts) for ts in rule_timestamps if ts is not None)
+        totals = self.persist_total_scores_for_round(decision_round_ts=round_ts)
         return round_ts, totals
+
+    def get_total_score_symbols(self) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT symbol
+                FROM symbol_total_scores
+                ORDER BY symbol ASC
+                """
+            ).fetchall()
+        return [str(r["symbol"]) for r in rows]
+
+    def get_total_score_trend(self, symbol: str, days: int = 3) -> list[sqlite3.Row]:
+        cutoff_ts = int(time.time() * 1000) - days * 24 * 60 * 60 * 1000
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT decision_round_ts, total_score
+                FROM symbol_total_scores
+                WHERE symbol = ? AND decision_round_ts >= ?
+                ORDER BY decision_round_ts ASC
+                """,
+                (symbol, cutoff_ts),
+            ).fetchall()
