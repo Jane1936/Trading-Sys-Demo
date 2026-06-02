@@ -10,7 +10,7 @@ import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-from flask import Flask, render_template, request
+from flask import Flask, jsonify, render_template, request
 
 import collector
 from pre_safety_module import PreSafetyModule
@@ -24,6 +24,31 @@ DB_PATH = os.getenv("DB_PATH", collector.DB_PATH)
 @app.get("/")
 def index():
     return "<a href='/safety/abnormal-wicks'>abnormal wick events</a>"
+
+
+@app.get("/api/safety/score-trend")
+def score_trend_api():
+    symbol = request.args.get("symbol", default="", type=str).strip()
+    days = request.args.get("days", default=3, type=int)
+    days = max(1, min(days, 30))
+
+    scoring = ScoringSystem(db_path=DB_PATH)
+    scoring.init_table()
+    rows = scoring.get_total_score_trend(symbol, days=days) if symbol else []
+    return jsonify(
+        {
+            "symbol": symbol,
+            "days": days,
+            "count": len(rows),
+            "rows": [
+                {
+                    "decision_round_ts": int(row["decision_round_ts"]),
+                    "total_score": int(row["total_score"]),
+                }
+                for row in rows
+            ],
+        }
+    )
 
 
 @app.get("/safety/abnormal-wicks")
