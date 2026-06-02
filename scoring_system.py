@@ -373,6 +373,49 @@ class ScoringSystem:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_symbol_scores_15m_low_rebound_3bars_round ON symbol_scores_15m_low_rebound_3bars(decision_round_ts DESC)"
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS symbol_structural_stop_losses (
+                    symbol TEXT NOT NULL,
+                    decision_round_ts INTEGER NOT NULL,
+                    structural_stop_loss REAL NOT NULL,
+                    reason TEXT NOT NULL,
+                    matched_open_time INTEGER,
+                    matched_low REAL NOT NULL,
+                    matched_volume REAL NOT NULL,
+                    volume_avg REAL NOT NULL,
+                    rule_name TEXT NOT NULL DEFAULT 'none',
+                    window_start_open_time INTEGER,
+                    window_end_open_time INTEGER,
+                    window_size INTEGER NOT NULL DEFAULT 0,
+                    highest_high REAL NOT NULL DEFAULT 0,
+                    lowest_low REAL NOT NULL DEFAULT 0,
+                    close_below_mid_count INTEGER NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY(symbol, decision_round_ts)
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_symbol_structural_stop_losses_round ON symbol_structural_stop_losses(decision_round_ts DESC)"
+            )
+            structural_stop_loss_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(symbol_structural_stop_losses)").fetchall()
+            }
+            structural_stop_loss_column_defs = {
+                "rule_name": "TEXT NOT NULL DEFAULT 'none'",
+                "window_start_open_time": "INTEGER",
+                "window_end_open_time": "INTEGER",
+                "window_size": "INTEGER NOT NULL DEFAULT 0",
+                "highest_high": "REAL NOT NULL DEFAULT 0",
+                "lowest_low": "REAL NOT NULL DEFAULT 0",
+                "close_below_mid_count": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for column_name, column_def in structural_stop_loss_column_defs.items():
+                if column_name not in structural_stop_loss_columns:
+                    conn.execute(
+                        f"ALTER TABLE symbol_structural_stop_losses ADD COLUMN {column_name} {column_def}"
+                    )
 
     def _latest_three_ma20_15m(self, symbol: str) -> tuple[float, float, float] | None:
         with self._connect() as conn:
@@ -417,6 +460,7 @@ class ScoringSystem:
             self._save_1h_volume_spike_latest_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
             self._save_15m_pullback_low_volume_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
             self._save_15m_low_rebound_3bars_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_structural_stop_loss(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
             ma20s = self._latest_three_ma20_15m(symbol)
             if ma20s is None:
                 continue
@@ -1460,6 +1504,239 @@ class ScoringSystem:
                 """,
                 (round_ts,),
             ).fetchall()
+
+    def _latest_24_15m_ohlcv(self, symbol: str) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT open_time, open, high, low, close, volume
+                FROM klines_15m
+                WHERE symbol = ?
+                ORDER BY open_time DESC
+                LIMIT 24
+                """,
+                (symbol,),
+            ).fetchall()
+
+    def _save_structural_stop_loss(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
+        rows = self._latest_24_15m_ohlcv(symbol)
+        structural_stop_loss = 0.0
+        reason = "structural_stop_loss_not_found"
+        matched_open_time = None
+        matched_low = 0.0
+        matched_volume = 0.0
+        volume_avg = 0.0
+        rule_name = "none"
+        window_start_open_time = None
+        window_end_open_time = None
+        window_size = 0
+        highest_high = 0.0
+        lowest_low = 0.0
+        close_below_mid_count = 0
+
+        # Rule 1: traverse the latest 8 closed 15m bars from newest to oldest.
+        # For each bar, compare its volume with the average volume of the 16 bars
+        # immediately before it.
+        for row_index, row in enumerate(rows[:8]):
+            prev_rows = rows[row_index + 1 : row_index + 17]
+            if len(prev_rows) < 16:
+                continue
+
+            current_open = float(row["open"])
+            current_high = float(row["high"])
+            current_low = float(row["low"])
+            current_close = float(row["close"])
+            current_volume = float(row["volume"])
+            if current_open <= 0:
+                continue
+
+            body_ratio = (current_close - current_open) / current_open
+            close_position_hit = current_close >= (current_high + current_low) / 2
+            if body_ratio < 0.025 or not close_position_hit:
+                continue
+
+            current_volume_avg = sum(float(prev_row["volume"]) for prev_row in prev_rows) / 16
+            if current_volume >= 1.5 * current_volume_avg:
+                structural_stop_loss = current_low
+                reason = "structural_stop_loss_rule1_found"
+                matched_open_time = int(row["open_time"])
+                matched_low = current_low
+                matched_volume = current_volume
+                volume_avg = current_volume_avg
+                rule_name = "rule1"
+                window_start_open_time = matched_open_time
+                window_end_open_time = matched_open_time
+                window_size = 1
+                highest_high = current_high
+                lowest_low = current_low
+                close_below_mid_count = 0
+                break
+
+        # Rule 2 only runs when Rule 1 did not find a structural stop loss. Scan
+        # contiguous windows inside the latest 12 closed 15m bars, starting from the
+        # most recent bar and then moving backward. For the same start point, check
+        # smaller windows before larger ones so the first match is the nearest and
+        # tightest valid window.
+        if structural_stop_loss == 0:
+            latest_12_rows = rows[:12]
+            for window_start_index in range(max(0, len(latest_12_rows) - 3)):
+                max_window_size = min(12, len(latest_12_rows) - window_start_index)
+                rule2_matched = False
+                for current_window_size in range(4, max_window_size + 1):
+                    window_rows = latest_12_rows[
+                        window_start_index : window_start_index + current_window_size
+                    ]
+                    current_highest_high = max(float(window_row["high"]) for window_row in window_rows)
+                    current_lowest_low = min(float(window_row["low"]) for window_row in window_rows)
+                    if current_lowest_low <= 0:
+                        continue
+
+                    current_close_below_mid_count = sum(
+                        1
+                        for window_row in window_rows
+                        if float(window_row["close"])
+                        <= (float(window_row["high"]) + float(window_row["low"])) / 2
+                    )
+                    range_ratio = (current_highest_high - current_lowest_low) / current_lowest_low
+                    if current_close_below_mid_count >= 2 and range_ratio <= 0.03:
+                        structural_stop_loss = current_highest_high
+                        reason = "structural_stop_loss_rule2_found"
+                        matched_open_time = int(window_rows[0]["open_time"])
+                        matched_low = current_lowest_low
+                        matched_volume = 0.0
+                        volume_avg = 0.0
+                        rule_name = "rule2"
+                        window_start_open_time = int(window_rows[0]["open_time"])
+                        window_end_open_time = int(window_rows[-1]["open_time"])
+                        window_size = current_window_size
+                        highest_high = current_highest_high
+                        lowest_low = current_lowest_low
+                        close_below_mid_count = current_close_below_mid_count
+                        rule2_matched = True
+                        break
+                if rule2_matched:
+                    break
+
+        # Rule 3 only runs when Rule 1 and Rule 2 did not find a structural stop
+        # loss. It checks whether the latest 24 closed 15m bars form an overall
+        # upward structure and then looks for the nearest qualifying pullback before
+        # the highest-high bar.
+        if structural_stop_loss == 0 and len(rows) >= 24:
+            latest_24_rows = rows[:24]
+            highest_index, highest_row = max(
+                enumerate(latest_24_rows), key=lambda item: float(item[1]["high"])
+            )
+            lowest_index, lowest_row = min(
+                enumerate(latest_24_rows), key=lambda item: float(item[1]["low"])
+            )
+            current_highest_high = float(highest_row["high"])
+            current_lowest_low = float(lowest_row["low"])
+            highest_position = highest_index + 1
+            lowest_position = lowest_index + 1
+
+            if (
+                current_lowest_low > 0
+                and highest_position <= lowest_position
+                and highest_position >= 3
+                and (current_highest_high - current_lowest_low) / current_lowest_low >= 0.05
+            ):
+                for pullback_index in range(1, highest_index):
+                    pullback_row = latest_24_rows[pullback_index]
+                    prev_row = latest_24_rows[pullback_index - 1]
+                    pullback_close = float(pullback_row["close"])
+                    pullback_low = float(pullback_row["low"])
+                    pullback_open = float(pullback_row["open"])
+                    prev_close = float(prev_row["close"])
+
+                    if (
+                        (current_highest_high - pullback_close) / current_highest_high >= 0.03
+                        and pullback_low > current_lowest_low
+                        and prev_close > pullback_open
+                    ):
+                        structural_stop_loss = pullback_low
+                        reason = "structural_stop_loss_rule3_found"
+                        matched_open_time = int(pullback_row["open_time"])
+                        matched_low = pullback_low
+                        matched_volume = float(pullback_row["volume"])
+                        volume_avg = 0.0
+                        rule_name = "rule3"
+                        window_start_open_time = int(latest_24_rows[0]["open_time"])
+                        window_end_open_time = int(latest_24_rows[-1]["open_time"])
+                        window_size = 24
+                        highest_high = current_highest_high
+                        lowest_low = current_lowest_low
+                        close_below_mid_count = 0
+                        break
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO symbol_structural_stop_losses
+                (
+                    symbol, decision_round_ts, structural_stop_loss, reason,
+                    matched_open_time, matched_low, matched_volume, volume_avg,
+                    rule_name, window_start_open_time, window_end_open_time,
+                    window_size, highest_high, lowest_low, close_below_mid_count,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
+                    structural_stop_loss=excluded.structural_stop_loss,
+                    reason=excluded.reason,
+                    matched_open_time=excluded.matched_open_time,
+                    matched_low=excluded.matched_low,
+                    matched_volume=excluded.matched_volume,
+                    volume_avg=excluded.volume_avg,
+                    rule_name=excluded.rule_name,
+                    window_start_open_time=excluded.window_start_open_time,
+                    window_end_open_time=excluded.window_end_open_time,
+                    window_size=excluded.window_size,
+                    highest_high=excluded.highest_high,
+                    lowest_low=excluded.lowest_low,
+                    close_below_mid_count=excluded.close_below_mid_count,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    symbol,
+                    decision_round_ts,
+                    structural_stop_loss,
+                    reason,
+                    matched_open_time,
+                    matched_low,
+                    matched_volume,
+                    volume_avg,
+                    rule_name,
+                    window_start_open_time,
+                    window_end_open_time,
+                    window_size,
+                    highest_high,
+                    lowest_low,
+                    close_below_mid_count,
+                    updated_at,
+                ),
+            )
+
+    def get_latest_round_structural_stop_losses(self) -> tuple[int | None, list[sqlite3.Row]]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_structural_stop_losses").fetchone()
+            if row["ts"] is None:
+                return None, []
+            round_ts = int(row["ts"])
+            rows = conn.execute(
+                """
+                SELECT
+                    symbol, decision_round_ts, structural_stop_loss, reason,
+                    matched_open_time, matched_low, matched_volume, volume_avg,
+                    rule_name, window_start_open_time, window_end_open_time,
+                    window_size, highest_high, lowest_low, close_below_mid_count,
+                    updated_at
+                FROM symbol_structural_stop_losses
+                WHERE decision_round_ts = ?
+                ORDER BY structural_stop_loss DESC, symbol ASC
+                """,
+                (round_ts,),
+            ).fetchall()
+        return round_ts, rows
 
     def get_latest_round_scores_15m_funding_rate_4bars(self) -> tuple[int | None, list[sqlite3.Row]]:
         with self._connect() as conn:
