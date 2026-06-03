@@ -32,6 +32,7 @@ DEFAULT_RULE_SCORE_WEIGHTS: dict[int, int] = {
 }
 
 RULE_SCORE_WEIGHTS_PATH = Path(__file__).with_name("scoring_rule_weights.json")
+DEFAULT_STRUCTURAL_STOP_LOSS_COEFFICIENT = 0.98
 
 
 def load_rule_score_weights(config_path: str | Path = RULE_SCORE_WEIGHTS_PATH) -> dict[int, int]:
@@ -55,6 +56,25 @@ def load_rule_score_weights(config_path: str | Path = RULE_SCORE_WEIGHTS_PATH) -
             raise ValueError(f"Scoring rule {rule_id} weight must be non-negative")
         weights[rule_id] = weight
     return weights
+
+
+def load_structural_stop_loss_coefficient(
+    config_path: str | Path = RULE_SCORE_WEIGHTS_PATH,
+) -> float:
+    """Load structural stop loss coefficient from JSON config."""
+    path = Path(config_path)
+    if not path.exists():
+        return DEFAULT_STRUCTURAL_STOP_LOSS_COEFFICIENT
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    raw_coefficient = data.get(
+        "structural_stop_loss_coefficient",
+        DEFAULT_STRUCTURAL_STOP_LOSS_COEFFICIENT,
+    )
+    coefficient = float(raw_coefficient)
+    if coefficient <= 0:
+        raise ValueError("Structural stop loss coefficient must be positive")
+    return coefficient
 
 
 @dataclass
@@ -97,12 +117,24 @@ class SymbolTotalScore:
 class ScoringSystem:
     """Score symbols after pre-safety using latest 3 rows of 15m MA20."""
 
-    def __init__(self, db_path: str = "data/klines.db", rule_weights_path: str | Path = RULE_SCORE_WEIGHTS_PATH) -> None:
+    def __init__(
+        self,
+        db_path: str = "data/klines.db",
+        rule_weights_path: str | Path = RULE_SCORE_WEIGHTS_PATH,
+    ) -> None:
         self.db_path = db_path
         self.rule_score_weights = load_rule_score_weights(rule_weights_path)
+        self.structural_stop_loss_coefficient = load_structural_stop_loss_coefficient(
+            rule_weights_path
+        )
 
     def _score_weight(self, rule_id: int) -> int:
         return self.rule_score_weights[rule_id]
+
+    def _adjust_structural_stop_loss(self, structural_stop_loss: float) -> float:
+        if structural_stop_loss <= 0:
+            return 0.0
+        return structural_stop_loss * self.structural_stop_loss_coefficient
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -1778,6 +1810,8 @@ class ScoringSystem:
                         lowest_low = current_lowest_low
                         close_below_mid_count = 0
                         break
+
+        structural_stop_loss = self._adjust_structural_stop_loss(structural_stop_loss)
 
         with self._connect() as conn:
             conn.execute(

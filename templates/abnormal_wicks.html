@@ -538,7 +538,7 @@
 
       <div id="score-rule-18" class="score-rule-panel">
         {% if score_rule18_round_ts %}
-        <div class="tip">规则18轮次：{{ score_rule18_round_ts|fmt_ms_datetime }}。要求本轮结构止损位 structural_stop_loss 已完成计算且 &gt; 0；若最近1条1m K线满足 (close - structural_stop_loss) / close ≤ 0.035，则结构止损位距离合格；在距离合格前提下，若最近第1条15m K线 close ≥ 最近第2条15m K线 close，则得5分。</div>
+        <div class="tip">规则18轮次：{{ score_rule18_round_ts|fmt_ms_datetime }}。要求本轮结构止损位 structural_stop_loss 已完成计算且 &gt; 0（已按配置系数 {{ structural_stop_loss_coefficient }} 折算）；若最近1条1m K线满足 (close - structural_stop_loss) / close ≤ 0.035，则结构止损位距离合格；在距离合格前提下，若最近第1条15m K线 close ≥ 最近第2条15m K线 close，则得5分。</div>
         {% endif %}
         <div class="table-wrap"><table>
           <thead><tr><th>symbol</th><th>score</th><th>structural_stop_loss</th><th>latest_1m_close</th><th>distance_ratio</th><th>latest_15m_close</th><th>prev_15m_close</th><th>reason</th><th>updated_at</th></tr></thead>
