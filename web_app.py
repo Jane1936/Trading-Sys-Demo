@@ -184,6 +184,7 @@ def abnormal_wicks():
         round_scores_rule17=round_scores_rule17,
         score_rule18_round_ts=score_rule18_round_ts,
         round_scores_rule18=round_scores_rule18,
+        structural_stop_loss_coefficient=scoring.structural_stop_loss_coefficient,
         score_total_round_ts=score_total_round_ts,
         round_scores_total=round_scores_total,
         rule_score_weights=scoring.rule_score_weights,

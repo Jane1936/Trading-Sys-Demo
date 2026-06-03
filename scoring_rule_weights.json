@@ -1,4 +1,5 @@
 {
+  "structural_stop_loss_coefficient": 0.98,
   "rules": {
     "1": 4,
     "2": 6,
