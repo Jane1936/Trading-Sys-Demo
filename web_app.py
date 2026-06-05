@@ -11,7 +11,9 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from flask import Flask, jsonify, render_template, request
+import requests
 
+from binance_account_manager import BinanceAccountConfigError, BinanceAccountManager
 import collector
 from cooldown_module import CooldownModule
 from openable_symbol_module import OpenableSymbolModule
@@ -51,6 +53,19 @@ def score_trend_api():
             ],
         }
     )
+
+
+@app.get("/api/account/balance")
+def account_balance_api():
+    try:
+        payload = BinanceAccountManager().futures_balance()
+        return jsonify(payload)
+    except BinanceAccountConfigError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except requests.exceptions.RequestException as exc:
+        return jsonify({"error": f"Binance balance request failed: {exc}"}), 502
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
 
 
 @app.get("/safety/abnormal-wicks")

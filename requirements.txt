@@ -4,3 +4,4 @@ gunicorn
 python-binance
 requests
 urllib3
+binance-sdk-derivatives-trading-usds-futures>=10.3.0,<11.0.0
