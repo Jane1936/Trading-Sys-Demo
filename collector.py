@@ -848,10 +848,11 @@ def run_oi_main(universe):
 def kline_job():
     global kline_job_running
 
+    if kline_job_running:
+        print("⚠️ Skip kline job (still running)")
+        return
+
     with kline_job_lock:
-        if kline_job_running:
-            print("⚠️ Skip kline job (still running)")
-            return
         kline_job_running = True
 
     print("\n🟢 Kline job start:", time.strftime("%Y-%m-%d %H:%M:%S"))
@@ -868,19 +869,20 @@ def kline_job():
 
     except Exception as e:
         print("❌ error:", e)
-    finally:
-        print(f"⏱ cost: {round(time.time() - start, 2)}s")
-        with kline_job_lock:
-            kline_job_running = False
+
+    print(f"⏱ cost: {round(time.time() - start, 2)}s")
+
+    kline_job_running = False
 
 
 def oi_job():
     global oi_job_running
 
+    if oi_job_running:
+        print("⚠️ Skip oi job (still running)")
+        return
+
     with oi_job_lock:
-        if oi_job_running:
-            print("⚠️ Skip oi job (still running)")
-            return
         oi_job_running = True
 
     print("\n🔵 OI job start:", time.strftime("%Y-%m-%d %H:%M:%S"))
@@ -896,19 +898,20 @@ def oi_job():
         run_oi_main(UNIVERSE)
     except Exception as e:
         print("❌ oi error:", e)
-    finally:
-        print(f"⏱ oi cost: {round(time.time() - start, 2)}s")
-        with oi_job_lock:
-            oi_job_running = False
+
+    print(f"⏱ oi cost: {round(time.time() - start, 2)}s")
+
+    oi_job_running = False
 
 
 def funding_job():
     global funding_job_running
 
+    if funding_job_running:
+        print("⚠️ Skip funding job (still running)")
+        return
+
     with funding_job_lock:
-        if funding_job_running:
-            print("⚠️ Skip funding job (still running)")
-            return
         funding_job_running = True
 
     print("\n🟣 Funding job start:", time.strftime("%Y-%m-%d %H:%M:%S"))
@@ -924,10 +927,10 @@ def funding_job():
         run_funding_update(UNIVERSE)
     except Exception as e:
         print("❌ funding error:", e)
-    finally:
-        print(f"⏱ funding cost: {round(time.time() - start, 2)}s")
-        with funding_job_lock:
-            funding_job_running = False
+
+    print(f"⏱ funding cost: {round(time.time() - start, 2)}s")
+
+    funding_job_running = False
 
 
 
@@ -935,10 +938,11 @@ def funding_job():
 def btc_5m_job():
     global btc_5m_job_running
 
+    if btc_5m_job_running:
+        print("⚠️ Skip BTC 5m job (still running)")
+        return
+
     with btc_5m_job_lock:
-        if btc_5m_job_running:
-            print("⚠️ Skip BTC 5m job (still running)")
-            return
         btc_5m_job_running = True
 
     print("\n🟡 BTC 5m job start:", time.strftime("%Y-%m-%d %H:%M:%S"))
@@ -948,10 +952,10 @@ def btc_5m_job():
         run_btc_5m_main()
     except Exception as e:
         print("❌ BTC 5m error:", e)
-    finally:
-        print(f"⏱ BTC 5m cost: {round(time.time() - start, 2)}s")
-        with btc_5m_job_lock:
-            btc_5m_job_running = False
+
+    print(f"⏱ BTC 5m cost: {round(time.time() - start, 2)}s")
+
+    btc_5m_job_running = False
 
 # ================= 全局 =================
 UNIVERSE = None
@@ -962,12 +966,11 @@ if __name__ == "__main__":
     init_db()
 
     scheduler = BlockingScheduler()
-    job_options = {"coalesce": True, "misfire_grace_time": 30, "max_instances": 2}
 
-    scheduler.add_job(kline_job, "cron", second=0, **job_options)
-    scheduler.add_job(oi_job, "cron", second=20, **job_options)
-    scheduler.add_job(funding_job, "cron", minute=1, second=40, **job_options)
-    scheduler.add_job(btc_5m_job, "cron", minute="*/5", second=10, **job_options)
+    scheduler.add_job(kline_job, "cron", second=0)
+    scheduler.add_job(oi_job, "cron", second=20)
+    scheduler.add_job(funding_job, "cron", minute=1, second=40)
+    scheduler.add_job(btc_5m_job, "cron", minute="*/5", second=10)
 
     print(
         f"🚀 Alpha ∩ Futures Kline System started (source={BASE_INTERVAL}, aggregates={AGG_INTERVALS}, SQLite)"
