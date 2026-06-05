@@ -4,7 +4,7 @@ Cooldown rule (per 15-minute decision round):
 - Symbol has an abnormal wick event in ``abnormal_wick_events`` within the
   latest 30 minutes; OR
 - The latest two closed 15m candles both satisfy
-  ``(high - close) / (high - low) >= 0.7``.
+  ``(high - close) / (high - low) >= 0.7`` and ``close > open``.
 
 Only symbols that hit at least one cooldown condition are persisted.
 """
@@ -128,7 +128,7 @@ class CooldownModule:
         if abnormal_hit:
             reasons.append("30分钟内异常插针")
         if upper_hit:
-            reasons.append("最近两根15m上影占比≥0.7")
+            reasons.append("最近两根15m上影占比≥0.7且close>open")
 
         return CooldownSymbol(
             symbol=symbol,
@@ -164,7 +164,7 @@ class CooldownModule:
     ) -> tuple[bool, int | None, float | None, int | None, float | None]:
         rows = conn.execute(
             """
-            SELECT open_time, high, low, close
+            SELECT open_time, open, high, low, close
             FROM klines_15m
             WHERE symbol = ?
               AND open_time < ?
@@ -177,7 +177,9 @@ class CooldownModule:
             return False, None, None, None, None
 
         ratios: list[float] = []
+        bullish_hits: list[bool] = []
         for row in rows:
+            open_price = float(row["open"])
             high = float(row["high"])
             low = float(row["low"])
             close = float(row["close"])
@@ -185,10 +187,15 @@ class CooldownModule:
             if span <= 0:
                 return False, int(rows[0]["open_time"]), None, int(rows[1]["open_time"]), None
             ratios.append((high - close) / span)
+            bullish_hits.append(close > open_price)
 
         latest_ratio = ratios[0]
         prev_ratio = ratios[1]
-        is_hit = latest_ratio >= self.UPPER_WICK_RATIO_THRESHOLD and prev_ratio >= self.UPPER_WICK_RATIO_THRESHOLD
+        is_hit = (
+            latest_ratio >= self.UPPER_WICK_RATIO_THRESHOLD
+            and prev_ratio >= self.UPPER_WICK_RATIO_THRESHOLD
+            and all(bullish_hits)
+        )
         return (
             is_hit,
             int(rows[0]["open_time"]),
