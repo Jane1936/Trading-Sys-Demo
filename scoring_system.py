@@ -616,108 +616,22 @@ class ScoringSystem:
         self.persist_total_scores_for_round(decision_round_ts=decision_round_ts, updated_at=now_ms)
         return results
 
-    def get_15m_ma20_readiness_for_round(
-        self,
-        decision_round_ts: int,
-        symbols: Iterable[str],
-        missing_sample_limit: int = 8,
-    ) -> dict[str, object]:
-        """Return MA20 readiness details for a 15-minute decision round."""
+    def is_15m_ma20_ready_for_round(self, decision_round_ts: int, symbols: Iterable[str]) -> bool:
         target_open_time = decision_round_ts - 15 * 60_000
-        symbol_list = sorted(set(symbols))
+        symbol_list = list(set(symbols))
         if not symbol_list:
-            return {
-                "ready": True,
-                "target_open_time": target_open_time,
-                "expected_count": 0,
-                "ready_count": 0,
-                "missing_count": 0,
-                "missing_sample": [],
-            }
-
+            return True
         placeholders = ",".join(["?"] * len(symbol_list))
         with self._connect() as conn:
-            rows = conn.execute(
+            row = conn.execute(
                 f"""
-                SELECT DISTINCT symbol
+                SELECT COUNT(DISTINCT symbol) AS cnt
                 FROM ma20_indicators
                 WHERE interval = '15m' AND open_time = ? AND symbol IN ({placeholders})
                 """,
                 [target_open_time, *symbol_list],
-            ).fetchall()
-
-        ready_symbols = {str(row["symbol"]) for row in rows}
-        missing_symbols = [symbol for symbol in symbol_list if symbol not in ready_symbols]
-        return {
-            "ready": not missing_symbols,
-            "target_open_time": target_open_time,
-            "expected_count": len(symbol_list),
-            "ready_count": len(ready_symbols),
-            "missing_count": len(missing_symbols),
-            "missing_sample": missing_symbols[:missing_sample_limit],
-        }
-
-    def is_15m_ma20_ready_for_round(self, decision_round_ts: int, symbols: Iterable[str]) -> bool:
-        readiness = self.get_15m_ma20_readiness_for_round(
-            decision_round_ts=decision_round_ts,
-            symbols=symbols,
-        )
-        return bool(readiness["ready"])
-
-    def get_1m_kline_freshness_for_round(
-        self,
-        decision_round_ts: int,
-        symbols: Iterable[str],
-        stale_sample_limit: int = 8,
-    ) -> dict[str, object]:
-        """Return whether base 1m klines can produce the round's closed 15m bar."""
-        target_close_time = decision_round_ts - 1
-        symbol_list = sorted(set(symbols))
-        if not symbol_list:
-            return {
-                "fresh": True,
-                "target_close_time": target_close_time,
-                "expected_count": 0,
-                "fresh_count": 0,
-                "stale_count": 0,
-                "stale_sample": [],
-            }
-
-        placeholders = ",".join(["?"] * len(symbol_list))
-        with self._connect() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT symbol, MAX(close_time) AS latest_close_time
-                FROM klines_1m
-                WHERE symbol IN ({placeholders})
-                GROUP BY symbol
-                """,
-                symbol_list,
-            ).fetchall()
-
-        latest_close_by_symbol = {str(row["symbol"]): row["latest_close_time"] for row in rows}
-        stale_sample: list[str] = []
-        fresh_count = 0
-        for symbol in symbol_list:
-            latest_close_time = latest_close_by_symbol.get(symbol)
-            if latest_close_time is not None and int(latest_close_time) >= target_close_time:
-                fresh_count += 1
-                continue
-            if len(stale_sample) < stale_sample_limit:
-                if latest_close_time is None:
-                    stale_sample.append(f"{symbol}:missing")
-                else:
-                    stale_sample.append(f"{symbol}:latest_close_time={int(latest_close_time)}")
-
-        stale_count = len(symbol_list) - fresh_count
-        return {
-            "fresh": stale_count == 0,
-            "target_close_time": target_close_time,
-            "expected_count": len(symbol_list),
-            "fresh_count": fresh_count,
-            "stale_count": stale_count,
-            "stale_sample": stale_sample,
-        }
+            ).fetchone()
+        return int(row["cnt"]) == len(symbol_list)
 
     def _latest_1m_close_and_15m_ma20(self, symbol: str) -> tuple[float, float] | None:
         with self._connect() as conn:
