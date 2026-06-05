@@ -46,6 +46,45 @@ sudo chmod -R u+rwX ./data ./logs
 docker compose up -d --build
 ```
 
+
+## 4) Binance Demo/Testnet 账户配置
+
+账户余额查询功能默认使用 Binance USDⓈ-M Futures Demo/Testnet：
+
+```python
+BINANCE_TESTNET = True
+
+TESTNET_API_KEY = "YOUR_TESTNET_API_KEY"
+TESTNET_SECRET_KEY = "YOUR_TESTNET_SECRET_KEY"
+REAL_API_KEY = "YOUR_REAL_API_KEY"
+REAL_API_SECRET = "YOUR_REAL_API_SECRET"
+
+if BINANCE_TESTNET:
+    BASE_URL = "https://demo-fapi.binance.com"
+    API_KEY = TESTNET_API_KEY
+    SECRET_KEY = TESTNET_SECRET_KEY
+else:
+    BASE_URL = "https://fapi.binance.com"
+    API_KEY = REAL_API_KEY
+    SECRET_KEY = REAL_API_SECRET
+```
+
+请不要把真实密钥提交到仓库。推荐在服务器或本地 shell 使用环境变量覆盖占位符：
+
+```bash
+export BINANCE_TESTNET=true
+export BINANCE_TESTNET_API_KEY="你的 demo API key"
+export BINANCE_TESTNET_SECRET_KEY="你的 demo secret key"
+# 如切换实盘：
+# export BINANCE_TESTNET=false
+# export BINANCE_REAL_API_KEY="你的 real API key"
+# export BINANCE_REAL_API_SECRET="你的 real secret key"
+```
+
+Docker Compose 启动前在同一个 shell 中导出这些变量即可；`docker-compose.yml` 会把这些变量注入 `web` 容器；`web` 容器会通过 `/api/account/balance` 在你点击网页“账户情况”的查询按钮时实时请求余额。
+
+---
+
 ## 方案 A（推荐）：Docker Compose
 
 ### 启动（构建并后台运行）

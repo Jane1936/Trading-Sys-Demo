@@ -19,6 +19,12 @@ services:
     restart: always
     ports:
       - "5000:5000"
+    environment:
+      BINANCE_TESTNET: "${BINANCE_TESTNET:-true}"
+      BINANCE_TESTNET_API_KEY: "${BINANCE_TESTNET_API_KEY:-YOUR_TESTNET_API_KEY}"
+      BINANCE_TESTNET_SECRET_KEY: "${BINANCE_TESTNET_SECRET_KEY:-YOUR_TESTNET_SECRET_KEY}"
+      BINANCE_REAL_API_KEY: "${BINANCE_REAL_API_KEY:-YOUR_REAL_API_KEY}"
+      BINANCE_REAL_API_SECRET: "${BINANCE_REAL_API_SECRET:-YOUR_REAL_API_SECRET}"
     volumes:
       - ${HOST_DATA_DIR:-./data}:/app/data
       - ${HOST_LOGS_DIR:-./logs}:/app/logs

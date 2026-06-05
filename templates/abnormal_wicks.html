@@ -101,6 +101,11 @@
     .bookmark-tab.active::after { content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px; background:#ffffff; }
     .strategy-subpanel { display:none; }
     .strategy-subpanel.active { display:block; }
+    .account-summary { display:flex; gap:12px; flex-wrap:wrap; padding:14px 20px; border-bottom:1px solid var(--line); background:#f8fdff; }
+    .account-metric { min-width:180px; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:#fff; box-shadow:0 3px 12px rgba(14, 116, 144, 0.08); }
+    .account-metric-label { color:#6b7280; font-size:12px; margin-bottom:6px; }
+    .account-metric-value { font-size:18px; font-weight:800; color:#0f172a; }
+    .account-error { color:#991b1b; background:#fee2e2; border:1px solid #fca5a5; border-radius:10px; padding:10px 12px; margin:0 20px 14px; display:none; }
   </style>
 </head>
 <body>
@@ -644,6 +649,7 @@
       <div class="bookmark-tabs" role="tablist" aria-label="本轮交易策略板块">
         <button class="bookmark-tab active" type="button" role="tab" aria-selected="true" data-strategy-tab="strategy-openable">本轮可开仓symbol情况</button>
         <button class="bookmark-tab" type="button" role="tab" aria-selected="false" data-strategy-tab="strategy-cooldown">本轮冷却期symbol</button>
+        <button class="bookmark-tab" type="button" role="tab" aria-selected="false" data-strategy-tab="strategy-account">账户情况</button>
       </div>
 
       <div id="strategy-openable" class="strategy-subpanel active" role="tabpanel">
@@ -703,6 +709,50 @@
               {% else %}
               <tr><td class="empty" colspan="12">暂无本轮可开仓symbol候选</td></tr>
               {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="strategy-account" class="strategy-subpanel" role="tabpanel">
+        <div class="symbol-strip">
+          <div><strong>账户情况</strong></div>
+          <div class="muted">点击下方按钮后，通过 REST API 实时查询 Binance USDⓈ-M Futures 账户余额。默认连接 Demo/Testnet：<code>https://demo-fapi.binance.com</code>。</div>
+        </div>
+        <div class="toolbar">
+          <button id="query-account-balance" class="btn btn-primary" type="button">查询账户余额</button>
+          <span id="account-balance-status" class="muted">尚未查询</span>
+        </div>
+        <div id="account-balance-error" class="account-error"></div>
+        <div class="account-summary">
+          <div class="account-metric">
+            <div class="account-metric-label">USDT 总余额</div>
+            <div id="account-usdt-balance" class="account-metric-value">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">USDT 可用余额</div>
+            <div id="account-usdt-available" class="account-metric-value">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">USDT 未实现盈亏</div>
+            <div id="account-usdt-pnl" class="account-metric-value">-</div>
+          </div>
+        </div>
+        <div class="tip">下表展示接口返回的全部资产余额；如果只需要看交易常用保证金币种，可优先关注 USDT 行。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>asset</th>
+                <th>balance</th>
+                <th>available_balance</th>
+                <th>cross_wallet_balance</th>
+                <th>cross_un_pnl</th>
+                <th>account_alias</th>
+              </tr>
+            </thead>
+            <tbody id="account-balance-rows">
+              <tr><td class="empty" colspan="6">点击“查询账户余额”后显示数据</td></tr>
             </tbody>
           </table>
         </div>
@@ -829,6 +879,85 @@
           const panel = document.getElementById(b.dataset.strategyTab);
           if (panel) panel.classList.add('active');
         });
+      });
+    })();
+
+
+    function setAccountBalanceLoading(isLoading) {
+      const btn = document.getElementById('query-account-balance');
+      const status = document.getElementById('account-balance-status');
+      if (btn) {
+        btn.disabled = isLoading;
+        btn.textContent = isLoading ? '查询中...' : '查询账户余额';
+      }
+      if (status && isLoading) status.textContent = '正在请求 Binance REST API...';
+    }
+
+    function renderAccountBalance(payload) {
+      const rowsEl = document.getElementById('account-balance-rows');
+      const statusEl = document.getElementById('account-balance-status');
+      const errorEl = document.getElementById('account-balance-error');
+      const balances = payload.balances || [];
+      const usdt = balances.find(row => row.asset === 'USDT') || balances[0] || {};
+
+      if (errorEl) {
+        errorEl.style.display = 'none';
+        errorEl.textContent = '';
+      }
+      document.getElementById('account-usdt-balance').textContent = usdt.balance || '-';
+      document.getElementById('account-usdt-available').textContent = usdt.available_balance || '-';
+      document.getElementById('account-usdt-pnl').textContent = usdt.cross_un_pnl || '-';
+
+      if (statusEl) {
+        const queriedAt = payload.queried_at ? new Date(payload.queried_at).toISOString().replace('T', ' ').slice(0, 19) + ' UTC' : '未知时间';
+        statusEl.textContent = `${payload.testnet ? 'Demo/Testnet' : 'Real'} 查询完成：${queriedAt}`;
+      }
+
+      const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+      if (!rowsEl) return;
+      if (!balances.length) {
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="6">接口未返回余额数据</td></tr>';
+        return;
+      }
+      rowsEl.innerHTML = balances.map(row => `
+        <tr>
+          <td>${escapeHtml(row.asset)}</td>
+          <td>${escapeHtml(row.balance || '0')}</td>
+          <td>${escapeHtml(row.available_balance || '0')}</td>
+          <td>${escapeHtml(row.cross_wallet_balance || '0')}</td>
+          <td>${escapeHtml(row.cross_un_pnl || '0')}</td>
+          <td>${escapeHtml(row.account_alias)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderAccountBalanceError(message) {
+      const errorEl = document.getElementById('account-balance-error');
+      const statusEl = document.getElementById('account-balance-status');
+      if (errorEl) {
+        errorEl.textContent = message;
+        errorEl.style.display = 'block';
+      }
+      if (statusEl) statusEl.textContent = '查询失败';
+    }
+
+    (function initAccountBalanceQuery() {
+      const btn = document.getElementById('query-account-balance');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        setAccountBalanceLoading(true);
+        try {
+          const response = await fetch('/api/account/balance', {
+            headers: { 'Accept': 'application/json' },
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          renderAccountBalance(payload);
+        } catch (error) {
+          renderAccountBalanceError(`账户余额查询失败：${error.message}`);
+        } finally {
+          setAccountBalanceLoading(false);
+        }
       });
     })();
 
