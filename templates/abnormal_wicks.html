@@ -68,6 +68,12 @@
     .score-band-standard-trial { background:#eef2ff; color:#4338ca; border-color:#a5b4fc; }
     .score-band-trend-standard { background:#f0fdf4; color:#15803d; border-color:#86efac; }
     .score-band-strong-trend { background:#fff7ed; color:#c2410c; border-color:#fdba74; }
+    .leverage-badge { display:inline-flex; align-items:center; justify-content:center; min-width:46px; padding:4px 11px; border-radius:999px; font-size:12px; font-weight:900; letter-spacing:.2px; border:1px solid transparent; box-shadow:0 2px 8px rgba(17, 24, 39, 0.08); }
+    .leverage-na { background:#f3f4f6; color:#6b7280; border-color:#d1d5db; box-shadow:none; }
+    .leverage-low { background:#eff6ff; color:#1d4ed8; border-color:#93c5fd; }
+    .leverage-mid { background:#ecfdf5; color:#047857; border-color:#6ee7b7; }
+    .leverage-high { background:#fff7ed; color:#c2410c; border-color:#fdba74; }
+    .leverage-very-high { background:linear-gradient(135deg, #f97316 0%, #dc2626 100%); color:#fff; border-color:#ef4444; box-shadow:0 5px 14px rgba(220, 38, 38, 0.22); }
     .score-tab-group { display:flex; gap:8px; flex-wrap:wrap; width:100%; margin-top:8px; align-items:stretch; }
     .score-tab-group-label { display:inline-flex; align-items:center; justify-content:center; min-width:128px; min-height:38px; box-sizing:border-box; text-align:center; font-size:12px; font-weight:700; padding:8px 14px; border:1px solid transparent; border-radius:12px; box-shadow:0 2px 8px rgba(17, 24, 39, 0.06); }
     .score-tab-group.trend .score-tab-group-label { background:#dbeafe; color:#1e3a8a; border-color:#93c5fd; }
@@ -98,6 +104,11 @@
     .bookmark-tabs { display:flex; gap:0; align-items:flex-end; padding:16px 20px 0; background:linear-gradient(180deg, #f8fdff 0%, #ffffff 100%); border-bottom:1px solid var(--line); }
     .bookmark-tab { border:1px solid var(--line); border-bottom:none; background:#eff6ff; color:#1e3a8a; padding:12px 18px; border-radius:14px 14px 0 0; cursor:pointer; font-weight:800; margin-right:8px; box-shadow:0 -1px 8px rgba(14, 116, 144, 0.08); transform:translateY(1px); }
     .bookmark-tab.active { background:#ffffff; color:#0f172a; position:relative; z-index:1; box-shadow:0 -4px 16px rgba(14, 116, 144, 0.14); }
+    .bookmark-tab.account-info-tab { color:#7c2d12; background:linear-gradient(135deg, #fffbeb 0%, #fed7aa 100%); border-color:#fb923c; box-shadow:0 -2px 12px rgba(249, 115, 22, 0.16); }
+    .bookmark-tab.account-info-tab::before { content:"●"; color:#f97316; margin-right:7px; font-size:11px; vertical-align:middle; }
+    .bookmark-tab.account-info-tab.active { color:#ffffff; background:linear-gradient(135deg, #f97316 0%, #dc2626 100%); border-color:#ea580c; box-shadow:0 -5px 18px rgba(249, 115, 22, 0.28); }
+    .bookmark-tab.account-info-tab.active::after { background:#fff7ed; }
+    .bookmark-tab.account-info-tab.active::before { color:#ffffff; }
     .bookmark-tab.active::after { content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px; background:#ffffff; }
     .strategy-subpanel { display:none; }
     .strategy-subpanel.active { display:block; }
@@ -649,7 +660,7 @@
       <div class="bookmark-tabs" role="tablist" aria-label="本轮交易策略板块">
         <button class="bookmark-tab active" type="button" role="tab" aria-selected="true" data-strategy-tab="strategy-openable">本轮可开仓symbol情况</button>
         <button class="bookmark-tab" type="button" role="tab" aria-selected="false" data-strategy-tab="strategy-cooldown">本轮冷却期symbol</button>
-        <button class="bookmark-tab" type="button" role="tab" aria-selected="false" data-strategy-tab="strategy-account">账户情况</button>
+        <button class="bookmark-tab account-info-tab" type="button" role="tab" aria-selected="false" data-strategy-tab="strategy-account">账户信息</button>
       </div>
 
       <div id="strategy-openable" class="strategy-subpanel active" role="tabpanel">
@@ -696,10 +707,10 @@
                 <td>{{ row.symbol }}</td>
                 <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
                 <td>{{ row.total_score }}</td>
-                <td>{{ row.score_band }}</td>
+                <td><span class="score-band-badge {{ 'score-band-strong-trend' if row.score_band == '确定性强趋势单' else 'score-band-trend-standard' if row.score_band == '趋势标准单' else 'score-band-standard-trial' if row.score_band == '标准试错单' else 'score-band-low-trial' if row.score_band == '低档试错单' else 'score-band-na' }}">{{ row.score_band }}</span></td>
                 <td>{{ '%.4f%%'|format(row.stop_loss_distance_ratio * 100) if row.stop_loss_distance_ratio is not none else '-' }}</td>
                 <td><span class="tier-badge {{ 'tier-a' if row.stop_loss_distance_tier == 'A档' else 'tier-b' if row.stop_loss_distance_tier == 'B档' else 'tier-c' if row.stop_loss_distance_tier == 'C档' else 'tier-d' if row.stop_loss_distance_tier == 'D档' else 'tier-na' }}">{{ row.stop_loss_distance_tier }}</span></td>
-                <td>{{ row.opening_leverage }}</td>
+                <td><span class="leverage-badge {{ 'leverage-very-high' if row.opening_leverage in ['10x', '12x'] else 'leverage-high' if row.opening_leverage in ['7x', '8x'] else 'leverage-mid' if row.opening_leverage in ['4x', '5x', '6x'] else 'leverage-low' if row.opening_leverage in ['1x', '2x', '3x'] else 'leverage-na' }}">{{ row.opening_leverage }}</span></td>
                 <td>{{ '%.2f%%'|format(row.distance_threshold * 100) if row.distance_threshold is not none else '-' }}</td>
                 <td><span class="status-badge {{ 'status-pass' if row.distance_qualified else 'status-fail' }}">{{ '合格' if row.distance_qualified else '不合格' }}</span></td>
                 <td><span class="status-badge {{ 'status-pass' if row.qualified else 'status-fail' }}">{{ '是' if row.qualified else '否' }}</span></td>
