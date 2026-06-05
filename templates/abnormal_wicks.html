@@ -86,6 +86,9 @@
     .score-tab-group.volume .score-rule-tab.active { background:#dc2626; border-color:#dc2626; }
     .score-tab-group.rhythm .score-rule-tab.active { background:#d97706; border-color:#d97706; color:#fff; }
     .score-total-tab.active { background:linear-gradient(135deg, #ea580c 0%, #dc2626 100%); border-color:#dc2626; color:#fff; }
+    .status-badge { display:inline-flex; align-items:center; justify-content:center; min-width:42px; padding:3px 8px; border-radius:999px; font-size:12px; font-weight:700; }
+    .status-pass { background:#dcfce7; color:#166534; border:1px solid #86efac; }
+    .status-fail { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
   </style>
 </head>
 <body>
@@ -676,6 +679,62 @@
             </tr>
             {% else %}
             <tr><td class="empty" colspan="10">暂无本轮冷却期symbol</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="symbol-strip">
+        <div><strong>本轮可开仓symbol情况</strong></div>
+        {% if openable_round_ts %}
+          <div class="muted">总分计算完成后评估轮次：{{ openable_round_ts|fmt_ms_datetime }}</div>
+        {% endif %}
+        {% set qualified_openable_symbols = openable_symbols|selectattr('qualified')|list %}
+        {% if qualified_openable_symbols %}
+          <div class="chips">
+            {% for row in qualified_openable_symbols %}
+              <span class="chip" title="总分 {{ row.total_score }}；止损距离 {{ '%.4f%%'|format(row.stop_loss_distance_ratio * 100) if row.stop_loss_distance_ratio is not none else '-' }}">{{ row.symbol }}</span>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="chips">
+            <span class="chip">无</span>
+          </div>
+        {% endif %}
+      </div>
+      <div class="tip">可开仓基础条件：本轮总分 ≥ 65，且不在冷却期。止损距离筛查使用规则18的 distance_ratio：65-72分≤5%，73-80分≤6%，81-88分≤7%，89-100分≤8%；其他情况不合格。下表展示基础条件命中的symbol及其止损距离筛查结果。</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>symbol</th>
+              <th>decision_round_ts</th>
+              <th>total_score</th>
+              <th>评分档位</th>
+              <th>distance_ratio</th>
+              <th>合格阈值</th>
+              <th>止损距离筛查</th>
+              <th>最终可开仓</th>
+              <th>reason</th>
+              <th>evaluated_at</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in openable_symbols %}
+            <tr>
+              <td>{{ row.symbol }}</td>
+              <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+              <td>{{ row.total_score }}</td>
+              <td>{{ row.score_band }}</td>
+              <td>{{ '%.4f%%'|format(row.stop_loss_distance_ratio * 100) if row.stop_loss_distance_ratio is not none else '-' }}</td>
+              <td>{{ '%.2f%%'|format(row.distance_threshold * 100) if row.distance_threshold is not none else '-' }}</td>
+              <td><span class="status-badge {{ 'status-pass' if row.distance_qualified else 'status-fail' }}">{{ '合格' if row.distance_qualified else '不合格' }}</span></td>
+              <td><span class="status-badge {{ 'status-pass' if row.qualified else 'status-fail' }}">{{ '是' if row.qualified else '否' }}</span></td>
+              <td>{{ row.reason }}</td>
+              <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
+            </tr>
+            {% else %}
+            <tr><td class="empty" colspan="10">暂无本轮可开仓symbol候选</td></tr>
             {% endfor %}
           </tbody>
         </table>

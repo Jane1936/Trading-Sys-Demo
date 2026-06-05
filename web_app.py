@@ -14,6 +14,7 @@ from flask import Flask, jsonify, render_template, request
 
 import collector
 from cooldown_module import CooldownModule
+from openable_symbol_module import OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
 from scoring_system import ScoringSystem
 
@@ -91,6 +92,10 @@ def abnormal_wicks():
     score_rule17_round_ts, round_scores_rule17 = scoring.get_latest_round_scores_15m_low_rebound_3bars()
     score_rule18_round_ts, round_scores_rule18 = scoring.get_latest_round_scores_structural_stop_loss_distance()
     score_total_round_ts, round_scores_total = scoring.get_latest_round_total_scores()
+    openable = OpenableSymbolModule(db_path=DB_PATH)
+    openable.init_table()
+    openable_round_ts = score_total_round_ts
+    openable_symbols = openable.run_round(decision_round_ts=openable_round_ts) if openable_round_ts else []
     score_trend_symbols = scoring.get_total_score_symbols()
     requested_score_trend_symbol = request.args.get("score_trend_symbol", default="", type=str).strip()
     default_score_trend_symbol = round_scores_total[0].symbol if round_scores_total else ""
@@ -193,6 +198,8 @@ def abnormal_wicks():
         structural_stop_loss_coefficient=scoring.structural_stop_loss_coefficient,
         score_total_round_ts=score_total_round_ts,
         round_scores_total=round_scores_total,
+        openable_round_ts=openable_round_ts,
+        openable_symbols=openable_symbols,
         rule_score_weights=scoring.rule_score_weights,
         score_trend_symbols=score_trend_symbols,
         score_trend_symbol=score_trend_symbol,

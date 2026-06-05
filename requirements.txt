@@ -1,7 +1,6 @@
-requests
-apscheduler
-python-binance
-urllib3
-
-flask
+APScheduler
+Flask
 gunicorn
+python-binance
+requests
+urllib3

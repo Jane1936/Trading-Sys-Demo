@@ -23,6 +23,7 @@ from data_processor import (
     save_ma20_result,
 )
 from cooldown_module import CooldownModule
+from openable_symbol_module import OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
 from scoring_system import ScoringSystem
 
@@ -76,6 +77,8 @@ def start_pre_safety_task() -> None:
     cooldown.init_table()
     scoring = ScoringSystem(db_path=collector.DB_PATH)
     scoring.init_table()
+    openable = OpenableSymbolModule(db_path=collector.DB_PATH)
+    openable.init_table()
 
     last_round_ts = None
     round_ms = 15 * 60_000
@@ -123,9 +126,12 @@ def start_pre_safety_task() -> None:
                     all_symbols=symbols,
                     abnormal_symbols=abnormal_symbols,
                 )
+                openable_symbols = openable.run_round(decision_round_ts=round_ts, evaluated_at=now_ms)
+                qualified_openable_count = sum(1 for row in openable_symbols if row.qualified)
                 print(
                     f"🧮 scoring round={round_ts} universe={len(symbols)} "
-                    f"abnormal={len(set(abnormal_symbols))} scored={len(scored)}"
+                    f"abnormal={len(set(abnormal_symbols))} scored={len(scored)} "
+                    f"openable_candidates={len(openable_symbols)} openable_qualified={qualified_openable_count}"
                 )
             except Exception as exc:
                 print(f"⚠️ scoring failed round={round_ts}: {exc}")
