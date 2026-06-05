@@ -95,6 +95,7 @@
     <button class="tab-btn {{ 'active' if active_tab == 'tab-btc' else '' }}" data-tab="tab-btc">BTC数据</button>
     <button class="tab-btn {{ 'active' if active_tab == 'tab-score' else '' }}" data-tab="tab-score">评分系统</button>
     <button class="tab-btn {{ 'active' if active_tab == 'tab-score-trend' else '' }}" data-tab="tab-score-trend">评分变化趋势</button>
+    <button class="tab-btn {{ 'active' if active_tab == 'tab-strategy' else '' }}" data-tab="tab-strategy">本轮交易策略</button>
   </aside>
   <main class="content container">
   <section id="tab-abnormal" class="panel {{ 'active' if not active_tab or active_tab == 'tab-abnormal' else '' }}">
@@ -618,6 +619,66 @@
           <span>时间范围：最近3天。</span>
         </div>
         <div id="score-trend-chart"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-strategy" class="panel {{ 'active' if active_tab == 'tab-strategy' else '' }}">
+    <div class="card">
+      <div class="header"><h2>本轮交易策略</h2></div>
+      <div class="symbol-strip">
+        <div><strong>本轮冷却期symbol（15分钟更新）</strong></div>
+        {% if cooldown_round_ts %}
+          <div class="muted">扫描轮次：{{ cooldown_round_ts|fmt_ms_datetime }}</div>
+        {% endif %}
+        {% if cooldown_symbols %}
+          <div class="chips">
+            {% for row in cooldown_symbols %}
+              <span class="chip" title="{{ row.reason }}">{{ row.symbol }}</span>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="chips">
+            <span class="chip">无</span>
+          </div>
+        {% endif %}
+      </div>
+      <div class="tip">冷却条件：30分钟内被标记为异常插针，或最近两根15分钟K线均满足 (high - close) / (high - low) ≥ 0.7。时间字段均为 UTC。</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>symbol</th>
+              <th>decision_round_ts</th>
+              <th>30分钟内异常插针</th>
+              <th>连续两根15m上影占比≥0.7</th>
+              <th>latest_15m_open_time</th>
+              <th>latest_15m_ratio</th>
+              <th>prev_15m_open_time</th>
+              <th>prev_15m_ratio</th>
+              <th>reason</th>
+              <th>detected_at</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in cooldown_symbols %}
+            <tr>
+              <td>{{ row.symbol }}</td>
+              <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+              <td>{{ '是' if row.abnormal_wick_hit else '否' }}</td>
+              <td>{{ '是' if row.upper_wick_2bar_hit else '否' }}</td>
+              <td>{{ row.latest_15m_open_time|fmt_ms_datetime if row.latest_15m_open_time else '-' }}</td>
+              <td>{{ '%.6f'|format(row.latest_15m_ratio) if row.latest_15m_ratio is not none else '-' }}</td>
+              <td>{{ row.prev_15m_open_time|fmt_ms_datetime if row.prev_15m_open_time else '-' }}</td>
+              <td>{{ '%.6f'|format(row.prev_15m_ratio) if row.prev_15m_ratio is not none else '-' }}</td>
+              <td>{{ row.reason }}</td>
+              <td>{{ row.detected_at|fmt_ms_datetime }}</td>
+            </tr>
+            {% else %}
+            <tr><td class="empty" colspan="10">暂无本轮冷却期symbol</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
   </section>

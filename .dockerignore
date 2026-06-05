@@ -1,7 +1,23 @@
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.db
+# Runtime data and logs are mounted as volumes in deployment.
 data/
+logs/
+
+# Python/runtime cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environment and VCS metadata
+.env
+.venv/
+venv/
 .git/
+.gitignore
+
+# Editor/OS noise
+.DS_Store
+.idea/
+.vscode/
