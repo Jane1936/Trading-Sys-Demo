@@ -1943,7 +1943,7 @@ class ScoringSystem:
                     reason = "rule18_invalid_latest_1m_close"
                 else:
                     stop_loss_distance_ratio = (latest_1m_close - structural_stop_loss) / latest_1m_close
-                    distance_hit = stop_loss_distance_ratio <= 0.035
+                    distance_hit = (0 < stop_loss_distance_ratio <= 0.035)
                     rhythm_hit = latest_15m_close >= prev_15m_close
                     if distance_hit and rhythm_hit:
                         score = self._score_weight(18)
