@@ -6,6 +6,8 @@ services:
     command: ["worker"]
     user: "${PUID:-1000}:${PGID:-1000}"
     restart: always
+    environment:
+      - UNIVERSE_SYMBOLS=${UNIVERSE_SYMBOLS:-}
     volumes:
       - /root/trade/data:/app/data
       - /root/trade/logs:/app/logs

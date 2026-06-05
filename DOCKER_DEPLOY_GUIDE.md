@@ -44,6 +44,18 @@ sudo chmod -R u+rwX ./data ./logs
 docker compose up -d --build
 ```
 
+
+## 4) 可选：Universe 离线兜底配置
+
+启动时系统会从 Binance U 本位合约和 Alpha Token 接口构建交易标的 Universe。如果服务器 DNS 或外网访问 Binance 临时失败，程序会优先沿用当前 Universe，其次读取 `UNIVERSE_SYMBOLS` 环境变量，再尝试读取 SQLite 中已有标的，最后才返回空列表，避免容器因临时网络解析失败直接退出。
+
+如需在 Binance 接口不可用时仍按固定标的启动，可配置逗号分隔的币种代码（不要带 `USDT` 后缀）：
+
+```bash
+export UNIVERSE_SYMBOLS=BTC,ETH,SOL
+docker compose up -d --build
+```
+
 ## 方案 A（推荐）：Docker Compose
 
 ### 启动（构建并后台运行）
