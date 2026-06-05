@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
-import queue
 import sqlite3
-import threading
 import time
 from pathlib import Path
 from dataclasses import dataclass
@@ -36,7 +33,6 @@ DEFAULT_RULE_SCORE_WEIGHTS: dict[int, int] = {
 
 RULE_SCORE_WEIGHTS_PATH = Path(__file__).with_name("scoring_rule_weights.json")
 DEFAULT_STRUCTURAL_STOP_LOSS_COEFFICIENT = 0.98
-INTERVAL_MS = {"1m": 60_000, "5m": 5 * 60_000, "15m": 15 * 60_000, "1h": 60 * 60_000}
 
 
 def load_rule_score_weights(config_path: str | Path = RULE_SCORE_WEIGHTS_PATH) -> dict[int, int]:
@@ -79,27 +75,6 @@ def load_structural_stop_loss_coefficient(
     if coefficient <= 0:
         raise ValueError("Structural stop loss coefficient must be positive")
     return coefficient
-
-
-@dataclass(frozen=True)
-class ScoringRoundJob:
-    decision_round_ts: int
-    all_symbols: tuple[str, ...]
-    abnormal_symbols: tuple[str, ...]
-    enqueued_at: int
-
-
-class _ReusedConnection:
-    """Context manager that lets nested DB helpers share one transaction."""
-
-    def __init__(self, conn: sqlite3.Connection) -> None:
-        self.conn = conn
-
-    def __enter__(self) -> sqlite3.Connection:
-        return self.conn
-
-    def __exit__(self, exc_type, exc, tb) -> bool:
-        return False
 
 
 @dataclass
@@ -152,10 +127,6 @@ class ScoringSystem:
         self.structural_stop_loss_coefficient = load_structural_stop_loss_coefficient(
             rule_weights_path
         )
-        self._local = threading.local()
-        self._scoring_jobs: queue.Queue[ScoringRoundJob] = queue.Queue()
-        self._scoring_worker_lock = threading.Lock()
-        self._scoring_worker_started = False
 
     def _score_weight(self, rule_id: int) -> int:
         return self.rule_score_weights[rule_id]
@@ -165,112 +136,10 @@ class ScoringSystem:
             return 0.0
         return structural_stop_loss * self.structural_stop_loss_coefficient
 
-    def _latest_closed_open_time(self, interval: str) -> int | None:
-        """Return the latest closed candle open_time for the active scoring round."""
-        decision_round_ts = getattr(self._local, "decision_round_ts", None)
-        if decision_round_ts is None:
-            return None
-        interval_ms = INTERVAL_MS[interval]
-        return (int(decision_round_ts) // interval_ms) * interval_ms - interval_ms
-
-    def _latest_snapshot_time(self) -> int | None:
-        """Return the latest snapshot timestamp allowed for the active scoring round."""
-        decision_round_ts = getattr(self._local, "decision_round_ts", None)
-        if decision_round_ts is None:
-            return None
-        return int(decision_round_ts)
-
-    def _connect(self):
-        active_conn = getattr(self._local, "conn", None)
-        if active_conn is not None:
-            return _ReusedConnection(active_conn)
-
-        conn = sqlite3.connect(self.db_path, timeout=30)
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA busy_timeout = 30000")
         return conn
-
-    @contextmanager
-    def _round_db_transaction(self):
-        """Share one SQLite connection/transaction for an entire scoring round.
-
-        The old path opened and committed one SQLite connection for every rule and
-        symbol. On a smaller 2C/4G host this can make the 15-minute scoring round
-        spend minutes only doing table writes. This scope keeps the existing rule
-        helpers unchanged while making their nested reads/writes reuse one
-        connection and commit once at the end.
-        """
-        if getattr(self._local, "conn", None) is not None:
-            yield
-            return
-
-        with sqlite3.connect(self.db_path, timeout=30) as conn:
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA busy_timeout = 30000")
-            self._local.conn = conn
-            try:
-                yield
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
-            finally:
-                self._local.conn = None
-
-    def start_scoring_worker(self) -> None:
-        """Start the independent scoring persistence worker once."""
-        with self._scoring_worker_lock:
-            if self._scoring_worker_started:
-                return
-            worker = threading.Thread(
-                target=self._run_scoring_worker,
-                name="scoring-persistence-worker",
-                daemon=True,
-            )
-            worker.start()
-            self._scoring_worker_started = True
-
-    def enqueue_score_round(
-        self,
-        decision_round_ts: int,
-        all_symbols: Iterable[str],
-        abnormal_symbols: Iterable[str],
-    ) -> int:
-        """Queue a scoring round so DB persistence runs outside the scheduler loop.
-
-        Returns the pending job count after enqueue.
-        """
-        self.start_scoring_worker()
-        job = ScoringRoundJob(
-            decision_round_ts=decision_round_ts,
-            all_symbols=tuple(sorted(set(all_symbols))),
-            abnormal_symbols=tuple(sorted(set(abnormal_symbols))),
-            enqueued_at=int(time.time() * 1000),
-        )
-        self._scoring_jobs.put(job)
-        return self._scoring_jobs.qsize()
-
-    def _run_scoring_worker(self) -> None:
-        print("🧮 scoring persistence worker started")
-        while True:
-            job = self._scoring_jobs.get()
-            started_at = time.time()
-            try:
-                scored = self.score_round(
-                    decision_round_ts=job.decision_round_ts,
-                    all_symbols=job.all_symbols,
-                    abnormal_symbols=job.abnormal_symbols,
-                )
-                elapsed = time.time() - started_at
-                print(
-                    f"🧮 scoring round={job.decision_round_ts} persisted "
-                    f"universe={len(job.all_symbols)} abnormal={len(job.abnormal_symbols)} "
-                    f"scored={len(scored)} elapsed={elapsed:.2f}s"
-                )
-            except Exception as exc:
-                print(f"⚠️ scoring persistence failed round={job.decision_round_ts}: {exc}")
-            finally:
-                self._scoring_jobs.task_done()
 
     def init_table(self) -> None:
         with self._connect() as conn:
@@ -690,18 +559,16 @@ class ScoringSystem:
                     )
 
     def _latest_three_ma20_15m(self, symbol: str) -> tuple[float, float, float] | None:
-        max_open_time = self._latest_closed_open_time("15m")
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT ma20
                 FROM ma20_indicators
                 WHERE symbol = ? AND interval = '15m'
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 3
                 """,
-                (symbol, max_open_time, max_open_time),
+                (symbol,),
             ).fetchall()
         if len(rows) < 3:
             return None
@@ -717,54 +584,36 @@ class ScoringSystem:
         candidates = sorted(set(all_symbols) - abnormal_set)
         now_ms = int(time.time() * 1000)
         results: List[SymbolScore] = []
-        previous_decision_round_ts = getattr(self._local, "decision_round_ts", None)
-        self._local.decision_round_ts = decision_round_ts
-        try:
-            with self._round_db_transaction():
-                for symbol in candidates:
-                    self._save_close_gt_ma20_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                    self._save_1h_close_gt_prev_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                    self._save_15m_bullish_3of4_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                    self._save_15m_close_increasing_3of4_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                    self._save_1m_close_gt_5m_ma20_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                    self._save_15m_close_near_high_2of4_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                    self._save_1h_latest_highest_24_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                    self._save_15m_close_desc_3_with_oi_45m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                    self._save_1m_close_gt_60m_open_with_oi_60m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                    self._save_oi_loss_rate_240m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                    self._save_15m_funding_rate_4bars_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                    self._save_15m_bullish_volume_breakout_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                    self._save_15m_volume_spike_2of3_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                    self._save_1h_volume_spike_latest_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                    self._save_15m_pullback_low_volume_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                    self._save_15m_low_rebound_3bars_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                    structural_stop_loss = self._save_structural_stop_loss(
-                        symbol=symbol,
-                        decision_round_ts=decision_round_ts,
-                        updated_at=now_ms,
-                    )
-                    self._save_structural_stop_loss_distance_score(
-                        symbol=symbol,
-                        decision_round_ts=decision_round_ts,
-                        updated_at=now_ms,
-                        structural_stop_loss=structural_stop_loss,
-                    )
-                    ma20s = self._latest_three_ma20_15m(symbol)
-                    if ma20s is None:
-                        continue
-                    m1, m2, m3 = ma20s
-                    hit = m1 > m2 > m3
-                    score = self._score_weight(1) if hit else 0
-                    reason = "ma20_15m_desc_3bars" if hit else "ma20_15m_rule_not_met"
-                    rec = SymbolScore(symbol, decision_round_ts, score, reason, m1, m2, m3, now_ms)
-                    results.append(rec)
-                    self._save_score(rec)
-                self.persist_total_scores_for_round(decision_round_ts=decision_round_ts, updated_at=now_ms)
-        finally:
-            if previous_decision_round_ts is None:
-                self._local.decision_round_ts = None
-            else:
-                self._local.decision_round_ts = previous_decision_round_ts
+        for symbol in candidates:
+            self._save_close_gt_ma20_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_1h_close_gt_prev_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_15m_bullish_3of4_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_15m_close_increasing_3of4_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_1m_close_gt_5m_ma20_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_15m_close_near_high_2of4_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_1h_latest_highest_24_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_15m_close_desc_3_with_oi_45m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_1m_close_gt_60m_open_with_oi_60m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_oi_loss_rate_240m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_15m_funding_rate_4bars_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_15m_bullish_volume_breakout_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_15m_volume_spike_2of3_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_1h_volume_spike_latest_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_15m_pullback_low_volume_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_15m_low_rebound_3bars_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_structural_stop_loss(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            self._save_structural_stop_loss_distance_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+            ma20s = self._latest_three_ma20_15m(symbol)
+            if ma20s is None:
+                continue
+            m1, m2, m3 = ma20s
+            hit = m1 > m2 > m3
+            score = self._score_weight(1) if hit else 0
+            reason = "ma20_15m_desc_3bars" if hit else "ma20_15m_rule_not_met"
+            rec = SymbolScore(symbol, decision_round_ts, score, reason, m1, m2, m3, now_ms)
+            results.append(rec)
+            self._save_score(rec)
+        self.persist_total_scores_for_round(decision_round_ts=decision_round_ts, updated_at=now_ms)
         return results
 
     def is_15m_ma20_ready_for_round(self, decision_round_ts: int, symbols: Iterable[str]) -> bool:
@@ -785,30 +634,26 @@ class ScoringSystem:
         return int(row["cnt"]) == len(symbol_list)
 
     def _latest_1m_close_and_15m_ma20(self, symbol: str) -> tuple[float, float] | None:
-        max_1m_open_time = self._latest_closed_open_time("1m")
-        max_15m_open_time = self._latest_closed_open_time("15m")
         with self._connect() as conn:
             close_row = conn.execute(
                 """
                 SELECT close
                 FROM klines_1m
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 1
                 """,
-                (symbol, max_1m_open_time, max_1m_open_time),
+                (symbol,),
             ).fetchone()
             ma20_row = conn.execute(
                 """
                 SELECT ma20
                 FROM ma20_indicators
                 WHERE symbol = ? AND interval = '15m'
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 1
                 """,
-                (symbol, max_15m_open_time, max_15m_open_time),
+                (symbol,),
             ).fetchone()
         if not close_row or not ma20_row:
             return None
@@ -840,30 +685,26 @@ class ScoringSystem:
 
 
     def _latest_1m_close_and_5m_ma20(self, symbol: str) -> tuple[float, float] | None:
-        max_1m_open_time = self._latest_closed_open_time("1m")
-        max_5m_open_time = self._latest_closed_open_time("5m")
         with self._connect() as conn:
             close_row = conn.execute(
                 """
                 SELECT close
                 FROM klines_1m
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 1
                 """,
-                (symbol, max_1m_open_time, max_1m_open_time),
+                (symbol,),
             ).fetchone()
             ma20_row = conn.execute(
                 """
                 SELECT ma20
                 FROM ma20_indicators
                 WHERE symbol = ? AND interval = '5m'
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 1
                 """,
-                (symbol, max_5m_open_time, max_5m_open_time),
+                (symbol,),
             ).fetchone()
         if not close_row or not ma20_row:
             return None
@@ -894,18 +735,16 @@ class ScoringSystem:
             )
 
     def _latest_two_1h_close(self, symbol: str) -> tuple[float, float] | None:
-        max_open_time = self._latest_closed_open_time("1h")
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT close
                 FROM klines_1h
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 2
                 """,
-                (symbol, max_open_time, max_open_time),
+                (symbol,),
             ).fetchall()
         if len(rows) < 2:
             return None
@@ -936,36 +775,32 @@ class ScoringSystem:
             )
 
     def _latest_four_15m_open_close(self, symbol: str) -> list[tuple[float, float]] | None:
-        max_open_time = self._latest_closed_open_time("15m")
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT open, close
                 FROM klines_15m
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 4
                 """,
-                (symbol, max_open_time, max_open_time),
+                (symbol,),
             ).fetchall()
         if len(rows) < 4:
             return None
         return [(float(r["open"]), float(r["close"])) for r in rows]
 
     def _latest_four_15m_close(self, symbol: str) -> list[float] | None:
-        max_open_time = self._latest_closed_open_time("15m")
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT close
                 FROM klines_15m
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 4
                 """,
-                (symbol, max_open_time, max_open_time),
+                (symbol,),
             ).fetchall()
         if len(rows) < 4:
             return None
@@ -1034,18 +869,16 @@ class ScoringSystem:
             )
 
     def _latest_four_15m_ohlc(self, symbol: str) -> list[tuple[float, float, float, float]] | None:
-        max_open_time = self._latest_closed_open_time("15m")
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT open, high, low, close
                 FROM klines_15m
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 4
                 """,
-                (symbol, max_open_time, max_open_time),
+                (symbol,),
             ).fetchall()
         if len(rows) < 4:
             return None
@@ -1080,18 +913,16 @@ class ScoringSystem:
             )
 
     def _latest_24_1h_high(self, symbol: str) -> list[float] | None:
-        max_open_time = self._latest_closed_open_time("1h")
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT high
                 FROM klines_1h
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 24
                 """,
-                (symbol, max_open_time, max_open_time),
+                (symbol,),
             ).fetchall()
         if len(rows) < 24:
             return None
@@ -1154,30 +985,26 @@ class ScoringSystem:
         return round_ts, rows
 
     def _latest_three_15m_close_and_oi_45m(self, symbol: str) -> tuple[float, float, float, float, float] | None:
-        max_15m_open_time = self._latest_closed_open_time("15m")
-        max_snapshot_time = self._latest_snapshot_time()
         with self._connect() as conn:
             close_rows = conn.execute(
                 """
                 SELECT close
                 FROM klines_15m
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 3
                 """,
-                (symbol, max_15m_open_time, max_15m_open_time),
+                (symbol,),
             ).fetchall()
             oi_rows = conn.execute(
                 """
                 SELECT open_interest
                 FROM open_interest_1m
                 WHERE symbol = ?
-                  AND (? IS NULL OR snapshot_time <= ?)
                 ORDER BY snapshot_time DESC
                 LIMIT 46
                 """,
-                (symbol, max_snapshot_time, max_snapshot_time),
+                (symbol,),
             ).fetchall()
         if len(close_rows) < 3 or len(oi_rows) < 46:
             return None
@@ -1247,25 +1074,13 @@ class ScoringSystem:
 
 
     def _save_1m_close_gt_60m_open_with_oi_60m_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
-        max_1m_open_time = self._latest_closed_open_time("1m")
-        max_snapshot_time = self._latest_snapshot_time()
         with self._connect() as conn:
             k_rows = conn.execute("""
-                SELECT open, close
-                FROM klines_1m
-                WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
-                ORDER BY open_time DESC
-                LIMIT 60
-            """, (symbol, max_1m_open_time, max_1m_open_time)).fetchall()
+                SELECT open, close FROM klines_1m WHERE symbol = ? ORDER BY open_time DESC LIMIT 60
+            """, (symbol,)).fetchall()
             oi_rows = conn.execute("""
-                SELECT open_interest
-                FROM open_interest_1m
-                WHERE symbol = ?
-                  AND (? IS NULL OR snapshot_time <= ?)
-                ORDER BY snapshot_time DESC
-                LIMIT 60
-            """, (symbol, max_snapshot_time, max_snapshot_time)).fetchall()
+                SELECT open_interest FROM open_interest_1m WHERE symbol = ? ORDER BY snapshot_time DESC LIMIT 60
+            """, (symbol,)).fetchall()
         if len(k_rows) < 60 or len(oi_rows) < 60:
             return
         latest_close = float(k_rows[0]["close"])
@@ -1287,16 +1102,10 @@ class ScoringSystem:
             """, (symbol, decision_round_ts, score, reason, latest_close, open_60m_ago, latest_oi, oi_60m_ago, updated_at))
 
     def _save_oi_loss_rate_240m_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
-        max_snapshot_time = self._latest_snapshot_time()
         with self._connect() as conn:
             oi_rows = conn.execute("""
-                SELECT open_interest
-                FROM open_interest_1m
-                WHERE symbol = ?
-                  AND (? IS NULL OR snapshot_time <= ?)
-                ORDER BY snapshot_time DESC
-                LIMIT 240
-            """, (symbol, max_snapshot_time, max_snapshot_time)).fetchall()
+                SELECT open_interest FROM open_interest_1m WHERE symbol = ? ORDER BY snapshot_time DESC LIMIT 240
+            """, (symbol,)).fetchall()
         if len(oi_rows) < 240:
             return
         latest_oi = float(oi_rows[0]["open_interest"])
@@ -1324,18 +1133,16 @@ class ScoringSystem:
 
 
     def _latest_four_15m_funding_rates(self, symbol: str) -> tuple[float | None, float | None, float | None, float | None] | None:
-        max_open_time = self._latest_closed_open_time("15m")
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT funding_rate
                 FROM klines_15m
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 4
                 """,
-                (symbol, max_open_time, max_open_time),
+                (symbol,),
             ).fetchall()
         if len(rows) < 4:
             return None
@@ -1371,18 +1178,16 @@ class ScoringSystem:
 
 
     def _latest_17_15m_ohlcv(self, symbol: str) -> list[sqlite3.Row] | None:
-        max_open_time = self._latest_closed_open_time("15m")
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT open, close, volume
                 FROM klines_15m
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 17
                 """,
-                (symbol, max_open_time, max_open_time),
+                (symbol,),
             ).fetchall()
         if len(rows) < 17:
             return None
@@ -1457,18 +1262,16 @@ class ScoringSystem:
             ).fetchall()
 
     def _latest_19_15m_volumes(self, symbol: str) -> list[float] | None:
-        max_open_time = self._latest_closed_open_time("15m")
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT volume
                 FROM klines_15m
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 19
                 """,
-                (symbol, max_open_time, max_open_time),
+                (symbol,),
             ).fetchall()
         if len(rows) < 19:
             return None
@@ -1551,18 +1354,16 @@ class ScoringSystem:
             ).fetchall()
 
     def _latest_13_1h_volumes(self, symbol: str) -> list[float] | None:
-        max_open_time = self._latest_closed_open_time("1h")
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT volume
                 FROM klines_1h
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 13
                 """,
-                (symbol, max_open_time, max_open_time),
+                (symbol,),
             ).fetchall()
         if len(rows) < 13:
             return None
@@ -1626,18 +1427,16 @@ class ScoringSystem:
 
 
     def _latest_2_15m_ohlcv(self, symbol: str) -> list[sqlite3.Row] | None:
-        max_open_time = self._latest_closed_open_time("15m")
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT open, close, volume
                 FROM klines_15m
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 2
                 """,
-                (symbol, max_open_time, max_open_time),
+                (symbol,),
             ).fetchall()
         if len(rows) < 2:
             return None
@@ -1734,18 +1533,16 @@ class ScoringSystem:
             ).fetchall()
 
     def _latest_3_15m_low_close(self, symbol: str) -> list[sqlite3.Row] | None:
-        max_open_time = self._latest_closed_open_time("15m")
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT low, close
                 FROM klines_15m
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 3
                 """,
-                (symbol, max_open_time, max_open_time),
+                (symbol,),
             ).fetchall()
         if len(rows) < 3:
             return None
@@ -1852,21 +1649,19 @@ class ScoringSystem:
             ).fetchall()
 
     def _latest_24_15m_ohlcv(self, symbol: str) -> list[sqlite3.Row]:
-        max_open_time = self._latest_closed_open_time("15m")
         with self._connect() as conn:
             return conn.execute(
                 """
                 SELECT open_time, open, high, low, close, volume
                 FROM klines_15m
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 24
                 """,
-                (symbol, max_open_time, max_open_time),
+                (symbol,),
             ).fetchall()
 
-    def _save_structural_stop_loss(self, symbol: str, decision_round_ts: int, updated_at: int) -> float:
+    def _save_structural_stop_loss(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
         rows = self._latest_24_15m_ohlcv(symbol)
         structural_stop_loss = 0.0
         reason = "structural_stop_loss_not_found"
@@ -2065,7 +1860,6 @@ class ScoringSystem:
                     updated_at,
                 ),
             )
-        return structural_stop_loss
 
     def get_latest_round_structural_stop_losses(self) -> tuple[int | None, list[sqlite3.Row]]:
         with self._connect() as conn:
@@ -2104,44 +1898,33 @@ class ScoringSystem:
         return float(row["structural_stop_loss"])
 
     def _latest_1m_close_and_two_15m_close(self, symbol: str) -> tuple[float, float, float] | None:
-        max_1m_open_time = self._latest_closed_open_time("1m")
-        max_15m_open_time = self._latest_closed_open_time("15m")
         with self._connect() as conn:
             close_1m_row = conn.execute(
                 """
                 SELECT close
                 FROM klines_1m
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 1
                 """,
-                (symbol, max_1m_open_time, max_1m_open_time),
+                (symbol,),
             ).fetchone()
             close_15m_rows = conn.execute(
                 """
                 SELECT close
                 FROM klines_15m
                 WHERE symbol = ?
-                  AND (? IS NULL OR open_time <= ?)
                 ORDER BY open_time DESC
                 LIMIT 2
                 """,
-                (symbol, max_15m_open_time, max_15m_open_time),
+                (symbol,),
             ).fetchall()
         if not close_1m_row or len(close_15m_rows) < 2:
             return None
         return float(close_1m_row["close"]), float(close_15m_rows[0]["close"]), float(close_15m_rows[1]["close"])
 
-    def _save_structural_stop_loss_distance_score(
-        self,
-        symbol: str,
-        decision_round_ts: int,
-        updated_at: int,
-        structural_stop_loss: float | None = None,
-    ) -> None:
-        if structural_stop_loss is None:
-            structural_stop_loss = self._structural_stop_loss_for_round(symbol, decision_round_ts)
+    def _save_structural_stop_loss_distance_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
+        structural_stop_loss = self._structural_stop_loss_for_round(symbol, decision_round_ts)
         latest_1m_close = 0.0
         stop_loss_distance_ratio = 0.0
         latest_15m_close = 0.0

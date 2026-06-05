@@ -106,14 +106,14 @@ def start_pre_safety_task() -> None:
                     print(f"⏳ scoring round={round_ts} waiting MA20 readiness")
                     time.sleep(5)
                     continue
-                pending_jobs = scoring.enqueue_score_round(
+                scored = scoring.score_round(
                     decision_round_ts=round_ts,
                     all_symbols=symbols,
                     abnormal_symbols=abnormal_symbols,
                 )
                 print(
-                    f"🧮 scoring round={round_ts} queued universe={len(symbols)} "
-                    f"abnormal={len(set(abnormal_symbols))} pending_jobs={pending_jobs}"
+                    f"🧮 scoring round={round_ts} universe={len(symbols)} "
+                    f"abnormal={len(set(abnormal_symbols))} scored={len(scored)}"
                 )
             except Exception as exc:
                 print(f"⚠️ scoring failed round={round_ts}: {exc}")
