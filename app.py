@@ -27,7 +27,6 @@ from scoring_system import ScoringSystem
 
 _universe_lock = threading.Lock()
 _universe_refresh_interval_sec = 12 * 60 * 60
-_universe_empty_retry_interval_sec = 5 * 60
 _universe_last_refresh_ts = 0.0
 _scoring_wait_log_interval_sec = int(os.getenv("SCORING_WAIT_LOG_INTERVAL_SEC", "60"))
 _scoring_wait_timeout_sec = int(os.getenv("SCORING_WAIT_TIMEOUT_SEC", "600"))
@@ -61,16 +60,8 @@ def ensure_universe() -> List[str]:
         now_ts = time.time()
         should_refresh = collector.UNIVERSE is None or (now_ts - _universe_last_refresh_ts) >= _universe_refresh_interval_sec
         if should_refresh:
-            refreshed = collector.build_universe()
-            collector.UNIVERSE = refreshed
-            if refreshed:
-                _universe_last_refresh_ts = now_ts
-            else:
-                _universe_last_refresh_ts = (
-                    now_ts
-                    - _universe_refresh_interval_sec
-                    + _universe_empty_retry_interval_sec
-                )
+            collector.UNIVERSE = collector.build_universe()
+            _universe_last_refresh_ts = now_ts
         return list(collector.UNIVERSE)
 
 
