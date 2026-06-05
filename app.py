@@ -29,6 +29,8 @@ _universe_lock = threading.Lock()
 _universe_refresh_interval_sec = 12 * 60 * 60
 _universe_empty_retry_interval_sec = 5 * 60
 _universe_last_refresh_ts = 0.0
+_scoring_wait_log_interval_sec = int(os.getenv("SCORING_WAIT_LOG_INTERVAL_SEC", "60"))
+_scoring_wait_timeout_sec = int(os.getenv("SCORING_WAIT_TIMEOUT_SEC", "600"))
 
 
 def verify_db_writable(db_path: str) -> None:
@@ -85,6 +87,8 @@ def start_pre_safety_task() -> None:
 
     last_round_ts = None
     round_ms = 15 * 60_000
+    scoring_wait_started_by_round: dict[int, float] = {}
+    scoring_wait_last_log_by_round: dict[int, float] = {}
 
     print("🛡️ Pre-safety task started")
     while True:
@@ -109,10 +113,73 @@ def start_pre_safety_task() -> None:
 
             try:
                 _, abnormal_symbols = module.get_latest_round_abnormal_symbols(decision_round_ts=round_ts)
+                # MA20 由 klines_1m 聚合出的15m K线计算得到：如果1m基准数据本身不新，
+                # 该轮15m MA20不可能就绪，先直接报告1m数据新鲜度，避免误导为MA20问题。
+                freshness = scoring.get_1m_kline_freshness_for_round(
+                    decision_round_ts=round_ts,
+                    symbols=symbols,
+                )
+                if not freshness["fresh"]:
+                    now_ts = time.time()
+                    wait_started_ts = scoring_wait_started_by_round.setdefault(round_ts, now_ts)
+                    last_log_ts = scoring_wait_last_log_by_round.get(round_ts, 0.0)
+                    waited_sec = int(now_ts - wait_started_ts)
+                    should_log_wait = (now_ts - last_log_ts) >= _scoring_wait_log_interval_sec
+                    if should_log_wait:
+                        scoring_wait_last_log_by_round[round_ts] = now_ts
+                        print(
+                            f"⏳ scoring round={round_ts} waiting klines_1m freshness "
+                            f"target_close_time={freshness['target_close_time']} "
+                            f"fresh={freshness['fresh_count']}/{freshness['expected_count']} "
+                            f"stale={freshness['stale_count']} "
+                            f"sample={freshness['stale_sample']} waited={waited_sec}s"
+                        )
+
+                    if waited_sec >= _scoring_wait_timeout_sec:
+                        print(
+                            f"⚠️ scoring round={round_ts} skipped after waiting {waited_sec}s for klines_1m "
+                            f"target_close_time={freshness['target_close_time']} "
+                            f"fresh={freshness['fresh_count']}/{freshness['expected_count']} "
+                            f"stale={freshness['stale_count']} sample={freshness['stale_sample']}"
+                        )
+                        last_round_ts = round_ts
+                        scoring_wait_started_by_round.pop(round_ts, None)
+                        scoring_wait_last_log_by_round.pop(round_ts, None)
+                    time.sleep(5)
+                    continue
+
                 # 评分严格依赖15m MA20：先等待该轮对应已收盘15m K线的MA20写入完成，再打分。
                 # 当前轮次 round_ts 对应的最新已收盘15m K线 open_time=round_ts-15m。
-                if not scoring.is_15m_ma20_ready_for_round(decision_round_ts=round_ts, symbols=symbols):
-                    print(f"⏳ scoring round={round_ts} waiting MA20 readiness")
+                readiness = scoring.get_15m_ma20_readiness_for_round(
+                    decision_round_ts=round_ts,
+                    symbols=symbols,
+                )
+                if not readiness["ready"]:
+                    now_ts = time.time()
+                    wait_started_ts = scoring_wait_started_by_round.setdefault(round_ts, now_ts)
+                    last_log_ts = scoring_wait_last_log_by_round.get(round_ts, 0.0)
+                    waited_sec = int(now_ts - wait_started_ts)
+                    should_log_wait = (now_ts - last_log_ts) >= _scoring_wait_log_interval_sec
+                    if should_log_wait:
+                        scoring_wait_last_log_by_round[round_ts] = now_ts
+                        print(
+                            f"⏳ scoring round={round_ts} waiting MA20 readiness "
+                            f"target_open_time={readiness['target_open_time']} "
+                            f"ready={readiness['ready_count']}/{readiness['expected_count']} "
+                            f"missing={readiness['missing_count']} "
+                            f"sample={readiness['missing_sample']} waited={waited_sec}s"
+                        )
+
+                    if waited_sec >= _scoring_wait_timeout_sec:
+                        print(
+                            f"⚠️ scoring round={round_ts} skipped after waiting {waited_sec}s for MA20 "
+                            f"target_open_time={readiness['target_open_time']} "
+                            f"ready={readiness['ready_count']}/{readiness['expected_count']} "
+                            f"missing={readiness['missing_count']} sample={readiness['missing_sample']}"
+                        )
+                        last_round_ts = round_ts
+                        scoring_wait_started_by_round.pop(round_ts, None)
+                        scoring_wait_last_log_by_round.pop(round_ts, None)
                     time.sleep(5)
                     continue
                 scored = scoring.score_round(
@@ -124,6 +191,8 @@ def start_pre_safety_task() -> None:
                     f"🧮 scoring round={round_ts} universe={len(symbols)} "
                     f"abnormal={len(set(abnormal_symbols))} scored={len(scored)}"
                 )
+                scoring_wait_started_by_round.pop(round_ts, None)
+                scoring_wait_last_log_by_round.pop(round_ts, None)
             except Exception as exc:
                 print(f"⚠️ scoring failed round={round_ts}: {exc}")
 
@@ -149,11 +218,12 @@ def start_collector_task(symbols: List[str]) -> None:
         job_func()
 
     scheduler = collector.BlockingScheduler()
-    scheduler.add_job(ensure_universe, "interval", hours=12)
-    scheduler.add_job(lambda: _run_with_fresh_universe(collector.kline_job), "cron", second=0)
-    scheduler.add_job(lambda: _run_with_fresh_universe(collector.oi_job), "cron", second=20)
-    scheduler.add_job(lambda: _run_with_fresh_universe(collector.funding_job), "cron", minute=1, second=40)
-    scheduler.add_job(lambda: _run_with_fresh_universe(collector.btc_5m_job), "cron", minute="*/5", second=10)
+    job_options = {"coalesce": True, "misfire_grace_time": 30, "max_instances": 2}
+    scheduler.add_job(ensure_universe, "interval", hours=12, coalesce=True, max_instances=1)
+    scheduler.add_job(lambda: _run_with_fresh_universe(collector.kline_job), "cron", second=0, **job_options)
+    scheduler.add_job(lambda: _run_with_fresh_universe(collector.oi_job), "cron", second=20, **job_options)
+    scheduler.add_job(lambda: _run_with_fresh_universe(collector.funding_job), "cron", minute=1, second=40, **job_options)
+    scheduler.add_job(lambda: _run_with_fresh_universe(collector.btc_5m_job), "cron", minute="*/5", second=10, **job_options)
 
     print("🚀 Collector task started")
     scheduler.start()
