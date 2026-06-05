@@ -656,7 +656,7 @@
           {% if qualified_openable_symbols %}
             <div class="chips">
               {% for row in qualified_openable_symbols %}
-                <span class="chip" title="总分 {{ row.total_score }}；止损距离 {{ '%.4f%%'|format(row.stop_loss_distance_ratio * 100) if row.stop_loss_distance_ratio is not none else '-' }}；止损距离档位 {{ row.stop_loss_distance_tier }}">{{ row.symbol }}</span>
+                <span class="chip" title="总分 {{ row.total_score }}；止损距离 {{ '%.4f%%'|format(row.stop_loss_distance_ratio * 100) if row.stop_loss_distance_ratio is not none else '-' }}；止损距离档位 {{ row.stop_loss_distance_tier }}；杠杆 {{ row.opening_leverage }}">{{ row.symbol }} {{ row.opening_leverage }}</span>
               {% endfor %}
             </div>
           {% else %}
@@ -665,7 +665,7 @@
             </div>
           {% endif %}
         </div>
-        <div class="tip">可开仓基础条件：本轮总分 ≥ 65，且不在冷却期。止损距离筛查使用规则18的 distance_ratio：65-72分≤5%，73-80分≤6%，81-88分≤7%，89-100分≤8%；止损距离档位：0&lt;distance_ratio≤2% 为A档，2%&lt;distance_ratio≤3% 为B档，3%&lt;distance_ratio≤4% 为C档，distance_ratio&gt;4% 为D档。下表展示基础条件命中的symbol及其止损距离筛查结果。</div>
+        <div class="tip">可开仓基础条件：本轮总分 ≥ 65，且不在冷却期。止损距离筛查使用规则18的 distance_ratio：65-72分≤5%，73-80分≤6%，81-88分≤7%，89-100分≤8%；止损距离档位：0&lt;distance_ratio≤2% 为A档，2%&lt;distance_ratio≤3% 为B档，3%&lt;distance_ratio≤4% 为C档，distance_ratio&gt;4% 为D档。杠杆评定：趋势标准单及以上且 distance_ratio 为0时统一为5x；其他情况按总分区间和止损距离档位映射（65-72：A/B/C/D=4x/3x/2x/1x；73-80：8x/6x/4x/2x；81-88：10x/7x/5x/3x；89-100：12x/8x/6x/4x）。下表展示基础条件命中的symbol及其止损距离筛查结果与本轮开仓杠杆倍数。</div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -676,6 +676,7 @@
                 <th>评分档位</th>
                 <th>distance_ratio</th>
                 <th>止损距离档位</th>
+                <th>杠杆大小</th>
                 <th>合格阈值</th>
                 <th>止损距离筛查</th>
                 <th>最终可开仓</th>
@@ -692,6 +693,7 @@
                 <td>{{ row.score_band }}</td>
                 <td>{{ '%.4f%%'|format(row.stop_loss_distance_ratio * 100) if row.stop_loss_distance_ratio is not none else '-' }}</td>
                 <td><span class="tier-badge {{ 'tier-a' if row.stop_loss_distance_tier == 'A档' else 'tier-b' if row.stop_loss_distance_tier == 'B档' else 'tier-c' if row.stop_loss_distance_tier == 'C档' else 'tier-d' if row.stop_loss_distance_tier == 'D档' else 'tier-na' }}">{{ row.stop_loss_distance_tier }}</span></td>
+                <td>{{ row.opening_leverage }}</td>
                 <td>{{ '%.2f%%'|format(row.distance_threshold * 100) if row.distance_threshold is not none else '-' }}</td>
                 <td><span class="status-badge {{ 'status-pass' if row.distance_qualified else 'status-fail' }}">{{ '合格' if row.distance_qualified else '不合格' }}</span></td>
                 <td><span class="status-badge {{ 'status-pass' if row.qualified else 'status-fail' }}">{{ '是' if row.qualified else '否' }}</span></td>
@@ -699,7 +701,7 @@
                 <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
               </tr>
               {% else %}
-              <tr><td class="empty" colspan="11">暂无本轮可开仓symbol候选</td></tr>
+              <tr><td class="empty" colspan="12">暂无本轮可开仓symbol候选</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -724,7 +726,7 @@
             </div>
           {% endif %}
         </div>
-        <div class="tip">冷却条件：30分钟内被标记为异常插针，或最近两根15分钟K线均满足 (high - close) / (high - low) ≥ 0.7。时间字段均为 UTC。</div>
+        <div class="tip">冷却条件：30分钟内被标记为异常插针，或最近两根15分钟K线均满足 (high - close) / (high - low) ≥ 0.7 且 close > open。时间字段均为 UTC。</div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -732,7 +734,7 @@
                 <th>symbol</th>
                 <th>decision_round_ts</th>
                 <th>30分钟内异常插针</th>
-                <th>连续两根15m上影占比≥0.7</th>
+                <th>连续两根15m上影占比≥0.7且close>open</th>
                 <th>latest_15m_open_time</th>
                 <th>latest_15m_ratio</th>
                 <th>prev_15m_open_time</th>
