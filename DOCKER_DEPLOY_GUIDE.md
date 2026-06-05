@@ -24,7 +24,7 @@ git pull --rebase
 
 ```bash
 mkdir -p ./data ./logs
-sudo chown -R 1000:1000 ./data ./logs
+sudo chown -R "$(id -u):$(id -g)" ./data ./logs
 sudo chmod -R u+rwX ./data ./logs
 ```
 
@@ -38,7 +38,9 @@ sudo chmod -R u+rwX ./data ./logs
 
 本项目的评分规则权重现在由仓库根目录的 `scoring_rule_weights.json` 管理，Docker 镜像构建时会把该文件复制到 `/app/scoring_rule_weights.json`。
 
-如果你只修改评分权重配置，请在服务器上重新构建并重启容器，让新镜像包含最新配置：
+本次新增的 `cooldown_module.py` 属于 Python 源码文件，`Dockerfile` 的 `COPY *.py ./` 会自动把它打进镜像；因此服务器升级时必须重新构建镜像，不能只重启旧容器。
+
+如果你修改了评分权重或 Python 源码，请在服务器上重新构建并重启容器，让新镜像包含最新配置和代码：
 
 ```bash
 docker compose up -d --build
@@ -51,10 +53,16 @@ docker compose up -d --build
 ```bash
 export PUID=$(id -u)
 export PGID=$(id -g)
+# 默认使用当前目录下的 ./data 和 ./logs；如需沿用 /root/trade，可取消下面两行注释：
+# export HOST_DATA_DIR=/root/trade/data
+# export HOST_LOGS_DIR=/root/trade/logs
 docker compose up -d --build
 ```
 
-`docker-compose.yml` 已支持 `user: "${PUID:-1000}:${PGID:-1000}"`，会让 `worker/web` 进程直接使用宿主机当前用户 UID/GID，避免挂载 `./data`、`./logs` 时出现只读权限问题。
+`docker-compose.yml` 已支持：
+- `user: "${PUID:-1000}:${PGID:-1000}"`：让 `worker/web` 进程直接使用宿主机当前用户 UID/GID，避免挂载数据目录时出现只读权限问题。
+- `HOST_DATA_DIR` / `HOST_LOGS_DIR`：可切换宿主机挂载目录；不设置时默认使用仓库当前目录的 `./data`、`./logs`。
+- `worker` 和 `web` 都声明同一个 `build: .` / `image: trading-sys-demo:latest`，避免新增 Python 文件后只启动 web 时仍使用旧镜像。
 
 ### 查看状态与日志
 
@@ -85,8 +93,8 @@ docker build -t trading-sys-demo:latest .
 ```bash
 docker run -d \
   --name trade \
-  -v /root/trade/data:/app/data \
-  -v /root/trade/logs:/app/logs \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/logs:/app/logs" \
   --restart=always \
   trading-sys-demo:latest worker
 ```
@@ -97,7 +105,7 @@ docker run -d \
 docker run -d \
   --name sqlite-web \
   -p 8080:8080 \
-  -v /root/trade/data:/data \
+  -v "$(pwd)/data:/data" \
   --restart=always \
   coleifer/sqlite-web:latest \
   sqlite_web /data/klines.db --host 0.0.0.0
@@ -108,8 +116,8 @@ docker run -d \
 ```bash
 docker run -d \
   --name trade-web \
-  -v /root/trade/data:/app/data \
-  -v /root/trade/logs:/app/logs \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/logs:/app/logs" \
   -p 5000:5000 \
   --restart=always \
   trading-sys-demo:latest web
@@ -121,6 +129,8 @@ docker run -d \
 
 ```bash
 git pull --rebase
+export PUID=$(id -u)
+export PGID=$(id -g)
 docker compose up -d --build
 ```
 

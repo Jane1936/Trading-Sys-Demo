@@ -7,10 +7,11 @@ services:
     user: "${PUID:-1000}:${PGID:-1000}"
     restart: always
     volumes:
-      - /root/trade/data:/app/data
-      - /root/trade/logs:/app/logs
+      - ${HOST_DATA_DIR:-./data}:/app/data
+      - ${HOST_LOGS_DIR:-./logs}:/app/logs
 
   web:
+    build: .
     image: trading-sys-demo:latest
     container_name: trade-web
     command: ["web"]
@@ -19,8 +20,8 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - /root/trade/data:/app/data
-      - /root/trade/logs:/app/logs
+      - ${HOST_DATA_DIR:-./data}:/app/data
+      - ${HOST_LOGS_DIR:-./logs}:/app/logs
     depends_on:
       - worker
 
@@ -30,7 +31,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - /root/trade/data:/data
+      - ${HOST_DATA_DIR:-./data}:/data
     command: ["sqlite_web", "/data/klines.db", "--host", "0.0.0.0"]
     depends_on:
       - worker

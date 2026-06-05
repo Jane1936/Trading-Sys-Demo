@@ -2,7 +2,7 @@
 
 - collector task: fetch 1m data and aggregate to 15m/1h/... by schedule
 - data processor task: consume DB aggregated candles and emit MA20 updates
-- pre-safety task: detect abnormal wick events every 15m decision round
+- pre-safety task: detect abnormal wick events and cooldown symbols every 15m decision round
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from data_processor import (
     run_loop,
     save_ma20_result,
 )
+from cooldown_module import CooldownModule
 from pre_safety_module import PreSafetyModule
 from scoring_system import ScoringSystem
 
@@ -71,6 +72,8 @@ def start_pre_safety_task() -> None:
     """
     module = PreSafetyModule(db_path=collector.DB_PATH)
     module.init_table()
+    cooldown = CooldownModule(db_path=collector.DB_PATH)
+    cooldown.init_table()
     scoring = ScoringSystem(db_path=collector.DB_PATH)
     scoring.init_table()
 
@@ -97,6 +100,15 @@ def start_pre_safety_task() -> None:
                         )
                 except Exception as exc:  # keep this side-task isolated
                     print(f"⚠️ pre-safety detect failed symbol={symbol}: {exc}")
+
+            try:
+                cooldown_symbols = cooldown.run_round(symbols=symbols, decision_round_ts=round_ts, now_ms=now_ms)
+                print(
+                    f"🧊 cooldown round={round_ts} universe={len(symbols)} "
+                    f"cooldown={len(cooldown_symbols)}"
+                )
+            except Exception as exc:
+                print(f"⚠️ cooldown failed round={round_ts}: {exc}")
 
             try:
                 _, abnormal_symbols = module.get_latest_round_abnormal_symbols(decision_round_ts=round_ts)
@@ -171,7 +183,7 @@ if __name__ == "__main__":
     # 预先构建一次 universe，并按12小时周期刷新
     symbols = ensure_universe()
 
-    # 三个独立 task：collector / pre_safety / data_processor
+    # 三个独立 task：collector / pre_safety（异常插针后立即执行冷却期symbol） / data_processor
     collector_thread = threading.Thread(target=start_collector_task, args=(symbols,), daemon=True)
     collector_thread.start()
 

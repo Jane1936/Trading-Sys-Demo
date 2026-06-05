@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from flask import Flask, jsonify, render_template, request
 
 import collector
+from cooldown_module import CooldownModule
 from pre_safety_module import PreSafetyModule
 from scoring_system import ScoringSystem
 
@@ -62,10 +63,13 @@ def abnormal_wicks():
 
     module = PreSafetyModule(db_path=DB_PATH)
     module.init_table()
+    cooldown = CooldownModule(db_path=DB_PATH)
+    cooldown.init_table()
     events = module.get_recent_events_by_symbol(symbol=symbol, limit=limit) if symbol else module.get_recent_events(limit=limit)
     symbols = module.get_event_symbols()
     current_round_ts = module._decision_round_ts_ms()
     latest_round_ts, latest_round_symbols = module.get_latest_round_abnormal_symbols(decision_round_ts=current_round_ts)
+    cooldown_round_ts, cooldown_symbols = cooldown.get_latest_round_symbols(decision_round_ts=current_round_ts)
     scoring = ScoringSystem(db_path=DB_PATH)
     scoring.init_table()
     score_round_ts, round_scores = scoring.get_latest_round_scores()
@@ -148,6 +152,8 @@ def abnormal_wicks():
         symbols=symbols,
         latest_round_ts=latest_round_ts,
         latest_round_symbols=latest_round_symbols,
+        cooldown_round_ts=cooldown_round_ts,
+        cooldown_symbols=cooldown_symbols,
         score_round_ts=score_round_ts,
         round_scores=round_scores,
         score_rule2_round_ts=score_rule2_round_ts,
