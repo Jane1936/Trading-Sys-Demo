@@ -22,6 +22,7 @@ class OpenableSymbol:
     stop_loss_distance_ratio: float | None
     distance_threshold: float | None
     stop_loss_distance_tier: str
+    opening_leverage: str
     distance_qualified: bool
     qualified: bool
     reason: str
@@ -54,6 +55,7 @@ class OpenableSymbolModule:
                     stop_loss_distance_ratio REAL,
                     distance_threshold REAL,
                     stop_loss_distance_tier TEXT NOT NULL DEFAULT 'NA',
+                    opening_leverage TEXT NOT NULL DEFAULT 'NA',
                     distance_qualified INTEGER NOT NULL,
                     qualified INTEGER NOT NULL,
                     reason TEXT NOT NULL,
@@ -67,6 +69,11 @@ class OpenableSymbolModule:
                 conn.execute(
                     f"ALTER TABLE {self.TABLE_NAME} "
                     "ADD COLUMN stop_loss_distance_tier TEXT NOT NULL DEFAULT 'NA'"
+                )
+            if "opening_leverage" not in columns:
+                conn.execute(
+                    f"ALTER TABLE {self.TABLE_NAME} "
+                    "ADD COLUMN opening_leverage TEXT NOT NULL DEFAULT 'NA'"
                 )
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_round "
@@ -108,6 +115,28 @@ class OpenableSymbolModule:
         if distance_ratio <= 0.04:
             return "C档"
         return "D档"
+
+    @classmethod
+    def opening_leverage_for_total_and_distance(
+        cls,
+        total_score: int,
+        distance_ratio: float | None,
+        distance_tier: str,
+    ) -> str:
+        """Return this-round opening leverage formatted as a multiplier string."""
+        if total_score >= 81 and distance_ratio == 0:
+            return "5x"
+
+        leverage_map = {
+            (65, 72): {"A档": "4x", "B档": "3x", "C档": "2x", "D档": "1x"},
+            (73, 80): {"A档": "8x", "B档": "6x", "C档": "4x", "D档": "2x"},
+            (81, 88): {"A档": "10x", "B档": "7x", "C档": "5x", "D档": "3x"},
+            (89, 100): {"A档": "12x", "B档": "8x", "C档": "6x", "D档": "4x"},
+        }
+        for (lower, upper), tier_leverages in leverage_map.items():
+            if lower <= total_score <= upper:
+                return tier_leverages.get(distance_tier, "NA")
+        return "NA"
 
     def run_round(
         self,
@@ -172,6 +201,7 @@ class OpenableSymbolModule:
         ratio = float(row["stop_loss_distance_ratio"]) if row["stop_loss_distance_ratio"] is not None else None
         threshold = self.distance_threshold_for_total(total_score)
         distance_tier = self.stop_loss_distance_tier_for_ratio(ratio)
+        opening_leverage = self.opening_leverage_for_total_and_distance(total_score, ratio, distance_tier)
         distance_qualified = ratio is not None and threshold is not None and 0 <= ratio <= threshold
         qualified = distance_qualified
         if threshold is None:
@@ -193,6 +223,7 @@ class OpenableSymbolModule:
             stop_loss_distance_ratio=ratio,
             distance_threshold=threshold,
             stop_loss_distance_tier=distance_tier,
+            opening_leverage=opening_leverage,
             distance_qualified=distance_qualified,
             qualified=qualified,
             reason=reason,
@@ -206,14 +237,16 @@ class OpenableSymbolModule:
             f"""
             INSERT INTO {self.TABLE_NAME}
             (symbol, decision_round_ts, total_score, score_band, stop_loss_distance_ratio,
-             distance_threshold, stop_loss_distance_tier, distance_qualified, qualified, reason, evaluated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             distance_threshold, stop_loss_distance_tier, opening_leverage, distance_qualified,
+             qualified, reason, evaluated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
                 total_score=excluded.total_score,
                 score_band=excluded.score_band,
                 stop_loss_distance_ratio=excluded.stop_loss_distance_ratio,
                 distance_threshold=excluded.distance_threshold,
                 stop_loss_distance_tier=excluded.stop_loss_distance_tier,
+                opening_leverage=excluded.opening_leverage,
                 distance_qualified=excluded.distance_qualified,
                 qualified=excluded.qualified,
                 reason=excluded.reason,
@@ -228,6 +261,7 @@ class OpenableSymbolModule:
                     row.stop_loss_distance_ratio,
                     row.distance_threshold,
                     row.stop_loss_distance_tier,
+                    row.opening_leverage,
                     int(row.distance_qualified),
                     int(row.qualified),
                     row.reason,
@@ -252,7 +286,7 @@ class OpenableSymbolModule:
                 f"""
                 SELECT symbol, decision_round_ts, total_score, score_band,
                        stop_loss_distance_ratio, distance_threshold, stop_loss_distance_tier,
-                       distance_qualified, qualified, reason, evaluated_at
+                       opening_leverage, distance_qualified, qualified, reason, evaluated_at
                 FROM {self.TABLE_NAME}
                 WHERE decision_round_ts = ?
                 ORDER BY qualified DESC, total_score DESC, symbol ASC
@@ -274,6 +308,7 @@ class OpenableSymbolModule:
             else None,
             distance_threshold=float(row["distance_threshold"]) if row["distance_threshold"] is not None else None,
             stop_loss_distance_tier=str(row["stop_loss_distance_tier"]),
+            opening_leverage=str(row["opening_leverage"]),
             distance_qualified=bool(row["distance_qualified"]),
             qualified=bool(row["qualified"]),
             reason=str(row["reason"]),
