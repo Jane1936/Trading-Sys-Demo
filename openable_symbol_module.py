@@ -21,6 +21,7 @@ class OpenableSymbol:
     score_band: str
     stop_loss_distance_ratio: float | None
     distance_threshold: float | None
+    stop_loss_distance_tier: str
     distance_qualified: bool
     qualified: bool
     reason: str
@@ -52,6 +53,7 @@ class OpenableSymbolModule:
                     score_band TEXT NOT NULL,
                     stop_loss_distance_ratio REAL,
                     distance_threshold REAL,
+                    stop_loss_distance_tier TEXT NOT NULL DEFAULT 'NA',
                     distance_qualified INTEGER NOT NULL,
                     qualified INTEGER NOT NULL,
                     reason TEXT NOT NULL,
@@ -60,6 +62,12 @@ class OpenableSymbolModule:
                 )
                 """
             )
+            columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.TABLE_NAME})").fetchall()}
+            if "stop_loss_distance_tier" not in columns:
+                conn.execute(
+                    f"ALTER TABLE {self.TABLE_NAME} "
+                    "ADD COLUMN stop_loss_distance_tier TEXT NOT NULL DEFAULT 'NA'"
+                )
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_round "
                 f"ON {self.TABLE_NAME}(decision_round_ts DESC, qualified DESC, total_score DESC, symbol ASC)"
@@ -88,6 +96,18 @@ class OpenableSymbolModule:
         if 89 <= total_score <= 100:
             return 0.08
         return None
+
+    @staticmethod
+    def stop_loss_distance_tier_for_ratio(distance_ratio: float | None) -> str:
+        if distance_ratio is None or distance_ratio <= 0:
+            return "NA"
+        if distance_ratio <= 0.02:
+            return "A档"
+        if distance_ratio <= 0.03:
+            return "B档"
+        if distance_ratio <= 0.04:
+            return "C档"
+        return "D档"
 
     def run_round(
         self,
@@ -151,6 +171,7 @@ class OpenableSymbolModule:
         total_score = int(row["total_score"])
         ratio = float(row["stop_loss_distance_ratio"]) if row["stop_loss_distance_ratio"] is not None else None
         threshold = self.distance_threshold_for_total(total_score)
+        distance_tier = self.stop_loss_distance_tier_for_ratio(ratio)
         distance_qualified = ratio is not None and threshold is not None and 0 <= ratio <= threshold
         qualified = distance_qualified
         if threshold is None:
@@ -171,6 +192,7 @@ class OpenableSymbolModule:
             score_band=self.score_band_for_total(total_score),
             stop_loss_distance_ratio=ratio,
             distance_threshold=threshold,
+            stop_loss_distance_tier=distance_tier,
             distance_qualified=distance_qualified,
             qualified=qualified,
             reason=reason,
@@ -184,13 +206,14 @@ class OpenableSymbolModule:
             f"""
             INSERT INTO {self.TABLE_NAME}
             (symbol, decision_round_ts, total_score, score_band, stop_loss_distance_ratio,
-             distance_threshold, distance_qualified, qualified, reason, evaluated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             distance_threshold, stop_loss_distance_tier, distance_qualified, qualified, reason, evaluated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
                 total_score=excluded.total_score,
                 score_band=excluded.score_band,
                 stop_loss_distance_ratio=excluded.stop_loss_distance_ratio,
                 distance_threshold=excluded.distance_threshold,
+                stop_loss_distance_tier=excluded.stop_loss_distance_tier,
                 distance_qualified=excluded.distance_qualified,
                 qualified=excluded.qualified,
                 reason=excluded.reason,
@@ -204,6 +227,7 @@ class OpenableSymbolModule:
                     row.score_band,
                     row.stop_loss_distance_ratio,
                     row.distance_threshold,
+                    row.stop_loss_distance_tier,
                     int(row.distance_qualified),
                     int(row.qualified),
                     row.reason,
@@ -227,7 +251,7 @@ class OpenableSymbolModule:
             rows = conn.execute(
                 f"""
                 SELECT symbol, decision_round_ts, total_score, score_band,
-                       stop_loss_distance_ratio, distance_threshold,
+                       stop_loss_distance_ratio, distance_threshold, stop_loss_distance_tier,
                        distance_qualified, qualified, reason, evaluated_at
                 FROM {self.TABLE_NAME}
                 WHERE decision_round_ts = ?
@@ -249,6 +273,7 @@ class OpenableSymbolModule:
             if row["stop_loss_distance_ratio"] is not None
             else None,
             distance_threshold=float(row["distance_threshold"]) if row["distance_threshold"] is not None else None,
+            stop_loss_distance_tier=str(row["stop_loss_distance_tier"]),
             distance_qualified=bool(row["distance_qualified"]),
             qualified=bool(row["qualified"]),
             reason=str(row["reason"]),
