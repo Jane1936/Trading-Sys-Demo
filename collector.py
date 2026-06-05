@@ -7,7 +7,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from apscheduler.schedulers.blocking import BlockingScheduler
-from binance.client import Client
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -16,6 +15,7 @@ from urllib3.util.retry import Retry
 BASE_URL = "https://fapi.binance.com/fapi/v1/klines"
 FUNDING_RATE_URL = "https://fapi.binance.com/fapi/v1/premiumIndex"
 OPEN_INTEREST_URL = "https://fapi.binance.com/fapi/v1/openInterest"
+EXCHANGE_INFO_URL = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 BTC_5M_TABLE = "btc_usdt_5m_klines"
 BTC_5M_INTERVAL = "5m"
 BTC_5M_LIMIT = 1500
@@ -245,15 +245,87 @@ def run_btc_5m_main():
     inserted = save_btc_5m_klines(all_klines)
     print(f"✅ BTC 5m fetched={len(all_klines)}, inserted={inserted}")
 
+def normalize_symbol(symbol):
+    return str(symbol).strip().upper()
+
+
+def get_env_universe_symbols():
+    raw = os.getenv("UNIVERSE_SYMBOLS", "")
+    return sorted(
+        {symbol for symbol in (normalize_symbol(s) for s in raw.split(",")) if symbol}
+    )
+
+
+def get_cached_universe_symbols():
+    if not os.path.exists(DB_PATH):
+        return []
+
+    symbols = set()
+    tables = [table_name(BASE_INTERVAL), table_name("15m"), "open_interest_1m"]
+
+    try:
+        with get_db_conn() as conn:
+            existing_tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            for tbl in tables:
+                if tbl not in existing_tables:
+                    continue
+                rows = conn.execute(f"SELECT DISTINCT symbol FROM {tbl}").fetchall()
+                symbols.update(
+                    normalize_symbol(row[0]) for row in rows if row and row[0]
+                )
+    except Exception as e:
+        print(f"⚠️ cached universe unavailable: {e}")
+        return []
+
+    return sorted(symbols)
+
+
+def get_universe_fallback(reason):
+    if UNIVERSE:
+        fallback = sorted(
+            {normalize_symbol(s) for s in UNIVERSE if normalize_symbol(s)}
+        )
+        print(
+            f"⚠️ Universe refresh failed ({reason}); "
+            f"keeping current universe={len(fallback)}"
+        )
+        return fallback
+
+    env_symbols = get_env_universe_symbols()
+    if env_symbols:
+        print(
+            f"⚠️ Universe refresh failed ({reason}); "
+            f"using UNIVERSE_SYMBOLS fallback={len(env_symbols)}"
+        )
+        return env_symbols
+
+    cached_symbols = get_cached_universe_symbols()
+    if cached_symbols:
+        print(
+            f"⚠️ Universe refresh failed ({reason}); "
+            f"using cached DB symbols={len(cached_symbols)}"
+        )
+        return cached_symbols
+
+    print(f"⚠️ Universe refresh failed ({reason}); no fallback symbols available")
+    return []
+
+
 # ================= 1. U本位合约 =================
 def get_um_symbols():
-    client = Client()
-    info = client.futures_exchange_info()
+    res = HTTP_SESSION.get(EXCHANGE_INFO_URL, timeout=(3, 10))
+    res.raise_for_status()
+    info = res.json()
 
     return {
         s["symbol"].replace("USDT", "")
-        for s in info["symbols"]
-        if s["status"] == "TRADING" and s["symbol"].endswith("USDT")
+        for s in info.get("symbols", [])
+        if s.get("status") == "TRADING" and s.get("symbol", "").endswith("USDT")
     }
 
 
@@ -262,25 +334,33 @@ def get_alpha_symbols():
     url = "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list"
     headers = {"User-Agent": "Mozilla/5.0"}
 
-    res = requests.get(url, headers=headers, timeout=10).json()
+    res = HTTP_SESSION.get(url, headers=headers, timeout=(3, 10))
+    res.raise_for_status()
+    data = res.json()
 
-    tokens = res.get("data", [])
+    tokens = data.get("data", []) if isinstance(data, dict) else []
     if isinstance(tokens, dict):
         tokens = tokens.get("list") or tokens.get("tokens") or []
 
-    return {t["symbol"].upper() for t in tokens if t.get("symbol")}
+    return {normalize_symbol(t.get("symbol")) for t in tokens if t.get("symbol")}
 
 
 # ================= 3. 构建 Universe（关键） =================
 def build_universe():
-    um = get_um_symbols()
-    alpha = get_alpha_symbols()
+    try:
+        um = get_um_symbols()
+        alpha = get_alpha_symbols()
+    except Exception as e:
+        return get_universe_fallback(str(e))
 
     universe = sorted(um & alpha)
 
     print(f"UM symbols: {len(um)}")
     print(f"Alpha symbols: {len(alpha)}")
     print(f"Universe (intersection): {len(universe)}")
+
+    if not universe:
+        return get_universe_fallback("empty Alpha ∩ Futures intersection")
 
     return universe
 
