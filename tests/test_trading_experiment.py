@@ -34,6 +34,8 @@ class FakeAccountManager:
 
     def _signed_post(self, endpoint, params=None):
         self.signed_posts.append((endpoint, dict(params or {})))
+        if endpoint == "/fapi/v1/algoOrder":
+            return {"algoId": len(self.signed_posts)}
         return {"orderId": len(self.signed_posts)}
 
 class FailingTakeProfitAccountManager(FakeAccountManager):
@@ -74,8 +76,21 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(fake_account.latest_mark_price_params, {"symbol": "BANKUSDT"})
         symbol_params = [params["symbol"] for _, params in fake_account.signed_posts]
         self.assertEqual(symbol_params, ["BANKUSDT", "BANKUSDT", "BANKUSDT", "BANKUSDT"])
+        endpoints = [endpoint for endpoint, _ in fake_account.signed_posts]
+        self.assertEqual(
+            endpoints,
+            ["/fapi/v1/leverage", "/fapi/v1/order", "/fapi/v1/algoOrder", "/fapi/v1/algoOrder"],
+        )
         order_types = [params.get("type", "LEVERAGE") for _, params in fake_account.signed_posts]
         self.assertEqual(order_types, ["LEVERAGE", "MARKET", "STOP_MARKET", "TAKE_PROFIT_MARKET"])
+        stop_loss_params = fake_account.signed_posts[2][1]
+        take_profit_params = fake_account.signed_posts[3][1]
+        self.assertEqual(stop_loss_params["algoType"], "CONDITIONAL")
+        self.assertEqual(take_profit_params["algoType"], "CONDITIONAL")
+        self.assertEqual(stop_loss_params["triggerPrice"], "0.9")
+        self.assertEqual(take_profit_params["triggerPrice"], "1.2")
+        self.assertNotIn("stopPrice", stop_loss_params)
+        self.assertNotIn("stopPrice", take_profit_params)
 
     def test_recent_trade_records_only_returns_opened_rows(self):
         fake_account = FakeAccountManager()

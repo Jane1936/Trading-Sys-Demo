@@ -427,8 +427,8 @@ class TradingExperiment:
             },
             "place_take_profit",
         )
-        tp_order_id = str(tp_order.get("orderId", "")) if tp_order else ""
-        sl_order_id = str(sl_order.get("orderId", "")) if sl_order else ""
+        tp_order_id = self._exit_order_id(tp_order)
+        sl_order_id = self._exit_order_id(sl_order)
         exit_order_status = []
         exit_order_status.append("tp_order_id=" + (tp_order_id or "failed"))
         exit_order_status.append("sl_order_id=" + (sl_order_id or "failed"))
@@ -462,10 +462,29 @@ class TradingExperiment:
         operation: str,
     ) -> dict[str, Any] | None:
         try:
-            return self.account_manager._signed_post("/fapi/v1/order", params)
+            endpoint, request_params = self._exit_order_request(params)
+            return self.account_manager._signed_post(endpoint, request_params)
         except Exception as exc:
             self._record_error(candidate, f"{operation}:{trading_symbol}", exc)
             return None
+
+    @staticmethod
+    def _exit_order_request(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        order_type = str(params.get("type", ""))
+        if order_type not in {"STOP_MARKET", "TAKE_PROFIT_MARKET"}:
+            return "/fapi/v1/order", dict(params)
+
+        algo_params = dict(params)
+        if "stopPrice" in algo_params:
+            algo_params["triggerPrice"] = algo_params.pop("stopPrice")
+        algo_params["algoType"] = "CONDITIONAL"
+        return "/fapi/v1/algoOrder", algo_params
+
+    @staticmethod
+    def _exit_order_id(order: dict[str, Any] | None) -> str:
+        if not order:
+            return ""
+        return str(order.get("algoId") or order.get("orderId") or "")
 
     def _fetch_and_store_positions(self) -> list[dict[str, Any]]:
         rows = self.account_manager._signed_get("/fapi/v3/positionRisk")
