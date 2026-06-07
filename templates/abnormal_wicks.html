@@ -770,44 +770,6 @@
         </div>
         <div class="experiment-note">第一组交易实验：总预算按 1000USDT 管理，其中 500USDT 用于总名义仓位、500USDT 用于保证金；每笔交易分配 50USDT 总名义仓位，并预留 50USDT 保证金预算；所需保证金按 实际名义仓位 / 杠杆 计算；开多前查询当前持仓，若已持有 10 笔或可用余额不足 50USDT 保证金预算则不开仓；候选按“最终可开仓=是”的总分降序遍历；杠杆使用本轮可开仓表中的杠杆；止盈 20%，止损价格距离按 min(10%，账户总净值 1% / 本笔名义仓位) 控制。</div>
         <div class="symbol-strip">
-          <div><strong>交易实验持仓快照</strong></div>
-          <div class="muted">展示最近一次由交易实验模块写入的 Futures 持仓快照。</div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>symbol</th>
-                <th>position_amt</th>
-                <th>entry_price</th>
-                <th>mark_price</th>
-                <th>unrealized_pnl</th>
-                <th>leverage</th>
-                <th>notional</th>
-                <th>liquidation_price</th>
-                <th>updated_at</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in trading_position_snapshots %}
-              <tr>
-                <td>{{ row.symbol }}</td>
-                <td>{{ row.position_amt }}</td>
-                <td>{{ row.entry_price }}</td>
-                <td>{{ row.mark_price }}</td>
-                <td>{{ row.unrealized_pnl }}</td>
-                <td>{{ row.leverage }}</td>
-                <td>{{ row.notional }}</td>
-                <td>{{ row.liquidation_price }}</td>
-                <td>{{ row.updated_at|fmt_ms_datetime }}</td>
-              </tr>
-              {% else %}
-              <tr><td class="empty" colspan="9">暂无交易实验持仓快照；执行实验后显示数据</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        <div class="symbol-strip">
           <div><strong>交易实验交易记录</strong></div>
           <div class="muted">只显示已开仓记录，以及止盈/止损挂单信息；跳过记录不在此表展示。</div>
         </div>
@@ -861,6 +823,44 @@
               </tr>
               {% else %}
               <tr><td class="empty" colspan="19">暂无交易实验记录；执行实验后显示数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="symbol-strip">
+          <div><strong>交易实验持仓快照</strong></div>
+          <div class="muted">展示最近一次由交易实验模块写入的 Futures 持仓快照。</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>symbol</th>
+                <th>position_amt</th>
+                <th>entry_price</th>
+                <th>mark_price</th>
+                <th>unrealized_pnl</th>
+                <th>leverage</th>
+                <th>notional</th>
+                <th>liquidation_price</th>
+                <th>updated_at</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in trading_position_snapshots %}
+              <tr>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.mark_price }}</td>
+                <td>{{ row.unrealized_pnl }}</td>
+                <td>{{ row.leverage }}</td>
+                <td>{{ row.notional }}</td>
+                <td>{{ row.liquidation_price }}</td>
+                <td>{{ row.updated_at|fmt_ms_datetime }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="9">暂无交易实验持仓快照；执行实验后显示数据</td></tr>
               {% endfor %}
             </tbody>
           </table>
