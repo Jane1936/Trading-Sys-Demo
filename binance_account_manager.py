@@ -118,7 +118,7 @@ class BinanceAccountManager:
             headers={"X-MBX-APIKEY": self.api_key},
             timeout=self.timeout,
         )
-        response.raise_for_status()
+        self._raise_for_status(response)
         return response.json()
 
     def _signed_post(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
@@ -128,7 +128,7 @@ class BinanceAccountManager:
             headers={"X-MBX-APIKEY": self.api_key},
             timeout=self.timeout,
         )
-        response.raise_for_status()
+        self._raise_for_status(response)
         return response.json()
 
     def _public_get(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
@@ -137,8 +137,18 @@ class BinanceAccountManager:
             params=dict(params or {}),
             timeout=self.timeout,
         )
-        response.raise_for_status()
+        self._raise_for_status(response)
         return response.json()
+
+    @staticmethod
+    def _raise_for_status(response: requests.Response) -> None:
+        try:
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as exc:
+            body = response.text.strip()
+            if body:
+                exc.args = (*exc.args, f"response_body={body}")
+            raise
 
     def _signed_params(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
         request_params: dict[str, Any] = dict(params or {})

@@ -27,11 +27,20 @@ class FakeAccountManager:
         if endpoint == "/fapi/v1/ticker/price":
             self.latest_price_params = params
             return {"price": "1"}
+        if endpoint == "/fapi/v1/premiumIndex":
+            self.latest_mark_price_params = params
+            return {"markPrice": "1"}
         raise AssertionError(f"unexpected public endpoint {endpoint}")
 
     def _signed_post(self, endpoint, params=None):
         self.signed_posts.append((endpoint, dict(params or {})))
         return {"orderId": len(self.signed_posts)}
+
+class FailingTakeProfitAccountManager(FakeAccountManager):
+    def _signed_post(self, endpoint, params=None):
+        if params and params.get("type") == "TAKE_PROFIT_MARKET":
+            raise RuntimeError("take profit failed")
+        return super()._signed_post(endpoint, params)
 
 
 class TradingExperimentSymbolTests(unittest.TestCase):
@@ -62,8 +71,73 @@ class TradingExperimentSymbolTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "opened")
         self.assertEqual(fake_account.latest_price_params, {"symbol": "BANKUSDT"})
+        self.assertEqual(fake_account.latest_mark_price_params, {"symbol": "BANKUSDT"})
         symbol_params = [params["symbol"] for _, params in fake_account.signed_posts]
         self.assertEqual(symbol_params, ["BANKUSDT", "BANKUSDT", "BANKUSDT", "BANKUSDT"])
+        order_types = [params.get("type", "LEVERAGE") for _, params in fake_account.signed_posts]
+        self.assertEqual(order_types, ["LEVERAGE", "MARKET", "STOP_MARKET", "TAKE_PROFIT_MARKET"])
+
+    def test_recent_trade_records_only_returns_opened_rows(self):
+        fake_account = FakeAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+            )
+            experiment.init_tables()
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=80,
+                score_band="标准试错单",
+                stop_loss_distance_ratio=0.01,
+                distance_threshold=0.02,
+                stop_loss_distance_tier="A档",
+                opening_leverage="4x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+            experiment._record_skip(candidate, Decimal("1000"), Decimal("10"), "test_skip")
+            experiment._open_long(candidate, Decimal("1000"), Decimal("10"))
+
+            rows = experiment.recent_trade_records()
+
+        self.assertEqual([row.status for row in rows], ["opened"])
+
+    def test_take_profit_failure_does_not_hide_opened_trade_or_stop_loss_order(self):
+        fake_account = FailingTakeProfitAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+            )
+            experiment.init_tables()
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=80,
+                score_band="标准试错单",
+                stop_loss_distance_ratio=0.01,
+                distance_threshold=0.02,
+                stop_loss_distance_tier="A档",
+                opening_leverage="4x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            result = experiment._open_long(candidate, Decimal("1000"), Decimal("10"))
+            trade_rows = experiment.recent_trade_records()
+            error_rows = experiment.recent_error_records()
+
+        self.assertEqual(result["status"], "opened")
+        self.assertEqual(trade_rows[0].status, "opened")
+        self.assertEqual(trade_rows[0].take_profit_order_id, "")
+        self.assertEqual(trade_rows[0].stop_loss_order_id, "3")
+        self.assertEqual(error_rows[0].operation, "place_take_profit:BANKUSDT")
 
     def test_usdt_pair_symbol_is_not_double_suffixed(self):
         self.assertEqual(TradingExperiment._binance_symbol("BANKUSDT"), "BANKUSDT")
