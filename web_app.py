@@ -135,6 +135,7 @@ def abnormal_wicks():
     trading_experiment = TradingExperiment(db_path=DB_PATH)
     trading_trade_records = trading_experiment.recent_trade_records(limit=100)
     trading_position_snapshots = trading_experiment.latest_position_snapshots(limit=100)
+    trading_error_records = trading_experiment.recent_error_records(limit=100)
 
     active_tab = request.args.get("active_tab", default="", type=str).strip()
     if requested_score_trend_symbol:
@@ -235,6 +236,7 @@ def abnormal_wicks():
         openable_symbols=openable_symbols,
         trading_trade_records=trading_trade_records,
         trading_position_snapshots=trading_position_snapshots,
+        trading_error_records=trading_error_records,
         rule_score_weights=scoring.rule_score_weights,
         score_trend_symbols=score_trend_symbols,
         score_trend_symbol=score_trend_symbol,

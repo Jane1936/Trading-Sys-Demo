@@ -73,6 +73,19 @@ class ExperimentPositionSnapshot:
     updated_at: int
 
 
+@dataclass(frozen=True)
+class ExperimentErrorRecord:
+    id: int
+    symbol: str
+    decision_round_ts: int | None
+    total_score: int | None
+    leverage: int | None
+    operation: str
+    error_type: str
+    error_message: str
+    created_at: int
+
+
 class TradingExperiment:
     """Run and persist the first long-only trading experiment.
 
@@ -91,6 +104,7 @@ class TradingExperiment:
 
     TRADES_TABLE = "trading_experiment_trades"
     POSITIONS_TABLE = "trading_experiment_position_snapshots"
+    ERRORS_TABLE = "trading_experiment_error_records"
 
     def __init__(
         self,
@@ -156,6 +170,21 @@ class TradingExperiment:
                 )
                 """
             )
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.ERRORS_TABLE} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    decision_round_ts INTEGER,
+                    total_score INTEGER,
+                    leverage INTEGER,
+                    operation TEXT NOT NULL,
+                    error_type TEXT NOT NULL,
+                    error_message TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
             columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.TRADES_TABLE})").fetchall()}
             if "required_margin_usdt" not in columns:
                 conn.execute(
@@ -169,6 +198,10 @@ class TradingExperiment:
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.POSITIONS_TABLE}_updated "
                 f"ON {self.POSITIONS_TABLE}(updated_at DESC, symbol ASC)"
+            )
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{self.ERRORS_TABLE}_created "
+                f"ON {self.ERRORS_TABLE}(created_at DESC, symbol ASC)"
             )
 
     def run_latest_round(self) -> dict[str, Any]:
@@ -221,7 +254,19 @@ class TradingExperiment:
                 skipped += 1
                 break
 
-            result = self._open_long(candidate, account_equity, max_loss)
+            try:
+                result = self._open_long(candidate, account_equity, max_loss)
+            except RuntimeError as exc:
+                self._record_error(candidate, "open_long", exc)
+                if "not found in exchangeInfo" in str(exc):
+                    self._record_skip(candidate, account_equity, max_loss, "symbol_not_found_in_exchange_info")
+                    skipped += 1
+                    continue
+                raise
+            except Exception as exc:
+                self._record_error(candidate, "open_long", exc)
+                raise
+
             if result["status"] == "opened":
                 opened += 1
                 available_balance -= self.config.per_trade_margin_budget_usdt
@@ -259,6 +304,15 @@ class TradingExperiment:
                 (latest_ts, int(limit)),
             ).fetchall()
         return [self._position_from_row(row) for row in rows]
+
+    def recent_error_records(self, limit: int = 100) -> list[ExperimentErrorRecord]:
+        self.init_tables()
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM {self.ERRORS_TABLE} ORDER BY created_at DESC, id DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+        return [self._error_from_row(row) for row in rows]
 
     def _latest_openable_candidates(self) -> list[OpenableSymbol]:
         module = OpenableSymbolModule(db_path=self.db_path)
@@ -411,6 +465,27 @@ class TradingExperiment:
                 symbols.add(str(row.get("symbol", "")))
         return symbols
 
+    def _record_error(self, candidate: OpenableSymbol, operation: str, exc: Exception) -> None:
+        now = int(time.time() * 1000)
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {self.ERRORS_TABLE}
+                (symbol, decision_round_ts, total_score, leverage, operation, error_type, error_message, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    candidate.symbol,
+                    candidate.decision_round_ts,
+                    candidate.total_score,
+                    self._parse_leverage(candidate.opening_leverage),
+                    operation,
+                    type(exc).__name__,
+                    str(exc),
+                    now,
+                ),
+            )
+
     def _record_skip(
         self,
         candidate: OpenableSymbol,
@@ -494,6 +569,61 @@ class TradingExperiment:
                 ),
             )
 
+    @staticmethod
+    def _trade_from_row(row: sqlite3.Row) -> ExperimentTradeRecord:
+        return ExperimentTradeRecord(
+            id=int(row["id"]),
+            symbol=str(row["symbol"]),
+            decision_round_ts=int(row["decision_round_ts"]) if row["decision_round_ts"] is not None else None,
+            side=str(row["side"]),
+            status=str(row["status"]),
+            total_score=int(row["total_score"]) if row["total_score"] is not None else None,
+            leverage=int(row["leverage"]) if row["leverage"] is not None else None,
+            allocated_notional_usdt=str(row["allocated_usdt"]),
+            required_margin_usdt=str(row["required_margin_usdt"]),
+            account_equity_usdt=str(row["account_equity_usdt"]),
+            max_loss_usdt=str(row["max_loss_usdt"]),
+            entry_price=str(row["entry_price"]),
+            quantity=str(row["quantity"]),
+            notional_usdt=str(row["notional_usdt"]),
+            take_profit_price=str(row["take_profit_price"]),
+            stop_loss_price=str(row["stop_loss_price"]),
+            take_profit_order_id=str(row["take_profit_order_id"]),
+            stop_loss_order_id=str(row["stop_loss_order_id"]),
+            reason=str(row["reason"]),
+            created_at=int(row["created_at"]),
+            updated_at=int(row["updated_at"]),
+        )
+
+    @staticmethod
+    def _position_from_row(row: sqlite3.Row) -> ExperimentPositionSnapshot:
+        return ExperimentPositionSnapshot(
+            id=int(row["id"]),
+            symbol=str(row["symbol"]),
+            position_amt=str(row["position_amt"]),
+            entry_price=str(row["entry_price"]),
+            mark_price=str(row["mark_price"]),
+            unrealized_pnl=str(row["unrealized_pnl"]),
+            leverage=str(row["leverage"]),
+            notional=str(row["notional"]),
+            liquidation_price=str(row["liquidation_price"]),
+            updated_at=int(row["updated_at"]),
+        )
+
+    @staticmethod
+    def _error_from_row(row: sqlite3.Row) -> ExperimentErrorRecord:
+        return ExperimentErrorRecord(
+            id=int(row["id"]),
+            symbol=str(row["symbol"]),
+            decision_round_ts=int(row["decision_round_ts"]) if row["decision_round_ts"] is not None else None,
+            total_score=int(row["total_score"]) if row["total_score"] is not None else None,
+            leverage=int(row["leverage"]) if row["leverage"] is not None else None,
+            operation=str(row["operation"]),
+            error_type=str(row["error_type"]),
+            error_message=str(row["error_message"]),
+            created_at=int(row["created_at"]),
+        )
+
     def _account_equity(self, account: dict[str, Any]) -> Decimal:
         for key in ("totalMarginBalance", "totalWalletBalance"):
             value = self._decimal_from(account.get(key), Decimal("0"))
@@ -558,46 +688,6 @@ class TradingExperiment:
     def _fmt_decimal(value: Decimal) -> str:
         return format(value.normalize(), "f")
 
-    @staticmethod
-    def _trade_from_row(row: sqlite3.Row) -> ExperimentTradeRecord:
-        return ExperimentTradeRecord(
-            id=int(row["id"]),
-            symbol=str(row["symbol"]),
-            decision_round_ts=int(row["decision_round_ts"]) if row["decision_round_ts"] is not None else None,
-            side=str(row["side"]),
-            status=str(row["status"]),
-            total_score=int(row["total_score"]) if row["total_score"] is not None else None,
-            leverage=int(row["leverage"]) if row["leverage"] is not None else None,
-            allocated_notional_usdt=str(row["allocated_usdt"]),
-            required_margin_usdt=str(row["required_margin_usdt"]),
-            account_equity_usdt=str(row["account_equity_usdt"]),
-            max_loss_usdt=str(row["max_loss_usdt"]),
-            entry_price=str(row["entry_price"]),
-            quantity=str(row["quantity"]),
-            notional_usdt=str(row["notional_usdt"]),
-            take_profit_price=str(row["take_profit_price"]),
-            stop_loss_price=str(row["stop_loss_price"]),
-            take_profit_order_id=str(row["take_profit_order_id"]),
-            stop_loss_order_id=str(row["stop_loss_order_id"]),
-            reason=str(row["reason"]),
-            created_at=int(row["created_at"]),
-            updated_at=int(row["updated_at"]),
-        )
-
-    @staticmethod
-    def _position_from_row(row: sqlite3.Row) -> ExperimentPositionSnapshot:
-        return ExperimentPositionSnapshot(
-            id=int(row["id"]),
-            symbol=str(row["symbol"]),
-            position_amt=str(row["position_amt"]),
-            entry_price=str(row["entry_price"]),
-            mark_price=str(row["mark_price"]),
-            unrealized_pnl=str(row["unrealized_pnl"]),
-            leverage=str(row["leverage"]),
-            notional=str(row["notional"]),
-            liquidation_price=str(row["liquidation_price"]),
-            updated_at=int(row["updated_at"]),
-        )
 
 
 if __name__ == "__main__":
