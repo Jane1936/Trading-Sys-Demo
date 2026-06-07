@@ -112,6 +112,35 @@ class BinanceAccountManager:
         }
 
     def _signed_get(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
+        response = self.session.get(
+            f"{self.base_url}{endpoint}",
+            params=self._signed_params(params),
+            headers={"X-MBX-APIKEY": self.api_key},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def _signed_post(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
+        response = self.session.post(
+            f"{self.base_url}{endpoint}",
+            params=self._signed_params(params),
+            headers={"X-MBX-APIKEY": self.api_key},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def _public_get(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
+        response = self.session.get(
+            f"{self.base_url}{endpoint}",
+            params=dict(params or {}),
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def _signed_params(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
         request_params: dict[str, Any] = dict(params or {})
         request_params["timestamp"] = int(time.time() * 1000)
         request_params["recvWindow"] = self.recv_window
@@ -121,14 +150,8 @@ class BinanceAccountManager:
             query_string.encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
-        signed_query = f"{query_string}&signature={signature}"
-        response = self.session.get(
-            f"{self.base_url}{endpoint}?{signed_query}",
-            headers={"X-MBX-APIKEY": self.api_key},
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
-        return response.json()
+        request_params["signature"] = signature
+        return request_params
 
     @staticmethod
     def _normalize_balance_row(row: dict[str, Any]) -> BinanceBalanceRow:

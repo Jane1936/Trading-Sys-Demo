@@ -26,6 +26,7 @@ from cooldown_module import CooldownModule
 from openable_symbol_module import OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
 from scoring_system import ScoringSystem
+from trading_experiment import TradingExperiment
 
 _universe_lock = threading.Lock()
 _universe_refresh_interval_sec = 12 * 60 * 60
@@ -133,6 +134,19 @@ def start_pre_safety_task() -> None:
                     f"abnormal={len(set(abnormal_symbols))} scored={len(scored)} "
                     f"openable_candidates={len(openable_symbols)} openable_qualified={qualified_openable_count}"
                 )
+                if qualified_openable_count > 0:
+                    try:
+                        experiment_result = TradingExperiment(db_path=collector.DB_PATH).run_round(openable_symbols)
+                        print(
+                            f"🧪 first trading experiment round={round_ts} "
+                            f"opened={experiment_result.get('opened', 0)} "
+                            f"skipped={experiment_result.get('skipped', 0)} "
+                            f"reason={experiment_result.get('reason', '')}"
+                        )
+                    except Exception as exc:
+                        print(f"⚠️ first trading experiment failed round={round_ts}: {exc}")
+                else:
+                    print(f"🧪 first trading experiment round={round_ts} skipped: no qualified openable symbols")
             except Exception as exc:
                 print(f"⚠️ scoring failed round={round_ts}: {exc}")
 

@@ -117,6 +117,7 @@
     .account-metric-label { color:#6b7280; font-size:12px; margin-bottom:6px; }
     .account-metric-value { font-size:18px; font-weight:800; color:#0f172a; }
     .account-error { color:#991b1b; background:#fee2e2; border:1px solid #fca5a5; border-radius:10px; padding:10px 12px; margin:0 20px 14px; display:none; }
+    .experiment-note { padding:10px 20px; color:#374151; font-size:12px; background:#fffbeb; border-top:1px solid #fde68a; border-bottom:1px solid #fde68a; }
   </style>
 </head>
 <body>
@@ -732,6 +733,7 @@
         </div>
         <div class="toolbar">
           <button id="query-account-balance" class="btn btn-primary" type="button">查询账户余额</button>
+          <button id="run-trading-experiment" class="btn btn-secondary" type="button">执行第一组交易实验</button>
           <span id="account-balance-status" class="muted">尚未查询</span>
         </div>
         <div id="account-balance-error" class="account-error"></div>
@@ -764,6 +766,103 @@
             </thead>
             <tbody id="account-balance-rows">
               <tr><td class="empty" colspan="6">点击“查询账户余额”后显示数据</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="experiment-note">第一组交易实验：总预算按 1000USDT 管理，其中 500USDT 用于总名义仓位、500USDT 用于保证金；每笔交易分配 50USDT 总名义仓位，并预留 50USDT 保证金预算；所需保证金按 实际名义仓位 / 杠杆 计算；开多前查询当前持仓，若已持有 10 笔或可用余额不足 50USDT 保证金预算则不开仓；候选按“最终可开仓=是”的总分降序遍历；杠杆使用本轮可开仓表中的杠杆；止盈 20%，止损价格距离按 min(10%，账户总净值 1% / 本笔名义仓位) 控制。</div>
+        <div class="symbol-strip">
+          <div><strong>交易实验持仓快照</strong></div>
+          <div class="muted">展示最近一次由交易实验模块写入的 Futures 持仓快照。</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>symbol</th>
+                <th>position_amt</th>
+                <th>entry_price</th>
+                <th>mark_price</th>
+                <th>unrealized_pnl</th>
+                <th>leverage</th>
+                <th>notional</th>
+                <th>liquidation_price</th>
+                <th>updated_at</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in trading_position_snapshots %}
+              <tr>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.mark_price }}</td>
+                <td>{{ row.unrealized_pnl }}</td>
+                <td>{{ row.leverage }}</td>
+                <td>{{ row.notional }}</td>
+                <td>{{ row.liquidation_price }}</td>
+                <td>{{ row.updated_at|fmt_ms_datetime }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="9">暂无交易实验持仓快照；执行实验后显示数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="symbol-strip">
+          <div><strong>交易实验交易记录</strong></div>
+          <div class="muted">记录每个候选 symbol 的开仓或跳过结果，以及止盈/止损挂单信息。</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>created_at</th>
+                <th>symbol</th>
+                <th>轮次</th>
+                <th>side</th>
+                <th>status</th>
+                <th>total_score</th>
+                <th>leverage</th>
+                <th>allocated_notional_usdt</th>
+                <th>required_margin_usdt</th>
+                <th>account_equity</th>
+                <th>max_loss</th>
+                <th>entry_price</th>
+                <th>quantity</th>
+                <th>notional</th>
+                <th>take_profit_price</th>
+                <th>stop_loss_price</th>
+                <th>tp_order_id</th>
+                <th>sl_order_id</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in trading_trade_records %}
+              <tr>
+                <td>{{ row.created_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.decision_round_ts|fmt_ms_datetime if row.decision_round_ts else '-' }}</td>
+                <td>{{ row.side }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.status == 'opened' else 'status-fail' }}">{{ row.status }}</span></td>
+                <td>{{ row.total_score if row.total_score is not none else '-' }}</td>
+                <td>{{ row.leverage if row.leverage is not none else '-' }}</td>
+                <td>{{ row.allocated_notional_usdt }}</td>
+                <td>{{ row.required_margin_usdt }}</td>
+                <td>{{ row.account_equity_usdt }}</td>
+                <td>{{ row.max_loss_usdt }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.quantity }}</td>
+                <td>{{ row.notional_usdt }}</td>
+                <td>{{ row.take_profit_price }}</td>
+                <td>{{ row.stop_loss_price }}</td>
+                <td>{{ row.take_profit_order_id or '-' }}</td>
+                <td>{{ row.stop_loss_order_id or '-' }}</td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="19">暂无交易实验记录；执行实验后显示数据</td></tr>
+              {% endfor %}
             </tbody>
           </table>
         </div>
@@ -968,6 +1067,29 @@
           renderAccountBalanceError(`账户余额查询失败：${error.message}`);
         } finally {
           setAccountBalanceLoading(false);
+        }
+      });
+    })();
+
+    (function initTradingExperimentRun() {
+      const btn = document.getElementById('run-trading-experiment');
+      const statusEl = document.getElementById('account-balance-status');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.textContent = '实验执行中...';
+        if (statusEl) statusEl.textContent = '正在执行第一组交易实验';
+        try {
+          const response = await fetch('/api/trading-experiment/run', { method: 'POST' });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          if (statusEl) statusEl.textContent = `交易实验完成：opened=${payload.opened || 0}, skipped=${payload.skipped || 0}`;
+          window.setTimeout(() => window.location.reload(), 800);
+        } catch (error) {
+          if (statusEl) statusEl.textContent = `交易实验失败：${error.message}`;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '执行第一组交易实验';
         }
       });
     })();

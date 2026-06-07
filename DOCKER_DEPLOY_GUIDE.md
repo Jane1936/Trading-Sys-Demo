@@ -81,7 +81,9 @@ export BINANCE_TESTNET_SECRET_KEY="你的 demo secret key"
 # export BINANCE_REAL_API_SECRET="你的 real secret key"
 ```
 
-Docker Compose 启动前在同一个 shell 中导出这些变量即可；`docker-compose.yml` 会把这些变量注入 `web` 容器；`web` 容器会通过 `/api/account/balance` 在你点击网页“账户情况”的查询按钮时实时请求余额。
+Docker Compose 启动前在同一个 shell 中导出这些变量即可；`docker-compose.yml` 会把这些变量同时注入 `worker` 和 `web` 容器：
+- `worker` 容器会在每轮“本轮可开仓symbol情况”完成计算后立即执行第一组交易实验，因此必须能读取交易 API key/secret。
+- `web` 容器会通过 `/api/account/balance` 在你点击网页“账户情况”的查询按钮时实时请求余额，也会复用这些变量。
 
 ---
 
@@ -102,6 +104,8 @@ docker compose up -d --build
 - `user: "${PUID:-1000}:${PGID:-1000}"`：让 `worker/web` 进程直接使用宿主机当前用户 UID/GID，避免挂载数据目录时出现只读权限问题。
 - `HOST_DATA_DIR` / `HOST_LOGS_DIR`：可切换宿主机挂载目录；不设置时默认使用仓库当前目录的 `./data`、`./logs`。
 - `worker` 和 `web` 都声明同一个 `build: .` / `image: trading-sys-demo:latest`，避免新增 Python 文件后只启动 web 时仍使用旧镜像。
+- `worker` 和 `web` 都注入 Binance 环境变量；第一组交易实验现在由 `worker` 在每轮可开仓 symbol 计算完成后自动触发。
+- 健康检查只配置在 `web` 服务上，避免 `worker` 因不提供 HTTP 服务而在云平台部署时被误判。
 
 ### 查看状态与日志
 
@@ -132,6 +136,11 @@ docker build -t trading-sys-demo:latest .
 ```bash
 docker run -d \
   --name trade \
+  -e BINANCE_TESTNET="${BINANCE_TESTNET:-true}" \
+  -e BINANCE_TESTNET_API_KEY="${BINANCE_TESTNET_API_KEY}" \
+  -e BINANCE_TESTNET_SECRET_KEY="${BINANCE_TESTNET_SECRET_KEY}" \
+  -e BINANCE_REAL_API_KEY="${BINANCE_REAL_API_KEY:-YOUR_REAL_API_KEY}" \
+  -e BINANCE_REAL_API_SECRET="${BINANCE_REAL_API_SECRET:-YOUR_REAL_API_SECRET}" \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/logs:/app/logs" \
   --restart=always \
@@ -155,6 +164,11 @@ docker run -d \
 ```bash
 docker run -d \
   --name trade-web \
+  -e BINANCE_TESTNET="${BINANCE_TESTNET:-true}" \
+  -e BINANCE_TESTNET_API_KEY="${BINANCE_TESTNET_API_KEY}" \
+  -e BINANCE_TESTNET_SECRET_KEY="${BINANCE_TESTNET_SECRET_KEY}" \
+  -e BINANCE_REAL_API_KEY="${BINANCE_REAL_API_KEY:-YOUR_REAL_API_KEY}" \
+  -e BINANCE_REAL_API_SECRET="${BINANCE_REAL_API_SECRET:-YOUR_REAL_API_SECRET}" \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/logs:/app/logs" \
   -p 5000:5000 \
