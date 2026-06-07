@@ -733,7 +733,6 @@
         </div>
         <div class="toolbar">
           <button id="query-account-balance" class="btn btn-primary" type="button">查询账户余额</button>
-          <button id="run-trading-experiment" class="btn btn-secondary" type="button">执行第一组交易实验</button>
           <span id="account-balance-status" class="muted">尚未查询</span>
         </div>
         <div id="account-balance-error" class="account-error"></div>
@@ -1107,28 +1106,6 @@
       });
     })();
 
-    (function initTradingExperimentRun() {
-      const btn = document.getElementById('run-trading-experiment');
-      const statusEl = document.getElementById('account-balance-status');
-      if (!btn) return;
-      btn.addEventListener('click', async () => {
-        btn.disabled = true;
-        btn.textContent = '实验执行中...';
-        if (statusEl) statusEl.textContent = '正在执行第一组交易实验';
-        try {
-          const response = await fetch('/api/trading-experiment/run', { method: 'POST' });
-          const payload = await response.json();
-          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-          if (statusEl) statusEl.textContent = `交易实验完成：opened=${payload.opened || 0}, skipped=${payload.skipped || 0}`;
-          window.setTimeout(() => window.location.reload(), 800);
-        } catch (error) {
-          if (statusEl) statusEl.textContent = `交易实验失败：${error.message}`;
-        } finally {
-          btn.disabled = false;
-          btn.textContent = '执行第一组交易实验';
-        }
-      });
-    })();
 
     const SCORE_BANDS = [
       { min: 89, max: 100, name: '确定性强趋势单', color: 'rgba(249, 115, 22, 0.14)', borderColor: 'rgba(249, 115, 22, 0.38)' },

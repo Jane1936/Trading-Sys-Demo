@@ -236,7 +236,8 @@ class TradingExperiment:
                 self._record_skip(candidate, account_equity, max_loss, "max_open_positions_reached")
                 skipped += 1
                 continue
-            if candidate.symbol in open_positions:
+            trading_symbol = self._binance_symbol(candidate.symbol)
+            if trading_symbol in open_positions:
                 self._record_skip(candidate, account_equity, max_loss, "symbol_position_already_open")
                 skipped += 1
                 continue
@@ -272,7 +273,7 @@ class TradingExperiment:
                 available_balance -= self.config.per_trade_margin_budget_usdt
                 reserved_notional_budget += self.config.per_trade_notional_usdt
                 reserved_margin_budget += self.config.per_trade_margin_budget_usdt
-                open_positions.add(candidate.symbol)
+                open_positions.add(trading_symbol)
             else:
                 skipped += 1
 
@@ -357,8 +358,9 @@ class TradingExperiment:
             self._record_skip(candidate, account_equity, max_loss, "invalid_opening_leverage")
             return {"status": "skipped"}
 
-        exchange_info = self._exchange_symbol_info(candidate.symbol)
-        price = self._latest_price(candidate.symbol)
+        trading_symbol = self._binance_symbol(candidate.symbol)
+        exchange_info = self._exchange_symbol_info(trading_symbol)
+        price = self._latest_price(trading_symbol)
         notional = self.config.per_trade_notional_usdt
         quantity = self._floor_to_step(notional / price, exchange_info["step_size"])
         if quantity <= 0:
@@ -371,11 +373,11 @@ class TradingExperiment:
         take_profit_price = self._floor_to_tick(price * (Decimal("1") + self.config.take_profit_pct), exchange_info["tick_size"])
         stop_loss_price = self._floor_to_tick(price * (Decimal("1") - stop_loss_pct), exchange_info["tick_size"])
 
-        self.account_manager._signed_post("/fapi/v1/leverage", {"symbol": candidate.symbol, "leverage": leverage})
+        self.account_manager._signed_post("/fapi/v1/leverage", {"symbol": trading_symbol, "leverage": leverage})
         market_order = self.account_manager._signed_post(
             "/fapi/v1/order",
             {
-                "symbol": candidate.symbol,
+                "symbol": trading_symbol,
                 "side": "BUY",
                 "type": "MARKET",
                 "quantity": self._fmt_decimal(quantity),
@@ -384,7 +386,7 @@ class TradingExperiment:
         tp_order = self.account_manager._signed_post(
             "/fapi/v1/order",
             {
-                "symbol": candidate.symbol,
+                "symbol": trading_symbol,
                 "side": "SELL",
                 "type": "TAKE_PROFIT_MARKET",
                 "stopPrice": self._fmt_decimal(take_profit_price),
@@ -395,7 +397,7 @@ class TradingExperiment:
         sl_order = self.account_manager._signed_post(
             "/fapi/v1/order",
             {
-                "symbol": candidate.symbol,
+                "symbol": trading_symbol,
                 "side": "SELL",
                 "type": "STOP_MARKET",
                 "stopPrice": self._fmt_decimal(stop_loss_price),
@@ -636,6 +638,15 @@ class TradingExperiment:
         if leverage <= 0:
             return Decimal("0")
         return self.config.per_trade_notional_usdt / Decimal(leverage)
+
+
+    @staticmethod
+    def _binance_symbol(symbol: str) -> str:
+        """Return the Binance USDⓈ-M Futures trading pair symbol for a stored base symbol."""
+        normalized = str(symbol).strip().upper()
+        if not normalized:
+            return normalized
+        return normalized if normalized.endswith("USDT") else f"{normalized}USDT"
 
     def _exchange_symbol_info(self, symbol: str) -> dict[str, Decimal]:
         info = self.account_manager._public_get("/fapi/v1/exchangeInfo")
