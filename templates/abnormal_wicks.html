@@ -866,6 +866,42 @@
             </tbody>
           </table>
         </div>
+        <div class="symbol-strip">
+          <div><strong>交易实验错误信息记录</strong></div>
+          <div class="muted">记录第一组实验遍历可开仓 symbol 时捕获到的错误信息；用于定位 exchangeInfo 缺失等开仓流程问题。</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>created_at</th>
+                <th>symbol</th>
+                <th>轮次</th>
+                <th>total_score</th>
+                <th>leverage</th>
+                <th>operation</th>
+                <th>error_type</th>
+                <th>error_message</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in trading_error_records %}
+              <tr>
+                <td>{{ row.created_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.decision_round_ts|fmt_ms_datetime if row.decision_round_ts else '-' }}</td>
+                <td>{{ row.total_score if row.total_score is not none else '-' }}</td>
+                <td>{{ row.leverage if row.leverage is not none else '-' }}</td>
+                <td>{{ row.operation }}</td>
+                <td>{{ row.error_type }}</td>
+                <td>{{ row.error_message }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="8">暂无交易实验错误信息记录</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div id="strategy-cooldown" class="strategy-subpanel" role="tabpanel">
