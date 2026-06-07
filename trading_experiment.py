@@ -12,7 +12,7 @@ import os
 import sqlite3
 import time
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_CEILING, ROUND_DOWN
 from typing import Any, Iterable
 
 from binance_account_manager import BinanceAccountManager
@@ -284,7 +284,12 @@ class TradingExperiment:
         self.init_tables()
         with self._connect() as conn:
             rows = conn.execute(
-                f"SELECT * FROM {self.TRADES_TABLE} ORDER BY created_at DESC, id DESC LIMIT ?",
+                f"""
+                SELECT * FROM {self.TRADES_TABLE}
+                WHERE status = 'opened'
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
                 (int(limit),),
             ).fetchall()
         return [self._trade_from_row(row) for row in rows]
@@ -360,18 +365,12 @@ class TradingExperiment:
 
         trading_symbol = self._binance_symbol(candidate.symbol)
         exchange_info = self._exchange_symbol_info(trading_symbol)
-        price = self._latest_price(trading_symbol)
+        pre_order_price = self._latest_price(trading_symbol)
         notional = self.config.per_trade_notional_usdt
-        quantity = self._floor_to_step(notional / price, exchange_info["step_size"])
+        quantity = self._floor_to_step(notional / pre_order_price, exchange_info["step_size"])
         if quantity <= 0:
             self._record_skip(candidate, account_equity, max_loss, "quantity_rounded_to_zero")
             return {"status": "skipped"}
-
-        notional = quantity * price
-        required_margin = notional / Decimal(leverage)
-        stop_loss_pct = min(self.config.max_stop_loss_pct, max_loss / notional) if notional > 0 else self.config.max_stop_loss_pct
-        take_profit_price = self._floor_to_tick(price * (Decimal("1") + self.config.take_profit_pct), exchange_info["tick_size"])
-        stop_loss_price = self._floor_to_tick(price * (Decimal("1") - stop_loss_pct), exchange_info["tick_size"])
 
         self.account_manager._signed_post("/fapi/v1/leverage", {"symbol": trading_symbol, "leverage": leverage})
         market_order = self.account_manager._signed_post(
@@ -381,21 +380,30 @@ class TradingExperiment:
                 "side": "BUY",
                 "type": "MARKET",
                 "quantity": self._fmt_decimal(quantity),
+                "newOrderRespType": "RESULT",
             },
         )
-        tp_order = self.account_manager._signed_post(
-            "/fapi/v1/order",
-            {
-                "symbol": trading_symbol,
-                "side": "SELL",
-                "type": "TAKE_PROFIT_MARKET",
-                "stopPrice": self._fmt_decimal(take_profit_price),
-                "closePosition": "true",
-                "workingType": "MARK_PRICE",
-            },
+
+        entry_price = self._filled_entry_price(market_order, pre_order_price)
+        trigger_reference_price = self._latest_mark_price(trading_symbol, entry_price)
+        notional = quantity * entry_price
+        required_margin = notional / Decimal(leverage)
+        stop_loss_pct = min(self.config.max_stop_loss_pct, max_loss / notional) if notional > 0 else self.config.max_stop_loss_pct
+        take_profit_price = self._valid_take_profit_price(
+            entry_price=entry_price,
+            trigger_reference_price=trigger_reference_price,
+            tick_size=exchange_info["tick_size"],
         )
-        sl_order = self.account_manager._signed_post(
-            "/fapi/v1/order",
+        stop_loss_price = self._valid_stop_loss_price(
+            entry_price=entry_price,
+            stop_loss_pct=stop_loss_pct,
+            trigger_reference_price=trigger_reference_price,
+            tick_size=exchange_info["tick_size"],
+        )
+
+        sl_order = self._place_exit_order(
+            candidate,
+            trading_symbol,
             {
                 "symbol": trading_symbol,
                 "side": "SELL",
@@ -404,7 +412,27 @@ class TradingExperiment:
                 "closePosition": "true",
                 "workingType": "MARK_PRICE",
             },
+            "place_stop_loss",
         )
+        tp_order = self._place_exit_order(
+            candidate,
+            trading_symbol,
+            {
+                "symbol": trading_symbol,
+                "side": "SELL",
+                "type": "TAKE_PROFIT_MARKET",
+                "stopPrice": self._fmt_decimal(take_profit_price),
+                "closePosition": "true",
+                "workingType": "MARK_PRICE",
+            },
+            "place_take_profit",
+        )
+        tp_order_id = str(tp_order.get("orderId", "")) if tp_order else ""
+        sl_order_id = str(sl_order.get("orderId", "")) if sl_order else ""
+        exit_order_status = []
+        exit_order_status.append("tp_order_id=" + (tp_order_id or "failed"))
+        exit_order_status.append("sl_order_id=" + (sl_order_id or "failed"))
+
         self._insert_trade(
             candidate=candidate,
             side="LONG",
@@ -412,19 +440,32 @@ class TradingExperiment:
             leverage=leverage,
             account_equity=account_equity,
             max_loss=max_loss,
-            entry_price=price,
+            entry_price=entry_price,
             quantity=quantity,
             notional=notional,
             required_margin=required_margin,
             take_profit_price=take_profit_price,
             stop_loss_price=stop_loss_price,
-            take_profit_order_id=str(tp_order.get("orderId", "")),
-            stop_loss_order_id=str(sl_order.get("orderId", "")),
-            reason=f"market_order_id={market_order.get('orderId', '')}",
+            take_profit_order_id=tp_order_id,
+            stop_loss_order_id=sl_order_id,
+            reason=f"market_order_id={market_order.get('orderId', '')}; " + "; ".join(exit_order_status),
             raw_response=str({"market": market_order, "tp": tp_order, "sl": sl_order}),
             now=now,
         )
         return {"status": "opened", "required_margin": self._fmt_decimal(required_margin)}
+
+    def _place_exit_order(
+        self,
+        candidate: OpenableSymbol,
+        trading_symbol: str,
+        params: dict[str, Any],
+        operation: str,
+    ) -> dict[str, Any] | None:
+        try:
+            return self.account_manager._signed_post("/fapi/v1/order", params)
+        except Exception as exc:
+            self._record_error(candidate, f"{operation}:{trading_symbol}", exc)
+            return None
 
     def _fetch_and_store_positions(self) -> list[dict[str, Any]]:
         rows = self.account_manager._signed_get("/fapi/v3/positionRisk")
@@ -670,6 +711,49 @@ class TradingExperiment:
         return price
 
     @staticmethod
+    def _filled_entry_price(market_order: dict[str, Any], fallback: Decimal) -> Decimal:
+        for key in ("avgPrice", "price"):
+            value = TradingExperiment._decimal_from(market_order.get(key), Decimal("0"))
+            if value > 0:
+                return value
+        executed_qty = TradingExperiment._decimal_from(market_order.get("executedQty"), Decimal("0"))
+        cumulative_quote = TradingExperiment._decimal_from(market_order.get("cumQuote"), Decimal("0"))
+        if executed_qty > 0 and cumulative_quote > 0:
+            return cumulative_quote / executed_qty
+        return fallback
+
+    def _latest_mark_price(self, symbol: str, fallback: Decimal) -> Decimal:
+        try:
+            payload = self.account_manager._public_get("/fapi/v1/premiumIndex", {"symbol": symbol})
+        except Exception:
+            return fallback
+        price = self._decimal_from(payload.get("markPrice"), Decimal("0"))
+        return price if price > 0 else fallback
+
+    def _valid_take_profit_price(
+        self,
+        entry_price: Decimal,
+        trigger_reference_price: Decimal,
+        tick_size: Decimal,
+    ) -> Decimal:
+        desired_price = entry_price * (Decimal("1") + self.config.take_profit_pct)
+        minimum_trigger_price = trigger_reference_price + tick_size
+        return self._ceil_to_tick(max(desired_price, minimum_trigger_price), tick_size)
+
+    def _valid_stop_loss_price(
+        self,
+        entry_price: Decimal,
+        stop_loss_pct: Decimal,
+        trigger_reference_price: Decimal,
+        tick_size: Decimal,
+    ) -> Decimal:
+        desired_price = entry_price * (Decimal("1") - stop_loss_pct)
+        maximum_trigger_price = trigger_reference_price - tick_size
+        raw_stop_price = min(desired_price, maximum_trigger_price) if maximum_trigger_price > 0 else desired_price
+        stop_price = self._floor_to_tick(raw_stop_price, tick_size)
+        return stop_price if stop_price > 0 else tick_size
+
+    @staticmethod
     def _parse_leverage(leverage: str) -> int:
         text = str(leverage).strip().lower().replace("x", "")
         if not text.isdigit():
@@ -685,6 +769,12 @@ class TradingExperiment:
     @staticmethod
     def _floor_to_tick(value: Decimal, tick: Decimal) -> Decimal:
         return TradingExperiment._floor_to_step(value, tick)
+
+    @staticmethod
+    def _ceil_to_tick(value: Decimal, tick: Decimal) -> Decimal:
+        if tick <= 0:
+            return value
+        return (value / tick).to_integral_value(rounding=ROUND_CEILING) * tick
 
     @staticmethod
     def _decimal_from(value: Any, default: Decimal) -> Decimal:
