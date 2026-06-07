@@ -19,6 +19,7 @@ from cooldown_module import CooldownModule
 from openable_symbol_module import OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
 from scoring_system import ScoringSystem
+from trading_experiment import TradingExperiment
 
 app = Flask(__name__)
 
@@ -64,6 +65,19 @@ def account_balance_api():
         return jsonify({"error": str(exc)}), 400
     except requests.exceptions.RequestException as exc:
         return jsonify({"error": f"Binance balance request failed: {exc}"}), 502
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
+@app.post("/api/trading-experiment/run")
+def trading_experiment_run_api():
+    try:
+        result = TradingExperiment(db_path=DB_PATH).run_latest_round()
+        return jsonify(result)
+    except BinanceAccountConfigError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except requests.exceptions.RequestException as exc:
+        return jsonify({"error": f"Trading experiment request failed: {exc}"}), 502
     except RuntimeError as exc:
         return jsonify({"error": str(exc)}), 502
 
@@ -118,6 +132,10 @@ def abnormal_wicks():
     if score_trend_symbol and score_trend_symbol not in score_trend_symbols:
         score_trend_symbols = sorted(set(score_trend_symbols) | {score_trend_symbol})
     score_trend_rows = scoring.get_total_score_trend(score_trend_symbol, days=3) if score_trend_symbol else []
+    trading_experiment = TradingExperiment(db_path=DB_PATH)
+    trading_trade_records = trading_experiment.recent_trade_records(limit=100)
+    trading_position_snapshots = trading_experiment.latest_position_snapshots(limit=100)
+
     active_tab = request.args.get("active_tab", default="", type=str).strip()
     if requested_score_trend_symbol:
         active_tab = "tab-score-trend"
@@ -215,6 +233,8 @@ def abnormal_wicks():
         round_scores_total=round_scores_total,
         openable_round_ts=openable_round_ts,
         openable_symbols=openable_symbols,
+        trading_trade_records=trading_trade_records,
+        trading_position_snapshots=trading_position_snapshots,
         rule_score_weights=scoring.rule_score_weights,
         score_trend_symbols=score_trend_symbols,
         score_trend_symbol=score_trend_symbol,

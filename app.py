@@ -11,7 +11,7 @@ import os
 import sqlite3
 import threading
 import time
-from typing import List
+from typing import Iterable, List
 
 import collector
 from data_processor import (
@@ -23,9 +23,10 @@ from data_processor import (
     save_ma20_result,
 )
 from cooldown_module import CooldownModule
-from openable_symbol_module import OpenableSymbolModule
+from openable_symbol_module import OpenableSymbol, OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
 from scoring_system import ScoringSystem
+from trading_experiment import TradingExperiment
 
 _universe_lock = threading.Lock()
 _universe_refresh_interval_sec = 12 * 60 * 60
@@ -63,6 +64,26 @@ def ensure_universe() -> List[str]:
             collector.UNIVERSE = collector.build_universe()
             _universe_last_refresh_ts = now_ts
         return list(collector.UNIVERSE)
+
+
+def run_first_experiment_after_openable_round(openable_symbols: Iterable[OpenableSymbol], round_ts: int) -> None:
+    """Run the first experiment only after openable-symbol evaluation is complete."""
+    openable_rows = list(openable_symbols)
+    qualified_openable_count = sum(1 for row in openable_rows if row.qualified)
+    if qualified_openable_count <= 0:
+        print(f"🧪 first trading experiment round={round_ts} skipped after openable round: no qualified symbols")
+        return
+
+    try:
+        experiment_result = TradingExperiment(db_path=collector.DB_PATH).run_round(openable_rows)
+        print(
+            f"🧪 first trading experiment after openable round={round_ts} "
+            f"opened={experiment_result.get('opened', 0)} "
+            f"skipped={experiment_result.get('skipped', 0)} "
+            f"reason={experiment_result.get('reason', '')}"
+        )
+    except Exception as exc:
+        print(f"⚠️ first trading experiment failed after openable round={round_ts}: {exc}")
 
 
 def start_pre_safety_task() -> None:
@@ -133,6 +154,9 @@ def start_pre_safety_task() -> None:
                     f"abnormal={len(set(abnormal_symbols))} scored={len(scored)} "
                     f"openable_candidates={len(openable_symbols)} openable_qualified={qualified_openable_count}"
                 )
+                # 第一组实验必须在“本轮可开仓symbol情况”完成计算之后执行，
+                # 这样才能使用该模块计算出的最终可开仓结果和杠杆大小。
+                run_first_experiment_after_openable_round(openable_symbols, round_ts)
             except Exception as exc:
                 print(f"⚠️ scoring failed round={round_ts}: {exc}")
 

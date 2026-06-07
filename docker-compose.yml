@@ -1,3 +1,10 @@
+x-binance-env: &binance-env
+  BINANCE_TESTNET: "${BINANCE_TESTNET:-true}"
+  BINANCE_TESTNET_API_KEY: "${BINANCE_TESTNET_API_KEY:-YOUR_TESTNET_API_KEY}"
+  BINANCE_TESTNET_SECRET_KEY: "${BINANCE_TESTNET_SECRET_KEY:-YOUR_TESTNET_SECRET_KEY}"
+  BINANCE_REAL_API_KEY: "${BINANCE_REAL_API_KEY:-YOUR_REAL_API_KEY}"
+  BINANCE_REAL_API_SECRET: "${BINANCE_REAL_API_SECRET:-YOUR_REAL_API_SECRET}"
+
 services:
   worker:
     build: .
@@ -6,6 +13,8 @@ services:
     command: ["worker"]
     user: "${PUID:-1000}:${PGID:-1000}"
     restart: always
+    environment:
+      <<: *binance-env
     volumes:
       - ${HOST_DATA_DIR:-./data}:/app/data
       - ${HOST_LOGS_DIR:-./logs}:/app/logs
@@ -20,16 +29,18 @@ services:
     ports:
       - "5000:5000"
     environment:
-      BINANCE_TESTNET: "${BINANCE_TESTNET:-true}"
-      BINANCE_TESTNET_API_KEY: "${BINANCE_TESTNET_API_KEY:-YOUR_TESTNET_API_KEY}"
-      BINANCE_TESTNET_SECRET_KEY: "${BINANCE_TESTNET_SECRET_KEY:-YOUR_TESTNET_SECRET_KEY}"
-      BINANCE_REAL_API_KEY: "${BINANCE_REAL_API_KEY:-YOUR_REAL_API_KEY}"
-      BINANCE_REAL_API_SECRET: "${BINANCE_REAL_API_SECRET:-YOUR_REAL_API_SECRET}"
+      <<: *binance-env
     volumes:
       - ${HOST_DATA_DIR:-./data}:/app/data
       - ${HOST_LOGS_DIR:-./logs}:/app/logs
     depends_on:
       - worker
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5000/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
 
   sqlite-web:
     image: coleifer/sqlite-web
