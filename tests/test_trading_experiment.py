@@ -4,7 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from openable_symbol_module import OpenableSymbol
-from trading_experiment import TradingExperiment
+from trading_experiment import ExperimentConfig, TradingExperiment
 
 
 class FakeAccountManager:
@@ -38,11 +38,44 @@ class FakeAccountManager:
             return {"algoId": len(self.signed_posts)}
         return {"orderId": len(self.signed_posts)}
 
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/positionRisk":
+            return [{"symbol": params["symbol"], "positionAmt": "50"}]
+        raise AssertionError(f"unexpected signed endpoint {endpoint}")
+
+
 class FailingTakeProfitAccountManager(FakeAccountManager):
     def _signed_post(self, endpoint, params=None):
         if params and params.get("type") == "TAKE_PROFIT_MARKET":
             raise RuntimeError("take profit failed")
         return super()._signed_post(endpoint, params)
+
+
+class MissingPositionOnceAccountManager(FakeAccountManager):
+    def __init__(self):
+        super().__init__()
+        self.take_profit_failures = 0
+        self.position_risk_requests = []
+
+    def _signed_post(self, endpoint, params=None):
+        if (
+            endpoint == "/fapi/v1/algoOrder"
+            and params
+            and params.get("type") == "TAKE_PROFIT_MARKET"
+            and self.take_profit_failures == 0
+        ):
+            self.take_profit_failures += 1
+            self.signed_posts.append((endpoint, dict(params or {})))
+            raise RuntimeError(
+                "400 Client Error: Bad Request response_body="
+                '{"code":-4509,"msg":"Time in Force (TIF) GTE can only be used with open positions. '
+                'Please ensure that positions are available."}'
+            )
+        return super()._signed_post(endpoint, params)
+
+    def _signed_get(self, endpoint, params=None):
+        self.position_risk_requests.append((endpoint, dict(params or {})))
+        return super()._signed_get(endpoint, params)
 
 
 class TradingExperimentSymbolTests(unittest.TestCase):
@@ -153,6 +186,43 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(trade_rows[0].take_profit_order_id, "")
         self.assertEqual(trade_rows[0].stop_loss_order_id, "3")
         self.assertEqual(error_rows[0].operation, "place_take_profit:BANKUSDT")
+
+    def test_exit_order_retries_missing_position_algo_order_error(self):
+        fake_account = MissingPositionOnceAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+                config=ExperimentConfig(exit_order_missing_position_retry_delay_seconds=Decimal("0")),
+            )
+            experiment.init_tables()
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=80,
+                score_band="标准试错单",
+                stop_loss_distance_ratio=0.01,
+                distance_threshold=0.02,
+                stop_loss_distance_tier="A档",
+                opening_leverage="4x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            result = experiment._open_long(candidate, Decimal("1000"), Decimal("10"))
+            trade_rows = experiment.recent_trade_records()
+            error_rows = experiment.recent_error_records()
+
+        self.assertEqual(result["status"], "opened")
+        self.assertEqual(fake_account.take_profit_failures, 1)
+        self.assertEqual(
+            fake_account.position_risk_requests,
+            [("/fapi/v3/positionRisk", {"symbol": "BANKUSDT"})],
+        )
+        self.assertEqual(trade_rows[0].take_profit_order_id, "5")
+        self.assertEqual(error_rows, [])
 
     def test_usdt_pair_symbol_is_not_double_suffixed(self):
         self.assertEqual(TradingExperiment._binance_symbol("BANKUSDT"), "BANKUSDT")

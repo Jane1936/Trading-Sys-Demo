@@ -32,6 +32,8 @@ class ExperimentConfig:
     risk_fraction: Decimal = Decimal("0.01")
     take_profit_pct: Decimal = Decimal("0.20")
     max_stop_loss_pct: Decimal = Decimal("0.10")
+    exit_order_missing_position_retries: int = 3
+    exit_order_missing_position_retry_delay_seconds: Decimal = Decimal("0.5")
 
 
 @dataclass(frozen=True)
@@ -461,12 +463,46 @@ class TradingExperiment:
         params: dict[str, Any],
         operation: str,
     ) -> dict[str, Any] | None:
+        endpoint, request_params = self._exit_order_request(params)
+        max_attempts = max(1, int(self.config.exit_order_missing_position_retries) + 1)
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return self.account_manager._signed_post(endpoint, request_params)
+            except Exception as exc:
+                last_exc = exc
+                if not self._is_missing_position_for_close_position_error(exc) or attempt >= max_attempts:
+                    break
+                self._wait_for_position_visibility(trading_symbol)
+
+        if last_exc is not None:
+            self._record_error(candidate, f"{operation}:{trading_symbol}", last_exc)
+        return None
+
+    def _wait_for_position_visibility(self, trading_symbol: str) -> None:
+        delay_seconds = float(self.config.exit_order_missing_position_retry_delay_seconds)
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
         try:
-            endpoint, request_params = self._exit_order_request(params)
-            return self.account_manager._signed_post(endpoint, request_params)
-        except Exception as exc:
-            self._record_error(candidate, f"{operation}:{trading_symbol}", exc)
-            return None
+            self._position_amount(trading_symbol)
+        except Exception:
+            return
+
+    def _position_amount(self, trading_symbol: str) -> Decimal:
+        rows = self.account_manager._signed_get("/fapi/v3/positionRisk", {"symbol": trading_symbol})
+        if not isinstance(rows, list):
+            return Decimal("0")
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("symbol", "")).upper() == trading_symbol.upper():
+                return self._decimal_from(row.get("positionAmt"), Decimal("0"))
+        return Decimal("0")
+
+    @staticmethod
+    def _is_missing_position_for_close_position_error(exc: Exception) -> bool:
+        message = str(exc)
+        return "-4509" in message or "positions are available" in message
 
     @staticmethod
     def _exit_order_request(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
