@@ -24,16 +24,24 @@ class ExperimentConfig:
     """Configurable risk controls for the first experiment group."""
 
     initial_equity_usdt: Decimal = Decimal("1000")
-    total_notional_budget_usdt: Decimal = Decimal("500")
-    total_margin_budget_usdt: Decimal = Decimal("500")
+    experiment_uninvested_usdt: Decimal = Decimal("4000")
+    total_margin_budget_usdt: Decimal = Decimal("1000")
     max_open_positions: int = 10
-    per_trade_notional_usdt: Decimal = Decimal("50")
-    per_trade_margin_budget_usdt: Decimal = Decimal("50")
     risk_fraction: Decimal = Decimal("0.01")
+    default_stop_loss_distance_ratio: Decimal = Decimal("0.05")
+    default_opening_leverage: int = 5
     take_profit_pct: Decimal = Decimal("0.20")
     max_stop_loss_pct: Decimal = Decimal("0.10")
     exit_order_missing_position_retries: int = 3
     exit_order_missing_position_retry_delay_seconds: Decimal = Decimal("0.5")
+
+
+@dataclass(frozen=True)
+class TradePlan:
+    leverage: int
+    stop_loss_distance_ratio: Decimal
+    required_margin_usdt: Decimal
+    planned_notional_usdt: Decimal
 
 
 @dataclass(frozen=True)
@@ -92,13 +100,14 @@ class TradingExperiment:
     """Run and persist the first long-only trading experiment.
 
     Rules implemented:
-    * experiment equity is capped at 1,000 USDT for risk calculation;
+    * experiment equity matches the web page "experiment USDT equity" metric;
     * before opening, query current positions and skip if there are already 10;
-    * the experiment reserves 500 USDT for total notional and 500 USDT for margin;
-    * each candidate receives at most 50 USDT total notional;
-    * each candidate reserves 50 USDT from the margin budget;
-    * required margin is calculated as actual_notional / leverage;
-    * stop-loss price distance is min(10%, experiment equity * 1% / notional);
+    * the experiment's total margin budget is capped at 1,000 USDT;
+    * before each new entry, query the latest experiment USDT equity from Binance;
+    * each candidate's margin is sized from 1% equity risk, stop-loss distance,
+      and leverage: margin = (equity * 1%) / (distance_ratio * leverage);
+    * actual notional is calculated as margin * leverage;
+    * stop-loss price distance remains capped by min(entry * 10%, equity * 1% / quantity);
     * take-profit is 20% above entry;
     * candidates come from the latest qualified openable-symbol round and are
       processed by total_score descending, then symbol ascending.
@@ -219,15 +228,14 @@ class TradingExperiment:
         self.account_manager.validate_config()
         self.init_tables()
 
-        account = self.account_manager._signed_get("/fapi/v3/account")
+        account = self._fetch_account()
         available_balance = self._decimal_from(account.get("availableBalance"), Decimal("0"))
-        account_equity = self._account_equity(account)
+        account_equity = self._fetch_experiment_usdt_equity()
         max_loss = account_equity * self.config.risk_fraction
         positions = self._fetch_and_store_positions()
         open_positions = self._open_position_symbols(positions)
 
-        reserved_notional_budget = Decimal(len(open_positions)) * self.config.per_trade_notional_usdt
-        reserved_margin_budget = Decimal(len(open_positions)) * self.config.per_trade_margin_budget_usdt
+        reserved_margin_budget = self._reserved_margin_from_positions(positions)
 
         opened = 0
         skipped = 0
@@ -246,22 +254,23 @@ class TradingExperiment:
                 self._record_skip(candidate, account_equity, max_loss, "symbol_position_already_open")
                 skipped += 1
                 continue
-            required_margin = self._planned_required_margin(candidate)
-            if reserved_notional_budget + self.config.per_trade_notional_usdt > self.config.total_notional_budget_usdt:
-                self._record_skip(candidate, account_equity, max_loss, "total_notional_budget_exhausted")
+            account = self._fetch_account()
+            available_balance = self._decimal_from(account.get("availableBalance"), Decimal("0"))
+            account_equity = self._fetch_experiment_usdt_equity()
+            max_loss = account_equity * self.config.risk_fraction
+            trade_plan = self._trade_plan(candidate, account_equity)
+            required_margin = trade_plan.required_margin_usdt
+            if reserved_margin_budget + required_margin > self.config.total_margin_budget_usdt:
+                self._record_skip(candidate, account_equity, max_loss, "total_margin_budget_exhausted", required_margin)
                 skipped += 1
                 break
-            if reserved_margin_budget + self.config.per_trade_margin_budget_usdt > self.config.total_margin_budget_usdt:
-                self._record_skip(candidate, account_equity, max_loss, "total_margin_budget_exhausted")
-                skipped += 1
-                break
-            if available_balance < self.config.per_trade_margin_budget_usdt:
-                self._record_skip(candidate, account_equity, max_loss, "available_balance_lt_50usdt_margin_budget", required_margin)
+            if available_balance < required_margin:
+                self._record_skip(candidate, account_equity, max_loss, "available_balance_lt_required_margin", required_margin)
                 skipped += 1
                 break
 
             try:
-                result = self._open_long(candidate, account_equity, max_loss)
+                result = self._open_long(candidate, account_equity, max_loss, trade_plan)
             except RuntimeError as exc:
                 self._record_error(candidate, "open_long", exc)
                 if "not found in exchangeInfo" in str(exc):
@@ -275,9 +284,8 @@ class TradingExperiment:
 
             if result["status"] == "opened":
                 opened += 1
-                available_balance -= self.config.per_trade_margin_budget_usdt
-                reserved_notional_budget += self.config.per_trade_notional_usdt
-                reserved_margin_budget += self.config.per_trade_margin_budget_usdt
+                available_balance -= required_margin
+                reserved_margin_budget += required_margin
                 open_positions.add(trading_symbol)
             else:
                 skipped += 1
@@ -364,12 +372,23 @@ class TradingExperiment:
 
     @classmethod
     def _candidate_allows_open(cls, candidate: OpenableSymbol) -> bool:
-        """Only first-experiment rows with final-openable=yes and leverage > 0 may open."""
-        return bool(candidate.qualified) and cls._parse_leverage(candidate.opening_leverage) > 0
+        """Only first-experiment rows with final-openable=yes and usable leverage may open."""
+        if not candidate.qualified:
+            return False
+        if cls._parse_leverage(candidate.opening_leverage) > 0:
+            return True
+        return candidate.total_score >= 81 and cls._candidate_distance_ratio(candidate) == 0
 
-    def _open_long(self, candidate: OpenableSymbol, account_equity: Decimal, max_loss: Decimal) -> dict[str, Any]:
+    def _open_long(
+        self,
+        candidate: OpenableSymbol,
+        account_equity: Decimal,
+        max_loss: Decimal,
+        trade_plan: TradePlan | None = None,
+    ) -> dict[str, Any]:
         now = int(time.time() * 1000)
-        leverage = self._parse_leverage(candidate.opening_leverage)
+        trade_plan = trade_plan or self._trade_plan(candidate, account_equity)
+        leverage = trade_plan.leverage
         if leverage <= 0:
             self._record_skip(candidate, account_equity, max_loss, "invalid_opening_leverage")
             return {"status": "skipped"}
@@ -377,8 +396,8 @@ class TradingExperiment:
         trading_symbol = self._binance_symbol(candidate.symbol)
         exchange_info = self._exchange_symbol_info(trading_symbol)
         pre_order_price = self._latest_price(trading_symbol)
-        notional = self.config.per_trade_notional_usdt
-        quantity = self._floor_to_step(notional / pre_order_price, exchange_info["step_size"])
+        planned_notional = trade_plan.planned_notional_usdt
+        quantity = self._floor_to_step(planned_notional / pre_order_price, exchange_info["step_size"])
         if quantity <= 0:
             self._record_skip(candidate, account_equity, max_loss, "quantity_rounded_to_zero")
             return {"status": "skipped"}
@@ -399,15 +418,15 @@ class TradingExperiment:
         trigger_reference_price = self._latest_mark_price(trading_symbol, entry_price)
         notional = quantity * entry_price
         required_margin = notional / Decimal(leverage)
-        stop_loss_pct = min(self.config.max_stop_loss_pct, max_loss / notional) if notional > 0 else self.config.max_stop_loss_pct
         take_profit_price = self._valid_take_profit_price(
             entry_price=entry_price,
             trigger_reference_price=trigger_reference_price,
             tick_size=exchange_info["tick_size"],
         )
-        stop_loss_price = self._valid_stop_loss_price(
+        stop_loss_price = self._risk_capped_stop_loss_price(
             entry_price=entry_price,
-            stop_loss_pct=stop_loss_pct,
+            quantity=quantity,
+            max_loss=max_loss,
             trigger_reference_price=trigger_reference_price,
             tick_size=exchange_info["tick_size"],
         )
@@ -455,6 +474,7 @@ class TradingExperiment:
             quantity=quantity,
             notional=notional,
             required_margin=required_margin,
+            allocated_notional=planned_notional,
             take_profit_price=take_profit_price,
             stop_loss_price=stop_loss_price,
             take_profit_order_id=tp_order_id,
@@ -611,7 +631,8 @@ class TradingExperiment:
             entry_price=Decimal("0"),
             quantity=Decimal("0"),
             notional=Decimal("0"),
-            required_margin=required_margin if required_margin is not None else self._planned_required_margin(candidate),
+            required_margin=required_margin if required_margin is not None else self._trade_plan(candidate, account_equity).required_margin_usdt,
+            allocated_notional=self._trade_plan(candidate, account_equity).planned_notional_usdt,
             take_profit_price=Decimal("0"),
             stop_loss_price=Decimal("0"),
             take_profit_order_id="",
@@ -633,6 +654,7 @@ class TradingExperiment:
         quantity: Decimal,
         notional: Decimal,
         required_margin: Decimal,
+        allocated_notional: Decimal,
         take_profit_price: Decimal,
         stop_loss_price: Decimal,
         take_profit_order_id: str,
@@ -658,7 +680,7 @@ class TradingExperiment:
                     status,
                     candidate.total_score,
                     leverage,
-                    self._fmt_decimal(self.config.per_trade_notional_usdt),
+                    self._fmt_decimal(allocated_notional),
                     self._fmt_decimal(required_margin),
                     self._fmt_decimal(account_equity),
                     self._fmt_decimal(max_loss),
@@ -731,18 +753,67 @@ class TradingExperiment:
             created_at=int(row["created_at"]),
         )
 
+    def _fetch_account(self) -> dict[str, Any]:
+        account = self.account_manager._signed_get("/fapi/v3/account")
+        if not isinstance(account, dict):
+            raise RuntimeError("Unexpected Binance account response format")
+        return account
+
+    def _fetch_experiment_usdt_equity(self) -> Decimal:
+        rows = self.account_manager._signed_get("/fapi/v3/balance")
+        if not isinstance(rows, list):
+            raise RuntimeError("Unexpected Binance balance response format")
+        for row in rows:
+            if not isinstance(row, dict) or str(row.get("asset", "")).upper() != "USDT":
+                continue
+            balance = self._decimal_from(row.get("balance"), Decimal("0"))
+            equity = balance - self.config.experiment_uninvested_usdt
+            return equity if equity > 0 else Decimal("0")
+        return Decimal("0")
+
     def _account_equity(self, account: dict[str, Any]) -> Decimal:
         for key in ("totalMarginBalance", "totalWalletBalance"):
             value = self._decimal_from(account.get(key), Decimal("0"))
             if value > 0:
-                return min(value, self.config.initial_equity_usdt)
+                return value
         return self.config.initial_equity_usdt
 
-    def _planned_required_margin(self, candidate: OpenableSymbol) -> Decimal:
+    def _trade_plan(self, candidate: OpenableSymbol, account_equity: Decimal) -> TradePlan:
+        leverage = self._effective_leverage(candidate)
+        distance_ratio = self._effective_stop_loss_distance_ratio(candidate)
+        if leverage <= 0 or distance_ratio <= 0 or account_equity <= 0:
+            return TradePlan(leverage, distance_ratio, Decimal("0"), Decimal("0"))
+        required_margin = (account_equity * self.config.risk_fraction) / (distance_ratio * Decimal(leverage))
+        planned_notional = required_margin * Decimal(leverage)
+        return TradePlan(leverage, distance_ratio, required_margin, planned_notional)
+
+    def _effective_leverage(self, candidate: OpenableSymbol) -> int:
         leverage = self._parse_leverage(candidate.opening_leverage)
-        if leverage <= 0:
-            return Decimal("0")
-        return self.config.per_trade_notional_usdt / Decimal(leverage)
+        if leverage <= 0 and candidate.total_score >= 81 and self._candidate_distance_ratio(candidate) == 0:
+            return int(self.config.default_opening_leverage)
+        return leverage
+
+    def _effective_stop_loss_distance_ratio(self, candidate: OpenableSymbol) -> Decimal:
+        ratio = self._candidate_distance_ratio(candidate)
+        if ratio == 0 and candidate.total_score >= 81:
+            return self.config.default_stop_loss_distance_ratio
+        return ratio
+
+    @classmethod
+    def _candidate_distance_ratio(cls, candidate: OpenableSymbol) -> Decimal:
+        return cls._decimal_from(candidate.stop_loss_distance_ratio, Decimal("0"))
+
+    def _reserved_margin_from_positions(self, positions: Iterable[dict[str, Any]]) -> Decimal:
+        reserved = Decimal("0")
+        for row in positions:
+            amt = self._decimal_from(row.get("positionAmt"), Decimal("0"))
+            if amt == 0:
+                continue
+            leverage = self._decimal_from(row.get("leverage"), Decimal("0"))
+            notional = abs(self._decimal_from(row.get("notional"), Decimal("0")))
+            if leverage > 0 and notional > 0:
+                reserved += notional / leverage
+        return reserved
 
 
     @staticmethod
@@ -804,14 +875,30 @@ class TradingExperiment:
         minimum_trigger_price = trigger_reference_price + tick_size
         return self._ceil_to_tick(max(desired_price, minimum_trigger_price), tick_size)
 
-    def _valid_stop_loss_price(
+    def _risk_capped_stop_loss_price(
         self,
         entry_price: Decimal,
-        stop_loss_pct: Decimal,
+        quantity: Decimal,
+        max_loss: Decimal,
         trigger_reference_price: Decimal,
         tick_size: Decimal,
     ) -> Decimal:
-        desired_price = entry_price * (Decimal("1") - stop_loss_pct)
+        ten_pct_price_distance = entry_price * self.config.max_stop_loss_pct
+        risk_price_distance = max_loss / quantity if quantity > 0 else ten_pct_price_distance
+        stop_loss_price_distance = min(ten_pct_price_distance, risk_price_distance)
+        desired_price = entry_price - stop_loss_price_distance
+        return self._valid_stop_loss_price(
+            desired_price=desired_price,
+            trigger_reference_price=trigger_reference_price,
+            tick_size=tick_size,
+        )
+
+    def _valid_stop_loss_price(
+        self,
+        desired_price: Decimal,
+        trigger_reference_price: Decimal,
+        tick_size: Decimal,
+    ) -> Decimal:
         maximum_trigger_price = trigger_reference_price - tick_size
         raw_stop_price = min(desired_price, maximum_trigger_price) if maximum_trigger_price > 0 else desired_price
         stop_price = self._floor_to_tick(raw_stop_price, tick_size)
