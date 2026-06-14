@@ -231,9 +231,12 @@ class TradingExperiment:
 
         opened = 0
         skipped = 0
-        for candidate in sorted(candidates, key=lambda row: (-row.total_score, row.symbol)):
-            if not candidate.qualified:
-                continue
+        eligible_candidates = [
+            candidate
+            for candidate in candidates
+            if self._candidate_allows_open(candidate)
+        ]
+        for candidate in sorted(eligible_candidates, key=lambda row: (-row.total_score, row.symbol)):
             if len(open_positions) >= self.config.max_open_positions:
                 self._record_skip(candidate, account_equity, max_loss, "max_open_positions_reached")
                 skipped += 1
@@ -336,6 +339,7 @@ class TradingExperiment:
                 f"""
                 SELECT * FROM {module.TABLE_NAME}
                 WHERE decision_round_ts = ? AND qualified = 1
+                  AND CAST(REPLACE(LOWER(opening_leverage), 'x', '') AS INTEGER) > 0
                 ORDER BY total_score DESC, symbol ASC
                 """,
                 (decision_round_ts,),
@@ -357,6 +361,11 @@ class TradingExperiment:
             )
             for row in rows
         ]
+
+    @classmethod
+    def _candidate_allows_open(cls, candidate: OpenableSymbol) -> bool:
+        """Only first-experiment rows with final-openable=yes and leverage > 0 may open."""
+        return bool(candidate.qualified) and cls._parse_leverage(candidate.opening_leverage) > 0
 
     def _open_long(self, candidate: OpenableSymbol, account_equity: Decimal, max_loss: Decimal) -> dict[str, Any]:
         now = int(time.time() * 1000)
