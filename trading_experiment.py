@@ -28,6 +28,7 @@ class ExperimentConfig:
     total_margin_budget_usdt: Decimal = Decimal("1000")
     max_open_positions: int = 10
     risk_fraction: Decimal = Decimal("0.01")
+    position_size_fraction: Decimal = Decimal("0.10")
     default_stop_loss_distance_ratio: Decimal = Decimal("0.05")
     default_opening_leverage: int = 5
     take_profit_pct: Decimal = Decimal("0.20")
@@ -104,9 +105,9 @@ class TradingExperiment:
     * before opening, query current positions and skip if there are already 10;
     * the experiment's total margin budget is capped at 1,000 USDT;
     * before each new entry, query the latest experiment USDT equity from Binance;
-    * each candidate's margin is sized from 1% equity risk, stop-loss distance,
-      and leverage: margin = (equity * 1%) / (distance_ratio * leverage);
-    * actual notional is calculated as margin * leverage;
+    * each candidate's base margin is sized from 1% equity risk, stop-loss distance,
+      and leverage: base margin = (equity * 1%) / (distance_ratio * leverage);
+    * required margin and actual notional are both scaled to 10% of the base values;
     * stop-loss price distance remains capped by min(entry * 10%, equity * 1% / quantity);
     * take-profit is 20% above entry;
     * candidates come from the latest qualified openable-symbol round and are
@@ -801,7 +802,8 @@ class TradingExperiment:
         distance_ratio = self._effective_stop_loss_distance_ratio(candidate)
         if leverage <= 0 or distance_ratio <= 0 or account_equity <= 0:
             return TradePlan(leverage, distance_ratio, Decimal("0"), Decimal("0"))
-        required_margin = (account_equity * self.config.risk_fraction) / (distance_ratio * Decimal(leverage))
+        base_required_margin = (account_equity * self.config.risk_fraction) / (distance_ratio * Decimal(leverage))
+        required_margin = base_required_margin * self.config.position_size_fraction
         planned_notional = required_margin * Decimal(leverage)
         return TradePlan(leverage, distance_ratio, required_margin, planned_notional)
 
