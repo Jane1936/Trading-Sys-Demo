@@ -601,7 +601,7 @@ class TradingExperiment:
                 """,
                 [
                     (
-                        str(row.get("symbol", "")),
+                        self._base_symbol(row.get("symbol", "")),
                         str(row.get("positionAmt", "0")),
                         str(row.get("entryPrice", "0")),
                         str(row.get("markPrice", "0")),
@@ -629,7 +629,7 @@ class TradingExperiment:
             ).fetchall()
         leverages: dict[str, str] = {}
         for row in rows:
-            symbol = str(row["symbol"]).upper()
+            symbol = self._base_symbol(row["symbol"])
             if symbol not in leverages and row["leverage"] is not None:
                 leverages[symbol] = str(row["leverage"])
         return leverages
@@ -639,7 +639,7 @@ class TradingExperiment:
         raw_leverage = str(row.get("leverage", "")).strip()
         if raw_leverage:
             return raw_leverage
-        return fallback_leverages.get(str(row.get("symbol", "")).upper(), "-")
+        return fallback_leverages.get(TradingExperiment._base_symbol(row.get("symbol", "")), "-")
 
     @staticmethod
     def _open_position_symbols(positions: Iterable[dict[str, Any]]) -> set[str]:
@@ -873,6 +873,13 @@ class TradingExperiment:
                 reserved += notional / leverage
         return reserved
 
+
+    @staticmethod
+    def _base_symbol(symbol: Any) -> str:
+        normalized = str(symbol).strip().upper()
+        if normalized.endswith("USDT"):
+            return normalized[:-4]
+        return normalized
 
     @staticmethod
     def _binance_symbol(symbol: str) -> str:

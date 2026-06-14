@@ -134,7 +134,8 @@ class HoldingPositionScoringSystem:
         triggered = 0
         records = 0
         for position in positions:
-            symbol = str(position.get("symbol", "")).strip()
+            exchange_symbol = str(position.get("symbol", "")).strip()
+            symbol = self._base_symbol(exchange_symbol)
             amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
             if not symbol or amount == 0:
                 continue
@@ -203,7 +204,7 @@ class HoldingPositionScoringSystem:
             response = self.account_manager._signed_post(
                 "/fapi/v1/order",
                 {
-                    "symbol": check.symbol,
+                    "symbol": self._exchange_symbol(position, check.symbol),
                     "side": side,
                     "type": "MARKET",
                     "quantity": self._fmt_decimal(quantity),
@@ -278,6 +279,20 @@ class HoldingPositionScoringSystem:
                 f"SELECT * FROM {self.RECORDS_TABLE} ORDER BY created_at DESC, id DESC LIMIT ?",
                 (limit,),
             ).fetchall()
+
+    @staticmethod
+    def _base_symbol(symbol: str) -> str:
+        normalized = str(symbol).strip().upper()
+        if normalized.endswith("USDT"):
+            return normalized[:-4]
+        return normalized
+
+    @staticmethod
+    def _exchange_symbol(position: dict[str, Any], base_symbol: str) -> str:
+        exchange_symbol = str(position.get("symbol", "")).strip().upper()
+        if exchange_symbol:
+            return exchange_symbol
+        return f"{base_symbol}USDT" if base_symbol and not base_symbol.endswith("USDT") else base_symbol
 
     @staticmethod
     def _current_decision_round_ts() -> int:
