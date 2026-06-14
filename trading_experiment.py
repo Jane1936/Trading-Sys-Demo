@@ -273,8 +273,13 @@ class TradingExperiment:
                 result = self._open_long(candidate, account_equity, max_loss, trade_plan)
             except RuntimeError as exc:
                 self._record_error(candidate, "open_long", exc)
-                if "not found in exchangeInfo" in str(exc):
+                error_message = str(exc)
+                if "not found in exchangeInfo" in error_message:
                     self._record_skip(candidate, account_equity, max_loss, "symbol_not_found_in_exchange_info")
+                    skipped += 1
+                    continue
+                if "Invalid latest price" in error_message:
+                    self._record_skip(candidate, account_equity, max_loss, "invalid_latest_price")
                     skipped += 1
                     continue
                 raise
@@ -840,10 +845,19 @@ class TradingExperiment:
 
     def _latest_price(self, symbol: str) -> Decimal:
         payload = self.account_manager._public_get("/fapi/v1/ticker/price", {"symbol": symbol})
-        price = self._decimal_from(payload.get("price"), Decimal("0"))
-        if price <= 0:
-            raise RuntimeError(f"Invalid latest price for {symbol}: {payload}")
-        return price
+        price = self._decimal_from(payload.get("price") if isinstance(payload, dict) else None, Decimal("0"))
+        if price > 0:
+            return price
+
+        mark_payload = self.account_manager._public_get("/fapi/v1/premiumIndex", {"symbol": symbol})
+        mark_price = self._decimal_from(
+            mark_payload.get("markPrice") if isinstance(mark_payload, dict) else None,
+            Decimal("0"),
+        )
+        if mark_price > 0:
+            return mark_price
+
+        raise RuntimeError(f"Invalid latest price for {symbol}: ticker={payload}, premiumIndex={mark_payload}")
 
     @staticmethod
     def _filled_entry_price(market_order: dict[str, Any], fallback: Decimal) -> Decimal:
