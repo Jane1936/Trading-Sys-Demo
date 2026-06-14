@@ -599,7 +599,50 @@ class TradingExperimentSymbolTests(unittest.TestCase):
             snapshots = experiment.latest_position_snapshots()
 
         self.assertEqual(len(snapshots), 1)
+        self.assertEqual(snapshots[0].symbol, "BANK")
         self.assertEqual(snapshots[0].leverage, "6")
+
+    def test_position_snapshot_leverage_fallback_matches_base_trade_symbol_to_usdt_position(self):
+        class PositionWithoutLeverageAccountManager(FakeAccountManager):
+            def _signed_get(self, endpoint, params=None):
+                if endpoint == "/fapi/v3/positionRisk":
+                    return [
+                        {
+                            "symbol": "BANKUSDT",
+                            "positionAmt": "2",
+                            "entryPrice": "1",
+                            "markPrice": "1.1",
+                            "unRealizedProfit": "0.2",
+                            "notional": "2.2",
+                            "liquidationPrice": "0.5",
+                        }
+                    ]
+                return super()._signed_get(endpoint, params)
+
+        fake_account = PositionWithoutLeverageAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+            )
+            experiment.init_tables()
+            with experiment._connect() as conn:
+                conn.execute(
+                    f"""
+                    INSERT INTO {experiment.TRADES_TABLE}
+                    (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt,
+                     required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity,
+                     notional_usdt, take_profit_price, stop_loss_price, reason, created_at, updated_at)
+                    VALUES ('BANK', 1, 'LONG', 'opened', 80, 7, '10', '1.42857143', '1000', '10', '1', '2', '2', '1.2', '0.9', 'new', 2000, 2000)
+                    """
+                )
+
+            experiment._fetch_and_store_positions()
+            snapshots = experiment.latest_position_snapshots()
+
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(snapshots[0].symbol, "BANK")
+        self.assertEqual(snapshots[0].leverage, "7")
 
 
 if __name__ == "__main__":
