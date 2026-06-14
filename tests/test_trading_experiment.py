@@ -44,6 +44,8 @@ class FakeAccountManager:
     def _signed_get(self, endpoint, params=None):
         if endpoint == "/fapi/v3/account":
             return {"availableBalance": "1000", "totalMarginBalance": "1000"}
+        if endpoint == "/fapi/v3/balance":
+            return [{"asset": "USDT", "balance": "5000"}]
         if endpoint == "/fapi/v3/positionRisk":
             if params and "symbol" in params:
                 return [{"symbol": params["symbol"], "positionAmt": "50"}]
@@ -123,11 +125,12 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         )
         order_types = [params.get("type", "LEVERAGE") for _, params in fake_account.signed_posts]
         self.assertEqual(order_types, ["LEVERAGE", "MARKET", "STOP_MARKET", "TAKE_PROFIT_MARKET"])
+        self.assertEqual(fake_account.signed_posts[1][1]["quantity"], "1000")
         stop_loss_params = fake_account.signed_posts[2][1]
         take_profit_params = fake_account.signed_posts[3][1]
         self.assertEqual(stop_loss_params["algoType"], "CONDITIONAL")
         self.assertEqual(take_profit_params["algoType"], "CONDITIONAL")
-        self.assertEqual(stop_loss_params["triggerPrice"], "0.9")
+        self.assertEqual(stop_loss_params["triggerPrice"], "0.99")
         self.assertEqual(take_profit_params["triggerPrice"], "1.2")
         self.assertNotIn("stopPrice", stop_loss_params)
         self.assertNotIn("stopPrice", take_profit_params)
@@ -277,6 +280,65 @@ class TradingExperimentSymbolTests(unittest.TestCase):
 
     def test_usdt_pair_symbol_is_not_double_suffixed(self):
         self.assertEqual(TradingExperiment._binance_symbol("BANKUSDT"), "BANKUSDT")
+
+    def test_trade_plan_uses_experiment_equity_distance_and_leverage(self):
+        fake_account = FakeAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+            )
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=89,
+                score_band="确定性强趋势单",
+                stop_loss_distance_ratio=0.02,
+                distance_threshold=0.08,
+                stop_loss_distance_tier="A档",
+                opening_leverage="10x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            equity = experiment._fetch_experiment_usdt_equity()
+            plan = experiment._trade_plan(candidate, equity)
+
+        self.assertEqual(equity, Decimal("1000"))
+        self.assertEqual(plan.required_margin_usdt, Decimal("50"))
+        self.assertEqual(plan.planned_notional_usdt, Decimal("500"))
+
+    def test_trade_plan_defaults_zero_distance_trend_candidate_to_five_percent_and_5x(self):
+        fake_account = FakeAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+            )
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=81,
+                score_band="趋势标准单",
+                stop_loss_distance_ratio=0,
+                distance_threshold=0.07,
+                stop_loss_distance_tier="NA",
+                opening_leverage="NA",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            plan = experiment._trade_plan(candidate, Decimal("1000"))
+
+        self.assertTrue(TradingExperiment._candidate_allows_open(candidate))
+        self.assertEqual(plan.leverage, 5)
+        self.assertEqual(plan.stop_loss_distance_ratio, Decimal("0.05"))
+        self.assertEqual(plan.required_margin_usdt, Decimal("40"))
+        self.assertEqual(plan.planned_notional_usdt, Decimal("200"))
 
 
 if __name__ == "__main__":
