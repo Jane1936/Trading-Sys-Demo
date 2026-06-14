@@ -174,12 +174,12 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         )
         order_types = [params.get("type", "LEVERAGE") for _, params in fake_account.signed_posts]
         self.assertEqual(order_types, ["LEVERAGE", "MARKET", "STOP_MARKET", "TAKE_PROFIT_MARKET"])
-        self.assertEqual(fake_account.signed_posts[1][1]["quantity"], "1000")
+        self.assertEqual(fake_account.signed_posts[1][1]["quantity"], "100")
         stop_loss_params = fake_account.signed_posts[2][1]
         take_profit_params = fake_account.signed_posts[3][1]
         self.assertEqual(stop_loss_params["algoType"], "CONDITIONAL")
         self.assertEqual(take_profit_params["algoType"], "CONDITIONAL")
-        self.assertEqual(stop_loss_params["triggerPrice"], "0.99")
+        self.assertEqual(stop_loss_params["triggerPrice"], "0.9")
         self.assertEqual(take_profit_params["triggerPrice"], "1.2")
         self.assertNotIn("stopPrice", stop_loss_params)
         self.assertNotIn("stopPrice", take_profit_params)
@@ -212,7 +212,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(result["status"], "opened")
         self.assertEqual(fake_account.latest_price_params, {"symbol": "BANKUSDT"})
         self.assertEqual(fake_account.latest_mark_price_params, {"symbol": "BANKUSDT"})
-        self.assertEqual(fake_account.signed_posts[1][1]["quantity"], "500")
+        self.assertEqual(fake_account.signed_posts[1][1]["quantity"], "50")
 
     def test_run_round_skips_candidate_when_latest_price_is_unavailable(self):
         fake_account = InvalidPriceAccountManager()
@@ -307,8 +307,8 @@ class TradingExperimentSymbolTests(unittest.TestCase):
 
         order_params = fake_account.signed_posts[1][1]
         stop_loss_params = fake_account.signed_posts[2][1]
-        self.assertEqual(order_params["quantity"], "497")
-        self.assertEqual(stop_loss_params["triggerPrice"], "0.979879")
+        self.assertEqual(order_params["quantity"], "49")
+        self.assertEqual(stop_loss_params["triggerPrice"], "0.9")
 
     def test_recent_trade_records_only_returns_opened_rows(self):
         fake_account = FakeAccountManager()
@@ -482,8 +482,8 @@ class TradingExperimentSymbolTests(unittest.TestCase):
             plan = experiment._trade_plan(candidate, equity)
 
         self.assertEqual(equity, Decimal("1000"))
-        self.assertEqual(plan.required_margin_usdt, Decimal("50"))
-        self.assertEqual(plan.planned_notional_usdt, Decimal("500"))
+        self.assertEqual(plan.required_margin_usdt, Decimal("5.0"))
+        self.assertEqual(plan.planned_notional_usdt, Decimal("50.0"))
 
     def test_trade_plan_defaults_zero_distance_trend_candidate_to_five_percent_and_5x(self):
         fake_account = FakeAccountManager()
@@ -512,8 +512,8 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertTrue(TradingExperiment._candidate_allows_open(candidate))
         self.assertEqual(plan.leverage, 5)
         self.assertEqual(plan.stop_loss_distance_ratio, Decimal("0.05"))
-        self.assertEqual(plan.required_margin_usdt, Decimal("40"))
-        self.assertEqual(plan.planned_notional_usdt, Decimal("200"))
+        self.assertEqual(plan.required_margin_usdt, Decimal("4.0"))
+        self.assertEqual(plan.planned_notional_usdt, Decimal("20.0"))
 
 
 if __name__ == "__main__":
