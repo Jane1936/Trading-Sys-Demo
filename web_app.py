@@ -133,9 +133,10 @@ def abnormal_wicks():
         score_trend_symbols = sorted(set(score_trend_symbols) | {score_trend_symbol})
     score_trend_rows = scoring.get_total_score_trend(score_trend_symbol, days=3) if score_trend_symbol else []
     trading_experiment = TradingExperiment(db_path=DB_PATH)
-    trading_trade_records = trading_experiment.recent_trade_records(limit=100)
+    trading_records_since_ms = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp() * 1000)
+    trading_trade_records = trading_experiment.recent_trade_records(limit=100, since_ms=trading_records_since_ms)
     trading_position_snapshots = trading_experiment.latest_position_snapshots(limit=100)
-    trading_error_records = trading_experiment.recent_error_records(limit=100)
+    trading_error_records = trading_experiment.recent_error_records(limit=100, since_ms=trading_records_since_ms)
 
     active_tab = request.args.get("active_tab", default="", type=str).strip()
     if requested_score_trend_symbol:

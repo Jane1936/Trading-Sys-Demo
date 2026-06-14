@@ -306,17 +306,23 @@ class TradingExperiment:
         self._fetch_and_store_positions()
         return {"opened": opened, "skipped": skipped, "reason": "completed"}
 
-    def recent_trade_records(self, limit: int = 100) -> list[ExperimentTradeRecord]:
+    def recent_trade_records(self, limit: int = 100, since_ms: int | None = None) -> list[ExperimentTradeRecord]:
         self.init_tables()
+        since_clause = "AND created_at >= ?" if since_ms is not None else ""
+        params: tuple[int, ...]
+        if since_ms is not None:
+            params = (int(since_ms), int(limit))
+        else:
+            params = (int(limit),)
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
                 SELECT * FROM {self.TRADES_TABLE}
-                WHERE status = 'opened'
+                WHERE status = 'opened' {since_clause}
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?
                 """,
-                (int(limit),),
+                params,
             ).fetchall()
         return [self._trade_from_row(row) for row in rows]
 
@@ -337,13 +343,21 @@ class TradingExperiment:
             ).fetchall()
         return [self._position_from_row(row) for row in rows]
 
-    def recent_error_records(self, limit: int = 100) -> list[ExperimentErrorRecord]:
+    def recent_error_records(self, limit: int = 100, since_ms: int | None = None) -> list[ExperimentErrorRecord]:
         self.init_tables()
+        if since_ms is not None:
+            query = f"""
+                SELECT * FROM {self.ERRORS_TABLE}
+                WHERE created_at >= ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+            """
+            params = (int(since_ms), int(limit))
+        else:
+            query = f"SELECT * FROM {self.ERRORS_TABLE} ORDER BY created_at DESC, id DESC LIMIT ?"
+            params = (int(limit),)
         with self._connect() as conn:
-            rows = conn.execute(
-                f"SELECT * FROM {self.ERRORS_TABLE} ORDER BY created_at DESC, id DESC LIMIT ?",
-                (int(limit),),
-            ).fetchall()
+            rows = conn.execute(query, params).fetchall()
         return [self._error_from_row(row) for row in rows]
 
     def _latest_openable_candidates(self) -> list[OpenableSymbol]:
@@ -575,6 +589,7 @@ class TradingExperiment:
         active_positions = [
             row for row in positions if self._decimal_from(row.get("positionAmt"), Decimal("0")) != 0
         ]
+        fallback_leverages = self._latest_opened_trade_leverages()
         now = int(time.time() * 1000)
         with self._connect() as conn:
             conn.execute(f"DELETE FROM {self.POSITIONS_TABLE}")
@@ -591,7 +606,7 @@ class TradingExperiment:
                         str(row.get("entryPrice", "0")),
                         str(row.get("markPrice", "0")),
                         str(row.get("unRealizedProfit", row.get("unrealizedProfit", "0"))),
-                        str(row.get("leverage", "")),
+                        self._position_leverage(row, fallback_leverages),
                         str(row.get("notional", "0")),
                         str(row.get("liquidationPrice", "0")),
                         now,
@@ -600,6 +615,31 @@ class TradingExperiment:
                 ],
             )
         return positions
+
+    def _latest_opened_trade_leverages(self) -> dict[str, str]:
+        self.init_tables()
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT symbol, leverage
+                FROM {self.TRADES_TABLE}
+                WHERE status = 'opened' AND leverage IS NOT NULL
+                ORDER BY created_at DESC, id DESC
+                """
+            ).fetchall()
+        leverages: dict[str, str] = {}
+        for row in rows:
+            symbol = str(row["symbol"]).upper()
+            if symbol not in leverages and row["leverage"] is not None:
+                leverages[symbol] = str(row["leverage"])
+        return leverages
+
+    @staticmethod
+    def _position_leverage(row: dict[str, Any], fallback_leverages: dict[str, str]) -> str:
+        raw_leverage = str(row.get("leverage", "")).strip()
+        if raw_leverage:
+            return raw_leverage
+        return fallback_leverages.get(str(row.get("symbol", "")).upper(), "-")
 
     @staticmethod
     def _open_position_symbols(positions: Iterable[dict[str, Any]]) -> set[str]:
