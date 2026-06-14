@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from decimal import Decimal
@@ -96,6 +97,17 @@ class InvalidPriceAccountManager(FakeAccountManager):
         return super()._public_get(endpoint, params)
 
 
+class InvalidSymbolOrderAccountManager(FakeAccountManager):
+    def _signed_post(self, endpoint, params=None):
+        self.signed_posts.append((endpoint, dict(params or {})))
+        if endpoint == "/fapi/v1/order":
+            raise RuntimeError(
+                "400 Client Error: Bad Request response_body="
+                '{"code":-1121,"msg":"Invalid symbol."}'
+            )
+        return {"orderId": len(self.signed_posts)}
+
+
 class MissingPositionOnceAccountManager(FakeAccountManager):
     def __init__(self):
         super().__init__()
@@ -127,8 +139,9 @@ class TradingExperimentSymbolTests(unittest.TestCase):
     def test_base_symbol_is_expanded_to_binance_usdt_pair_for_order_api_calls(self):
         fake_account = FakeAccountManager()
         with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "klines.db"
             experiment = TradingExperiment(
-                db_path=str(Path(tmpdir) / "klines.db"),
+                db_path=str(db_path),
                 account_manager=fake_account,
             )
             experiment.init_tables()
@@ -228,6 +241,43 @@ class TradingExperimentSymbolTests(unittest.TestCase):
 
         self.assertEqual(result, {"opened": 0, "skipped": 1, "reason": "completed"})
         self.assertEqual(fake_account.signed_posts, [])
+        self.assertEqual(error_rows[0].operation, "open_long")
+
+    def test_run_round_skips_candidate_when_demo_order_rejects_invalid_symbol(self):
+        fake_account = InvalidSymbolOrderAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "klines.db"
+            experiment = TradingExperiment(
+                db_path=str(db_path),
+                account_manager=fake_account,
+            )
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=80,
+                score_band="标准试错单",
+                stop_loss_distance_ratio=0.01,
+                distance_threshold=0.02,
+                stop_loss_distance_tier="A档",
+                opening_leverage="4x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            result = experiment.run_round([candidate])
+            error_rows = experiment.recent_error_records()
+            with sqlite3.connect(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                trade_row = conn.execute(
+                    f"SELECT status, reason FROM {experiment.TRADES_TABLE} ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+
+        self.assertEqual(result, {"opened": 0, "skipped": 1, "reason": "completed"})
+        self.assertEqual([params.get("type", "LEVERAGE") for _, params in fake_account.signed_posts], ["LEVERAGE", "MARKET"])
+        self.assertEqual(trade_row["status"], "skipped")
+        self.assertEqual(trade_row["reason"], "invalid_binance_symbol")
         self.assertEqual(error_rows[0].operation, "open_long")
 
     def test_stop_loss_price_uses_equity_risk_per_coin_after_quantity_rounding(self):
