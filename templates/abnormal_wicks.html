@@ -768,7 +768,7 @@
             </tbody>
           </table>
         </div>
-        <div class="experiment-note">第一组交易实验：总预算仍按 1000USDT 保证金预算管理；每次新开仓前查询当前“实验组USDT净值”，按 1% 风险、止损距离和杠杆动态计算保证金：基础保证金 = (实验组USDT净值 × 1%) ÷ (distance_ratio × 杠杆)，实际保证金 = 基础保证金 × 10%，实际名义仓位 = (基础保证金 × 杠杆) × 10%；distance_ratio 和杠杆来自“本轮可开仓symbol情况”，趋势标准单及以上且 distance_ratio 为 0 时默认按 5% 止损距离、5倍杠杆计算；开多前查询当前持仓，若已持有 10 笔或可用余额不足本笔所需保证金则不开仓；候选按“最终可开仓=是”的总分降序遍历；止盈 20%，止损价格距离仍按 min(入场价 × 10%，实验组USDT净值 × 1% / 持仓数量) 控制。</div>
+        <div class="experiment-note">第一组交易实验：总预算仍按 1000USDT 保证金预算管理；每次新开仓前查询当前“实验组USDT净值”，按 1% 风险、止损距离和杠杆动态计算保证金：保证金 = (实验组USDT净值 × 1%) ÷ (distance_ratio × 杠杆)，名义仓位 = 保证金 × 杠杆；distance_ratio 和杠杆来自“本轮可开仓symbol情况”，趋势标准单及以上且 distance_ratio 为 0 时默认按 5% 止损距离、5倍杠杆计算；开多前查询当前持仓，若已持有 10 笔或可用余额不足本笔所需保证金则不开仓；候选按“最终可开仓=是”的总分降序遍历；止盈 20%，止损价格距离仍按 min(入场价 × 10%，实验组USDT净值 × 1% / 持仓数量) 控制。</div>
         <div class="account-summary" aria-label="实验组USDT净值">
           <div class="account-metric">
             <div class="account-metric-label">实验组USDT净值</div>
