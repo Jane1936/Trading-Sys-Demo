@@ -107,7 +107,7 @@ class TradingExperiment:
     * each candidate's margin is sized from 1% equity risk, stop-loss distance,
       and leverage: margin = (equity * 1%) / (distance_ratio * leverage);
     * actual notional is calculated as margin * leverage;
-    * stop-loss price distance comes from the current-round openable symbol row;
+    * stop-loss price distance remains capped by min(10%, equity * 1% / actual notional);
     * take-profit is 20% above entry;
     * candidates come from the latest qualified openable-symbol round and are
       processed by total_score descending, then symbol ascending.
@@ -418,7 +418,11 @@ class TradingExperiment:
         trigger_reference_price = self._latest_mark_price(trading_symbol, entry_price)
         notional = quantity * entry_price
         required_margin = notional / Decimal(leverage)
-        stop_loss_pct = min(self.config.max_stop_loss_pct, trade_plan.stop_loss_distance_ratio)
+        stop_loss_pct = (
+            min(self.config.max_stop_loss_pct, max_loss / notional)
+            if notional > 0
+            else self.config.max_stop_loss_pct
+        )
         take_profit_price = self._valid_take_profit_price(
             entry_price=entry_price,
             trigger_reference_price=trigger_reference_price,

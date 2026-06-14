@@ -53,6 +53,23 @@ class FakeAccountManager:
         raise AssertionError(f"unexpected signed endpoint {endpoint}")
 
 
+class CoarseLotAccountManager(FakeAccountManager):
+    def _public_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v1/exchangeInfo":
+            return {
+                "symbols": [
+                    {
+                        "symbol": "BANKUSDT",
+                        "filters": [
+                            {"filterType": "LOT_SIZE", "stepSize": "7"},
+                            {"filterType": "PRICE_FILTER", "tickSize": "0.000001"},
+                        ],
+                    }
+                ]
+            }
+        return super()._public_get(endpoint, params)
+
+
 class FailingTakeProfitAccountManager(FakeAccountManager):
     def _signed_post(self, endpoint, params=None):
         if params and params.get("type") == "TAKE_PROFIT_MARKET":
@@ -134,6 +151,36 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(take_profit_params["triggerPrice"], "1.2")
         self.assertNotIn("stopPrice", stop_loss_params)
         self.assertNotIn("stopPrice", take_profit_params)
+
+    def test_stop_loss_price_uses_equity_risk_over_actual_notional_after_rounding(self):
+        fake_account = CoarseLotAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+            )
+            experiment.init_tables()
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=89,
+                score_band="确定性强趋势单",
+                stop_loss_distance_ratio=0.02,
+                distance_threshold=0.08,
+                stop_loss_distance_tier="A档",
+                opening_leverage="10x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            experiment._open_long(candidate, Decimal("1000"), Decimal("10"))
+
+        order_params = fake_account.signed_posts[1][1]
+        stop_loss_params = fake_account.signed_posts[2][1]
+        self.assertEqual(order_params["quantity"], "497")
+        self.assertEqual(stop_loss_params["triggerPrice"], "0.979879")
 
     def test_recent_trade_records_only_returns_opened_rows(self):
         fake_account = FakeAccountManager()
