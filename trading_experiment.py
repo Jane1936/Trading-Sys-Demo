@@ -107,7 +107,7 @@ class TradingExperiment:
     * each candidate's margin is sized from 1% equity risk, stop-loss distance,
       and leverage: margin = (equity * 1%) / (distance_ratio * leverage);
     * actual notional is calculated as margin * leverage;
-    * stop-loss price distance remains capped by min(10%, equity * 1% / actual notional);
+    * stop-loss price distance remains capped by min(entry * 10%, equity * 1% / quantity);
     * take-profit is 20% above entry;
     * candidates come from the latest qualified openable-symbol round and are
       processed by total_score descending, then symbol ascending.
@@ -418,19 +418,15 @@ class TradingExperiment:
         trigger_reference_price = self._latest_mark_price(trading_symbol, entry_price)
         notional = quantity * entry_price
         required_margin = notional / Decimal(leverage)
-        stop_loss_pct = (
-            min(self.config.max_stop_loss_pct, max_loss / notional)
-            if notional > 0
-            else self.config.max_stop_loss_pct
-        )
         take_profit_price = self._valid_take_profit_price(
             entry_price=entry_price,
             trigger_reference_price=trigger_reference_price,
             tick_size=exchange_info["tick_size"],
         )
-        stop_loss_price = self._valid_stop_loss_price(
+        stop_loss_price = self._risk_capped_stop_loss_price(
             entry_price=entry_price,
-            stop_loss_pct=stop_loss_pct,
+            quantity=quantity,
+            max_loss=max_loss,
             trigger_reference_price=trigger_reference_price,
             tick_size=exchange_info["tick_size"],
         )
@@ -879,14 +875,30 @@ class TradingExperiment:
         minimum_trigger_price = trigger_reference_price + tick_size
         return self._ceil_to_tick(max(desired_price, minimum_trigger_price), tick_size)
 
-    def _valid_stop_loss_price(
+    def _risk_capped_stop_loss_price(
         self,
         entry_price: Decimal,
-        stop_loss_pct: Decimal,
+        quantity: Decimal,
+        max_loss: Decimal,
         trigger_reference_price: Decimal,
         tick_size: Decimal,
     ) -> Decimal:
-        desired_price = entry_price * (Decimal("1") - stop_loss_pct)
+        ten_pct_price_distance = entry_price * self.config.max_stop_loss_pct
+        risk_price_distance = max_loss / quantity if quantity > 0 else ten_pct_price_distance
+        stop_loss_price_distance = min(ten_pct_price_distance, risk_price_distance)
+        desired_price = entry_price - stop_loss_price_distance
+        return self._valid_stop_loss_price(
+            desired_price=desired_price,
+            trigger_reference_price=trigger_reference_price,
+            tick_size=tick_size,
+        )
+
+    def _valid_stop_loss_price(
+        self,
+        desired_price: Decimal,
+        trigger_reference_price: Decimal,
+        tick_size: Decimal,
+    ) -> Decimal:
         maximum_trigger_price = trigger_reference_price - tick_size
         raw_stop_price = min(desired_price, maximum_trigger_price) if maximum_trigger_price > 0 else desired_price
         stop_price = self._floor_to_tick(raw_stop_price, tick_size)

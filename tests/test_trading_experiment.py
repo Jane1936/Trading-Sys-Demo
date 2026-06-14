@@ -152,7 +152,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertNotIn("stopPrice", stop_loss_params)
         self.assertNotIn("stopPrice", take_profit_params)
 
-    def test_stop_loss_price_uses_equity_risk_over_actual_notional_after_rounding(self):
+    def test_stop_loss_price_uses_equity_risk_per_coin_after_quantity_rounding(self):
         fake_account = CoarseLotAccountManager()
         with tempfile.TemporaryDirectory() as tmpdir:
             experiment = TradingExperiment(
