@@ -665,6 +665,7 @@
       <div class="bookmark-tabs" role="tablist" aria-label="本轮交易策略板块">
         <button class="bookmark-tab active" type="button" role="tab" aria-selected="true" data-strategy-tab="strategy-openable">本轮可开仓symbol情况</button>
         <button class="bookmark-tab" type="button" role="tab" aria-selected="false" data-strategy-tab="strategy-cooldown">本轮冷却期symbol</button>
+        <button class="bookmark-tab" type="button" role="tab" aria-selected="false" data-strategy-tab="strategy-holding-score">持仓评分系统</button>
         <button class="bookmark-tab account-info-tab" type="button" role="tab" aria-selected="false" data-strategy-tab="strategy-account">账户信息</button>
       </div>
 
@@ -724,6 +725,108 @@
               </tr>
               {% else %}
               <tr><td class="empty" colspan="12">暂无本轮可开仓symbol候选</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+
+
+      <div id="strategy-holding-score" class="strategy-subpanel" role="tabpanel">
+        <div class="symbol-strip">
+          <div><strong>持仓评分系统：止损规则判断结果</strong></div>
+          {% if holding_stop_loss_round_ts %}
+            <div class="muted">最近判断轮次：{{ holding_stop_loss_round_ts|fmt_ms_datetime }}。每15分钟在15分钟K线收敛后，对当前已持仓 symbol 判断最近两根15m close 是否连续跌破对应结构止损位。</div>
+          {% else %}
+            <div class="muted">暂无持仓评分系统判断结果。</div>
+          {% endif %}
+          {% set triggered_holding_checks = holding_stop_loss_checks|selectattr('triggered')|list %}
+          {% if triggered_holding_checks %}
+            <div class="chips">
+              {% for row in triggered_holding_checks %}
+                <span class="chip" title="{{ row.reason }}">{{ row.symbol }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="chips"><span class="chip">本轮无触发止损规则symbol</span></div>
+          {% endif %}
+        </div>
+        <div class="tip">止损规则：查询最近两条15分钟K线数据，以及最近两条 <code>symbol_structural_stop_losses</code> 结构止损位数据；若最近第1条15m close &lt; 最近第1条 structural_stop_loss，且最近第2条15m close &lt; 最近第2条 structural_stop_loss，则立刻提交 reduceOnly MARKET 订单平掉该持仓，并写入下方止损记录。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>symbol</th>
+                <th>decision_round_ts</th>
+                <th>触发止损</th>
+                <th>latest_15m_open_time</th>
+                <th>latest_15m_close</th>
+                <th>latest_structural_stop_loss</th>
+                <th>prev_15m_open_time</th>
+                <th>prev_15m_close</th>
+                <th>prev_structural_stop_loss</th>
+                <th>reason</th>
+                <th>checked_at</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in holding_stop_loss_checks %}
+              <tr>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                <td><span class="status-badge {{ 'status-fail' if row.triggered else 'status-pass' }}">{{ '是' if row.triggered else '否' }}</span></td>
+                <td>{{ row.latest_15m_open_time|fmt_ms_datetime if row.latest_15m_open_time else '-' }}</td>
+                <td>{{ '%.6f'|format(row.latest_15m_close) if row.latest_15m_close is not none else '-' }}</td>
+                <td>{{ '%.6f'|format(row.latest_structural_stop_loss) if row.latest_structural_stop_loss is not none else '-' }}</td>
+                <td>{{ row.prev_15m_open_time|fmt_ms_datetime if row.prev_15m_open_time else '-' }}</td>
+                <td>{{ '%.6f'|format(row.prev_15m_close) if row.prev_15m_close is not none else '-' }}</td>
+                <td>{{ '%.6f'|format(row.prev_structural_stop_loss) if row.prev_structural_stop_loss is not none else '-' }}</td>
+                <td>{{ row.reason }}</td>
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="11">暂无持仓止损规则判断结果</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="symbol-strip">
+          <div><strong>止损记录</strong></div>
+          <div class="muted">当某个已持仓 symbol 触发止损规则时，会记录提交止损操作的方向、数量、订单状态和订单ID。</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>created_at</th>
+                <th>symbol</th>
+                <th>轮次</th>
+                <th>side</th>
+                <th>quantity</th>
+                <th>latest_close / stop_loss</th>
+                <th>prev_close / stop_loss</th>
+                <th>status</th>
+                <th>order_id</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in holding_stop_loss_records %}
+              <tr>
+                <td>{{ row.created_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                <td>{{ row.side }}</td>
+                <td>{{ row.quantity }}</td>
+                <td>{{ '%.6f'|format(row.latest_15m_close) }} / {{ '%.6f'|format(row.latest_structural_stop_loss) }}</td>
+                <td>{{ '%.6f'|format(row.prev_15m_close) }} / {{ '%.6f'|format(row.prev_structural_stop_loss) }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
+                <td>{{ row.order_id or '-' }}</td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="10">暂无止损记录</td></tr>
               {% endfor %}
             </tbody>
           </table>

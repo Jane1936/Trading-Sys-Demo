@@ -18,6 +18,7 @@ import collector
 from cooldown_module import CooldownModule
 from openable_symbol_module import OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
+from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
 
@@ -137,6 +138,9 @@ def abnormal_wicks():
     trading_trade_records = trading_experiment.recent_trade_records(limit=100, since_ms=trading_records_since_ms)
     trading_position_snapshots = trading_experiment.latest_position_snapshots(limit=100)
     trading_error_records = trading_experiment.recent_error_records(limit=100, since_ms=trading_records_since_ms)
+    holding_scoring = HoldingPositionScoringSystem(db_path=DB_PATH)
+    holding_stop_loss_round_ts, holding_stop_loss_checks = holding_scoring.get_latest_round_checks()
+    holding_stop_loss_records = holding_scoring.recent_stop_loss_records(limit=100)
 
     active_tab = request.args.get("active_tab", default="", type=str).strip()
     if requested_score_trend_symbol:
@@ -238,6 +242,9 @@ def abnormal_wicks():
         trading_trade_records=trading_trade_records,
         trading_position_snapshots=trading_position_snapshots,
         trading_error_records=trading_error_records,
+        holding_stop_loss_round_ts=holding_stop_loss_round_ts,
+        holding_stop_loss_checks=holding_stop_loss_checks,
+        holding_stop_loss_records=holding_stop_loss_records,
         rule_score_weights=scoring.rule_score_weights,
         score_trend_symbols=score_trend_symbols,
         score_trend_symbol=score_trend_symbol,
