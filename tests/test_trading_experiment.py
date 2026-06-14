@@ -515,6 +515,92 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(plan.required_margin_usdt, Decimal("40"))
         self.assertEqual(plan.planned_notional_usdt, Decimal("200"))
 
+    def test_recent_records_can_be_filtered_by_created_at(self):
+        fake_account = FakeAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+            )
+            experiment.init_tables()
+            with experiment._connect() as conn:
+                conn.execute(
+                    f"""
+                    INSERT INTO {experiment.TRADES_TABLE}
+                    (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt,
+                     required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity,
+                     notional_usdt, take_profit_price, stop_loss_price, reason, created_at, updated_at)
+                    VALUES ('OLD', 1, 'LONG', 'opened', 80, 4, '10', '2.5', '1000', '10', '1', '1', '10', '1.2', '0.9', 'old', 1000, 1000)
+                    """
+                )
+                conn.execute(
+                    f"""
+                    INSERT INTO {experiment.TRADES_TABLE}
+                    (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt,
+                     required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity,
+                     notional_usdt, take_profit_price, stop_loss_price, reason, created_at, updated_at)
+                    VALUES ('NEW', 1, 'LONG', 'opened', 80, 5, '10', '2', '1000', '10', '1', '1', '10', '1.2', '0.9', 'new', 2000, 2000)
+                    """
+                )
+                conn.execute(
+                    f"""
+                    INSERT INTO {experiment.ERRORS_TABLE}
+                    (symbol, decision_round_ts, total_score, leverage, operation, error_type, error_message, created_at)
+                    VALUES ('OLD', 1, 80, 4, 'open', 'RuntimeError', 'old', 1000)
+                    """
+                )
+                conn.execute(
+                    f"""
+                    INSERT INTO {experiment.ERRORS_TABLE}
+                    (symbol, decision_round_ts, total_score, leverage, operation, error_type, error_message, created_at)
+                    VALUES ('NEW', 1, 80, 5, 'open', 'RuntimeError', 'new', 2000)
+                    """
+                )
+
+            self.assertEqual([row.symbol for row in experiment.recent_trade_records(since_ms=1500)], ["NEW"])
+            self.assertEqual([row.symbol for row in experiment.recent_error_records(since_ms=1500)], ["NEW"])
+
+    def test_position_snapshot_uses_latest_opened_trade_leverage_when_position_risk_omits_it(self):
+        class PositionWithoutLeverageAccountManager(FakeAccountManager):
+            def _signed_get(self, endpoint, params=None):
+                if endpoint == "/fapi/v3/positionRisk":
+                    return [
+                        {
+                            "symbol": "BANKUSDT",
+                            "positionAmt": "2",
+                            "entryPrice": "1",
+                            "markPrice": "1.1",
+                            "unRealizedProfit": "0.2",
+                            "notional": "2.2",
+                            "liquidationPrice": "0.5",
+                        }
+                    ]
+                return super()._signed_get(endpoint, params)
+
+        fake_account = PositionWithoutLeverageAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+            )
+            experiment.init_tables()
+            with experiment._connect() as conn:
+                conn.execute(
+                    f"""
+                    INSERT INTO {experiment.TRADES_TABLE}
+                    (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt,
+                     required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity,
+                     notional_usdt, take_profit_price, stop_loss_price, reason, created_at, updated_at)
+                    VALUES ('BANKUSDT', 1, 'LONG', 'opened', 80, 6, '10', '1.66666667', '1000', '10', '1', '2', '2', '1.2', '0.9', 'new', 2000, 2000)
+                    """
+                )
+
+            experiment._fetch_and_store_positions()
+            snapshots = experiment.latest_position_snapshots()
+
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(snapshots[0].leverage, "6")
+
 
 if __name__ == "__main__":
     unittest.main()

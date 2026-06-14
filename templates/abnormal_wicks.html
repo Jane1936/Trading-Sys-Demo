@@ -114,6 +114,10 @@
     .strategy-subpanel.active { display:block; }
     .account-summary { display:flex; gap:12px; flex-wrap:wrap; padding:14px 20px; border-bottom:1px solid var(--line); background:#f8fdff; }
     .account-metric { min-width:180px; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:#fff; box-shadow:0 3px 12px rgba(14, 116, 144, 0.08); }
+    .account-metric-highlight { border-color:#f59e0b; background:linear-gradient(135deg, #fffbeb 0%, #fff7ed 100%); box-shadow:0 8px 22px rgba(245, 158, 11, 0.20); position:relative; overflow:hidden; }
+    .account-metric-highlight::before { content:""; position:absolute; inset:0 0 auto 0; height:4px; background:linear-gradient(90deg, #f59e0b 0%, #ef4444 100%); }
+    .account-metric-highlight .account-metric-label { color:#92400e; font-weight:800; }
+    .account-metric-highlight .account-metric-value { color:#dc2626; font-size:22px; text-shadow:0 1px 0 rgba(255, 255, 255, 0.7); }
     .account-metric-label { color:#6b7280; font-size:12px; margin-bottom:6px; }
     .account-metric-value { font-size:18px; font-weight:800; color:#0f172a; }
     .account-error { color:#991b1b; background:#fee2e2; border:1px solid #fca5a5; border-radius:10px; padding:10px 12px; margin:0 20px 14px; display:none; }
@@ -745,7 +749,7 @@
             <div class="account-metric-label">USDT 可用余额</div>
             <div id="account-usdt-available" class="account-metric-value">-</div>
           </div>
-          <div class="account-metric">
+          <div class="account-metric account-metric-highlight">
             <div class="account-metric-label">USDT 未实现盈亏</div>
             <div id="account-usdt-pnl" class="account-metric-value">-</div>
           </div>
@@ -770,7 +774,7 @@
         </div>
         <div class="experiment-note">第一组交易实验：总预算仍按 1000USDT 保证金预算管理；每次新开仓前查询当前“实验组USDT净值”，按 1% 风险、止损距离和杠杆动态计算保证金：保证金 = (实验组USDT净值 × 1%) ÷ (distance_ratio × 杠杆)，名义仓位 = 保证金 × 杠杆；distance_ratio 和杠杆来自“本轮可开仓symbol情况”，趋势标准单及以上且 distance_ratio 为 0 时默认按 5% 止损距离、5倍杠杆计算；开多前查询当前持仓，若已持有 10 笔或可用余额不足本笔所需保证金则不开仓；候选按“最终可开仓=是”的总分降序遍历；止盈 20%，止损价格距离仍按 min(入场价 × 10%，实验组USDT净值 × 1% / 持仓数量) 控制。</div>
         <div class="account-summary" aria-label="实验组USDT净值">
-          <div class="account-metric">
+          <div class="account-metric account-metric-highlight">
             <div class="account-metric-label">实验组USDT净值</div>
             <div id="experiment-usdt-equity" class="account-metric-value">-</div>
           </div>
@@ -778,7 +782,7 @@
         </div>
         <div class="symbol-strip">
           <div><strong>交易实验交易记录</strong></div>
-          <div class="muted">只显示已开仓记录，以及止盈/止损挂单信息；跳过记录不在此表展示。</div>
+          <div class="muted">只显示7天内已开仓记录，以及止盈/止损挂单信息；跳过记录不在此表展示。</div>
         </div>
         <div class="table-wrap">
           <table>
@@ -861,7 +865,7 @@
                 <td>{{ row.entry_price }}</td>
                 <td>{{ row.mark_price }}</td>
                 <td>{{ row.unrealized_pnl }}</td>
-                <td>{{ row.leverage }}</td>
+                <td>{{ row.leverage if row.leverage else '-' }}</td>
                 <td>{{ row.notional }}</td>
                 <td>{{ row.liquidation_price }}</td>
                 <td>{{ row.updated_at|fmt_ms_datetime }}</td>
@@ -874,7 +878,7 @@
         </div>
         <div class="symbol-strip">
           <div><strong>交易实验错误信息记录</strong></div>
-          <div class="muted">记录第一组实验遍历可开仓 symbol 时捕获到的错误信息；用于定位 exchangeInfo 缺失等开仓流程问题。</div>
+          <div class="muted">只显示7天内第一组实验遍历可开仓 symbol 时捕获到的错误信息；用于定位 exchangeInfo 缺失等开仓流程问题。</div>
         </div>
         <div class="table-wrap">
           <table>
