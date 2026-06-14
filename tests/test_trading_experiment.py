@@ -76,6 +76,25 @@ class FailingTakeProfitAccountManager(FakeAccountManager):
             raise RuntimeError("take profit failed")
         return super()._signed_post(endpoint, params)
 
+class EmptyTickerAccountManager(FakeAccountManager):
+    def _public_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v1/ticker/price":
+            self.latest_price_params = params
+            return {}
+        if endpoint == "/fapi/v1/premiumIndex":
+            self.latest_mark_price_params = params
+            return {"markPrice": "2"}
+        return super()._public_get(endpoint, params)
+
+
+class InvalidPriceAccountManager(FakeAccountManager):
+    def _public_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v1/ticker/price":
+            return {}
+        if endpoint == "/fapi/v1/premiumIndex":
+            return {}
+        return super()._public_get(endpoint, params)
+
 
 class MissingPositionOnceAccountManager(FakeAccountManager):
     def __init__(self):
@@ -151,6 +170,65 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(take_profit_params["triggerPrice"], "1.2")
         self.assertNotIn("stopPrice", stop_loss_params)
         self.assertNotIn("stopPrice", take_profit_params)
+
+    def test_latest_price_falls_back_to_mark_price_when_ticker_payload_is_empty(self):
+        fake_account = EmptyTickerAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+            )
+            experiment.init_tables()
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=80,
+                score_band="标准试错单",
+                stop_loss_distance_ratio=0.01,
+                distance_threshold=0.02,
+                stop_loss_distance_tier="A档",
+                opening_leverage="4x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            result = experiment._open_long(candidate, Decimal("1000"), Decimal("10"))
+
+        self.assertEqual(result["status"], "opened")
+        self.assertEqual(fake_account.latest_price_params, {"symbol": "BANKUSDT"})
+        self.assertEqual(fake_account.latest_mark_price_params, {"symbol": "BANKUSDT"})
+        self.assertEqual(fake_account.signed_posts[1][1]["quantity"], "500")
+
+    def test_run_round_skips_candidate_when_latest_price_is_unavailable(self):
+        fake_account = InvalidPriceAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+            )
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=80,
+                score_band="标准试错单",
+                stop_loss_distance_ratio=0.01,
+                distance_threshold=0.02,
+                stop_loss_distance_tier="A档",
+                opening_leverage="4x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            result = experiment.run_round([candidate])
+            error_rows = experiment.recent_error_records()
+
+        self.assertEqual(result, {"opened": 0, "skipped": 1, "reason": "completed"})
+        self.assertEqual(fake_account.signed_posts, [])
+        self.assertEqual(error_rows[0].operation, "open_long")
 
     def test_stop_loss_price_uses_equity_risk_per_coin_after_quantity_rounding(self):
         fake_account = CoarseLotAccountManager()
