@@ -63,9 +63,11 @@ class HoldingPositionScoringSystem:
         self,
         db_path: str = "data/klines.db",
         account_manager: BinanceAccountManager | None = None,
+        realized_pnl_retry_delays: Iterable[float] = (1, 3, 5),
     ) -> None:
         self.db_path = db_path
         self.account_manager = account_manager or BinanceAccountManager()
+        self.realized_pnl_retry_delays = tuple(realized_pnl_retry_delays)
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=30)
@@ -222,31 +224,59 @@ class HoldingPositionScoringSystem:
         except Exception as exc:
             status = "failed"
             reason = f"{check.reason}; stop_loss_order_failed: {type(exc).__name__}: {exc}"
-        realized_pnl = self._fetch_order_realized_pnl(self._exchange_symbol(position, check.symbol), order_id) if order_id else ""
+        realized_pnl = ""
+        pnl_failure_reason = ""
+        if order_id:
+            realized_pnl, pnl_failure_reason = self._fetch_order_realized_pnl(
+                self._exchange_symbol(position, check.symbol),
+                order_id,
+            )
+        if pnl_failure_reason:
+            reason = f"{reason}; {pnl_failure_reason}"
         return HoldingStopLossRecord(0, check.symbol, check.decision_round_ts, side, self._fmt_decimal(quantity), float(check.latest_15m_close or 0), float(check.latest_structural_stop_loss or 0), float(check.prev_15m_close or 0), float(check.prev_structural_stop_loss or 0), status, order_id, realized_pnl, reason, raw_response, now_ms)
 
-    def _fetch_order_realized_pnl(self, exchange_symbol: str, order_id: str) -> str:
-        """Return summed realized PnL for a submitted futures order.
+    def _fetch_order_realized_pnl(self, exchange_symbol: str, order_id: str) -> tuple[str, str]:
+        """Return summed realized PnL and a failure reason for a futures order.
 
         Binance USDⓈ-M exposes realized PnL per fill via the account trades API;
         summing fills by orderId gives the final realized profit/loss for this
-        reduce-only stop-loss order. If the query is temporarily unavailable, keep
-        the audit record instead of failing the stop-loss workflow.
+        reduce-only stop-loss order. The user-trades endpoint can lag right after
+        a MARKET close, so retry with configured delays before returning an empty
+        PnL and writing the failure reason into the stop-loss audit record.
         """
-        try:
-            trades = self.account_manager._signed_get(
-                "/fapi/v1/userTrades",
-                {"symbol": exchange_symbol, "orderId": order_id},
+        attempts = len(self.realized_pnl_retry_delays) + 1
+        last_error = ""
+        for attempt in range(1, attempts + 1):
+            try:
+                trades = self.account_manager._signed_get(
+                    "/fapi/v1/userTrades",
+                    {"symbol": exchange_symbol, "orderId": order_id},
+                )
+                if not isinstance(trades, list):
+                    last_error = f"unexpected_user_trades_response_type={type(trades).__name__}"
+                elif not trades:
+                    last_error = "user_trades_empty"
+                else:
+                    realized = sum(
+                        (
+                            self._decimal_from(row.get("realizedPnl"), Decimal("0"))
+                            for row in trades
+                            if isinstance(row, dict)
+                        ),
+                        Decimal("0"),
+                    )
+                    return self._fmt_decimal(realized), ""
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+
+            print(
+                f"⚠️ realized PnL query failed symbol={exchange_symbol} order_id={order_id} "
+                f"attempt={attempt}/{attempts}: {last_error}"
             )
-        except Exception:
-            return ""
-        if not isinstance(trades, list):
-            return ""
-        realized = sum(
-            (self._decimal_from(row.get("realizedPnl"), Decimal("0")) for row in trades if isinstance(row, dict)),
-            Decimal("0"),
-        )
-        return self._fmt_decimal(realized)
+            if attempt <= len(self.realized_pnl_retry_delays):
+                time.sleep(float(self.realized_pnl_retry_delays[attempt - 1]))
+
+        return "", f"realized_pnl_query_failed_after_{attempts}_attempts: {last_error}"
 
     def _save_check(self, check: HoldingStopLossCheck) -> None:
         with self._connect() as conn:
