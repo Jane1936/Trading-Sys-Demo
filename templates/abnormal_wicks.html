@@ -793,7 +793,7 @@
         </div>
         <div class="symbol-strip">
           <div><strong>止损记录</strong></div>
-          <div class="muted">当某个已持仓 symbol 触发止损规则时，会记录提交止损操作的方向、数量、订单状态和订单ID。</div>
+          <div class="muted">当某个已持仓 symbol 触发止损规则时，会记录提交止损操作的方向、数量、订单状态、订单ID，以及依据订单号查询到的最终已实现盈亏。</div>
         </div>
         <div class="table-wrap">
           <table>
@@ -808,6 +808,7 @@
                 <th>prev_close / stop_loss</th>
                 <th>status</th>
                 <th>order_id</th>
+                <th>已实现盈亏</th>
                 <th>reason</th>
               </tr>
             </thead>
@@ -823,10 +824,11 @@
                 <td>{{ '%.6f'|format(row.prev_15m_close) }} / {{ '%.6f'|format(row.prev_structural_stop_loss) }}</td>
                 <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
                 <td>{{ row.order_id or '-' }}</td>
+                <td>{{ row.realized_pnl if row.realized_pnl else '-' }}</td>
                 <td>{{ row.reason }}</td>
               </tr>
               {% else %}
-              <tr><td class="empty" colspan="10">暂无止损记录</td></tr>
+              <tr><td class="empty" colspan="11">暂无止损记录</td></tr>
               {% endfor %}
             </tbody>
           </table>
