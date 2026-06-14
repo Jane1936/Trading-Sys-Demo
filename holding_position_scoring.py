@@ -47,6 +47,7 @@ class HoldingStopLossRecord:
     prev_structural_stop_loss: float
     status: str
     order_id: str
+    realized_pnl: str
     reason: str
     raw_response: str
     created_at: int
@@ -108,6 +109,7 @@ class HoldingPositionScoringSystem:
                     prev_structural_stop_loss REAL NOT NULL,
                     status TEXT NOT NULL,
                     order_id TEXT NOT NULL DEFAULT '',
+                    realized_pnl TEXT NOT NULL DEFAULT '',
                     reason TEXT NOT NULL,
                     raw_response TEXT NOT NULL DEFAULT '',
                     created_at INTEGER NOT NULL
@@ -118,6 +120,9 @@ class HoldingPositionScoringSystem:
                 f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_round "
                 f"ON {self.CHECKS_TABLE}(decision_round_ts DESC, triggered DESC, symbol ASC)"
             )
+            record_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.RECORDS_TABLE})").fetchall()}
+            if "realized_pnl" not in record_columns:
+                conn.execute(f"ALTER TABLE {self.RECORDS_TABLE} ADD COLUMN realized_pnl TEXT NOT NULL DEFAULT ''")
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_created "
                 f"ON {self.RECORDS_TABLE}(created_at DESC, symbol ASC)"
@@ -217,7 +222,31 @@ class HoldingPositionScoringSystem:
         except Exception as exc:
             status = "failed"
             reason = f"{check.reason}; stop_loss_order_failed: {type(exc).__name__}: {exc}"
-        return HoldingStopLossRecord(0, check.symbol, check.decision_round_ts, side, self._fmt_decimal(quantity), float(check.latest_15m_close or 0), float(check.latest_structural_stop_loss or 0), float(check.prev_15m_close or 0), float(check.prev_structural_stop_loss or 0), status, order_id, reason, raw_response, now_ms)
+        realized_pnl = self._fetch_order_realized_pnl(self._exchange_symbol(position, check.symbol), order_id) if order_id else ""
+        return HoldingStopLossRecord(0, check.symbol, check.decision_round_ts, side, self._fmt_decimal(quantity), float(check.latest_15m_close or 0), float(check.latest_structural_stop_loss or 0), float(check.prev_15m_close or 0), float(check.prev_structural_stop_loss or 0), status, order_id, realized_pnl, reason, raw_response, now_ms)
+
+    def _fetch_order_realized_pnl(self, exchange_symbol: str, order_id: str) -> str:
+        """Return summed realized PnL for a submitted futures order.
+
+        Binance USDⓈ-M exposes realized PnL per fill via the account trades API;
+        summing fills by orderId gives the final realized profit/loss for this
+        reduce-only stop-loss order. If the query is temporarily unavailable, keep
+        the audit record instead of failing the stop-loss workflow.
+        """
+        try:
+            trades = self.account_manager._signed_get(
+                "/fapi/v1/userTrades",
+                {"symbol": exchange_symbol, "orderId": order_id},
+            )
+        except Exception:
+            return ""
+        if not isinstance(trades, list):
+            return ""
+        realized = sum(
+            (self._decimal_from(row.get("realizedPnl"), Decimal("0")) for row in trades if isinstance(row, dict)),
+            Decimal("0"),
+        )
+        return self._fmt_decimal(realized)
 
     def _save_check(self, check: HoldingStopLossCheck) -> None:
         with self._connect() as conn:
@@ -245,10 +274,10 @@ class HoldingPositionScoringSystem:
             conn.execute(
                 f"""
                 INSERT INTO {self.RECORDS_TABLE}
-                (symbol, decision_round_ts, side, quantity, latest_15m_close, latest_structural_stop_loss, prev_15m_close, prev_structural_stop_loss, status, order_id, reason, raw_response, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (symbol, decision_round_ts, side, quantity, latest_15m_close, latest_structural_stop_loss, prev_15m_close, prev_structural_stop_loss, status, order_id, realized_pnl, reason, raw_response, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (record.symbol, record.decision_round_ts, record.side, record.quantity, record.latest_15m_close, record.latest_structural_stop_loss, record.prev_15m_close, record.prev_structural_stop_loss, record.status, record.order_id, record.reason, record.raw_response, record.created_at),
+                (record.symbol, record.decision_round_ts, record.side, record.quantity, record.latest_15m_close, record.latest_structural_stop_loss, record.prev_15m_close, record.prev_structural_stop_loss, record.status, record.order_id, record.realized_pnl, record.reason, record.raw_response, record.created_at),
             )
 
     def _has_stop_loss_record(self, symbol: str, decision_round_ts: int) -> bool:

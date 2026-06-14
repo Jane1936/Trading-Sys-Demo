@@ -15,6 +15,9 @@ class FakeAccountManager:
     def _signed_get(self, endpoint, params=None):
         if endpoint == "/fapi/v3/positionRisk":
             return [{"symbol": "BANKUSDT", "positionAmt": "2"}]
+        if endpoint == "/fapi/v1/userTrades":
+            assert params == {"symbol": "BANKUSDT", "orderId": "123"}
+            return [{"realizedPnl": "1.25"}, {"realizedPnl": "-0.5"}]
         raise AssertionError(f"unexpected endpoint {endpoint}")
 
     def _signed_post(self, endpoint, params=None):
@@ -49,4 +52,5 @@ def test_holding_position_scoring_strips_usdt_for_database_lookups_and_records()
     assert checks[0]["symbol"] == "BANK"
     assert checks[0]["reason"] == "two_15m_closes_below_structural_stop_loss"
     assert records[0]["symbol"] == "BANK"
+    assert records[0]["realized_pnl"] == "0.75"
     assert fake_account.signed_posts[0][1]["symbol"] == "BANKUSDT"
