@@ -11,6 +11,9 @@ class FakeAccountManager:
     def __init__(self):
         self.signed_posts = []
 
+    def validate_config(self):
+        return None
+
     def _public_get(self, endpoint, params=None):
         if endpoint == "/fapi/v1/exchangeInfo":
             return {
@@ -39,8 +42,12 @@ class FakeAccountManager:
         return {"orderId": len(self.signed_posts)}
 
     def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/account":
+            return {"availableBalance": "1000", "totalMarginBalance": "1000"}
         if endpoint == "/fapi/v3/positionRisk":
-            return [{"symbol": params["symbol"], "positionAmt": "50"}]
+            if params and "symbol" in params:
+                return [{"symbol": params["symbol"], "positionAmt": "50"}]
+            return []
         raise AssertionError(f"unexpected signed endpoint {endpoint}")
 
 
@@ -223,6 +230,50 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         )
         self.assertEqual(trade_rows[0].take_profit_order_id, "5")
         self.assertEqual(error_rows, [])
+
+
+    def test_run_round_requires_qualified_candidate_and_positive_leverage(self):
+        fake_account = FakeAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+            )
+            candidates = [
+                OpenableSymbol(
+                    symbol="BANK",
+                    decision_round_ts=1,
+                    total_score=90,
+                    score_band="确定性强趋势单",
+                    stop_loss_distance_ratio=0.01,
+                    distance_threshold=0.08,
+                    stop_loss_distance_tier="A档",
+                    opening_leverage="NA",
+                    distance_qualified=True,
+                    qualified=True,
+                    reason="test",
+                    evaluated_at=1,
+                ),
+                OpenableSymbol(
+                    symbol="BANK",
+                    decision_round_ts=1,
+                    total_score=89,
+                    score_band="确定性强趋势单",
+                    stop_loss_distance_ratio=0.01,
+                    distance_threshold=0.08,
+                    stop_loss_distance_tier="A档",
+                    opening_leverage="4x",
+                    distance_qualified=True,
+                    qualified=False,
+                    reason="test",
+                    evaluated_at=1,
+                ),
+            ]
+
+            result = experiment.run_round(candidates)
+
+        self.assertEqual(result, {"opened": 0, "skipped": 0, "reason": "completed"})
+        self.assertEqual(fake_account.signed_posts, [])
 
     def test_usdt_pair_symbol_is_not_double_suffixed(self):
         self.assertEqual(TradingExperiment._binance_symbol("BANKUSDT"), "BANKUSDT")
