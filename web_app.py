@@ -14,6 +14,7 @@ from flask import Flask, jsonify, render_template, request
 import requests
 
 from binance_account_manager import BinanceAccountConfigError, BinanceAccountManager
+from break_even_take_profit import BreakEvenTakeProfitStrategy
 import collector
 from cooldown_module import CooldownModule
 from openable_symbol_module import OpenableSymbolModule
@@ -141,6 +142,9 @@ def abnormal_wicks():
     holding_scoring = HoldingPositionScoringSystem(db_path=DB_PATH)
     holding_stop_loss_round_ts, holding_stop_loss_checks = holding_scoring.get_latest_round_checks()
     holding_stop_loss_records = holding_scoring.recent_stop_loss_records(limit=100)
+    break_even_strategy = BreakEvenTakeProfitStrategy(db_path=DB_PATH)
+    break_even_checks = break_even_strategy.recent_checks(limit=100)
+    break_even_records = break_even_strategy.recent_records(limit=100)
 
     active_tab = request.args.get("active_tab", default="", type=str).strip()
     if requested_score_trend_symbol:
@@ -245,6 +249,8 @@ def abnormal_wicks():
         holding_stop_loss_round_ts=holding_stop_loss_round_ts,
         holding_stop_loss_checks=holding_stop_loss_checks,
         holding_stop_loss_records=holding_stop_loss_records,
+        break_even_checks=break_even_checks,
+        break_even_records=break_even_records,
         rule_score_weights=scoring.rule_score_weights,
         score_trend_symbols=score_trend_symbols,
         score_trend_symbol=score_trend_symbol,
