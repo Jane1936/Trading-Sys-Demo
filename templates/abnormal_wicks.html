@@ -747,6 +747,7 @@
 
 
       <div id="strategy-holding-score" class="strategy-subpanel" role="tabpanel">
+        <div class="critical-section" aria-label="关键持仓止损规则判断结果">
         <div class="symbol-strip">
           <div><strong>持仓评分系统：止损规则判断结果</strong></div>
           {% if holding_stop_loss_round_ts %}
@@ -804,10 +805,16 @@
             </tbody>
           </table>
         </div>
-        <div class="symbol-strip">
-          <div><strong>止损记录</strong></div>
-          <div class="muted">当某个已持仓 symbol 触发止损规则时，会记录提交止损操作的方向、数量、订单状态、订单ID，以及依据订单号查询到的最终已实现盈亏。</div>
         </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>止损记录</strong></div>
+              <div class="muted">当某个已持仓 symbol 触发止损规则时，会记录提交止损操作的方向、数量、订单状态、订单ID，以及依据订单号查询到的最终已实现盈亏。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -827,7 +834,7 @@
             </thead>
             <tbody>
               {% for row in holding_stop_loss_records %}
-              <tr>
+              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
                 <td>{{ row.created_at|fmt_ms_datetime }}</td>
                 <td>{{ row.symbol }}</td>
                 <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
@@ -846,9 +853,25 @@
             </tbody>
           </table>
         </div>
+        </div>
+        <div class="critical-section" aria-label="关键保本止盈5分钟扫描结果">
         <div class="symbol-strip">
           <div><strong>保本止盈策略：5分钟扫描结果</strong></div>
-          <div class="muted">R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；若未变现盈亏 ≥ R，则取消原止损单并按开仓价新建 STOP_MARKET 止损单。</div>
+          {% if break_even_round_ts %}
+            <div class="muted">最近判断轮次：{{ break_even_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；若未变现盈亏 ≥ R，则取消原止损单并按开仓价新建 STOP_MARKET 止损单。</div>
+          {% else %}
+            <div class="muted">暂无保本止盈扫描结果。</div>
+          {% endif %}
+          {% set triggered_break_even_checks = break_even_checks|selectattr('triggered')|list %}
+          {% if triggered_break_even_checks %}
+            <div class="chips">
+              {% for row in triggered_break_even_checks %}
+                <span class="chip" title="{{ row.reason }}">{{ row.symbol }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="chips"><span class="chip">本轮无触发保本止盈symbol</span></div>
+          {% endif %}
         </div>
         <div class="table-wrap">
           <table>
@@ -884,10 +907,16 @@
             </tbody>
           </table>
         </div>
-        <div class="symbol-strip">
-          <div><strong>保本止盈新建止损单记录</strong></div>
-          <div class="muted">记录被取消的原止损单ID、新建止损单ID、保本止损价格与接口执行状态。</div>
         </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>保本止盈新建止损单记录</strong></div>
+              <div class="muted">记录被取消的原止损单ID、新建止损单ID、保本止损价格与接口执行状态。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -907,7 +936,7 @@
             </thead>
             <tbody>
               {% for row in break_even_records %}
-              <tr>
+              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
                 <td>{{ row.checked_at|fmt_ms_datetime }}</td>
                 <td>{{ row.symbol }}</td>
                 <td>{{ row.side }}</td>
@@ -925,6 +954,7 @@
               {% endfor %}
             </tbody>
           </table>
+        </div>
         </div>
       </div>
 

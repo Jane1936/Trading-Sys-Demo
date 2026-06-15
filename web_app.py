@@ -143,7 +143,7 @@ def abnormal_wicks():
     holding_stop_loss_round_ts, holding_stop_loss_checks = holding_scoring.get_latest_round_checks()
     holding_stop_loss_records = holding_scoring.recent_stop_loss_records(limit=100)
     break_even_strategy = BreakEvenTakeProfitStrategy(db_path=DB_PATH)
-    break_even_checks = break_even_strategy.recent_checks(limit=100)
+    break_even_round_ts, break_even_checks = break_even_strategy.get_latest_round_checks()
     break_even_records = break_even_strategy.recent_records(limit=100)
 
     active_tab = request.args.get("active_tab", default="", type=str).strip()
@@ -249,6 +249,7 @@ def abnormal_wicks():
         holding_stop_loss_round_ts=holding_stop_loss_round_ts,
         holding_stop_loss_checks=holding_stop_loss_checks,
         holding_stop_loss_records=holding_stop_loss_records,
+        break_even_round_ts=break_even_round_ts,
         break_even_checks=break_even_checks,
         break_even_records=break_even_records,
         rule_score_weights=scoring.rule_score_weights,
