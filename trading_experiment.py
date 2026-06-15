@@ -442,6 +442,8 @@ class TradingExperiment:
         )
 
         entry_price = self._filled_entry_price(market_order, pre_order_price)
+        position_amt = self._wait_for_open_position(candidate, trading_symbol)
+        position_visible = position_amt > 0
         trigger_reference_price = self._latest_mark_price(trading_symbol, entry_price)
         notional = quantity * entry_price
         required_margin = notional / Decimal(leverage)
@@ -458,32 +460,35 @@ class TradingExperiment:
             tick_size=exchange_info["tick_size"],
         )
 
-        sl_order = self._place_exit_order(
-            candidate,
-            trading_symbol,
-            {
-                "symbol": trading_symbol,
-                "side": "SELL",
-                "type": "STOP_MARKET",
-                "stopPrice": self._fmt_decimal(stop_loss_price),
-                "closePosition": "true",
-                "workingType": "MARK_PRICE",
-            },
-            "place_stop_loss",
-        )
-        tp_order = self._place_exit_order(
-            candidate,
-            trading_symbol,
-            {
-                "symbol": trading_symbol,
-                "side": "SELL",
-                "type": "TAKE_PROFIT_MARKET",
-                "stopPrice": self._fmt_decimal(take_profit_price),
-                "closePosition": "true",
-                "workingType": "MARK_PRICE",
-            },
-            "place_take_profit",
-        )
+        sl_order = None
+        tp_order = None
+        if position_visible:
+            sl_order = self._place_exit_order(
+                candidate,
+                trading_symbol,
+                {
+                    "symbol": trading_symbol,
+                    "side": "SELL",
+                    "type": "STOP_MARKET",
+                    "stopPrice": self._fmt_decimal(stop_loss_price),
+                    "closePosition": "true",
+                    "workingType": "MARK_PRICE",
+                },
+                "place_stop_loss",
+            )
+            tp_order = self._place_exit_order(
+                candidate,
+                trading_symbol,
+                {
+                    "symbol": trading_symbol,
+                    "side": "SELL",
+                    "type": "TAKE_PROFIT_MARKET",
+                    "stopPrice": self._fmt_decimal(take_profit_price),
+                    "closePosition": "true",
+                    "workingType": "MARK_PRICE",
+                },
+                "place_take_profit",
+            )
         tp_order_id = self._exit_order_id(tp_order)
         sl_order_id = self._exit_order_id(sl_order)
         exit_order_status = []
@@ -511,6 +516,32 @@ class TradingExperiment:
             now=now,
         )
         return {"status": "opened", "required_margin": self._fmt_decimal(required_margin)}
+
+    def _wait_for_open_position(self, candidate: OpenableSymbol, trading_symbol: str) -> Decimal:
+        max_attempts = max(1, int(self.config.exit_order_missing_position_retries) + 1)
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                position_amt = self._position_amount(trading_symbol)
+                if position_amt > 0:
+                    return position_amt
+            except Exception as exc:
+                last_exc = exc
+
+            if attempt < max_attempts:
+                delay_seconds = float(self.config.exit_order_missing_position_retry_delay_seconds)
+                if delay_seconds > 0:
+                    time.sleep(delay_seconds)
+
+        if last_exc is not None:
+            self._record_error(candidate, f"wait_open_position:{trading_symbol}", last_exc)
+        else:
+            self._record_error(
+                candidate,
+                f"wait_open_position:{trading_symbol}",
+                RuntimeError(f"positionAmt for {trading_symbol} was not positive after market order"),
+            )
+        return Decimal("0")
 
     def _place_exit_order(
         self,
