@@ -225,6 +225,19 @@ class BreakEvenTakeProfitStrategy:
         with self._connect() as conn:
             conn.execute(f"INSERT INTO {self.RECORDS_TABLE} (symbol, checked_at, side, position_amt, entry_price, account_equity_usdt, r_usdt, unrealized_pnl, old_stop_loss_order_id, new_stop_loss_order_id, stop_loss_price, status, reason, raw_response) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, side, self._fmt_decimal(amount), self._fmt_decimal(entry), self._fmt_decimal(equity), self._fmt_decimal(r_value), self._fmt_decimal(pnl), old_id, new_id, self._fmt_decimal(stop_price), status, reason, raw))
 
+    def get_latest_round_checks(self) -> tuple[int | None, list[BreakEvenTakeProfitCheck]]:
+        self.init_tables()
+        with self._connect() as conn:
+            latest = conn.execute(f"SELECT MAX(checked_at) AS latest_checked_at FROM {self.CHECKS_TABLE}").fetchone()
+            latest_checked_at = latest["latest_checked_at"] if latest else None
+            if latest_checked_at is None:
+                return None, []
+            rows = conn.execute(
+                f"SELECT * FROM {self.CHECKS_TABLE} WHERE checked_at = ? ORDER BY symbol ASC, id DESC",
+                (int(latest_checked_at),),
+            ).fetchall()
+        return int(latest_checked_at), [BreakEvenTakeProfitCheck(**{**dict(row), "triggered": bool(row["triggered"])}) for row in rows]
+
     def recent_checks(self, limit: int = 100) -> list[BreakEvenTakeProfitCheck]:
         self.init_tables()
         with self._connect() as conn:
