@@ -8,6 +8,7 @@ from holding_position_scoring import HoldingPositionScoringSystem
 class FakeAccountManager:
     def __init__(self):
         self.signed_posts = []
+        self.signed_deletes = []
 
     def validate_config(self):
         return None
@@ -23,6 +24,10 @@ class FakeAccountManager:
     def _signed_post(self, endpoint, params=None):
         self.signed_posts.append((endpoint, dict(params or {})))
         return {"orderId": 123}
+
+    def _signed_delete(self, endpoint, params=None):
+        self.signed_deletes.append((endpoint, dict(params or {})))
+        return {"code": 200, "msg": "success"}
 
 
 class RetryThenSuccessAccountManager(FakeAccountManager):
@@ -50,6 +55,26 @@ class AlwaysMissingTradesAccountManager(FakeAccountManager):
         if endpoint == "/fapi/v1/userTrades":
             self.user_trade_calls += 1
             return []
+        return super()._signed_get(endpoint, params)
+
+
+class ReduceOnlyRejectedAccountManager(FakeAccountManager):
+    def __init__(self):
+        super().__init__()
+        self.diagnostic_gets = []
+
+    def _signed_post(self, endpoint, params=None):
+        self.signed_posts.append((endpoint, dict(params or {})))
+        raise RuntimeError('400 Client Error; response_body={"code":-2022,"msg":"ReduceOnly Order is rejected."}')
+
+    def _signed_get(self, endpoint, params=None):
+        self.diagnostic_gets.append((endpoint, dict(params or {})))
+        if endpoint == "/fapi/v3/positionRisk":
+            return [{"symbol": "BANKUSDT", "positionAmt": "2", "positionSide": "BOTH"}]
+        if endpoint == "/fapi/v1/openOrders":
+            return [{"symbol": "BANKUSDT", "side": "SELL", "type": "STOP_MARKET", "origQty": "2", "reduceOnly": True, "status": "NEW", "orderId": 456}]
+        if endpoint == "/fapi/v1/openAlgoOrders":
+            return [{"symbol": "BANKUSDT", "side": "SELL", "type": "TAKE_PROFIT_MARKET", "closePosition": True, "status": "NEW", "algoId": 789}]
         return super()._signed_get(endpoint, params)
 
 
@@ -81,6 +106,10 @@ def test_holding_position_scoring_strips_usdt_for_database_lookups_and_records()
     assert checks[0]["reason"] == "two_15m_closes_below_structural_stop_loss"
     assert records[0]["symbol"] == "BANK"
     assert records[0]["realized_pnl"] == "0.75"
+    assert fake_account.signed_deletes == [
+        ("/fapi/v1/allOpenOrders", {"symbol": "BANKUSDT"}),
+        ("/fapi/v1/algoOpenOrders", {"symbol": "BANKUSDT"}),
+    ]
     assert fake_account.signed_posts[0][1]["symbol"] == "BANKUSDT"
 
 
@@ -134,3 +163,30 @@ def test_realized_pnl_query_failure_is_written_to_reason():
     assert fake_account.user_trade_calls == 4
     assert records[0]["realized_pnl"] == ""
     assert "realized_pnl_query_failed_after_4_attempts: user_trades_empty" in records[0]["reason"]
+
+
+def test_reduce_only_rejection_records_positions_and_open_order_diagnostics():
+    fake_account = ReduceOnlyRejectedAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        _seed_triggered_stop_loss_db(db_path)
+
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.run_round(decision_round_ts=3000)
+        records = scoring.recent_stop_loss_records()
+
+    assert fake_account.signed_deletes == [
+        ("/fapi/v1/allOpenOrders", {"symbol": "BANKUSDT"}),
+        ("/fapi/v1/algoOpenOrders", {"symbol": "BANKUSDT"}),
+    ]
+    assert fake_account.diagnostic_gets[-3:] == [
+        ("/fapi/v3/positionRisk", {}),
+        ("/fapi/v1/openOrders", {"symbol": "BANKUSDT"}),
+        ("/fapi/v1/openAlgoOrders", {"symbol": "BANKUSDT"}),
+    ]
+    assert records[0]["status"] == "failed"
+    assert "stop_loss_order_failed" in records[0]["reason"]
+    assert "reduce_only_diagnostics:" in records[0]["reason"]
+    assert "positions=[{symbol=BANKUSDT, positionAmt=2, positionSide=BOTH}] total=1" in records[0]["reason"]
+    assert "open_orders=[{symbol=BANKUSDT, side=SELL, type=STOP_MARKET" in records[0]["reason"]
+    assert "open_algo_orders=[{symbol=BANKUSDT, side=SELL, type=TAKE_PROFIT_MARKET" in records[0]["reason"]
