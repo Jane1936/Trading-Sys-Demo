@@ -108,6 +108,20 @@ class InvalidSymbolOrderAccountManager(FakeAccountManager):
         return {"orderId": len(self.signed_posts)}
 
 
+class DelayedPositionAccountManager(FakeAccountManager):
+    def __init__(self):
+        super().__init__()
+        self.position_risk_requests = []
+
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/positionRisk" and params and "symbol" in params:
+            self.position_risk_requests.append((endpoint, dict(params or {})))
+            if len(self.position_risk_requests) < 3:
+                return [{"symbol": params["symbol"], "positionAmt": "0"}]
+            return [{"symbol": params["symbol"], "positionAmt": "50"}]
+        return super()._signed_get(endpoint, params)
+
+
 class MissingPositionOnceAccountManager(FakeAccountManager):
     def __init__(self):
         super().__init__()
@@ -183,6 +197,45 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(take_profit_params["triggerPrice"], "1.2")
         self.assertNotIn("stopPrice", stop_loss_params)
         self.assertNotIn("stopPrice", take_profit_params)
+
+    def test_open_long_waits_until_position_amt_is_positive_before_exit_orders(self):
+        fake_account = DelayedPositionAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+                config=ExperimentConfig(exit_order_missing_position_retry_delay_seconds=Decimal("0")),
+            )
+            experiment.init_tables()
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=80,
+                score_band="标准试错单",
+                stop_loss_distance_ratio=0.01,
+                distance_threshold=0.02,
+                stop_loss_distance_tier="A档",
+                opening_leverage="4x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            result = experiment._open_long(candidate, Decimal("1000"), Decimal("10"))
+
+        self.assertEqual(result["status"], "opened")
+        self.assertEqual(
+            fake_account.position_risk_requests,
+            [
+                ("/fapi/v3/positionRisk", {"symbol": "BANKUSDT"}),
+                ("/fapi/v3/positionRisk", {"symbol": "BANKUSDT"}),
+                ("/fapi/v3/positionRisk", {"symbol": "BANKUSDT"}),
+            ],
+        )
+        endpoints = [endpoint for endpoint, _ in fake_account.signed_posts]
+        self.assertEqual(endpoints[:2], ["/fapi/v1/leverage", "/fapi/v1/order"])
+        self.assertEqual(endpoints[2:], ["/fapi/v1/algoOrder", "/fapi/v1/algoOrder"])
 
     def test_latest_price_falls_back_to_mark_price_when_ticker_payload_is_empty(self):
         fake_account = EmptyTickerAccountManager()
@@ -404,7 +457,10 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(fake_account.take_profit_failures, 1)
         self.assertEqual(
             fake_account.position_risk_requests,
-            [("/fapi/v3/positionRisk", {"symbol": "BANKUSDT"})],
+            [
+                ("/fapi/v3/positionRisk", {"symbol": "BANKUSDT"}),
+                ("/fapi/v3/positionRisk", {"symbol": "BANKUSDT"}),
+            ],
         )
         self.assertEqual(trade_rows[0].take_profit_order_id, "5")
         self.assertEqual(error_rows, [])
