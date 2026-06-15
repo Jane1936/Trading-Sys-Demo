@@ -22,6 +22,7 @@ from data_processor import (
     run_loop,
     save_ma20_result,
 )
+from break_even_take_profit import BreakEvenTakeProfitStrategy
 from cooldown_module import CooldownModule
 from openable_symbol_module import OpenableSymbol, OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
@@ -85,6 +86,24 @@ def run_first_experiment_after_openable_round(openable_symbols: Iterable[Openabl
         )
     except Exception as exc:
         print(f"⚠️ first trading experiment failed after openable round={round_ts}: {exc}")
+
+
+def start_break_even_take_profit_task() -> None:
+    """Run break-even take-profit protection every 5 minutes, independently."""
+    strategy = BreakEvenTakeProfitStrategy(db_path=collector.DB_PATH)
+    strategy.init_tables()
+    print("🟢 Break-even take-profit task started")
+    while True:
+        try:
+            result = strategy.run_round()
+            print(
+                f"🟢 break-even take-profit checked={result.get('checked', 0)} "
+                f"triggered={result.get('triggered', 0)} "
+                f"records={result.get('records', 0)} R={result.get('r_usdt', '')}"
+            )
+        except Exception as exc:
+            print(f"⚠️ break-even take-profit failed: {exc}")
+        time.sleep(5 * 60)
 
 
 def start_pre_safety_task() -> None:
@@ -233,12 +252,15 @@ if __name__ == "__main__":
     # 预先构建一次 universe，并按12小时周期刷新
     symbols = ensure_universe()
 
-    # 三个独立 task：collector / pre_safety（异常插针后立即执行冷却期symbol） / data_processor
+    # 四个独立 task：collector / pre_safety（异常插针后立即执行冷却期symbol） / break_even_take_profit / data_processor
     collector_thread = threading.Thread(target=start_collector_task, args=(symbols,), daemon=True)
     collector_thread.start()
 
     pre_safety_thread = threading.Thread(target=start_pre_safety_task, daemon=True)
     pre_safety_thread.start()
+
+    break_even_thread = threading.Thread(target=start_break_even_take_profit_task, daemon=True)
+    break_even_thread.start()
 
     # 主线程跑 processor task
     start_processor_task(symbols)

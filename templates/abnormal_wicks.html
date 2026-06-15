@@ -846,6 +846,86 @@
             </tbody>
           </table>
         </div>
+        <div class="symbol-strip">
+          <div><strong>保本止盈策略：5分钟扫描结果</strong></div>
+          <div class="muted">R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；若未变现盈亏 ≥ R，则取消原止损单并按开仓价新建 STOP_MARKET 止损单。</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>实验组USDT净值</th>
+                <th>R</th>
+                <th>未变现盈亏</th>
+                <th>开仓价</th>
+                <th>持仓数量</th>
+                <th>触发保本</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in break_even_checks %}
+              <tr>
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.account_equity_usdt }}</td>
+                <td>{{ row.r_usdt }}</td>
+                <td>{{ row.unrealized_pnl }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.triggered else 'status-fail' }}">{{ '是' if row.triggered else '否' }}</span></td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="9">暂无保本止盈扫描结果</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="symbol-strip">
+          <div><strong>保本止盈新建止损单记录</strong></div>
+          <div class="muted">记录被取消的原止损单ID、新建止损单ID、保本止损价格与接口执行状态。</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>side</th>
+                <th>position_amt</th>
+                <th>entry_price</th>
+                <th>R / 未变现盈亏</th>
+                <th>old_stop_loss_order_id</th>
+                <th>new_stop_loss_order_id</th>
+                <th>stop_loss_price</th>
+                <th>status</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in break_even_records %}
+              <tr>
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.side }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.r_usdt }} / {{ row.unrealized_pnl }}</td>
+                <td>{{ row.old_stop_loss_order_id or '-' }}</td>
+                <td>{{ row.new_stop_loss_order_id or '-' }}</td>
+                <td>{{ row.stop_loss_price }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="11">暂无保本止盈止损单记录</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div id="strategy-account" class="strategy-subpanel" role="tabpanel">
