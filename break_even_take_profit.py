@@ -187,7 +187,7 @@ class BreakEvenTakeProfitStrategy:
         raw_parts: list[str] = []
         try:
             if old_order_id:
-                cancel_response = self._cancel_stop_loss_order(exchange_symbol, old_order_id)
+                cancel_response = self._cancel_stop_loss_order(exchange_symbol, old_order_id, current_stop_loss)
                 raw_parts.append(str({"cancel_stop_loss": cancel_response}))
                 reason_parts.append("old_stop_loss_cancelled")
             else:
@@ -233,7 +233,7 @@ class BreakEvenTakeProfitStrategy:
                 status = str(row.get("status", "NEW")).upper()
                 if status and status != "NEW":
                     continue
-                return row
+                return {**row, "_source_endpoint": endpoint}
         return None
 
     @staticmethod
@@ -251,7 +251,22 @@ class BreakEvenTakeProfitStrategy:
                 return price
         return None
 
-    def _cancel_stop_loss_order(self, exchange_symbol: str, order_id: str) -> Any:
+    def _cancel_stop_loss_order(self, exchange_symbol: str, order_id: str, order: dict[str, Any] | None = None) -> Any:
+        """Cancel the current stop-loss order with the matching Binance endpoint.
+
+        Binance Futures conditional orders created through ``/fapi/v1/algoOrder``
+        are not cancelable through the regular ``/fapi/v1/order`` endpoint.  When
+        the open-order scan tells us which endpoint returned the order, keep that
+        order family and do not fall back to the other cancellation API.
+        """
+        source_endpoint = str((order or {}).get("_source_endpoint", ""))
+        if (order or {}).get("algoId") or source_endpoint.endswith("AlgoOrders"):
+            algo_id = str((order or {}).get("algoId") or order_id)
+            return self.account_manager._signed_delete("/fapi/v1/algoOrder", {"symbol": exchange_symbol, "algoId": algo_id})
+        if (order or {}).get("orderId") or source_endpoint.endswith("OpenOrders"):
+            regular_id = str((order or {}).get("orderId") or order_id)
+            return self.account_manager._signed_delete("/fapi/v1/order", {"symbol": exchange_symbol, "orderId": regular_id})
+
         try:
             return self.account_manager._signed_delete("/fapi/v1/algoOrder", {"symbol": exchange_symbol, "algoId": order_id})
         except Exception:
