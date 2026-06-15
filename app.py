@@ -26,6 +26,7 @@ from break_even_take_profit import BreakEvenTakeProfitStrategy
 from cooldown_module import CooldownModule
 from openable_symbol_module import OpenableSymbol, OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
+from partial_take_profit import PartialTakeProfitStrategy
 from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
@@ -89,10 +90,12 @@ def run_first_experiment_after_openable_round(openable_symbols: Iterable[Openabl
 
 
 def start_break_even_take_profit_task() -> None:
-    """Run break-even take-profit protection every 5 minutes, independently."""
+    """Run break-even and partial take-profit protection every 5 minutes."""
     strategy = BreakEvenTakeProfitStrategy(db_path=collector.DB_PATH)
+    partial_strategy = PartialTakeProfitStrategy(db_path=collector.DB_PATH)
     strategy.init_tables()
-    print("🟢 Break-even take-profit task started")
+    partial_strategy.init_tables()
+    print("🟢 Break-even and partial take-profit task started")
     while True:
         try:
             result = strategy.run_round()
@@ -100,6 +103,12 @@ def start_break_even_take_profit_task() -> None:
                 f"🟢 break-even take-profit checked={result.get('checked', 0)} "
                 f"triggered={result.get('triggered', 0)} "
                 f"records={result.get('records', 0)} R={result.get('r_usdt', '')}"
+            )
+            partial_result = partial_strategy.run_round()
+            print(
+                f"🟢 partial take-profit checked={partial_result.get('checked', 0)} "
+                f"triggered={partial_result.get('triggered', 0)} "
+                f"records={partial_result.get('records', 0)} 2R={partial_result.get('trigger_r_usdt', '')}"
             )
         except Exception as exc:
             print(f"⚠️ break-even take-profit failed: {exc}")

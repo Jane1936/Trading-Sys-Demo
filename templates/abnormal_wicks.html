@@ -964,6 +964,112 @@
           </table>
         </div>
         </div>
+        <div class="critical-section" aria-label="关键分批止盈5分钟扫描结果">
+        <div class="symbol-strip">
+          <div><strong>分批止盈规则：5分钟扫描结果</strong></div>
+          {% if partial_take_profit_round_ts %}
+            <div class="muted">最近判断轮次：{{ partial_take_profit_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；若未变现盈亏 ≥ 2 × R，则提交 reduceOnly MARKET 订单卖出当前仓位的30%。</div>
+          {% else %}
+            <div class="muted">暂无分批止盈扫描结果。</div>
+          {% endif %}
+          {% set triggered_partial_take_profit_checks = partial_take_profit_checks|selectattr('triggered')|list %}
+          {% if triggered_partial_take_profit_checks %}
+            <div class="chips">
+              {% for row in triggered_partial_take_profit_checks %}
+                <span class="chip" title="{{ row.reason }}">{{ row.symbol }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="chips"><span class="chip">本轮无触发分批止盈symbol</span></div>
+          {% endif %}
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>实验组USDT净值</th>
+                <th>R / 2R</th>
+                <th>未变现盈亏</th>
+                <th>开仓价</th>
+                <th>持仓数量</th>
+                <th>触发分批止盈</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in partial_take_profit_checks %}
+              <tr>
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.account_equity_usdt }}</td>
+                <td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }}</td>
+                <td>{{ row.unrealized_pnl }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>
+                  {% if row.reason == 'partial_take_profit_already_completed' %}
+                    <span class="status-badge status-pass">已完成分批止盈</span>
+                  {% else %}
+                    <span class="status-badge {{ 'status-pass' if row.triggered else 'status-fail' }}">{{ '是' if row.triggered else '否' }}</span>
+                  {% endif %}
+                </td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="9">暂无分批止盈扫描结果</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>分批止盈卖出记录</strong></div>
+              <div class="muted">记录分批止盈 MARKET 卖出方向、卖出数量、订单ID与接口执行状态。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>side</th>
+                <th>position_amt</th>
+                <th>take_profit_quantity</th>
+                <th>entry_price</th>
+                <th>R / 2R / 未变现盈亏</th>
+                <th>take_profit_order_id</th>
+                <th>status</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in partial_take_profit_records %}
+              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.side }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>{{ row.take_profit_quantity }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }} / {{ row.unrealized_pnl }}</td>
+                <td>{{ row.take_profit_order_id or '-' }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="10">暂无分批止盈卖出记录</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
       </div>
 
       <div id="strategy-account" class="strategy-subpanel" role="tabpanel">

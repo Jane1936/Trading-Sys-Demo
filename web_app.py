@@ -19,6 +19,7 @@ import collector
 from cooldown_module import CooldownModule
 from openable_symbol_module import OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
+from partial_take_profit import PartialTakeProfitStrategy
 from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
@@ -145,6 +146,9 @@ def abnormal_wicks():
     break_even_strategy = BreakEvenTakeProfitStrategy(db_path=DB_PATH)
     break_even_round_ts, break_even_checks = break_even_strategy.get_latest_round_checks()
     break_even_records = break_even_strategy.recent_records(limit=100)
+    partial_take_profit_strategy = PartialTakeProfitStrategy(db_path=DB_PATH)
+    partial_take_profit_round_ts, partial_take_profit_checks = partial_take_profit_strategy.get_latest_round_checks()
+    partial_take_profit_records = partial_take_profit_strategy.recent_records(limit=100)
 
     active_tab = request.args.get("active_tab", default="", type=str).strip()
     if requested_score_trend_symbol:
@@ -252,6 +256,9 @@ def abnormal_wicks():
         break_even_round_ts=break_even_round_ts,
         break_even_checks=break_even_checks,
         break_even_records=break_even_records,
+        partial_take_profit_round_ts=partial_take_profit_round_ts,
+        partial_take_profit_checks=partial_take_profit_checks,
+        partial_take_profit_records=partial_take_profit_records,
         rule_score_weights=scoring.rule_score_weights,
         score_trend_symbols=score_trend_symbols,
         score_trend_symbol=score_trend_symbol,
