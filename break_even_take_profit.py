@@ -144,17 +144,21 @@ class BreakEvenTakeProfitStrategy:
         entry_price = self._decimal_from(position.get("entryPrice"), Decimal("0"))
         unrealized_pnl = self._decimal_from(position.get("unRealizedProfit", position.get("unrealizedProfit")), Decimal("0"))
         triggered = amount != 0 and entry_price > 0 and r_value > 0 and unrealized_pnl >= r_value
-        reason = "unrealized_pnl_ge_r" if triggered else "unrealized_pnl_lt_r"
-        self._insert_check(symbol, now, equity, r_value, unrealized_pnl, entry_price, amount, triggered, reason)
         if not triggered:
+            self._insert_check(symbol, now, equity, r_value, unrealized_pnl, entry_price, amount, False, "unrealized_pnl_lt_r")
             return False
 
         current_stop_loss = self._current_stop_loss_order(exchange_symbol, amount)
         target_stop_price = self._break_even_stop_price(exchange_symbol, entry_price, "SELL" if amount > 0 else "BUY")
         current_stop_price = self._stop_loss_order_price(current_stop_loss)
+        if current_stop_price == entry_price:
+            self._insert_check(symbol, now, equity, r_value, unrealized_pnl, entry_price, amount, True, "break_even_already_completed")
+            return False
         if current_stop_price == target_stop_price:
+            self._insert_check(symbol, now, equity, r_value, unrealized_pnl, entry_price, amount, True, "break_even_stop_loss_already_at_target")
             return False
 
+        self._insert_check(symbol, now, equity, r_value, unrealized_pnl, entry_price, amount, True, "unrealized_pnl_ge_r")
         self._move_stop_loss_to_break_even(
             position,
             equity,

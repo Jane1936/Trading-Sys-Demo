@@ -146,6 +146,7 @@ def test_break_even_strategy_skips_when_current_stop_loss_is_already_at_entry():
     assert result["triggered"] == 0
     assert result["records"] == 0
     assert checks[0].triggered is True
+    assert checks[0].reason == "break_even_already_completed"
     assert fake_account.signed_deletes == []
     assert fake_account.signed_posts == []
     assert records == []

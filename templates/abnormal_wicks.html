@@ -900,7 +900,13 @@
                 <td>{{ row.unrealized_pnl }}</td>
                 <td>{{ row.entry_price }}</td>
                 <td>{{ row.position_amt }}</td>
-                <td><span class="status-badge {{ 'status-pass' if row.triggered else 'status-fail' }}">{{ '是' if row.triggered else '否' }}</span></td>
+                <td>
+                  {% if row.reason == 'break_even_already_completed' %}
+                    <span class="status-badge status-pass">已完成保本</span>
+                  {% else %}
+                    <span class="status-badge {{ 'status-pass' if row.triggered else 'status-fail' }}">{{ '是' if row.triggered else '否' }}</span>
+                  {% endif %}
+                </td>
                 <td>{{ row.reason }}</td>
               </tr>
               {% else %}
