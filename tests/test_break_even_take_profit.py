@@ -149,3 +149,71 @@ def test_break_even_strategy_skips_when_current_stop_loss_is_already_at_entry():
     assert fake_account.signed_deletes == []
     assert fake_account.signed_posts == []
     assert records == []
+
+
+def test_break_even_strategy_cancels_regular_stop_loss_with_regular_order_endpoint():
+    fake_account = FakeAccountManager()
+
+    def signed_get(endpoint, params=None):
+        if endpoint == "/fapi/v3/balance":
+            return [{"asset": "USDT", "balance": "5100"}]
+        if endpoint == "/fapi/v3/positionRisk":
+            return [
+                {
+                    "symbol": "BANKUSDT",
+                    "positionAmt": "2",
+                    "entryPrice": "10",
+                    "unRealizedProfit": "20",
+                }
+            ]
+        if endpoint == "/fapi/v1/openAlgoOrders":
+            return []
+        if endpoint == "/fapi/v1/openOrders":
+            return [
+                {
+                    "symbol": "BANKUSDT",
+                    "side": "SELL",
+                    "type": "STOP_MARKET",
+                    "status": "NEW",
+                    "orderId": "321",
+                    "stopPrice": "9",
+                }
+            ]
+        raise AssertionError(f"unexpected signed endpoint {endpoint}")
+
+    def signed_delete(endpoint, params=None):
+        fake_account.signed_deletes.append((endpoint, dict(params or {})))
+        return {"orderId": params["orderId"], "status": "CANCELED"}
+
+    fake_account._signed_get = signed_get
+    fake_account._signed_delete = signed_delete
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        result = strategy.run_round()
+
+    assert result["triggered"] == 1
+    assert fake_account.signed_deletes == [("/fapi/v1/order", {"symbol": "BANKUSDT", "orderId": "321"})]
+
+
+def test_break_even_strategy_does_not_retry_algo_stop_loss_cancel_as_regular_order():
+    fake_account = FakeAccountManager()
+
+    def signed_delete(endpoint, params=None):
+        fake_account.signed_deletes.append((endpoint, dict(params or {})))
+        raise RuntimeError("algo cancel failed")
+
+    fake_account._signed_delete = signed_delete
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        result = strategy.run_round()
+        records = strategy.recent_records()
+
+    assert result["triggered"] == 1
+    assert fake_account.signed_deletes == [("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "123"})]
+    assert fake_account.signed_posts == []
+    assert records[0].status == "failed"
+    assert "break_even_stop_loss_failed" in records[0].reason
