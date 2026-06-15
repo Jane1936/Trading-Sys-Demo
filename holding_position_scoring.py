@@ -201,17 +201,21 @@ class HoldingPositionScoringSystem:
 
     def _execute_stop_loss(self, position: dict[str, Any], check: HoldingStopLossCheck, now_ms: int) -> HoldingStopLossRecord:
         amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
+        exchange_symbol = self._exchange_symbol(position, check.symbol)
         side = "SELL" if amount > 0 else "BUY"
         quantity = abs(amount)
         status = "submitted"
         order_id = ""
         reason = check.reason
         raw_response = ""
+        cancel_reason = self._cancel_existing_exit_orders(exchange_symbol)
+        if cancel_reason:
+            reason = f"{reason}; {cancel_reason}"
         try:
             response = self.account_manager._signed_post(
                 "/fapi/v1/order",
                 {
-                    "symbol": self._exchange_symbol(position, check.symbol),
+                    "symbol": exchange_symbol,
                     "side": side,
                     "type": "MARKET",
                     "quantity": self._fmt_decimal(quantity),
@@ -224,16 +228,85 @@ class HoldingPositionScoringSystem:
         except Exception as exc:
             status = "failed"
             reason = f"{check.reason}; stop_loss_order_failed: {type(exc).__name__}: {exc}"
+            if cancel_reason:
+                reason = f"{reason}; {cancel_reason}"
+            if self._is_reduce_only_rejected(exc):
+                reason = f"{reason}; reduce_only_diagnostics: {self._reduce_only_diagnostics(exchange_symbol)}"
         realized_pnl = ""
         pnl_failure_reason = ""
         if order_id:
             realized_pnl, pnl_failure_reason = self._fetch_order_realized_pnl(
-                self._exchange_symbol(position, check.symbol),
+                exchange_symbol,
                 order_id,
             )
         if pnl_failure_reason:
             reason = f"{reason}; {pnl_failure_reason}"
         return HoldingStopLossRecord(0, check.symbol, check.decision_round_ts, side, self._fmt_decimal(quantity), float(check.latest_15m_close or 0), float(check.latest_structural_stop_loss or 0), float(check.prev_15m_close or 0), float(check.prev_structural_stop_loss or 0), status, order_id, realized_pnl, reason, raw_response, now_ms)
+
+    def _cancel_existing_exit_orders(self, exchange_symbol: str) -> str:
+        """Cancel normal and conditional open orders before a MARKET close."""
+        failures: list[str] = []
+        for endpoint, label in (
+            ("/fapi/v1/allOpenOrders", "open_orders_cancel"),
+            ("/fapi/v1/algoOpenOrders", "algo_orders_cancel"),
+        ):
+            try:
+                self.account_manager._signed_delete(endpoint, {"symbol": exchange_symbol})
+            except AttributeError as exc:
+                failures.append(f"{label}_unsupported: {type(exc).__name__}: {exc}")
+            except Exception as exc:
+                failures.append(f"{label}_failed: {type(exc).__name__}: {exc}")
+        if failures:
+            return "pre_close_cancel_warnings: " + " | ".join(failures)
+        return "pre_close_cancelled_existing_open_orders"
+
+    def _reduce_only_diagnostics(self, exchange_symbol: str) -> str:
+        diagnostics: list[str] = []
+        for endpoint, label, params in (
+            ("/fapi/v3/positionRisk", "positions", None),
+            ("/fapi/v1/openOrders", "open_orders", {"symbol": exchange_symbol}),
+            ("/fapi/v1/openAlgoOrders", "open_algo_orders", {"symbol": exchange_symbol}),
+        ):
+            try:
+                response = self.account_manager._signed_get(endpoint, params)
+                diagnostics.append(f"{label}={self._summarize_response(response)}")
+            except Exception as exc:
+                diagnostics.append(f"{label}_query_failed={type(exc).__name__}: {exc}")
+        return "; ".join(diagnostics)
+
+    @staticmethod
+    def _is_reduce_only_rejected(exc: Exception) -> bool:
+        message = str(exc)
+        return "-2022" in message or "ReduceOnly Order is rejected" in message
+
+    @classmethod
+    def _summarize_response(cls, response: Any) -> str:
+        if isinstance(response, list):
+            return "[" + ", ".join(cls._summarize_order_like_row(row) for row in response[:10]) + f"] total={len(response)}"
+        if isinstance(response, dict):
+            return cls._summarize_order_like_row(response)
+        return str(response)
+
+    @staticmethod
+    def _summarize_order_like_row(row: Any) -> str:
+        if not isinstance(row, dict):
+            return str(row)
+        keys = (
+            "symbol",
+            "positionAmt",
+            "positionSide",
+            "side",
+            "type",
+            "origQty",
+            "executedQty",
+            "reduceOnly",
+            "closePosition",
+            "status",
+            "orderId",
+            "algoId",
+        )
+        parts = [f"{key}={row[key]}" for key in keys if key in row]
+        return "{" + ", ".join(parts) + "}"
 
     def _fetch_order_realized_pnl(self, exchange_symbol: str, order_id: str) -> tuple[str, str]:
         """Return summed realized PnL and a failure reason for a futures order.

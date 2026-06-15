@@ -131,6 +131,16 @@ class BinanceAccountManager:
         self._raise_for_status(response)
         return response.json()
 
+    def _signed_delete(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
+        response = self.session.delete(
+            f"{self.base_url}{endpoint}",
+            params=self._signed_params(params),
+            headers={"X-MBX-APIKEY": self.api_key},
+            timeout=self.timeout,
+        )
+        self._raise_for_status(response)
+        return response.json()
+
     def _public_get(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
         response = self.session.get(
             f"{self.base_url}{endpoint}",
