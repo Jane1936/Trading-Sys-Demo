@@ -218,3 +218,80 @@ def test_break_even_strategy_does_not_retry_algo_stop_loss_cancel_as_regular_ord
     assert fake_account.signed_posts == []
     assert records[0].status == "failed"
     assert "break_even_stop_loss_failed" in records[0].reason
+
+
+def test_break_even_strategy_cancels_db_only_stop_loss_as_algo_without_regular_retry():
+    fake_account = FakeAccountManager()
+
+    def signed_get(endpoint, params=None):
+        if endpoint == "/fapi/v3/balance":
+            return [{"asset": "USDT", "balance": "5100"}]
+        if endpoint == "/fapi/v3/positionRisk":
+            return [
+                {
+                    "symbol": "BANKUSDT",
+                    "positionAmt": "2",
+                    "entryPrice": "10",
+                    "unRealizedProfit": "20",
+                }
+            ]
+        if endpoint in {"/fapi/v1/openAlgoOrders", "/fapi/v1/openOrders"}:
+            return []
+        raise AssertionError(f"unexpected signed endpoint {endpoint}")
+
+    def signed_delete(endpoint, params=None):
+        fake_account.signed_deletes.append((endpoint, dict(params or {})))
+        raise RuntimeError("unknown algo order")
+
+    fake_account._signed_get = signed_get
+    fake_account._signed_delete = signed_delete
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
+        experiment = TradingExperiment(db_path=db_path, account_manager=fake_account)
+        experiment.init_tables()
+        with experiment._connect() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {TradingExperiment.TRADES_TABLE}
+                (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt,
+                 required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity,
+                 notional_usdt, take_profit_price, stop_loss_price, take_profit_order_id,
+                 stop_loss_order_id, reason, raw_response, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("BANK", 1, "LONG", "opened", 80, 5, "20", "4", "1100", "11", "10", "2", "20", "12", "9", "999", "1000000106055690", "test", "", 1, 1),
+            )
+
+        result = strategy.run_round()
+        records = strategy.recent_records()
+
+    assert result["triggered"] == 1
+    assert fake_account.signed_deletes == [
+        ("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "1000000106055690"})
+    ]
+    assert fake_account.signed_posts == []
+    assert records[0].status == "failed"
+
+
+def test_break_even_strategy_recognizes_open_algo_order_order_type_field():
+    fake_account = FakeAccountManager()
+
+    def signed_get(endpoint, params=None):
+        rows = FakeAccountManager._signed_get(fake_account, endpoint, params)
+        if endpoint == "/fapi/v1/openAlgoOrders":
+            rows[0].pop("type")
+            rows[0]["orderType"] = "STOP_MARKET"
+        return rows
+
+    fake_account._signed_get = signed_get
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        result = strategy.run_round()
+
+    assert result["triggered"] == 1
+    assert fake_account.signed_deletes == [("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "123"})]

@@ -232,7 +232,7 @@ class BreakEvenTakeProfitStrategy:
                     continue
                 if str(row.get("side", "")).upper() != side:
                     continue
-                if str(row.get("type", "")).upper() != "STOP_MARKET":
+                if not self._is_stop_market_order(row):
                     continue
                 status = str(row.get("status", "NEW")).upper()
                 if status and status != "NEW":
@@ -245,6 +245,11 @@ class BreakEvenTakeProfitStrategy:
         if not order:
             return ""
         return str(order.get("algoId") or order.get("orderId") or "")
+
+    @staticmethod
+    def _is_stop_market_order(order: dict[str, Any]) -> bool:
+        order_type = str(order.get("type") or order.get("orderType") or "").upper()
+        return order_type == "STOP_MARKET"
 
     def _stop_loss_order_price(self, order: dict[str, Any] | None) -> Decimal | None:
         if not order:
@@ -263,18 +268,15 @@ class BreakEvenTakeProfitStrategy:
         the open-order scan tells us which endpoint returned the order, keep that
         order family and do not fall back to the other cancellation API.
         """
-        source_endpoint = str((order or {}).get("_source_endpoint", ""))
-        if (order or {}).get("algoId") or source_endpoint.endswith("AlgoOrders"):
+        source_endpoint = str((order or {}).get("_source_endpoint", "")).lower()
+        if (order or {}).get("algoId") or source_endpoint.endswith("openalgoorders"):
             algo_id = str((order or {}).get("algoId") or order_id)
             return self.account_manager._signed_delete("/fapi/v1/algoOrder", {"symbol": exchange_symbol, "algoId": algo_id})
-        if (order or {}).get("orderId") or source_endpoint.endswith("OpenOrders"):
+        if (order or {}).get("orderId") or source_endpoint.endswith("openorders"):
             regular_id = str((order or {}).get("orderId") or order_id)
             return self.account_manager._signed_delete("/fapi/v1/order", {"symbol": exchange_symbol, "orderId": regular_id})
 
-        try:
-            return self.account_manager._signed_delete("/fapi/v1/algoOrder", {"symbol": exchange_symbol, "algoId": order_id})
-        except Exception:
-            return self.account_manager._signed_delete("/fapi/v1/order", {"symbol": exchange_symbol, "orderId": order_id})
+        return self.account_manager._signed_delete("/fapi/v1/algoOrder", {"symbol": exchange_symbol, "algoId": order_id})
 
     def _break_even_stop_price(self, exchange_symbol: str, entry_price: Decimal, side: str) -> Decimal:
         tick = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)._exchange_symbol_info(exchange_symbol)["tick_size"]
