@@ -171,13 +171,22 @@ class PartialTakeProfitStrategy:
         raw_response = ""
         reason = "unrealized_pnl_ge_2r_take_profit_30_percent"
         try:
-            step = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)._exchange_symbol_info(exchange_symbol)["step_size"]
+            helper = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)
+            exchange_info = helper._exchange_symbol_info(exchange_symbol)
+            step = exchange_info["step_size"]
             quantity = self._floor_to_step(abs(amount) * self.TAKE_PROFIT_FRACTION, step)
             if quantity <= 0:
                 raise RuntimeError("take_profit_quantity_rounded_to_zero")
-            response = self.account_manager._signed_post(
+            response = helper._signed_post_order_with_ioc_retry(
                 "/fapi/v1/order",
-                {"symbol": exchange_symbol, "side": side, "type": "MARKET", "quantity": self._fmt_decimal(quantity), "reduceOnly": "true"},
+                {
+                    "symbol": exchange_symbol,
+                    "side": side,
+                    "type": "MARKET",
+                    "quantity": self._fmt_decimal(quantity),
+                    "reduceOnly": "true",
+                },
+                tick_size=exchange_info["tick_size"],
             )
             raw_response = str(response)
             order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
