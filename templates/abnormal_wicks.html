@@ -54,6 +54,8 @@
     .score-trend-card { min-height: calc(100vh - 32px); display: flex; flex-direction: column; }
     .score-trend-chart-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 12px 20px 16px; }
     #score-trend-chart { width: 100%; flex: 1; min-height: calc(100vh - 245px); height: auto; max-height: none; }
+    .equity-trend-chart-wrap { padding: 14px 20px 16px; border-top: 1px solid var(--line); background: #ffffff; }
+    #experiment-equity-trend-chart { width: 100%; height: 340px; min-height: 280px; }
     .pager { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
     .pager-info { color: #4b5563; font-size: 12px; }
     .symbol-strip { padding: 14px 20px; border-bottom: 1px solid var(--line); background: #f8fdff; }
@@ -1122,6 +1124,13 @@
           </div>
           <div class="muted">计算公式：当前USDT总余额 - 未投入实验组USDT额度（4000U）。USDT总初始资金5000U，第一组实验投入1000U。</div>
         </div>
+        <div class="equity-trend-chart-wrap" aria-label="近7天实验组USDT净值变化趋势图">
+          <div class="chart-meta">
+            <span><strong>近7天实验组USDT净值变化趋势图</strong></span>
+            <span>随页面每15分钟自动刷新；数据来自开仓、保本止盈、分批止盈扫描记录。</span>
+          </div>
+          <div id="experiment-equity-trend-chart"></div>
+        </div>
         <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
           <div class="symbol-strip collapsible-header">
             <div>
@@ -1333,6 +1342,7 @@
   <script>
     let btcChart = null;
     let scoreTrendChart = null;
+    let experimentEquityTrendChart = null;
 
     function refreshBtcChartLayout() {
       if (btcChart) btcChart.resize();
@@ -1340,6 +1350,10 @@
 
     function refreshScoreTrendChartLayout() {
       if (scoreTrendChart) scoreTrendChart.resize();
+    }
+
+    function refreshExperimentEquityTrendChartLayout() {
+      if (experimentEquityTrendChart) experimentEquityTrendChart.resize();
     }
 
     (function initTabs() {
@@ -1357,6 +1371,9 @@
           }
           if (b.dataset.tab === 'tab-score-trend') {
             requestAnimationFrame(refreshScoreTrendChartLayout);
+          }
+          if (b.dataset.tab === 'tab-strategy') {
+            requestAnimationFrame(refreshExperimentEquityTrendChartLayout);
           }
         });
       });
@@ -1390,6 +1407,9 @@
           b.setAttribute('aria-selected', 'true');
           const panel = document.getElementById(b.dataset.strategyTab);
           if (panel) panel.classList.add('active');
+          if (b.dataset.strategyTab === 'strategy-account') {
+            requestAnimationFrame(refreshExperimentEquityTrendChartLayout);
+          }
         });
       });
     })();
@@ -1507,6 +1527,71 @@
           setAccountBalanceLoading(false);
         }
       });
+    })();
+
+
+    function buildExperimentEquityTrendOption(rawRows) {
+      const hasRows = rawRows.length > 0;
+      const labels = rawRows.map(r => new Date(r[0]).toISOString().slice(5, 16).replace('T', ' '));
+      const values = rawRows.map(r => Number(r[1]));
+      if (!hasRows) {
+        return {
+          title: { text: '暂无近7天实验组USDT净值数据', left: 'center', top: 'middle', textStyle: { color: '#6b7280', fontSize: 16 } },
+          grid: { left: 64, right: 28, top: 32, bottom: 58 },
+          xAxis: { type: 'category', data: [] },
+          yAxis: { type: 'value', name: 'USDT净值', splitLine: { lineStyle: { color: '#e5e7eb', type: 'dashed' } } },
+          series: [{ type: 'line', data: [] }]
+        };
+      }
+      return {
+        animation: false,
+        grid: { left: 64, right: 28, top: 32, bottom: 58 },
+        tooltip: {
+          trigger: 'axis',
+          formatter: function (params) {
+            const p = params[0];
+            const row = rawRows[p.dataIndex];
+            return `${new Date(row[0]).toISOString().replace('T', ' ').slice(0, 19)} UTC<br/>实验组USDT净值：${Number(row[1]).toFixed(2)} U`;
+          }
+        },
+        xAxis: { type: 'category', data: labels, boundaryGap: false },
+        yAxis: {
+          type: 'value',
+          name: 'USDT净值',
+          scale: true,
+          axisLabel: { formatter: value => `${Number(value).toFixed(0)}U`, color: '#374151', fontWeight: 600 },
+          splitLine: { lineStyle: { color: '#e5e7eb', type: 'dashed' } }
+        },
+        dataZoom: [
+          { type: 'inside', start: 0, end: 100 },
+          { type: 'slider', bottom: 12, height: 18, start: 0, end: 100 }
+        ],
+        series: [{
+          name: '实验组USDT净值',
+          type: 'line',
+          data: values,
+          smooth: true,
+          symbol: 'circle',
+          symbolSize: 6,
+          lineStyle: { width: 3, color: '#f97316' },
+          itemStyle: { color: '#f97316', borderColor: '#ffffff', borderWidth: 2 },
+          areaStyle: { color: 'rgba(249, 115, 22, 0.14)' }
+        }]
+      };
+    }
+
+    (function initExperimentEquityTrendChart() {
+      const chartEl = document.getElementById('experiment-equity-trend-chart');
+      if (!chartEl || !window.echarts) return;
+      const rawRows = [
+        {% for r in trading_equity_trend_rows %}
+          [{{ r.recorded_at }}, {{ '%.8f'|format(r.account_equity_usdt) }}],
+        {% endfor %}
+      ];
+      experimentEquityTrendChart = echarts.init(chartEl);
+      experimentEquityTrendChart.setOption(buildExperimentEquityTrendOption(rawRows), true);
+      window.addEventListener('resize', refreshExperimentEquityTrendChartLayout);
+      requestAnimationFrame(refreshExperimentEquityTrendChartLayout);
     })();
 
 
