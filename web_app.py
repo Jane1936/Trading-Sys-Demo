@@ -29,6 +29,57 @@ app = Flask(__name__)
 DB_PATH = os.getenv("DB_PATH", collector.DB_PATH)
 
 
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _experiment_equity_trend_rows(since_ms: int) -> list[sqlite3.Row]:
+    """Return one experiment USDT equity point per recorded scan/open timestamp."""
+    sources = [
+        (TradingExperiment.TRADES_TABLE, "created_at"),
+        (BreakEvenTakeProfitStrategy.CHECKS_TABLE, "checked_at"),
+        (PartialTakeProfitStrategy.CHECKS_TABLE, "checked_at"),
+    ]
+    try:
+        with sqlite3.connect(DB_PATH, timeout=30) as conn:
+            conn.row_factory = sqlite3.Row
+            union_queries = []
+            params: list[int] = []
+            for table_name, ts_column in sources:
+                if not _table_exists(conn, table_name):
+                    continue
+                union_queries.append(
+                    f"""
+                    SELECT {ts_column} AS recorded_at,
+                           CAST(account_equity_usdt AS REAL) AS account_equity_usdt
+                    FROM {table_name}
+                    WHERE {ts_column} >= ?
+                      AND account_equity_usdt IS NOT NULL
+                      AND account_equity_usdt != ''
+                    """
+                )
+                params.append(int(since_ms))
+            if not union_queries:
+                return []
+            rows = conn.execute(
+                f"""
+                SELECT recorded_at, AVG(account_equity_usdt) AS account_equity_usdt
+                FROM ({' UNION ALL '.join(union_queries)})
+                WHERE account_equity_usdt IS NOT NULL
+                GROUP BY recorded_at
+                ORDER BY recorded_at ASC
+                """,
+                tuple(params),
+            ).fetchall()
+            return rows
+    except sqlite3.OperationalError:
+        return []
+
+
 @app.get("/")
 def index():
     return "<a href='/safety/abnormal-wicks'>abnormal wick events</a>"
@@ -140,6 +191,7 @@ def abnormal_wicks():
     trading_trade_records = trading_experiment.recent_trade_records(limit=100, since_ms=trading_records_since_ms)
     trading_position_snapshots = trading_experiment.latest_position_snapshots(limit=100)
     trading_error_records = trading_experiment.recent_error_records(limit=100, since_ms=trading_records_since_ms)
+    trading_equity_trend_rows = _experiment_equity_trend_rows(trading_records_since_ms)
     holding_scoring = HoldingPositionScoringSystem(db_path=DB_PATH)
     holding_stop_loss_round_ts, holding_stop_loss_checks = holding_scoring.get_latest_round_checks()
     holding_stop_loss_records = holding_scoring.recent_stop_loss_records(limit=100)
@@ -250,6 +302,7 @@ def abnormal_wicks():
         trading_trade_records=trading_trade_records,
         trading_position_snapshots=trading_position_snapshots,
         trading_error_records=trading_error_records,
+        trading_equity_trend_rows=trading_equity_trend_rows,
         holding_stop_loss_round_ts=holding_stop_loss_round_ts,
         holding_stop_loss_checks=holding_stop_loss_checks,
         holding_stop_loss_records=holding_stop_loss_records,
