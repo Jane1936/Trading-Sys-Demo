@@ -17,6 +17,7 @@ from decimal import Decimal
 from typing import Any, Iterable
 
 from binance_account_manager import BinanceAccountManager
+from trading_experiment import TradingExperiment
 
 
 @dataclass(frozen=True)
@@ -212,7 +213,8 @@ class HoldingPositionScoringSystem:
         if cancel_reason:
             reason = f"{reason}; {cancel_reason}"
         try:
-            response = self.account_manager._signed_post(
+            helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
+            response = helper._signed_post_order_with_ioc_retry(
                 "/fapi/v1/order",
                 {
                     "symbol": exchange_symbol,

@@ -363,6 +363,51 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(order_params["quantity"], "497")
         self.assertEqual(stop_loss_params["triggerPrice"], "0.979879")
 
+    def test_percent_price_market_rejection_retries_as_limit_ioc_with_one_percent_slippage(self):
+        class PercentPriceRetryAccountManager(FakeAccountManager):
+            def _signed_post(self, endpoint, params=None):
+                self.signed_posts.append((endpoint, dict(params or {})))
+                if len(self.signed_posts) == 1:
+                    raise RuntimeError('HTTPError response_body={"code":-4131,"msg":"PERCENT_PRICE"}')
+                return {"orderId": 222}
+
+        fake_account = PercentPriceRetryAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+            )
+            response = experiment._signed_post_order_with_ioc_retry(
+                "/fapi/v1/order",
+                {
+                    "symbol": "BANKUSDT",
+                    "side": "SELL",
+                    "type": "MARKET",
+                    "quantity": "3",
+                    "reduceOnly": "true",
+                    "newOrderRespType": "RESULT",
+                },
+            )
+
+        self.assertEqual(response["orderId"], 222)
+        self.assertEqual(fake_account.signed_posts[0][1]["type"], "MARKET")
+        self.assertEqual(
+            fake_account.signed_posts[1],
+            (
+                "/fapi/v1/order",
+                {
+                    "symbol": "BANKUSDT",
+                    "side": "SELL",
+                    "quantity": "3",
+                    "reduceOnly": "true",
+                    "newOrderRespType": "RESULT",
+                    "type": "LIMIT",
+                    "timeInForce": "IOC",
+                    "price": "0.99",
+                },
+            ),
+        )
+
     def test_recent_trade_records_only_returns_opened_rows(self):
         fake_account = FakeAccountManager()
         with tempfile.TemporaryDirectory() as tmpdir:

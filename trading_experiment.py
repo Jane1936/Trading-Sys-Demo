@@ -34,6 +34,7 @@ class ExperimentConfig:
     max_stop_loss_pct: Decimal = Decimal("0.10")
     exit_order_missing_position_retries: int = 3
     exit_order_missing_position_retry_delay_seconds: Decimal = Decimal("0.5")
+    percent_price_ioc_slippage: Decimal = Decimal("0.01")
 
 
 @dataclass(frozen=True)
@@ -430,7 +431,7 @@ class TradingExperiment:
             return {"status": "skipped"}
 
         self.account_manager._signed_post("/fapi/v1/leverage", {"symbol": trading_symbol, "leverage": leverage})
-        market_order = self.account_manager._signed_post(
+        market_order = self._signed_post_order_with_ioc_retry(
             "/fapi/v1/order",
             {
                 "symbol": trading_symbol,
@@ -439,6 +440,7 @@ class TradingExperiment:
                 "quantity": self._fmt_decimal(quantity),
                 "newOrderRespType": "RESULT",
             },
+            tick_size=exchange_info["tick_size"],
         )
 
         entry_price = self._filled_entry_price(market_order, pre_order_price)
@@ -517,6 +519,89 @@ class TradingExperiment:
         )
         return {"status": "opened", "required_margin": self._fmt_decimal(required_margin)}
 
+    def _signed_post_order_with_ioc_retry(
+        self,
+        endpoint: str,
+        params: dict[str, Any],
+        trading_symbol: str | None = None,
+        tick_size: Decimal | None = None,
+    ) -> dict[str, Any]:
+        """Submit an order and retry Binance -4131 MARKET rejections as LIMIT IOC.
+
+        Binance can reject MARKET orders with -4131 when the counterparty best
+        price violates the PERCENT_PRICE filter.  The retry keeps the original
+        side/quantity/reduceOnly flags, changes the order to LIMIT IOC, and caps
+        the limit price at 1% slippage from the latest observed price.
+        """
+        try:
+            response = self.account_manager._signed_post(endpoint, params)
+        except Exception as exc:
+            if not self._should_retry_percent_price_as_ioc(endpoint, params, exc):
+                raise
+            retry_params = self._limit_ioc_retry_params(
+                params,
+                trading_symbol=trading_symbol,
+                tick_size=tick_size,
+            )
+            try:
+                return self.account_manager._signed_post("/fapi/v1/order", retry_params)
+            except Exception as retry_exc:
+                raise RuntimeError(
+                    f"percent_price_ioc_retry_failed: original={exc}; "
+                    f"retry={retry_exc}; retry_params={retry_params}"
+                ) from retry_exc
+        return response if isinstance(response, dict) else {"raw_response": response}
+
+    def _limit_ioc_retry_params(
+        self,
+        params: dict[str, Any],
+        trading_symbol: str | None = None,
+        tick_size: Decimal | None = None,
+    ) -> dict[str, Any]:
+        symbol = str(trading_symbol or params.get("symbol") or "").upper()
+        side = str(params.get("side") or "").upper()
+        price = self._latest_price(symbol)
+        if tick_size is None:
+            tick_size = self._exchange_symbol_info(symbol)["tick_size"]
+        if side == "BUY":
+            limit_price = self._ceil_to_tick(
+                price * (Decimal("1") + self.config.percent_price_ioc_slippage),
+                tick_size,
+            )
+        else:
+            limit_price = self._floor_to_tick(
+                price * (Decimal("1") - self.config.percent_price_ioc_slippage),
+                tick_size,
+            )
+            if limit_price <= 0:
+                limit_price = tick_size
+        retry_params = {
+            key: value
+            for key, value in params.items()
+            if key not in {"type", "stopPrice", "triggerPrice", "closePosition", "workingType", "priceProtect"}
+        }
+        retry_params.update(
+            {
+                "symbol": symbol,
+                "side": side,
+                "type": "LIMIT",
+                "timeInForce": "IOC",
+                "price": self._fmt_decimal(limit_price),
+                "newOrderRespType": params.get("newOrderRespType", "RESULT"),
+            }
+        )
+        return retry_params
+
+    @staticmethod
+    def _should_retry_percent_price_as_ioc(endpoint: str, params: dict[str, Any], exc: Exception) -> bool:
+        message = str(exc)
+        return (
+            endpoint == "/fapi/v1/order"
+            and str(params.get("type", "")).upper() == "MARKET"
+            and bool(params.get("quantity"))
+            and ("-4131" in message or "PERCENT_PRICE" in message)
+        )
+
     def _wait_for_open_position(self, candidate: OpenableSymbol, trading_symbol: str) -> Decimal:
         max_attempts = max(1, int(self.config.exit_order_missing_position_retries) + 1)
         last_exc: Exception | None = None
@@ -555,7 +640,7 @@ class TradingExperiment:
         last_exc: Exception | None = None
         for attempt in range(1, max_attempts + 1):
             try:
-                return self.account_manager._signed_post(endpoint, request_params)
+                return self._signed_post_order_with_ioc_retry(endpoint, request_params, trading_symbol=trading_symbol)
             except Exception as exc:
                 last_exc = exc
                 if not self._is_missing_position_for_close_position_error(exc) or attempt >= max_attempts:
