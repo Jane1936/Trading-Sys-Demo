@@ -190,7 +190,7 @@
       </div>
     </form>
   </div>
-  <div class="tip">时间字段均已转换为日期格式（UTC）。建议结合浏览器自动刷新或手动 F5 查看最新数据。</div>
+  <div class="tip">时间字段均已转换为日期格式（UTC）。异常插针记录最多只显示近7天数据；建议结合浏览器自动刷新或手动 F5 查看最新数据。</div>
 
   <div class="table-wrap">
   <table>
@@ -240,10 +240,10 @@
   <section id="tab-btc" class="panel {{ 'active' if active_tab == 'tab-btc' else '' }}">
   <div class="card" style="margin-top:16px;">
     <div class="header"><h2>BTC 5分钟K线</h2></div>
-    <div class="tip">仅展示最近7天数据。红涨绿跌（close >= open 为红色，close &lt; open 为绿色），按开盘时间倒序展示，每页最多24条。</div>
+    <div class="tip">仅展示最近3天数据。红涨绿跌（close >= open 为红色，close &lt; open 为绿色），按开盘时间倒序展示，每页最多24条。</div>
     <div class="chart-wrap">
       <div class="chart-meta">
-        <span>图表展示最近7天完整5分钟K线（约2016根）。</span>
+        <span>图表展示最近3天完整5分钟K线（约864根）。</span>
         <span>下方表格仍按每页24条分页显示。</span>
       </div>
       <div id="btc-kline-chart"></div>
@@ -286,7 +286,7 @@
         <a class="btn btn-secondary" href="/safety/abnormal-wicks?limit={{ limit }}&symbol={{ selected_symbol|urlencode }}&btc_page={{ btc_page - 1 if btc_page > 1 else 1 }}">上一页</a>
         <a class="btn btn-secondary" href="/safety/abnormal-wicks?limit={{ limit }}&symbol={{ selected_symbol|urlencode }}&btc_page={{ btc_page + 1 if btc_page < btc_total_pages else btc_total_pages }}">下一页</a>
       </div>
-      <div class="pager-info">第 {{ btc_page }} / {{ btc_total_pages }} 页，共 {{ btc_total_rows }} 条（最近7天）</div>
+      <div class="pager-info">第 {{ btc_page }} / {{ btc_total_pages }} 页，共 {{ btc_total_rows }} 条（最近3天）</div>
     </div>
   </div>
   </section>

@@ -1,4 +1,11 @@
+import sqlite3
+import sys
+import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from pre_safety_module import PreSafetyModule
 
 
 def test_trading_position_snapshots_render_after_trade_records():
@@ -21,3 +28,43 @@ def test_experiment_equity_trend_chart_renders_under_equity_metric():
     assert equity_metric_index < trend_chart_index < trade_records_index
     assert "每15分钟自动刷新" in template
     assert "experiment-equity-trend-chart" in template
+
+
+def _insert_abnormal_wick_event(conn, symbol, detected_at):
+    conn.execute(
+        """
+        INSERT INTO abnormal_wick_events (
+            symbol, decision_round_ts, candle_index,
+            first_candle_open_time, first_candle_close_time,
+            open, high, low, close,
+            cond1_ratio, cond2_ratio, detected_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (symbol, detected_at, 1, detected_at - 300000, detected_at, 1, 2, 0.9, 1.1, 0.7, 0.1, detected_at),
+    )
+
+
+def test_abnormal_wick_recent_event_queries_support_since_filter():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        module = PreSafetyModule(db_path=db_path)
+        module.init_table()
+        with sqlite3.connect(db_path) as conn:
+            _insert_abnormal_wick_event(conn, "OLD", 1_000)
+            _insert_abnormal_wick_event(conn, "NEW", 10_000)
+
+        recent_events = module.get_recent_events(limit=10, since_ms=5_000)
+        recent_symbols = module.get_event_symbols(since_ms=5_000)
+        old_symbol_events = module.get_recent_events_by_symbol("OLD", limit=10, since_ms=5_000)
+
+    assert [event.symbol for event in recent_events] == ["NEW"]
+    assert recent_symbols == ["NEW"]
+    assert old_symbol_events == []
+
+
+def test_abnormal_wicks_template_mentions_recent_limits():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    assert "异常插针记录最多只显示近7天数据" in template
+    assert "仅展示最近3天数据" in template
+    assert "图表展示最近3天完整5分钟K线（约864根）" in template
