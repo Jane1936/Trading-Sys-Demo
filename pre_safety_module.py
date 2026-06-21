@@ -254,10 +254,12 @@ class PreSafetyModule:
                 ),
             )
 
-    def get_recent_events(self, limit: int = 50) -> List[AbnormalWickEvent]:
+    def get_recent_events(self, limit: int = 50, since_ms: Optional[int] = None) -> List[AbnormalWickEvent]:
+        where_clause = "" if since_ms is None else "WHERE detected_at >= ?"
+        params = (limit,) if since_ms is None else (int(since_ms), limit)
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT symbol, decision_round_ts,
                        candle_index,
                        first_candle_open_time, first_candle_close_time,
@@ -265,10 +267,11 @@ class PreSafetyModule:
                        cond1_ratio, cond2_ratio,
                        detected_at
                 FROM abnormal_wick_events
+                {where_clause}
                 ORDER BY detected_at DESC
                 LIMIT ?
                 """,
-                (limit,),
+                params,
             ).fetchall()
 
         return [
@@ -289,10 +292,14 @@ class PreSafetyModule:
             for row in rows
         ]
 
-    def get_recent_events_by_symbol(self, symbol: str, limit: int = 50) -> List[AbnormalWickEvent]:
+    def get_recent_events_by_symbol(
+        self, symbol: str, limit: int = 50, since_ms: Optional[int] = None
+    ) -> List[AbnormalWickEvent]:
+        time_clause = "" if since_ms is None else "AND detected_at >= ?"
+        params = (symbol, limit) if since_ms is None else (symbol, int(since_ms), limit)
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT symbol, decision_round_ts,
                        candle_index,
                        first_candle_open_time, first_candle_close_time,
@@ -301,10 +308,11 @@ class PreSafetyModule:
                        detected_at
                 FROM abnormal_wick_events
                 WHERE symbol = ?
+                {time_clause}
                 ORDER BY detected_at DESC
                 LIMIT ?
                 """,
-                (symbol, limit),
+                params,
             ).fetchall()
 
         return [
@@ -325,14 +333,18 @@ class PreSafetyModule:
             for row in rows
         ]
 
-    def get_event_symbols(self) -> List[str]:
+    def get_event_symbols(self, since_ms: Optional[int] = None) -> List[str]:
+        where_clause = "" if since_ms is None else "WHERE detected_at >= ?"
+        params = () if since_ms is None else (int(since_ms),)
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT DISTINCT symbol
                 FROM abnormal_wick_events
+                {where_clause}
                 ORDER BY symbol ASC
-                """
+                """,
+                params,
             ).fetchall()
         return [str(row["symbol"]) for row in rows]
 

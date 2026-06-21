@@ -147,10 +147,15 @@ def abnormal_wicks():
 
     module = PreSafetyModule(db_path=DB_PATH)
     module.init_table()
+    abnormal_events_since_ms = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp() * 1000)
     cooldown = CooldownModule(db_path=DB_PATH)
     cooldown.init_table()
-    events = module.get_recent_events_by_symbol(symbol=symbol, limit=limit) if symbol else module.get_recent_events(limit=limit)
-    symbols = module.get_event_symbols()
+    events = (
+        module.get_recent_events_by_symbol(symbol=symbol, limit=limit, since_ms=abnormal_events_since_ms)
+        if symbol
+        else module.get_recent_events(limit=limit, since_ms=abnormal_events_since_ms)
+    )
+    symbols = module.get_event_symbols(since_ms=abnormal_events_since_ms)
     current_round_ts = module._decision_round_ts_ms()
     latest_round_ts, latest_round_symbols = module.get_latest_round_abnormal_symbols(decision_round_ts=current_round_ts)
     cooldown_round_ts, cooldown_symbols = cooldown.get_latest_round_symbols(decision_round_ts=current_round_ts)
@@ -209,7 +214,7 @@ def abnormal_wicks():
     btc_5m_rows = []
     btc_chart_rows = []
     btc_total_rows = 0
-    seven_days_ago_ms = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp() * 1000)
+    btc_chart_since_ms = int((datetime.now(timezone.utc) - timedelta(days=3)).timestamp() * 1000)
     try:
         with sqlite3.connect(DB_PATH, timeout=30) as conn:
             btc_total_rows = conn.execute(
@@ -218,7 +223,7 @@ def abnormal_wicks():
                 FROM {collector.BTC_5M_TABLE}
                 WHERE open_time >= ?
                 """,
-                (seven_days_ago_ms,),
+                (btc_chart_since_ms,),
             ).fetchone()[0]
             btc_total_pages = max(1, (btc_total_rows + btc_page_size - 1) // btc_page_size)
             btc_page = min(btc_page, btc_total_pages)
@@ -231,7 +236,7 @@ def abnormal_wicks():
                 ORDER BY open_time DESC
                 LIMIT ? OFFSET ?
                 """,
-                (seven_days_ago_ms, btc_page_size, btc_offset),
+                (btc_chart_since_ms, btc_page_size, btc_offset),
             ).fetchall()
             btc_chart_rows = conn.execute(
                 f"""
@@ -240,7 +245,7 @@ def abnormal_wicks():
                 WHERE open_time >= ?
                 ORDER BY open_time DESC
                 """,
-                (seven_days_ago_ms,),
+                (btc_chart_since_ms,),
             ).fetchall()
     except sqlite3.OperationalError:
         # table may not exist before collector.init_db() first run
