@@ -81,6 +81,8 @@ class ExperimentPositionSnapshot:
     leverage: str
     notional: str
     liquidation_price: str
+    opened_at: int | None
+    holding_hours: str
     updated_at: int
 
 
@@ -335,9 +337,18 @@ class TradingExperiment:
                 return []
             rows = conn.execute(
                 f"""
-                SELECT * FROM {self.POSITIONS_TABLE}
-                WHERE updated_at = ?
-                ORDER BY ABS(CAST(position_amt AS REAL)) DESC, symbol ASC
+                SELECT
+                    p.*,
+                    (
+                        SELECT MAX(t.created_at)
+                        FROM {self.TRADES_TABLE} AS t
+                        WHERE t.status = 'opened'
+                          AND UPPER(t.symbol) = UPPER(p.symbol)
+                          AND t.created_at <= p.updated_at
+                    ) AS opened_at
+                FROM {self.POSITIONS_TABLE} AS p
+                WHERE p.updated_at = ?
+                ORDER BY ABS(CAST(p.position_amt AS REAL)) DESC, p.symbol ASC
                 LIMIT ?
                 """,
                 (latest_ts, int(limit)),
@@ -900,6 +911,12 @@ class TradingExperiment:
 
     @staticmethod
     def _position_from_row(row: sqlite3.Row) -> ExperimentPositionSnapshot:
+        opened_at = int(row["opened_at"]) if "opened_at" in row.keys() and row["opened_at"] is not None else None
+        updated_at = int(row["updated_at"])
+        holding_hours = "-"
+        if opened_at is not None:
+            elapsed_ms = max(0, int(time.time() * 1000) - opened_at)
+            holding_hours = f"{elapsed_ms / 3_600_000:.2f}"
         return ExperimentPositionSnapshot(
             id=int(row["id"]),
             symbol=str(row["symbol"]),
@@ -910,7 +927,9 @@ class TradingExperiment:
             leverage=str(row["leverage"]),
             notional=str(row["notional"]),
             liquidation_price=str(row["liquidation_price"]),
-            updated_at=int(row["updated_at"]),
+            opened_at=opened_at,
+            holding_hours=holding_hours,
+            updated_at=updated_at,
         )
 
     @staticmethod

@@ -76,6 +76,8 @@
     .leverage-mid { background:#ecfdf5; color:#047857; border-color:#6ee7b7; }
     .leverage-high { background:#fff7ed; color:#c2410c; border-color:#fdba74; }
     .leverage-very-high { background:linear-gradient(135deg, #f97316 0%, #dc2626 100%); color:#fff; border-color:#ef4444; box-shadow:0 5px 14px rgba(220, 38, 38, 0.22); }
+    .holding-hours-cell { background: linear-gradient(135deg, #fef3c7 0%, #fed7aa 100%); color: #9a3412; font-weight: 900; border-left: 3px solid #f97316; border-right: 3px solid #f97316; box-shadow: inset 0 0 0 1px rgba(249, 115, 22, 0.18); }
+    .holding-hours-badge { display:inline-flex; align-items:center; gap:4px; padding:5px 11px; border-radius:999px; background:#fff7ed; border:1px solid #fdba74; color:#c2410c; font-weight:900; }
     .score-tab-group { display:flex; gap:8px; flex-wrap:wrap; width:100%; margin-top:8px; align-items:stretch; }
     .score-tab-group-label { display:inline-flex; align-items:center; justify-content:center; min-width:128px; min-height:38px; box-sizing:border-box; text-align:center; font-size:12px; font-weight:700; padding:8px 14px; border:1px solid transparent; border-radius:12px; box-shadow:0 2px 8px rgba(17, 24, 39, 0.06); }
     .score-tab-group.trend .score-tab-group-label { background:#dbeafe; color:#1e3a8a; border-color:#93c5fd; }
@@ -1207,6 +1209,8 @@
                 <th>symbol</th>
                 <th>position_amt</th>
                 <th>entry_price</th>
+                <th>持仓时长(小时)</th>
+                <th>开仓时间</th>
                 <th>mark_price</th>
                 <th>unrealized_pnl</th>
                 <th>leverage</th>
@@ -1221,6 +1225,8 @@
                 <td>{{ row.symbol }}</td>
                 <td>{{ row.position_amt }}</td>
                 <td>{{ row.entry_price }}</td>
+                <td class="holding-hours-cell"><span class="holding-hours-badge">⏱ {{ row.holding_hours }}</span></td>
+                <td>{{ row.opened_at|fmt_ms_datetime if row.opened_at else '-' }}</td>
                 <td>{{ row.mark_price }}</td>
                 <td>{{ row.unrealized_pnl }}</td>
                 <td>{{ row.leverage if row.leverage else '-' }}</td>
@@ -1229,7 +1235,7 @@
                 <td>{{ row.updated_at|fmt_ms_datetime }}</td>
               </tr>
               {% else %}
-              <tr><td class="empty" colspan="9">暂无交易实验持仓快照；执行实验后显示数据</td></tr>
+              <tr><td class="empty" colspan="11">暂无交易实验持仓快照；执行实验后显示数据</td></tr>
               {% endfor %}
             </tbody>
           </table>
