@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 
 from flask import Flask, jsonify, render_template, request
@@ -113,7 +114,7 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
     if _table_exists(conn, HoldingPositionScoringSystem.RECORDS_TABLE):
         rows = conn.execute(
             f"""
-            SELECT created_at AS matched_at, quantity, reason
+            SELECT created_at AS matched_at, quantity
             FROM {HoldingPositionScoringSystem.RECORDS_TABLE}
             WHERE symbol = ?
               AND side = 'SELL'
@@ -124,13 +125,13 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
         ).fetchall()
         for row in rows:
             if _decimal_text_equal(row["quantity"], quantity):
-                matches.append({"type": "止损", "reason": str(row["reason"] or ""), "matched_at": str(row["matched_at"] or "")})
+                matches.append({"type": "结构止损", "matched_at": str(row["matched_at"] or "")})
                 break
 
     if _table_exists(conn, PartialTakeProfitStrategy.RECORDS_TABLE):
         rows = conn.execute(
             f"""
-            SELECT checked_at AS matched_at, take_profit_quantity, reason
+            SELECT checked_at AS matched_at, take_profit_quantity
             FROM {PartialTakeProfitStrategy.RECORDS_TABLE}
             WHERE symbol = ?
               AND side = 'SELL'
@@ -141,9 +142,27 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
         ).fetchall()
         for row in rows:
             if _decimal_text_equal(row["take_profit_quantity"], quantity):
-                matches.append({"type": "分批止盈", "reason": str(row["reason"] or ""), "matched_at": str(row["matched_at"] or "")})
+                matches.append({"type": "分批止盈", "matched_at": str(row["matched_at"] or "")})
                 break
     return matches
+
+
+def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) -> str:
+    """Return the UI label for a filled order's take-profit / stop-loss reason."""
+    if str(order.get("side", "")).upper() != "SELL":
+        return ""
+
+    match_types = {match.get("type", "") for match in matches}
+    if "结构止损" in match_types:
+        return "结构止损"
+    if "分批止盈" in match_types:
+        return "分批止盈"
+
+    try:
+        realized_pnl = Decimal(str(order.get("realized_pnl", "0") or "0"))
+    except Exception:
+        realized_pnl = Decimal("0")
+    return "硬止盈" if realized_pnl > 0 else "硬止损"
 
 
 def _annotate_filled_order_exit_reasons(payload: dict) -> dict:
@@ -157,16 +176,14 @@ def _annotate_filled_order_exit_reasons(payload: dict) -> dict:
                 if not isinstance(order, dict):
                     continue
                 matches = _filled_order_exit_reason_matches(conn, order)
-                order["exit_reason"] = "；".join(
-                    f"{match['type']}：{match['reason']}" if match["reason"] else match["type"]
-                    for match in matches
-                )
+                order["exit_reason"] = _filled_order_exit_reason_label(order, matches)
                 order["exit_reason_matches"] = matches
     except sqlite3.OperationalError:
         for order in orders:
             if isinstance(order, dict):
-                order.setdefault("exit_reason", "")
-                order.setdefault("exit_reason_matches", [])
+                matches = []
+                order.setdefault("exit_reason_matches", matches)
+                order["exit_reason"] = _filled_order_exit_reason_label(order, matches)
     return payload
 
 @app.get("/")
