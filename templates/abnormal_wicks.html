@@ -98,6 +98,7 @@
     .score-total-tab.active { background:linear-gradient(135deg, #ea580c 0%, #dc2626 100%); border-color:#dc2626; color:#fff; }
     .status-badge { display:inline-flex; align-items:center; justify-content:center; min-width:42px; padding:3px 8px; border-radius:999px; font-size:12px; font-weight:700; }
     .status-pass { background:#dcfce7; color:#166534; border:1px solid #86efac; }
+    .status-ok { background:#dbeafe; color:#1d4ed8; border:1px solid #93c5fd; }
     .status-fail { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
     .tier-badge { display:inline-flex; align-items:center; justify-content:center; min-width:38px; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:800; border:1px solid transparent; }
     .tier-a { background:#dcfce7; color:#166534; border-color:#86efac; }
@@ -115,6 +116,13 @@
     .pnl-positive { color:#ef4444; font-weight:900; background:#fee2e2; border-radius:999px; padding:3px 8px; }
     .pnl-negative { color:#16a34a; font-weight:900; background:#dcfce7; border-radius:999px; padding:3px 8px; }
     .pnl-zero { color:#64748b; font-weight:800; background:#f1f5f9; border-radius:999px; padding:3px 8px; }
+    .filled-orders-wrap { max-height: calc(100vh - 310px); min-height: 240px; overflow: auto; }
+    .filled-orders-wrap th { z-index: 3; box-shadow: 0 2px 0 #fecdd3, 0 8px 14px rgba(225, 29, 72, 0.10); }
+    .filled-order-row { cursor: pointer; transition: background .12s ease, box-shadow .12s ease; }
+    .filled-order-row.is-linked { background: #fff7ed; box-shadow: inset 4px 0 0 #f97316; }
+    .filled-order-row.is-linked:hover { background: #ffedd5; }
+    .filled-order-row.is-active { background: #fee2e2; box-shadow: inset 4px 0 0 #dc2626, inset 0 0 0 9999px rgba(254, 226, 226, 0.28); }
+    .filled-order-group-badge { display:inline-flex; align-items:center; justify-content:center; min-width:28px; margin-left:6px; padding:2px 7px; border-radius:999px; background:#ffedd5; color:#c2410c; border:1px solid #fdba74; font-size:11px; font-weight:800; }
     .bookmark-tab.account-info-tab { color:#7c2d12; background:linear-gradient(135deg, #fffbeb 0%, #fed7aa 100%); border-color:#fb923c; box-shadow:0 -2px 12px rgba(249, 115, 22, 0.16); }
     .bookmark-tab.account-info-tab::before { content:"●"; color:#f97316; margin-right:7px; font-size:11px; vertical-align:middle; }
     .bookmark-tab.account-info-tab.active { color:#ffffff; background:linear-gradient(135deg, #f97316 0%, #dc2626 100%); border-color:#ea580c; box-shadow:0 -5px 18px rgba(249, 115, 22, 0.28); }
@@ -1094,7 +1102,7 @@
         </div>
         <div id="filled-sell-orders-error" class="account-error"></div>
         <div class="tip">数据来自 Binance USDⓈ-M Futures <code>userTrades</code> 成交明细；同一 symbol、同一成交时间、同一方向的多笔成交会合并为一行；成交价格为按成交额/成交数量计算的均价。</div>
-        <div class="table-wrap">
+        <div class="table-wrap filled-orders-wrap">
           <table>
             <thead>
               <tr>
@@ -1600,6 +1608,58 @@
       if (status && isLoading) status.textContent = '正在请求 Binance REST API...';
     }
 
+    function buildFilledOrderGroups(orders) {
+      const groupByRow = new Map();
+      const openGroupsBySymbol = new Map();
+      let nextGroupId = 1;
+      const ordered = orders
+        .map((row, index) => ({ ...row, index, numericTime: Number(row.time) || 0, numericQty: Math.abs(Number(row.quantity) || 0) }))
+        .sort((a, b) => a.numericTime - b.numericTime || a.index - b.index);
+
+      const appendGroup = (rowIndex, groupId) => {
+        if (!groupByRow.has(rowIndex)) groupByRow.set(rowIndex, new Set());
+        groupByRow.get(rowIndex).add(groupId);
+      };
+
+      ordered.forEach((row) => {
+        const symbol = row.symbol || '';
+        if (!openGroupsBySymbol.has(symbol)) openGroupsBySymbol.set(symbol, []);
+        const openGroups = openGroupsBySymbol.get(symbol);
+        if (row.side === 'BUY') {
+          const groupId = nextGroupId++;
+          openGroups.push({ groupId, remainingQty: row.numericQty });
+          appendGroup(row.index, groupId);
+          return;
+        }
+        if (row.side !== 'SELL') return;
+        let remainingSellQty = row.numericQty;
+        while (remainingSellQty > 0 && openGroups.length) {
+          const group = openGroups[0];
+          const matchedQty = Math.min(remainingSellQty, group.remainingQty);
+          appendGroup(row.index, group.groupId);
+          group.remainingQty -= matchedQty;
+          remainingSellQty -= matchedQty;
+          if (group.remainingQty <= 1e-12) openGroups.shift();
+        }
+      });
+
+      return orders.map((_, index) => Array.from(groupByRow.get(index) || []));
+    }
+
+    function bindFilledOrderHighlights(rowsEl) {
+      rowsEl.querySelectorAll('.filled-order-row').forEach((rowEl) => {
+        rowEl.addEventListener('click', () => {
+          const selectedGroups = (rowEl.dataset.groupIds || '').split(',').filter(Boolean);
+          rowsEl.querySelectorAll('.filled-order-row').forEach((candidate) => {
+            const candidateGroups = (candidate.dataset.groupIds || '').split(',').filter(Boolean);
+            const isLinked = selectedGroups.length && candidateGroups.some(groupId => selectedGroups.includes(groupId));
+            candidate.classList.toggle('is-linked', isLinked);
+            candidate.classList.toggle('is-active', candidate === rowEl);
+          });
+        });
+      });
+    }
+
     function renderFilledSellOrders(payload) {
       const rowsEl = document.getElementById('filled-sell-orders-rows');
       const statusEl = document.getElementById('filled-sell-orders-status');
@@ -1620,10 +1680,14 @@
         rowsEl.innerHTML = '<tr><td class="empty" colspan="11">最近7天暂无已成交订单</td></tr>';
         return;
       }
-      rowsEl.innerHTML = orders.map(row => `
-        <tr>
+      const groupsByRow = buildFilledOrderGroups(orders);
+      rowsEl.innerHTML = orders.map((row, index) => {
+        const groupIds = groupsByRow[index];
+        const groupLabel = groupIds.length ? `<span class="filled-order-group-badge">组${escapeHtml(groupIds.join('/'))}</span>` : '';
+        return `
+        <tr class="filled-order-row" data-group-ids="${escapeHtml(groupIds.join(','))}" title="点击高亮同一 symbol 同一组买卖订单">
           <td>${formatMsDatetime(row.time)}</td>
-          <td>${escapeHtml(row.symbol)}</td>
+          <td>${escapeHtml(row.symbol)}${groupLabel}</td>
           <td><span class="status-badge ${row.side === 'BUY' ? 'status-ok' : 'status-fail'}">${escapeHtml(row.side || '-')}</span></td>
           <td>${escapeHtml(row.order_id)}</td>
           <td>${escapeHtml(row.price)}</td>
@@ -1633,8 +1697,9 @@
           <td>${escapeHtml(row.commission || '0')} ${escapeHtml(row.commission_asset || '')}</td>
           <td>${row.maker ? '是' : '否'}</td>
           <td>${escapeHtml(row.trade_id)}</td>
-        </tr>
-      `).join('');
+        </tr>`;
+      }).join('');
+      bindFilledOrderHighlights(rowsEl);
     }
 
     function renderFilledSellOrdersError(message) {
