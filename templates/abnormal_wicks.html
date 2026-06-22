@@ -1128,6 +1128,18 @@
             <div class="account-metric-label">亏损订单总数</div>
             <div id="filled-loss-count" class="account-metric-value">-</div>
           </div>
+          <div class="account-metric">
+            <div class="account-metric-label">已完成订单平均盈利</div>
+            <div id="filled-average-profit" class="account-metric-value pnl-zero">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">已完成订单平均亏损</div>
+            <div id="filled-average-loss" class="account-metric-value pnl-zero">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">已完成订单盈亏比</div>
+            <div id="filled-profit-loss-ratio" class="account-metric-value">-</div>
+          </div>
         </div>
         <div class="table-wrap filled-orders-wrap">
           <table>
@@ -1685,14 +1697,22 @@
       const completedGroups = Array.from(groups.values()).filter(group => group.buyQty > 0 && Math.abs(group.buyQty - group.sellQty) <= 1e-8);
       const totalProfit = completedGroups.reduce((total, group) => total + Math.max(group.realizedPnl, 0), 0);
       const totalLoss = completedGroups.reduce((total, group) => total + Math.min(group.realizedPnl, 0), 0);
+      const profitCount = completedGroups.filter(group => group.realizedPnl > 0).length;
+      const lossCount = completedGroups.filter(group => group.realizedPnl < 0).length;
+      const averageProfit = profitCount ? totalProfit / profitCount : 0;
+      const averageLoss = lossCount ? totalLoss / lossCount : 0;
+      const profitLossRatio = Math.abs(averageLoss) > 0 ? averageProfit / Math.abs(averageLoss) : 0;
       return {
         rowGroups,
         summary: {
           completedCount: completedGroups.length,
           totalProfit,
-          profitCount: completedGroups.filter(group => group.realizedPnl > 0).length,
+          profitCount,
           totalLoss,
-          lossCount: completedGroups.filter(group => group.realizedPnl < 0).length,
+          lossCount,
+          averageProfit,
+          averageLoss,
+          profitLossRatio,
         },
       };
     }
@@ -1721,6 +1741,9 @@
       setText('filled-profit-count', String(summary?.profitCount ?? 0));
       setPnl('filled-total-loss', summary?.totalLoss ?? 0);
       setText('filled-loss-count', String(summary?.lossCount ?? 0));
+      setPnl('filled-average-profit', summary?.averageProfit ?? 0);
+      setPnl('filled-average-loss', summary?.averageLoss ?? 0);
+      setText('filled-profit-loss-ratio', formatPnlAmount(summary?.profitLossRatio ?? 0));
     }
 
     function bindFilledOrderHighlights(rowsEl) {
@@ -1755,7 +1778,7 @@
       if (!rowsEl) return;
       if (!orders.length) {
         rowsEl.innerHTML = '<tr><td class="empty" colspan="12">最近7天暂无已成交订单</td></tr>';
-        renderFilledOrdersSummary({ completedCount: 0, totalProfit: 0, profitCount: 0, totalLoss: 0, lossCount: 0 });
+        renderFilledOrdersSummary({ completedCount: 0, totalProfit: 0, profitCount: 0, totalLoss: 0, lossCount: 0, averageProfit: 0, averageLoss: 0, profitLossRatio: 0 });
         return;
       }
       const filledOrderAnalysis = buildFilledOrderAnalysis(orders);
