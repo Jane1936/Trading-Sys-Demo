@@ -185,15 +185,19 @@ class BreakEvenTakeProfitStrategy:
         amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
         entry_price = self._decimal_from(position.get("entryPrice"), Decimal("0"))
         side = "SELL" if amount > 0 else "BUY"
-        old_order_id = self._stop_loss_order_id(current_stop_loss) or self._latest_stop_loss_order_id(symbol)
+        current_stop_loss_order_id = self._stop_loss_order_id(current_stop_loss)
+        db_stop_loss_order_id = self._latest_stop_loss_order_id(symbol)
+        old_order_id = current_stop_loss_order_id or db_stop_loss_order_id
         status = "submitted"
         reason_parts = ["unrealized_pnl_ge_r_move_stop_loss_to_entry"]
         raw_parts: list[str] = []
         try:
-            if old_order_id:
-                cancel_response = self._cancel_stop_loss_order(exchange_symbol, old_order_id, current_stop_loss)
+            if current_stop_loss_order_id:
+                cancel_response = self._cancel_stop_loss_order(exchange_symbol, current_stop_loss_order_id, current_stop_loss)
                 raw_parts.append(str({"cancel_stop_loss": cancel_response}))
                 reason_parts.append("old_stop_loss_cancelled")
+            elif db_stop_loss_order_id:
+                reason_parts.append("db_stop_loss_order_id_not_open_skip_cancel")
             else:
                 reason_parts.append("old_stop_loss_order_id_missing")
             stop_loss_price = stop_loss_price or self._break_even_stop_price(exchange_symbol, entry_price, side)

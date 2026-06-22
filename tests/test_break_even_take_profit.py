@@ -220,7 +220,7 @@ def test_break_even_strategy_does_not_retry_algo_stop_loss_cancel_as_regular_ord
     assert "break_even_stop_loss_failed" in records[0].reason
 
 
-def test_break_even_strategy_cancels_db_only_stop_loss_as_algo_without_regular_retry():
+def test_break_even_strategy_skips_stale_db_only_stop_loss_cancel_and_creates_new_stop_loss():
     fake_account = FakeAccountManager()
 
     def signed_get(endpoint, params=None):
@@ -239,12 +239,7 @@ def test_break_even_strategy_cancels_db_only_stop_loss_as_algo_without_regular_r
             return []
         raise AssertionError(f"unexpected signed endpoint {endpoint}")
 
-    def signed_delete(endpoint, params=None):
-        fake_account.signed_deletes.append((endpoint, dict(params or {})))
-        raise RuntimeError("unknown algo order")
-
     fake_account._signed_get = signed_get
-    fake_account._signed_delete = signed_delete
 
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
@@ -269,11 +264,25 @@ def test_break_even_strategy_cancels_db_only_stop_loss_as_algo_without_regular_r
         records = strategy.recent_records()
 
     assert result["triggered"] == 1
-    assert fake_account.signed_deletes == [
-        ("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "1000000106055690"})
+    assert fake_account.signed_deletes == []
+    assert fake_account.signed_posts == [
+        (
+            "/fapi/v1/algoOrder",
+            {
+                "symbol": "BANKUSDT",
+                "side": "SELL",
+                "type": "STOP_MARKET",
+                "closePosition": "true",
+                "workingType": "MARK_PRICE",
+                "triggerPrice": "10",
+                "algoType": "CONDITIONAL",
+            },
+        )
     ]
-    assert fake_account.signed_posts == []
-    assert records[0].status == "failed"
+    assert records[0].status == "submitted"
+    assert records[0].old_stop_loss_order_id == "1000000106055690"
+    assert records[0].new_stop_loss_order_id == "456"
+    assert "db_stop_loss_order_id_not_open_skip_cancel" in records[0].reason
 
 
 def test_break_even_strategy_recognizes_open_algo_order_order_type_field():
