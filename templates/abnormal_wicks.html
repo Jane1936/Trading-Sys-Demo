@@ -123,6 +123,11 @@
     .filled-order-row.is-linked:hover { background: #ffedd5; }
     .filled-order-row.is-active { background: #fee2e2; box-shadow: inset 4px 0 0 #dc2626, inset 0 0 0 9999px rgba(254, 226, 226, 0.28); }
     .filled-order-group-badge { display:inline-flex; align-items:center; justify-content:center; min-width:28px; margin-left:6px; padding:2px 7px; border-radius:999px; background:#ffedd5; color:#c2410c; border:1px solid #fdba74; font-size:11px; font-weight:800; }
+    .filled-orders-summary { display:flex; gap:12px; flex-wrap:wrap; padding:14px 20px; border-top:1px solid #fecdd3; border-bottom:1px solid #fecdd3; background:#fff7f7; }
+    .filled-orders-summary .account-metric { border-color:#fecdd3; min-width:170px; }
+    .filled-orders-summary .account-metric-value.pnl-positive,
+    .filled-orders-summary .account-metric-value.pnl-negative,
+    .filled-orders-summary .account-metric-value.pnl-zero { display:inline-block; font-size:18px; }
     .bookmark-tab.account-info-tab { color:#7c2d12; background:linear-gradient(135deg, #fffbeb 0%, #fed7aa 100%); border-color:#fb923c; box-shadow:0 -2px 12px rgba(249, 115, 22, 0.16); }
     .bookmark-tab.account-info-tab::before { content:"●"; color:#f97316; margin-right:7px; font-size:11px; vertical-align:middle; }
     .bookmark-tab.account-info-tab.active { color:#ffffff; background:linear-gradient(135deg, #f97316 0%, #dc2626 100%); border-color:#ea580c; box-shadow:0 -5px 18px rgba(249, 115, 22, 0.28); }
@@ -1102,6 +1107,28 @@
         </div>
         <div id="filled-sell-orders-error" class="account-error"></div>
         <div class="tip">数据来自 Binance USDⓈ-M Futures <code>userTrades</code> 成交明细；同一 symbol、同一成交时间、同一方向的多笔成交会合并为一行；成交价格为按成交额/成交数量计算的均价。</div>
+        <div id="filled-orders-summary" class="filled-orders-summary" aria-label="已完成订单统计">
+          <div class="account-metric">
+            <div class="account-metric-label">已完成订单数量</div>
+            <div id="filled-completed-count" class="account-metric-value">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">已完成订单总盈利</div>
+            <div id="filled-total-profit" class="account-metric-value pnl-zero">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">盈利订单总数</div>
+            <div id="filled-profit-count" class="account-metric-value">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">已完成订单总亏损</div>
+            <div id="filled-total-loss" class="account-metric-value pnl-zero">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">亏损订单总数</div>
+            <div id="filled-loss-count" class="account-metric-value">-</div>
+          </div>
+        </div>
         <div class="table-wrap filled-orders-wrap">
           <table>
             <thead>
@@ -1607,11 +1634,13 @@
         btn.textContent = isLoading ? '查询中...' : '查询近7天已成交订单';
       }
       if (status && isLoading) status.textContent = '正在请求 Binance REST API...';
+      if (isLoading) renderFilledOrdersSummary(null);
     }
 
-    function buildFilledOrderGroups(orders) {
+    function buildFilledOrderAnalysis(orders) {
       const groupByRow = new Map();
       const openGroupsBySymbol = new Map();
+      const groups = new Map();
       let nextGroupId = 1;
       const ordered = orders
         .map((row, index) => ({ ...row, index, numericTime: Number(row.time) || 0, numericQty: Math.abs(Number(row.quantity) || 0) }))
@@ -1629,22 +1658,69 @@
         if (row.side === 'BUY') {
           const groupId = nextGroupId++;
           openGroups.push({ groupId, remainingQty: row.numericQty });
+          groups.set(groupId, { groupId, symbol, buyQty: row.numericQty, sellQty: 0, realizedPnl: 0 });
           appendGroup(row.index, groupId);
           return;
         }
         if (row.side !== 'SELL') return;
         let remainingSellQty = row.numericQty;
+        const rowPnl = Number(row.realized_pnl) || 0;
         while (remainingSellQty > 0 && openGroups.length) {
           const group = openGroups[0];
           const matchedQty = Math.min(remainingSellQty, group.remainingQty);
+          const groupSummary = groups.get(group.groupId);
           appendGroup(row.index, group.groupId);
+          if (groupSummary) {
+            groupSummary.sellQty += matchedQty;
+            // 同一完成订单组可能包含多笔卖出成交；按组累计这些卖出成交的全部已实现盈亏。
+            groupSummary.realizedPnl += rowPnl;
+          }
           group.remainingQty -= matchedQty;
           remainingSellQty -= matchedQty;
           if (group.remainingQty <= 1e-12) openGroups.shift();
         }
       });
 
-      return orders.map((_, index) => Array.from(groupByRow.get(index) || []));
+      const rowGroups = orders.map((_, index) => Array.from(groupByRow.get(index) || []));
+      const completedGroups = Array.from(groups.values()).filter(group => group.buyQty > 0 && Math.abs(group.buyQty - group.sellQty) <= 1e-8);
+      const totalProfit = completedGroups.reduce((total, group) => total + Math.max(group.realizedPnl, 0), 0);
+      const totalLoss = completedGroups.reduce((total, group) => total + Math.min(group.realizedPnl, 0), 0);
+      return {
+        rowGroups,
+        summary: {
+          completedCount: completedGroups.length,
+          totalProfit,
+          profitCount: completedGroups.filter(group => group.realizedPnl > 0).length,
+          totalLoss,
+          lossCount: completedGroups.filter(group => group.realizedPnl < 0).length,
+        },
+      };
+    }
+
+
+    function formatPnlAmount(value) {
+      const numericValue = Number(value);
+      if (!Number.isFinite(numericValue)) return '0.00000000';
+      return numericValue.toFixed(8).replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+    }
+
+    function renderFilledOrdersSummary(summary) {
+      const setText = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = value;
+      };
+      const setPnl = (id, value) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = formatPnlAmount(value);
+        el.classList.remove('pnl-positive', 'pnl-negative', 'pnl-zero');
+        el.classList.add(pnlClass(value));
+      };
+      setText('filled-completed-count', String(summary?.completedCount ?? 0));
+      setPnl('filled-total-profit', summary?.totalProfit ?? 0);
+      setText('filled-profit-count', String(summary?.profitCount ?? 0));
+      setPnl('filled-total-loss', summary?.totalLoss ?? 0);
+      setText('filled-loss-count', String(summary?.lossCount ?? 0));
     }
 
     function bindFilledOrderHighlights(rowsEl) {
@@ -1679,9 +1755,12 @@
       if (!rowsEl) return;
       if (!orders.length) {
         rowsEl.innerHTML = '<tr><td class="empty" colspan="12">最近7天暂无已成交订单</td></tr>';
+        renderFilledOrdersSummary({ completedCount: 0, totalProfit: 0, profitCount: 0, totalLoss: 0, lossCount: 0 });
         return;
       }
-      const groupsByRow = buildFilledOrderGroups(orders);
+      const filledOrderAnalysis = buildFilledOrderAnalysis(orders);
+      const groupsByRow = filledOrderAnalysis.rowGroups;
+      renderFilledOrdersSummary(filledOrderAnalysis.summary);
       rowsEl.innerHTML = orders.map((row, index) => {
         const groupIds = groupsByRow[index];
         const groupLabel = groupIds.length ? `<span class="filled-order-group-badge">组${escapeHtml(groupIds.join('/'))}</span>` : '';
@@ -1712,6 +1791,7 @@
         errorEl.style.display = 'block';
       }
       if (statusEl) statusEl.textContent = '查询失败';
+      renderFilledOrdersSummary(null);
     }
 
     (function initFilledSellOrdersQuery() {
