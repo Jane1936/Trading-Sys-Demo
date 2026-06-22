@@ -1102,13 +1102,13 @@
                 <th>symbol</th>
                 <th>方向</th>
                 <th>order_id</th>
-                <th>trade_id</th>
                 <th>成交价格</th>
                 <th>成交数量</th>
                 <th>成交额</th>
                 <th>已实现盈亏</th>
                 <th>手续费</th>
                 <th>maker</th>
+                <th>trade_id</th>
               </tr>
             </thead>
             <tbody id="filled-sell-orders-rows">
@@ -1626,13 +1626,13 @@
           <td>${escapeHtml(row.symbol)}</td>
           <td><span class="status-badge ${row.side === 'BUY' ? 'status-ok' : 'status-fail'}">${escapeHtml(row.side || '-')}</span></td>
           <td>${escapeHtml(row.order_id)}</td>
-          <td>${escapeHtml(row.trade_id)}</td>
           <td>${escapeHtml(row.price)}</td>
           <td>${escapeHtml(row.quantity)}</td>
           <td>${escapeHtml(row.quote_quantity)}</td>
           <td><span class="${pnlClass(row.realized_pnl)}">${escapeHtml(row.realized_pnl || '0')}</span></td>
           <td>${escapeHtml(row.commission || '0')} ${escapeHtml(row.commission_asset || '')}</td>
           <td>${row.maker ? '是' : '否'}</td>
+          <td>${escapeHtml(row.trade_id)}</td>
         </tr>
       `).join('');
     }
