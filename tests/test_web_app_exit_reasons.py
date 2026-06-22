@@ -122,3 +122,15 @@ def test_unmatched_filled_sell_order_exit_reason_falls_back_to_realized_pnl(tmp_
     annotated = web_app._annotate_filled_order_exit_reasons(payload)
 
     assert [order["exit_reason"] for order in annotated["orders"]] == ["硬止盈", "硬止损", ""]
+
+
+def test_trailing_stop_summary_api_returns_latest_rows(tmp_path, monkeypatch):
+    db_path = tmp_path / "orders.db"
+    monkeypatch.setattr(web_app, "DB_PATH", str(db_path))
+    TrailingStopTracker(db_path=str(db_path)).init_tables()
+
+    client = web_app.app.test_client()
+    response = client.get("/api/trailing-stop/summary")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"round_ts": None, "checks": [], "records": []}

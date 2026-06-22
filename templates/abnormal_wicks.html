@@ -37,6 +37,8 @@
     .field input, .field select { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 160px; }
     .actions { display: flex; gap: 8px; }
     .btn { border: none; border-radius: 8px; padding: 9px 14px; cursor: pointer; font-weight: 600; }
+    .btn:disabled { cursor: not-allowed; opacity: .65; }
+    .btn-small { padding: 6px 10px; font-size: 12px; }
     .btn-primary { background: var(--sky); color: var(--white); }
     .btn-secondary { background: var(--black); color: var(--white); text-decoration: none; display: inline-flex; align-items: center; }
     .tip { padding: 0 20px 12px; color: #4b5563; font-size: 12px; }
@@ -59,6 +61,7 @@
     .pager { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
     .pager-info { color: #4b5563; font-size: 12px; }
     .symbol-strip { padding: 14px 20px; border-bottom: 1px solid var(--line); background: #f8fdff; }
+    .section-title-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
     .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
     .chip { padding: 4px 10px; border-radius: 999px; background: #dbeafe; color: #1e3a8a; font-size: 12px; font-weight: 600; }
     .muted { color: #6b7280; font-size: 12px; }
@@ -1048,23 +1051,73 @@
           </table>
         </div>
         </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>分批止盈卖出记录</strong></div>
+              <div class="muted">记录分批止盈 MARKET 卖出方向、卖出数量、订单ID与接口执行状态。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>side</th>
+                <th>position_amt</th>
+                <th>take_profit_quantity</th>
+                <th>entry_price</th>
+                <th>R / 2R / 未变现盈亏</th>
+                <th>take_profit_order_id</th>
+                <th>status</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in partial_take_profit_records %}
+              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.side }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>{{ row.take_profit_quantity }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }} / {{ row.unrealized_pnl }}</td>
+                <td>{{ row.take_profit_order_id or '-' }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="10">暂无分批止盈卖出记录</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
         <div class="critical-section" aria-label="移动追踪止损1分钟扫描结果">
         <div class="symbol-strip">
-          <div><strong>移动追踪止损规则：1分钟扫描结果</strong></div>
+          <div class="section-title-row">
+            <strong>移动追踪止损规则：1分钟扫描结果</strong>
+            <button id="refresh-trailing-stop" class="btn btn-primary btn-small" type="button">刷新</button>
+            <span id="trailing-stop-refresh-status" class="muted">可单独刷新移动追踪止损数据</span>
+          </div>
           {% if trailing_stop_round_ts %}
-            <div class="muted">最近判断轮次：{{ trailing_stop_round_ts|fmt_ms_datetime }}。仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；每分钟读取数据库 klines_1m 最新high，计算 持仓数量 × (high - 开仓价)，维护“最大未变现盈利”，并计算当前盈利回撤幅度 = (最大未变现盈利 - 当下未变现盈利) / 最大未变现盈利；若满足对应 total_score 分层阈值，则取消原止盈单并 reduceOnly MARKET 全部止盈。</div>
+            <div id="trailing-stop-round-note" class="muted">最近判断轮次：{{ trailing_stop_round_ts|fmt_ms_datetime }}。仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；每分钟读取数据库 klines_1m 最新high，计算 持仓数量 × (high - 开仓价)，维护“最大未变现盈利”，并计算当前盈利回撤幅度 = (最大未变现盈利 - 当下未变现盈利) / 最大未变现盈利；若满足对应 total_score 分层阈值，则取消原止盈单并 reduceOnly MARKET 全部止盈。</div>
           {% else %}
-            <div class="muted">暂无移动追踪止损扫描结果。</div>
+            <div id="trailing-stop-round-note" class="muted">暂无移动追踪止损扫描结果。</div>
           {% endif %}
           {% set eligible_trailing_stop_checks = trailing_stop_checks|selectattr('eligible')|list %}
           {% if eligible_trailing_stop_checks %}
-            <div class="chips">
+            <div id="trailing-stop-eligible-chips" class="chips">
               {% for row in eligible_trailing_stop_checks %}
                 <span class="chip" title="最大未变现盈利 {{ row.max_unrealized_pnl }}">{{ row.symbol }}</span>
               {% endfor %}
             </div>
           {% else %}
-            <div class="chips"><span class="chip">本轮无满足移动追踪止损前提的symbol</span></div>
+            <div id="trailing-stop-eligible-chips" class="chips"><span class="chip">本轮无满足移动追踪止损前提的symbol</span></div>
           {% endif %}
         </div>
         <div class="table-wrap">
@@ -1088,7 +1141,7 @@
                 <th>reason</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="trailing-stop-checks-body">
               {% for row in trailing_stop_checks %}
               <tr>
                 <td>{{ row.checked_at|fmt_ms_datetime }}</td>
@@ -1140,7 +1193,7 @@
                 <th>reason</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="trailing-stop-records-body">
               {% for row in trailing_stop_records %}
               <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
                 <td>{{ row.checked_at|fmt_ms_datetime }}</td>
@@ -1157,52 +1210,6 @@
               </tr>
               {% else %}
               <tr><td class="empty" colspan="11">暂无移动追踪止盈操作记录</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        </div>
-        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
-          <div class="symbol-strip collapsible-header">
-            <div>
-              <div><strong>分批止盈卖出记录</strong></div>
-              <div class="muted">记录分批止盈 MARKET 卖出方向、卖出数量、订单ID与接口执行状态。</div>
-            </div>
-            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
-          </div>
-          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>checked_at</th>
-                <th>symbol</th>
-                <th>side</th>
-                <th>position_amt</th>
-                <th>take_profit_quantity</th>
-                <th>entry_price</th>
-                <th>R / 2R / 未变现盈亏</th>
-                <th>take_profit_order_id</th>
-                <th>status</th>
-                <th>reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in partial_take_profit_records %}
-              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
-                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
-                <td>{{ row.symbol }}</td>
-                <td>{{ row.side }}</td>
-                <td>{{ row.position_amt }}</td>
-                <td>{{ row.take_profit_quantity }}</td>
-                <td>{{ row.entry_price }}</td>
-                <td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }} / {{ row.unrealized_pnl }}</td>
-                <td>{{ row.take_profit_order_id or '-' }}</td>
-                <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
-                <td>{{ row.reason }}</td>
-              </tr>
-              {% else %}
-              <tr><td class="empty" colspan="10">暂无分批止盈卖出记录</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -1233,6 +1240,10 @@
           <div class="account-metric">
             <div class="account-metric-label">盈利订单总数</div>
             <div id="filled-profit-count" class="account-metric-value">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">已完成订单胜率</div>
+            <div id="filled-win-rate" class="account-metric-value">-</div>
           </div>
           <div class="account-metric">
             <div class="account-metric-label">已完成订单总亏损</div>
@@ -1553,6 +1564,11 @@
     let btcChart = null;
     let scoreTrendChart = null;
     let experimentEquityTrendChart = null;
+    const TRAILING_STOP_RULE_NOTE = '仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；每分钟读取数据库 klines_1m 最新high，计算 持仓数量 × (high - 开仓价)，维护“最大未变现盈利”，并计算当前盈利回撤幅度 = (最大未变现盈利 - 当下未变现盈利) / 最大未变现盈利；若满足对应 total_score 分层阈值，则取消原止盈单并 reduceOnly MARKET 全部止盈。';
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    }
 
     function refreshBtcChartLayout() {
       if (btcChart) btcChart.resize();
@@ -1752,6 +1768,113 @@
       return new Date(numericValue).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
     }
 
+
+    function statusBadge(value, passText = '是', failText = '否') {
+      return `<span class="status-badge ${value ? 'status-pass' : 'status-fail'}">${value ? passText : failText}</span>`;
+    }
+
+    function renderTrailingStopChecks(rows) {
+      const rowsEl = document.getElementById('trailing-stop-checks-body');
+      if (!rowsEl) return;
+      if (!rows.length) {
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="15">暂无移动追踪止损扫描结果</td></tr>';
+        return;
+      }
+      rowsEl.innerHTML = rows.map(row => `
+        <tr>
+          <td>${formatMsDatetime(row.checked_at)}</td>
+          <td>${escapeHtml(row.symbol)}</td>
+          <td>${escapeHtml(row.entry_price)}</td>
+          <td>${escapeHtml(row.position_amt)}</td>
+          <td>${escapeHtml(row.kline_high)}</td>
+          <td>${escapeHtml(row.unrealized_pnl_at_high)}</td>
+          <td>${escapeHtml(row.max_unrealized_pnl)}</td>
+          <td>${escapeHtml(row.current_profit_drawdown)}</td>
+          <td>${row.total_score ?? '-'} / ${escapeHtml(row.drawdown_threshold)}</td>
+          <td>${statusBadge(row.trailing_stop_triggered)}</td>
+          <td>${escapeHtml(row.cancel_take_profit_order_id || '-')} / ${escapeHtml(row.cancel_status)}</td>
+          <td>${escapeHtml(row.close_quantity)} / ${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td>
+          <td>${formatMsDatetime(row.max_unrealized_pnl_at)}</td>
+          <td>${statusBadge(row.eligible)}</td>
+          <td>${escapeHtml(row.reason)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderTrailingStopRecords(rows) {
+      const rowsEl = document.getElementById('trailing-stop-records-body');
+      if (!rowsEl) return;
+      if (!rows.length) {
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="11">暂无移动追踪止盈操作记录</td></tr>';
+        return;
+      }
+      rowsEl.innerHTML = rows.map((row, index) => `
+        <tr class="${index >= 10 ? 'collapsed-extra' : ''}">
+          <td>${formatMsDatetime(row.checked_at)}</td>
+          <td>${escapeHtml(row.symbol)}</td>
+          <td>${escapeHtml(row.position_amt)}</td>
+          <td>${escapeHtml(row.entry_price)}</td>
+          <td>${row.total_score ?? '-'} / ${escapeHtml(row.drawdown_threshold)}</td>
+          <td>${escapeHtml(row.unrealized_pnl_at_high)} / ${escapeHtml(row.max_unrealized_pnl)}</td>
+          <td>${escapeHtml(row.current_profit_drawdown)}</td>
+          <td>${escapeHtml(row.cancel_take_profit_order_id || '-')} / ${escapeHtml(row.cancel_status)}</td>
+          <td>${escapeHtml(row.close_quantity)}</td>
+          <td>${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td>
+          <td>${escapeHtml(row.reason)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderTrailingStopSummary(payload) {
+      const roundNoteEl = document.getElementById('trailing-stop-round-note');
+      if (roundNoteEl) {
+        roundNoteEl.textContent = payload.round_ts
+          ? `最近判断轮次：${formatMsDatetime(payload.round_ts)}。${TRAILING_STOP_RULE_NOTE}`
+          : '暂无移动追踪止损扫描结果。';
+      }
+      const chipsEl = document.getElementById('trailing-stop-eligible-chips');
+      if (chipsEl) {
+        const eligibleRows = (payload.checks || []).filter(row => row.eligible);
+        chipsEl.innerHTML = eligibleRows.length
+          ? eligibleRows.map(row => `<span class="chip" title="最大未变现盈利 ${escapeHtml(row.max_unrealized_pnl)}">${escapeHtml(row.symbol)}</span>`).join('')
+          : '<span class="chip">本轮无满足移动追踪止损前提的symbol</span>';
+      }
+      renderTrailingStopChecks(payload.checks || []);
+      renderTrailingStopRecords(payload.records || []);
+    }
+
+    function setTrailingStopRefreshLoading(isLoading) {
+      const btn = document.getElementById('refresh-trailing-stop');
+      const statusEl = document.getElementById('trailing-stop-refresh-status');
+      if (btn) {
+        btn.disabled = isLoading;
+        btn.textContent = isLoading ? '刷新中...' : '刷新';
+      }
+      if (statusEl && isLoading) statusEl.textContent = '正在刷新移动追踪止损数据...';
+    }
+
+    (function initTrailingStopRefresh() {
+      const btn = document.getElementById('refresh-trailing-stop');
+      const statusEl = document.getElementById('trailing-stop-refresh-status');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        setTrailingStopRefreshLoading(true);
+        try {
+          const response = await fetch('/api/trailing-stop/summary', {
+            headers: { 'Accept': 'application/json' },
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          renderTrailingStopSummary(payload);
+          if (statusEl) statusEl.textContent = `刷新完成：${formatMsDatetime(Date.now())}`;
+        } catch (error) {
+          if (statusEl) statusEl.textContent = `刷新失败：${error.message}`;
+        } finally {
+          setTrailingStopRefreshLoading(false);
+        }
+      });
+    })();
+
     function setFilledSellOrdersLoading(isLoading) {
       const btn = document.getElementById('query-filled-sell-orders');
       const status = document.getElementById('filled-sell-orders-status');
@@ -1816,6 +1939,7 @@
       const averageProfit = profitCount ? totalProfit / profitCount : 0;
       const averageLoss = lossCount ? totalLoss / lossCount : 0;
       const profitLossRatio = Math.abs(averageLoss) > 0 ? averageProfit / Math.abs(averageLoss) : 0;
+      const winRate = completedGroups.length ? profitCount / completedGroups.length : 0;
       return {
         rowGroups,
         summary: {
@@ -1827,6 +1951,7 @@
           averageProfit,
           averageLoss,
           profitLossRatio,
+          winRate,
         },
       };
     }
@@ -1853,6 +1978,7 @@
       setText('filled-completed-count', String(summary?.completedCount ?? 0));
       setPnl('filled-total-profit', summary?.totalProfit ?? 0);
       setText('filled-profit-count', String(summary?.profitCount ?? 0));
+      setText('filled-win-rate', `${((summary?.winRate ?? 0) * 100).toFixed(2)}%`);
       setPnl('filled-total-loss', summary?.totalLoss ?? 0);
       setText('filled-loss-count', String(summary?.lossCount ?? 0));
       setPnl('filled-average-profit', summary?.averageProfit ?? 0);
@@ -1892,7 +2018,7 @@
       if (!rowsEl) return;
       if (!orders.length) {
         rowsEl.innerHTML = '<tr><td class="empty" colspan="12">最近7天暂无已成交订单</td></tr>';
-        renderFilledOrdersSummary({ completedCount: 0, totalProfit: 0, profitCount: 0, totalLoss: 0, lossCount: 0, averageProfit: 0, averageLoss: 0, profitLossRatio: 0 });
+        renderFilledOrdersSummary({ completedCount: 0, totalProfit: 0, profitCount: 0, totalLoss: 0, lossCount: 0, averageProfit: 0, averageLoss: 0, profitLossRatio: 0, winRate: 0 });
         return;
       }
       const filledOrderAnalysis = buildFilledOrderAnalysis(orders);
