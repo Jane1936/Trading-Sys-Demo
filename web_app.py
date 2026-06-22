@@ -80,6 +80,95 @@ def _experiment_equity_trend_rows(since_ms: int) -> list[sqlite3.Row]:
         return []
 
 
+def _base_symbol(symbol: str) -> str:
+    normalized = str(symbol or "").strip().upper()
+    return normalized[:-4] if normalized.endswith("USDT") else normalized
+
+
+def _decimal_text_equal(left: object, right: object) -> bool:
+    try:
+        from decimal import Decimal
+
+        return Decimal(str(left)).normalize() == Decimal(str(right)).normalize()
+    except Exception:
+        return str(left or "").strip() == str(right or "").strip()
+
+
+def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, time_tolerance_ms: int = 5 * 60 * 1000) -> list[dict[str, str]]:
+    """Match a filled SELL order to local stop-loss / partial take-profit records.
+
+    Local strategy tables store symbols without the USDT suffix, while Binance
+    userTrades returns symbols like BTCUSDT.  The audit rows are written at order
+    submission time, so a small time tolerance is used around the fill time.
+    """
+    if str(order.get("side", "")).upper() != "SELL":
+        return []
+    symbol = _base_symbol(str(order.get("symbol", "")))
+    order_time = int(order.get("time") or 0)
+    quantity = order.get("quantity", "")
+    if not symbol or order_time <= 0 or quantity == "":
+        return []
+
+    matches: list[dict[str, str]] = []
+    if _table_exists(conn, HoldingPositionScoringSystem.RECORDS_TABLE):
+        rows = conn.execute(
+            f"""
+            SELECT created_at AS matched_at, quantity, reason
+            FROM {HoldingPositionScoringSystem.RECORDS_TABLE}
+            WHERE symbol = ?
+              AND side = 'SELL'
+              AND created_at BETWEEN ? AND ?
+            ORDER BY ABS(created_at - ?) ASC, id DESC
+            """,
+            (symbol, order_time - time_tolerance_ms, order_time + time_tolerance_ms, order_time),
+        ).fetchall()
+        for row in rows:
+            if _decimal_text_equal(row["quantity"], quantity):
+                matches.append({"type": "止损", "reason": str(row["reason"] or ""), "matched_at": str(row["matched_at"] or "")})
+                break
+
+    if _table_exists(conn, PartialTakeProfitStrategy.RECORDS_TABLE):
+        rows = conn.execute(
+            f"""
+            SELECT checked_at AS matched_at, take_profit_quantity, reason
+            FROM {PartialTakeProfitStrategy.RECORDS_TABLE}
+            WHERE symbol = ?
+              AND side = 'SELL'
+              AND checked_at BETWEEN ? AND ?
+            ORDER BY ABS(checked_at - ?) ASC, id DESC
+            """,
+            (symbol, order_time - time_tolerance_ms, order_time + time_tolerance_ms, order_time),
+        ).fetchall()
+        for row in rows:
+            if _decimal_text_equal(row["take_profit_quantity"], quantity):
+                matches.append({"type": "分批止盈", "reason": str(row["reason"] or ""), "matched_at": str(row["matched_at"] or "")})
+                break
+    return matches
+
+
+def _annotate_filled_order_exit_reasons(payload: dict) -> dict:
+    orders = payload.get("orders")
+    if not isinstance(orders, list) or not orders:
+        return payload
+    try:
+        with sqlite3.connect(DB_PATH, timeout=30) as conn:
+            conn.row_factory = sqlite3.Row
+            for order in orders:
+                if not isinstance(order, dict):
+                    continue
+                matches = _filled_order_exit_reason_matches(conn, order)
+                order["exit_reason"] = "；".join(
+                    f"{match['type']}：{match['reason']}" if match["reason"] else match["type"]
+                    for match in matches
+                )
+                order["exit_reason_matches"] = matches
+    except sqlite3.OperationalError:
+        for order in orders:
+            if isinstance(order, dict):
+                order.setdefault("exit_reason", "")
+                order.setdefault("exit_reason_matches", [])
+    return payload
+
 @app.get("/")
 def index():
     return "<a href='/safety/abnormal-wicks'>abnormal wick events</a>"
@@ -129,7 +218,7 @@ def account_filled_sell_orders_api():
     limit = request.args.get("limit", default=1000, type=int)
     try:
         payload = BinanceAccountManager().futures_recent_filled_sell_orders(days=days, limit=limit)
-        return jsonify(payload)
+        return jsonify(_annotate_filled_order_exit_reasons(payload))
     except BinanceAccountConfigError as exc:
         return jsonify({"error": str(exc)}), 400
     except requests.exceptions.RequestException as exc:

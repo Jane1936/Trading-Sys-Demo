@@ -1108,6 +1108,7 @@
               <tr>
                 <th>成交时间</th>
                 <th>symbol</th>
+                <th>止盈/止损原因</th>
                 <th>方向</th>
                 <th>order_id</th>
                 <th>成交价格</th>
@@ -1120,7 +1121,7 @@
               </tr>
             </thead>
             <tbody id="filled-sell-orders-rows">
-              <tr><td class="empty" colspan="11">点击“查询近7天已成交订单”后显示数据</td></tr>
+              <tr><td class="empty" colspan="12">点击“查询近7天已成交订单”后显示数据</td></tr>
             </tbody>
           </table>
         </div>
@@ -1677,7 +1678,7 @@
       }
       if (!rowsEl) return;
       if (!orders.length) {
-        rowsEl.innerHTML = '<tr><td class="empty" colspan="11">最近7天暂无已成交订单</td></tr>';
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="12">最近7天暂无已成交订单</td></tr>';
         return;
       }
       const groupsByRow = buildFilledOrderGroups(orders);
@@ -1688,6 +1689,7 @@
         <tr class="filled-order-row" data-group-ids="${escapeHtml(groupIds.join(','))}" title="点击高亮同一 symbol 同一组买卖订单">
           <td>${formatMsDatetime(row.time)}</td>
           <td>${escapeHtml(row.symbol)}${groupLabel}</td>
+          <td>${escapeHtml(row.exit_reason || '-')}</td>
           <td><span class="status-badge ${row.side === 'BUY' ? 'status-ok' : 'status-fail'}">${escapeHtml(row.side || '-')}</span></td>
           <td>${escapeHtml(row.order_id)}</td>
           <td>${escapeHtml(row.price)}</td>
