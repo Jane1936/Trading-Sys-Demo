@@ -21,6 +21,7 @@ from cooldown_module import CooldownModule
 from openable_symbol_module import OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
 from partial_take_profit import PartialTakeProfitStrategy
+from trailing_stop_tracker import TrailingStopTracker
 from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
@@ -128,6 +129,24 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
                 matches.append({"type": "结构止损", "matched_at": str(row["matched_at"] or "")})
                 break
 
+    if _table_exists(conn, TrailingStopTracker.CHECKS_TABLE):
+        rows = conn.execute(
+            f"""
+            SELECT checked_at AS matched_at, close_quantity
+            FROM {TrailingStopTracker.CHECKS_TABLE}
+            WHERE symbol = ?
+              AND trailing_stop_triggered = 1
+              AND close_status = 'submitted'
+              AND checked_at BETWEEN ? AND ?
+            ORDER BY ABS(checked_at - ?) ASC, id DESC
+            """,
+            (symbol, order_time - time_tolerance_ms, order_time + time_tolerance_ms, order_time),
+        ).fetchall()
+        for row in rows:
+            if _decimal_text_equal(row["close_quantity"], quantity):
+                matches.append({"type": "移动追踪止损", "matched_at": str(row["matched_at"] or "")})
+                break
+
     if _table_exists(conn, PartialTakeProfitStrategy.RECORDS_TABLE):
         rows = conn.execute(
             f"""
@@ -155,6 +174,8 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
     match_types = {match.get("type", "") for match in matches}
     if "结构止损" in match_types:
         return "结构止损"
+    if "移动追踪止损" in match_types:
+        return "移动追踪止损"
     if "分批止盈" in match_types:
         return "分批止盈"
 
@@ -326,6 +347,9 @@ def abnormal_wicks():
     partial_take_profit_strategy = PartialTakeProfitStrategy(db_path=DB_PATH)
     partial_take_profit_round_ts, partial_take_profit_checks = partial_take_profit_strategy.get_latest_round_checks()
     partial_take_profit_records = partial_take_profit_strategy.recent_records(limit=100)
+    trailing_stop_tracker = TrailingStopTracker(db_path=DB_PATH)
+    trailing_stop_round_ts, trailing_stop_checks = trailing_stop_tracker.get_latest_round_checks()
+    trailing_stop_records = trailing_stop_tracker.recent_action_records(limit=100)
 
     active_tab = request.args.get("active_tab", default="", type=str).strip()
     if requested_score_trend_symbol:
@@ -437,6 +461,9 @@ def abnormal_wicks():
         partial_take_profit_round_ts=partial_take_profit_round_ts,
         partial_take_profit_checks=partial_take_profit_checks,
         partial_take_profit_records=partial_take_profit_records,
+        trailing_stop_round_ts=trailing_stop_round_ts,
+        trailing_stop_checks=trailing_stop_checks,
+        trailing_stop_records=trailing_stop_records,
         rule_score_weights=scoring.rule_score_weights,
         score_trend_symbols=score_trend_symbols,
         score_trend_symbol=score_trend_symbol,
