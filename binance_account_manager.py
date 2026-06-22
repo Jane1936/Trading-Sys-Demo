@@ -12,6 +12,7 @@ import hmac
 import os
 import time
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 from urllib.parse import urlencode
 
@@ -56,6 +57,23 @@ PLACEHOLDER_VALUES = {
 class BinanceAccountConfigError(RuntimeError):
     """Raised when account API credentials are not configured."""
 
+
+@dataclass(frozen=True)
+class BinanceFilledSellOrderRow:
+    """Normalized filled SELL trade row returned to the web layer."""
+
+    symbol: str
+    order_id: str
+    trade_id: str
+    time: int
+    side: str
+    price: str
+    quantity: str
+    quote_quantity: str
+    realized_pnl: str
+    commission: str
+    commission_asset: str
+    maker: bool
 
 @dataclass(frozen=True)
 class BinanceBalanceRow:
@@ -109,6 +127,36 @@ class BinanceAccountManager:
             "base_url": self.base_url,
             "queried_at": int(time.time() * 1000),
             "balances": [row.__dict__ for row in balances],
+        }
+
+    def futures_recent_filled_sell_orders(self, days: int = 7, limit: int = 1000) -> dict[str, Any]:
+        """Query recent filled SELL trades from USDⓈ-M Futures account trade history."""
+        self.validate_config()
+        now_ms = int(time.time() * 1000)
+        days = max(1, min(int(days), 30))
+        limit = max(1, min(int(limit), 1000))
+        start_time = now_ms - days * 24 * 60 * 60 * 1000
+        raw_rows = self._signed_get(
+            "/fapi/v1/userTrades",
+            {"startTime": start_time, "endTime": now_ms, "limit": limit},
+        )
+        if not isinstance(raw_rows, list):
+            raise RuntimeError("Unexpected Binance user trades response format")
+
+        orders = [
+            self._normalize_filled_sell_order_row(row)
+            for row in raw_rows
+            if isinstance(row, dict) and not bool(row.get("buyer", False))
+        ]
+        orders.sort(key=lambda row: row.time, reverse=True)
+        return {
+            "testnet": BINANCE_TESTNET,
+            "base_url": self.base_url,
+            "queried_at": now_ms,
+            "days": days,
+            "start_time": start_time,
+            "end_time": now_ms,
+            "orders": [row.__dict__ for row in orders],
         }
 
     def _signed_get(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
@@ -172,6 +220,31 @@ class BinanceAccountManager:
         ).hexdigest()
         request_params["signature"] = signature
         return request_params
+
+    @staticmethod
+    def _normalize_filled_sell_order_row(row: dict[str, Any]) -> BinanceFilledSellOrderRow:
+        price = str(row.get("price", "0"))
+        quantity = str(row.get("qty", row.get("quantity", "0")))
+        quote_quantity = str(row.get("quoteQty", ""))
+        if quote_quantity == "":
+            try:
+                quote_quantity = str(Decimal(price) * Decimal(quantity))
+            except Exception:
+                quote_quantity = "0"
+        return BinanceFilledSellOrderRow(
+            symbol=str(row.get("symbol", "")),
+            order_id=str(row.get("orderId", "")),
+            trade_id=str(row.get("id", "")),
+            time=int(row.get("time", 0) or 0),
+            side="SELL",
+            price=price,
+            quantity=quantity,
+            quote_quantity=quote_quantity,
+            realized_pnl=str(row.get("realizedPnl", "0")),
+            commission=str(row.get("commission", "0")),
+            commission_asset=str(row.get("commissionAsset", "")),
+            maker=bool(row.get("maker", False)),
+        )
 
     @staticmethod
     def _normalize_balance_row(row: dict[str, Any]) -> BinanceBalanceRow:
