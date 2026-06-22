@@ -145,7 +145,7 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
         ).fetchall()
         for row in rows:
             if _decimal_text_equal(row["close_quantity"], quantity):
-                matches.append({"type": "移动追踪止损", "matched_at": str(row["matched_at"] or "")})
+                matches.append({"type": "移动追踪止盈", "matched_at": str(row["matched_at"] or "")})
                 break
 
     if _table_exists(conn, PartialTakeProfitStrategy.RECORDS_TABLE):
@@ -175,8 +175,8 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
     match_types = {match.get("type", "") for match in matches}
     if "结构止损" in match_types:
         return "结构止损"
-    if "移动追踪止损" in match_types:
-        return "移动追踪止损"
+    if "移动追踪止盈" in match_types:
+        return "移动追踪止盈"
     if "分批止盈" in match_types:
         return "分批止盈"
 
