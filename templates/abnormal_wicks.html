@@ -108,6 +108,13 @@
     .bookmark-tabs { display:flex; gap:0; align-items:flex-end; padding:16px 20px 0; background:linear-gradient(180deg, #f8fdff 0%, #ffffff 100%); border-bottom:1px solid var(--line); }
     .bookmark-tab { border:1px solid var(--line); border-bottom:none; background:#eff6ff; color:#1e3a8a; padding:12px 18px; border-radius:14px 14px 0 0; cursor:pointer; font-weight:800; margin-right:8px; box-shadow:0 -1px 8px rgba(14, 116, 144, 0.08); transform:translateY(1px); }
     .bookmark-tab.active { background:#ffffff; color:#0f172a; position:relative; z-index:1; box-shadow:0 -4px 16px rgba(14, 116, 144, 0.14); }
+    .bookmark-tab.filled-orders-tab { color:#7f1d1d; background:linear-gradient(135deg, #fff1f2 0%, #fecdd3 100%); border-color:#fb7185; box-shadow:0 -2px 12px rgba(244, 63, 94, 0.16); }
+    .bookmark-tab.filled-orders-tab::before { content:"◆"; color:#e11d48; margin-right:7px; font-size:11px; vertical-align:middle; }
+    .bookmark-tab.filled-orders-tab.active { color:#ffffff; background:linear-gradient(135deg, #ef4444 0%, #be123c 100%); border-color:#e11d48; box-shadow:0 -5px 18px rgba(225, 29, 72, 0.28); }
+    .bookmark-tab.filled-orders-tab.active::before { color:#ffffff; }
+    .pnl-positive { color:#ef4444; font-weight:900; background:#fee2e2; border-radius:999px; padding:3px 8px; }
+    .pnl-negative { color:#16a34a; font-weight:900; background:#dcfce7; border-radius:999px; padding:3px 8px; }
+    .pnl-zero { color:#64748b; font-weight:800; background:#f1f5f9; border-radius:999px; padding:3px 8px; }
     .bookmark-tab.account-info-tab { color:#7c2d12; background:linear-gradient(135deg, #fffbeb 0%, #fed7aa 100%); border-color:#fb923c; box-shadow:0 -2px 12px rgba(249, 115, 22, 0.16); }
     .bookmark-tab.account-info-tab::before { content:"●"; color:#f97316; margin-right:7px; font-size:11px; vertical-align:middle; }
     .bookmark-tab.account-info-tab.active { color:#ffffff; background:linear-gradient(135deg, #f97316 0%, #dc2626 100%); border-color:#ea580c; box-shadow:0 -5px 18px rgba(249, 115, 22, 0.28); }
@@ -685,6 +692,7 @@
         <button class="bookmark-tab active" type="button" role="tab" aria-selected="true" data-strategy-tab="strategy-openable">本轮可开仓symbol情况</button>
         <button class="bookmark-tab" type="button" role="tab" aria-selected="false" data-strategy-tab="strategy-cooldown">本轮冷却期symbol</button>
         <button class="bookmark-tab" type="button" role="tab" aria-selected="false" data-strategy-tab="strategy-holding-score">持仓评分系统</button>
+        <button class="bookmark-tab filled-orders-tab" type="button" role="tab" aria-selected="false" data-strategy-tab="strategy-filled-orders">已成交订单分析</button>
         <button class="bookmark-tab account-info-tab" type="button" role="tab" aria-selected="false" data-strategy-tab="strategy-account">账户信息</button>
       </div>
 
@@ -749,7 +757,6 @@
           </table>
         </div>
       </div>
-
 
 
       <div id="strategy-holding-score" class="strategy-subpanel" role="tabpanel">
@@ -1073,6 +1080,41 @@
             </tbody>
           </table>
         </div>
+        </div>
+      </div>
+
+      <div id="strategy-filled-orders" class="strategy-subpanel" role="tabpanel">
+        <div class="symbol-strip">
+          <div><strong>已成交订单分析</strong></div>
+          <div class="muted">点击下方按钮后，通过 REST API 查询最近7天 Futures 账户成交明细，并仅展示“卖出 / SELL”方向的已成交记录；已实现盈亏按红正绿负高亮。</div>
+        </div>
+        <div class="toolbar">
+          <button id="query-filled-sell-orders" class="btn btn-primary" type="button">查询近7天卖出成交</button>
+          <span id="filled-sell-orders-status" class="muted">尚未查询</span>
+        </div>
+        <div id="filled-sell-orders-error" class="account-error"></div>
+        <div class="tip">数据来自 Binance USDⓈ-M Futures <code>userTrades</code> 成交明细；同一订单如发生多笔成交会按成交明细逐行显示。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>成交时间</th>
+                <th>symbol</th>
+                <th>方向</th>
+                <th>order_id</th>
+                <th>trade_id</th>
+                <th>成交价格</th>
+                <th>成交数量</th>
+                <th>成交额</th>
+                <th>已实现盈亏</th>
+                <th>手续费</th>
+                <th>maker</th>
+              </tr>
+            </thead>
+            <tbody id="filled-sell-orders-rows">
+              <tr><td class="empty" colspan="11">点击“查询近7天卖出成交”后显示数据</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -1531,6 +1573,96 @@
           renderAccountBalanceError(`账户余额查询失败：${error.message}`);
         } finally {
           setAccountBalanceLoading(false);
+        }
+      });
+    })();
+
+    function pnlClass(value) {
+      const numericValue = Number(value);
+      if (Number.isFinite(numericValue) && numericValue > 0) return 'pnl-positive';
+      if (Number.isFinite(numericValue) && numericValue < 0) return 'pnl-negative';
+      return 'pnl-zero';
+    }
+
+    function formatMsDatetime(ms) {
+      const numericValue = Number(ms);
+      if (!Number.isFinite(numericValue) || numericValue <= 0) return '-';
+      return new Date(numericValue).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    }
+
+    function setFilledSellOrdersLoading(isLoading) {
+      const btn = document.getElementById('query-filled-sell-orders');
+      const status = document.getElementById('filled-sell-orders-status');
+      if (btn) {
+        btn.disabled = isLoading;
+        btn.textContent = isLoading ? '查询中...' : '查询近7天卖出成交';
+      }
+      if (status && isLoading) status.textContent = '正在请求 Binance REST API...';
+    }
+
+    function renderFilledSellOrders(payload) {
+      const rowsEl = document.getElementById('filled-sell-orders-rows');
+      const statusEl = document.getElementById('filled-sell-orders-status');
+      const errorEl = document.getElementById('filled-sell-orders-error');
+      const orders = payload.orders || [];
+      const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+
+      if (errorEl) {
+        errorEl.style.display = 'none';
+        errorEl.textContent = '';
+      }
+      if (statusEl) {
+        const queriedAt = payload.queried_at ? formatMsDatetime(payload.queried_at) : '未知时间';
+        statusEl.textContent = `${payload.testnet ? 'Demo/Testnet' : 'Real'} 查询完成：${queriedAt}；近${payload.days || 7}天卖出成交 ${orders.length} 笔`;
+      }
+      if (!rowsEl) return;
+      if (!orders.length) {
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="11">最近7天暂无卖出方向已成交订单</td></tr>';
+        return;
+      }
+      rowsEl.innerHTML = orders.map(row => `
+        <tr>
+          <td>${formatMsDatetime(row.time)}</td>
+          <td>${escapeHtml(row.symbol)}</td>
+          <td><span class="status-badge status-fail">${escapeHtml(row.side || 'SELL')}</span></td>
+          <td>${escapeHtml(row.order_id)}</td>
+          <td>${escapeHtml(row.trade_id)}</td>
+          <td>${escapeHtml(row.price)}</td>
+          <td>${escapeHtml(row.quantity)}</td>
+          <td>${escapeHtml(row.quote_quantity)}</td>
+          <td><span class="${pnlClass(row.realized_pnl)}">${escapeHtml(row.realized_pnl || '0')}</span></td>
+          <td>${escapeHtml(row.commission || '0')} ${escapeHtml(row.commission_asset || '')}</td>
+          <td>${row.maker ? '是' : '否'}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderFilledSellOrdersError(message) {
+      const errorEl = document.getElementById('filled-sell-orders-error');
+      const statusEl = document.getElementById('filled-sell-orders-status');
+      if (errorEl) {
+        errorEl.textContent = message;
+        errorEl.style.display = 'block';
+      }
+      if (statusEl) statusEl.textContent = '查询失败';
+    }
+
+    (function initFilledSellOrdersQuery() {
+      const btn = document.getElementById('query-filled-sell-orders');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        setFilledSellOrdersLoading(true);
+        try {
+          const response = await fetch('/api/account/filled-sell-orders?days=7', {
+            headers: { 'Accept': 'application/json' },
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          renderFilledSellOrders(payload);
+        } catch (error) {
+          renderFilledSellOrdersError(`已成交订单查询失败：${error.message}`);
+        } finally {
+          setFilledSellOrdersLoading(false);
         }
       });
     })();

@@ -123,6 +123,20 @@ def account_balance_api():
         return jsonify({"error": str(exc)}), 502
 
 
+@app.get("/api/account/filled-sell-orders")
+def account_filled_sell_orders_api():
+    days = request.args.get("days", default=7, type=int)
+    limit = request.args.get("limit", default=1000, type=int)
+    try:
+        payload = BinanceAccountManager().futures_recent_filled_sell_orders(days=days, limit=limit)
+        return jsonify(payload)
+    except BinanceAccountConfigError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except requests.exceptions.RequestException as exc:
+        return jsonify({"error": f"Binance filled sell orders request failed: {exc}"}), 502
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
+
 @app.post("/api/trading-experiment/run")
 def trading_experiment_run_api():
     try:
