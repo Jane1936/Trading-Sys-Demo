@@ -58,6 +58,17 @@ class AlwaysMissingTradesAccountManager(FakeAccountManager):
         return super()._signed_get(endpoint, params)
 
 
+class ExpiredNoFillAccountManager(FakeAccountManager):
+    def _signed_post(self, endpoint, params=None):
+        self.signed_posts.append((endpoint, dict(params or {})))
+        return {"orderId": 321, "status": "EXPIRED", "executedQty": "0"}
+
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v1/userTrades":
+            raise AssertionError("should not query realized PnL for an unfilled stop-loss order")
+        return super()._signed_get(endpoint, params)
+
+
 class ReduceOnlyRejectedAccountManager(FakeAccountManager):
     def __init__(self):
         super().__init__()
@@ -163,6 +174,23 @@ def test_realized_pnl_query_failure_is_written_to_reason():
     assert fake_account.user_trade_calls == 4
     assert records[0]["realized_pnl"] == ""
     assert "realized_pnl_query_failed_after_4_attempts: user_trades_empty" in records[0]["reason"]
+
+
+def test_unfilled_stop_loss_order_response_is_recorded_as_failed_without_pnl_lookup():
+    fake_account = ExpiredNoFillAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        _seed_triggered_stop_loss_db(db_path)
+
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.run_round(decision_round_ts=3000)
+        records = scoring.recent_stop_loss_records()
+
+    assert records[0]["status"] == "failed"
+    assert records[0]["order_id"] == ""
+    assert records[0]["realized_pnl"] == ""
+    assert "stop_loss_order_not_filled: status=EXPIRED; executedQty=0" in records[0]["reason"]
+    assert "realized_pnl_query_failed" not in records[0]["reason"]
 
 
 def test_reduce_only_rejection_records_positions_and_open_order_diagnostics():

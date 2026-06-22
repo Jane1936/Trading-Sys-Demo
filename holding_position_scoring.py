@@ -227,6 +227,11 @@ class HoldingPositionScoringSystem:
             )
             order_id = str(response.get("orderId", "")) if isinstance(response, dict) else ""
             raw_response = str(response)
+            no_fill_reason = self._no_fill_order_response_reason(response)
+            if no_fill_reason:
+                status = "failed"
+                reason = f"{reason}; {no_fill_reason}"
+                order_id = ""
         except Exception as exc:
             status = "failed"
             reason = f"{check.reason}; stop_loss_order_failed: {type(exc).__name__}: {exc}"
@@ -280,6 +285,18 @@ class HoldingPositionScoringSystem:
     def _is_reduce_only_rejected(exc: Exception) -> bool:
         message = str(exc)
         return "-2022" in message or "ReduceOnly Order is rejected" in message
+
+    @classmethod
+    def _no_fill_order_response_reason(cls, response: Any) -> str:
+        if not isinstance(response, dict):
+            return ""
+        order_status = str(response.get("status", "")).upper()
+        if order_status not in {"EXPIRED", "CANCELED", "REJECTED"}:
+            return ""
+        executed_qty = cls._decimal_from(response.get("executedQty") or response.get("cumQty"), Decimal("0"))
+        if executed_qty != 0:
+            return ""
+        return f"stop_loss_order_not_filled: status={order_status}; executedQty={cls._fmt_decimal(executed_qty)}"
 
     @classmethod
     def _summarize_response(cls, response: Any) -> str:
