@@ -1048,6 +1048,120 @@
           </table>
         </div>
         </div>
+        <div class="critical-section" aria-label="移动追踪止损1分钟扫描结果">
+        <div class="symbol-strip">
+          <div><strong>移动追踪止损规则：1分钟扫描结果</strong></div>
+          {% if trailing_stop_round_ts %}
+            <div class="muted">最近判断轮次：{{ trailing_stop_round_ts|fmt_ms_datetime }}。仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；每分钟读取数据库 klines_1m 最新high，计算 持仓数量 × (high - 开仓价)，维护“最大未变现盈利”，并计算当前盈利回撤幅度 = (最大未变现盈利 - 当下未变现盈利) / 最大未变现盈利；若满足对应 total_score 分层阈值，则取消原止盈单并 reduceOnly MARKET 全部止盈。</div>
+          {% else %}
+            <div class="muted">暂无移动追踪止损扫描结果。</div>
+          {% endif %}
+          {% set eligible_trailing_stop_checks = trailing_stop_checks|selectattr('eligible')|list %}
+          {% if eligible_trailing_stop_checks %}
+            <div class="chips">
+              {% for row in eligible_trailing_stop_checks %}
+                <span class="chip" title="最大未变现盈利 {{ row.max_unrealized_pnl }}">{{ row.symbol }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="chips"><span class="chip">本轮无满足移动追踪止损前提的symbol</span></div>
+          {% endif %}
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>开仓价</th>
+                <th>持仓数量</th>
+                <th>1m high</th>
+                <th>当下未变现盈利(high)</th>
+                <th>最大未变现盈利</th>
+                <th>当前盈利回撤幅度</th>
+                <th>total_score / 阈值</th>
+                <th>触发移动止损</th>
+                <th>取消止盈单</th>
+                <th>全部止盈单</th>
+                <th>最大值时间</th>
+                <th>满足前提</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in trailing_stop_checks %}
+              <tr>
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>{{ row.kline_high }}</td>
+                <td>{{ row.unrealized_pnl_at_high }}</td>
+                <td>{{ row.max_unrealized_pnl }}</td>
+                <td>{{ row.current_profit_drawdown }}</td>
+                <td>{{ row.total_score if row.total_score is not none else '-' }} / {{ row.drawdown_threshold }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.trailing_stop_triggered else 'status-fail' }}">{{ '是' if row.trailing_stop_triggered else '否' }}</span></td>
+                <td>{{ row.cancel_take_profit_order_id or '-' }} / {{ row.cancel_status }}</td>
+                <td>{{ row.close_quantity }} / {{ row.close_order_id or '-' }} / {{ row.close_status }}</td>
+                <td>{{ row.max_unrealized_pnl_at|fmt_ms_datetime }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="15">暂无移动追踪止损扫描结果</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>移动追踪止盈操作记录</strong></div>
+              <div class="muted">记录移动追踪止盈触发后的原止盈单取消状态、当前仓位 reduceOnly MARKET 全部止盈数量、订单ID与接口执行状态。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>position_amt</th>
+                <th>entry_price</th>
+                <th>total_score / 阈值</th>
+                <th>当下 / 最大未变现盈利</th>
+                <th>盈利回撤幅度</th>
+                <th>cancel_take_profit_order_id / status</th>
+                <th>close_quantity</th>
+                <th>close_order_id / status</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in trailing_stop_records %}
+              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.total_score if row.total_score is not none else '-' }} / {{ row.drawdown_threshold }}</td>
+                <td>{{ row.unrealized_pnl_at_high }} / {{ row.max_unrealized_pnl }}</td>
+                <td>{{ row.current_profit_drawdown }}</td>
+                <td>{{ row.cancel_take_profit_order_id or '-' }} / {{ row.cancel_status }}</td>
+                <td>{{ row.close_quantity }}</td>
+                <td>{{ row.close_order_id or '-' }} / {{ row.close_status }}</td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="11">暂无移动追踪止盈操作记录</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
         <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
           <div class="symbol-strip collapsible-header">
             <div>

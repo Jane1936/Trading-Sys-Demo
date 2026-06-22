@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import web_app
 from holding_position_scoring import HoldingPositionScoringSystem
 from partial_take_profit import PartialTakeProfitStrategy
+from trailing_stop_tracker import TrailingStopTracker
 
 
 def _create_exit_reason_tables(db_path):
@@ -32,6 +33,18 @@ def _create_exit_reason_tables(db_path):
                 take_profit_quantity TEXT NOT NULL,
                 reason TEXT NOT NULL,
                 checked_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            f"""
+            CREATE TABLE {TrailingStopTracker.CHECKS_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                checked_at INTEGER NOT NULL,
+                close_quantity TEXT NOT NULL,
+                trailing_stop_triggered INTEGER NOT NULL,
+                close_status TEXT NOT NULL
             )
             """
         )
@@ -73,6 +86,24 @@ def test_filled_sell_order_exit_reason_uses_partial_take_profit_match(tmp_path, 
     assert annotated["orders"][0]["exit_reason"] == "分批止盈"
     assert annotated["orders"][0]["exit_reason_matches"] == [{"type": "分批止盈", "matched_at": "1000"}]
     assert "unrealized_pnl_ge_2r_take_profit_30_percent" not in str(annotated["orders"][0])
+
+
+def test_filled_sell_order_exit_reason_uses_trailing_stop_match(tmp_path, monkeypatch):
+    db_path = tmp_path / "orders.db"
+    _create_exit_reason_tables(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"INSERT INTO {TrailingStopTracker.CHECKS_TABLE} (symbol, checked_at, close_quantity, trailing_stop_triggered, close_status) VALUES (?, ?, ?, ?, ?)",
+            ("BANK", 1000, "7", 1, "submitted"),
+        )
+    monkeypatch.setattr(web_app, "DB_PATH", str(db_path))
+
+    payload = {"orders": [{"symbol": "BANKUSDT", "side": "SELL", "time": 1000, "quantity": "7.0", "realized_pnl": "3"}]}
+
+    annotated = web_app._annotate_filled_order_exit_reasons(payload)
+
+    assert annotated["orders"][0]["exit_reason"] == "移动追踪止损"
+    assert annotated["orders"][0]["exit_reason_matches"] == [{"type": "移动追踪止损", "matched_at": "1000"}]
 
 
 def test_unmatched_filled_sell_order_exit_reason_falls_back_to_realized_pnl(tmp_path, monkeypatch):

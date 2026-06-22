@@ -27,6 +27,7 @@ from cooldown_module import CooldownModule
 from openable_symbol_module import OpenableSymbol, OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
 from partial_take_profit import PartialTakeProfitStrategy
+from trailing_stop_tracker import TrailingStopTracker
 from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
@@ -93,9 +94,11 @@ def start_break_even_take_profit_task() -> None:
     """Run break-even and partial take-profit protection every 5 minutes."""
     strategy = BreakEvenTakeProfitStrategy(db_path=collector.DB_PATH)
     partial_strategy = PartialTakeProfitStrategy(db_path=collector.DB_PATH)
+    trailing_stop_tracker = TrailingStopTracker(db_path=collector.DB_PATH)
     strategy.init_tables()
     partial_strategy.init_tables()
-    print("🟢 Break-even and partial take-profit task started")
+    trailing_stop_tracker.init_tables()
+    print("🟢 Break-even, partial take-profit and trailing stop tracker task started")
     while True:
         try:
             result = strategy.run_round()
@@ -110,6 +113,15 @@ def start_break_even_take_profit_task() -> None:
                 f"triggered={partial_result.get('triggered', 0)} "
                 f"records={partial_result.get('records', 0)} 2R={partial_result.get('trigger_r_usdt', '')}"
             )
+            for _ in range(5):
+                trailing_result = trailing_stop_tracker.run_round()
+                print(
+                    f"🟢 trailing stop tracker checked={trailing_result.get('checked', 0)} "
+                    f"eligible={trailing_result.get('eligible', 0)} "
+                    f"updated={trailing_result.get('updated', 0)}"
+                )
+                time.sleep(60)
+            continue
         except Exception as exc:
             print(f"⚠️ break-even take-profit failed: {exc}")
         time.sleep(5 * 60)
