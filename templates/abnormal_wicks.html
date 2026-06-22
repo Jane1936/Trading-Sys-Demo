@@ -1265,6 +1265,10 @@
             <div class="account-metric-label">已完成订单盈亏比</div>
             <div id="filled-profit-loss-ratio" class="account-metric-value">-</div>
           </div>
+          <div class="account-metric">
+            <div class="account-metric-label">已完成订单期望</div>
+            <div id="filled-expectancy" class="account-metric-value pnl-zero">-</div>
+          </div>
         </div>
         <div class="table-wrap filled-orders-wrap">
           <table>
@@ -1940,6 +1944,7 @@
       const averageLoss = lossCount ? totalLoss / lossCount : 0;
       const profitLossRatio = Math.abs(averageLoss) > 0 ? averageProfit / Math.abs(averageLoss) : 0;
       const winRate = completedGroups.length ? profitCount / completedGroups.length : 0;
+      const expectancy = winRate * profitLossRatio - (1 - winRate);
       return {
         rowGroups,
         summary: {
@@ -1952,6 +1957,7 @@
           averageLoss,
           profitLossRatio,
           winRate,
+          expectancy,
         },
       };
     }
@@ -1984,6 +1990,7 @@
       setPnl('filled-average-profit', summary?.averageProfit ?? 0);
       setPnl('filled-average-loss', summary?.averageLoss ?? 0);
       setText('filled-profit-loss-ratio', formatPnlAmount(summary?.profitLossRatio ?? 0));
+      setPnl('filled-expectancy', summary?.expectancy ?? 0);
     }
 
     function bindFilledOrderHighlights(rowsEl) {
@@ -2018,7 +2025,7 @@
       if (!rowsEl) return;
       if (!orders.length) {
         rowsEl.innerHTML = '<tr><td class="empty" colspan="12">最近7天暂无已成交订单</td></tr>';
-        renderFilledOrdersSummary({ completedCount: 0, totalProfit: 0, profitCount: 0, totalLoss: 0, lossCount: 0, averageProfit: 0, averageLoss: 0, profitLossRatio: 0, winRate: 0 });
+        renderFilledOrdersSummary({ completedCount: 0, totalProfit: 0, profitCount: 0, totalLoss: 0, lossCount: 0, averageProfit: 0, averageLoss: 0, profitLossRatio: 0, winRate: 0, expectancy: 0 });
         return;
       }
       const filledOrderAnalysis = buildFilledOrderAnalysis(orders);
