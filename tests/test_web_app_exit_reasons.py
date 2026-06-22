@@ -102,8 +102,8 @@ def test_filled_sell_order_exit_reason_uses_trailing_stop_match(tmp_path, monkey
 
     annotated = web_app._annotate_filled_order_exit_reasons(payload)
 
-    assert annotated["orders"][0]["exit_reason"] == "移动追踪止损"
-    assert annotated["orders"][0]["exit_reason_matches"] == [{"type": "移动追踪止损", "matched_at": "1000"}]
+    assert annotated["orders"][0]["exit_reason"] == "移动追踪止盈"
+    assert annotated["orders"][0]["exit_reason_matches"] == [{"type": "移动追踪止盈", "matched_at": "1000"}]
 
 
 def test_unmatched_filled_sell_order_exit_reason_falls_back_to_realized_pnl(tmp_path, monkeypatch):
