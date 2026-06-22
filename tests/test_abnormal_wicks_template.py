@@ -30,6 +30,19 @@ def test_experiment_equity_trend_chart_renders_under_equity_metric():
     assert "experiment-equity-trend-chart" in template
 
 
+def test_filled_orders_summary_includes_expectancy_metric():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    summary_index = template.index('id="filled-orders-summary"')
+    expectancy_metric_index = template.index('id="filled-expectancy"')
+    table_index = template.index('class="table-wrap filled-orders-wrap"')
+
+    assert summary_index < expectancy_metric_index < table_index
+    assert "已完成订单期望" in template
+    assert "const expectancy = winRate * profitLossRatio - (1 - winRate);" in template
+    assert "setPnl('filled-expectancy', summary?.expectancy ?? 0);" in template
+
+
 def _insert_abnormal_wick_event(conn, symbol, detected_at):
     conn.execute(
         """
