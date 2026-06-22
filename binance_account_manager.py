@@ -59,8 +59,8 @@ class BinanceAccountConfigError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class BinanceFilledSellOrderRow:
-    """Normalized filled SELL trade row returned to the web layer."""
+class BinanceFilledOrderRow:
+    """Normalized filled trade row returned to the web layer."""
 
     symbol: str
     order_id: str
@@ -130,7 +130,11 @@ class BinanceAccountManager:
         }
 
     def futures_recent_filled_sell_orders(self, days: int = 7, limit: int = 1000) -> dict[str, Any]:
-        """Query recent filled SELL trades from USDⓈ-M Futures account trade history."""
+        """Backward-compatible wrapper for recent filled BUY/SELL trades."""
+        return self.futures_recent_filled_orders(days=days, limit=limit)
+
+    def futures_recent_filled_orders(self, days: int = 7, limit: int = 1000) -> dict[str, Any]:
+        """Query and merge recent filled BUY/SELL trades from USDⓈ-M Futures account trade history."""
         self.validate_config()
         now_ms = int(time.time() * 1000)
         days = max(1, min(int(days), 30))
@@ -143,11 +147,11 @@ class BinanceAccountManager:
         if not isinstance(raw_rows, list):
             raise RuntimeError("Unexpected Binance user trades response format")
 
-        orders = [
-            self._normalize_filled_sell_order_row(row)
+        orders = self._merge_filled_order_rows(
+            self._normalize_filled_order_row(row)
             for row in raw_rows
-            if isinstance(row, dict) and not bool(row.get("buyer", False))
-        ]
+            if isinstance(row, dict)
+        )
         orders.sort(key=lambda row: row.time, reverse=True)
         return {
             "testnet": BINANCE_TESTNET,
@@ -222,7 +226,7 @@ class BinanceAccountManager:
         return request_params
 
     @staticmethod
-    def _normalize_filled_sell_order_row(row: dict[str, Any]) -> BinanceFilledSellOrderRow:
+    def _normalize_filled_order_row(row: dict[str, Any]) -> BinanceFilledOrderRow:
         price = str(row.get("price", "0"))
         quantity = str(row.get("qty", row.get("quantity", "0")))
         quote_quantity = str(row.get("quoteQty", ""))
@@ -231,12 +235,12 @@ class BinanceAccountManager:
                 quote_quantity = str(Decimal(price) * Decimal(quantity))
             except Exception:
                 quote_quantity = "0"
-        return BinanceFilledSellOrderRow(
+        return BinanceFilledOrderRow(
             symbol=str(row.get("symbol", "")),
             order_id=str(row.get("orderId", "")),
             trade_id=str(row.get("id", "")),
             time=int(row.get("time", 0) or 0),
-            side="SELL",
+            side="BUY" if bool(row.get("buyer", False)) else "SELL",
             price=price,
             quantity=quantity,
             quote_quantity=quote_quantity,
@@ -245,6 +249,72 @@ class BinanceAccountManager:
             commission_asset=str(row.get("commissionAsset", "")),
             maker=bool(row.get("maker", False)),
         )
+
+
+    @staticmethod
+    def _merge_filled_order_rows(rows: Any) -> list[BinanceFilledOrderRow]:
+        merged: dict[tuple[str, int, str], dict[str, Any]] = {}
+        for row in rows:
+            key = (row.symbol, row.time, row.side)
+            bucket = merged.setdefault(
+                key,
+                {
+                    "symbol": row.symbol,
+                    "time": row.time,
+                    "side": row.side,
+                    "order_ids": [],
+                    "trade_ids": [],
+                    "quantity": Decimal("0"),
+                    "quote_quantity": Decimal("0"),
+                    "realized_pnl": Decimal("0"),
+                    "commission": Decimal("0"),
+                    "commission_assets": set(),
+                    "maker_values": [],
+                },
+            )
+            if row.order_id and row.order_id not in bucket["order_ids"]:
+                bucket["order_ids"].append(row.order_id)
+            if row.trade_id and row.trade_id not in bucket["trade_ids"]:
+                bucket["trade_ids"].append(row.trade_id)
+            bucket["quantity"] += BinanceAccountManager._decimal_or_zero(row.quantity)
+            bucket["quote_quantity"] += BinanceAccountManager._decimal_or_zero(row.quote_quantity)
+            bucket["realized_pnl"] += BinanceAccountManager._decimal_or_zero(row.realized_pnl)
+            bucket["commission"] += BinanceAccountManager._decimal_or_zero(row.commission)
+            if row.commission_asset:
+                bucket["commission_assets"].add(row.commission_asset)
+            bucket["maker_values"].append(row.maker)
+
+        result = []
+        for bucket in merged.values():
+            price = bucket["quote_quantity"] / bucket["quantity"] if bucket["quantity"] else Decimal("0")
+            result.append(
+                BinanceFilledOrderRow(
+                    symbol=bucket["symbol"],
+                    order_id=",".join(bucket["order_ids"]),
+                    trade_id=",".join(bucket["trade_ids"]),
+                    time=bucket["time"],
+                    side=bucket["side"],
+                    price=BinanceAccountManager._format_decimal(price),
+                    quantity=BinanceAccountManager._format_decimal(bucket["quantity"]),
+                    quote_quantity=BinanceAccountManager._format_decimal(bucket["quote_quantity"]),
+                    realized_pnl=BinanceAccountManager._format_decimal(bucket["realized_pnl"]),
+                    commission=BinanceAccountManager._format_decimal(bucket["commission"]),
+                    commission_asset=",".join(sorted(bucket["commission_assets"])),
+                    maker=all(bucket["maker_values"]) if bucket["maker_values"] else False,
+                )
+            )
+        return result
+
+    @staticmethod
+    def _decimal_or_zero(value: Any) -> Decimal:
+        try:
+            return Decimal(str(value))
+        except Exception:
+            return Decimal("0")
+
+    @staticmethod
+    def _format_decimal(value: Decimal) -> str:
+        return format(value.normalize(), "f")
 
     @staticmethod
     def _normalize_balance_row(row: dict[str, Any]) -> BinanceBalanceRow:

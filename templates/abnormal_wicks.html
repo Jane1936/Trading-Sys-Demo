@@ -1086,14 +1086,14 @@
       <div id="strategy-filled-orders" class="strategy-subpanel" role="tabpanel">
         <div class="symbol-strip">
           <div><strong>已成交订单分析</strong></div>
-          <div class="muted">点击下方按钮后，通过 REST API 查询最近7天 Futures 账户成交明细，并仅展示“卖出 / SELL”方向的已成交记录；已实现盈亏按红正绿负高亮。</div>
+          <div class="muted">点击下方按钮后，通过 REST API 查询最近7天 Futures 账户成交明细，展示“买入 / BUY”和“卖出 / SELL”方向的已成交记录；同一 symbol、同一成交时间、同一方向的多笔成交会合并展示，已实现盈亏按红正绿负高亮。</div>
         </div>
         <div class="toolbar">
-          <button id="query-filled-sell-orders" class="btn btn-primary" type="button">查询近7天卖出成交</button>
+          <button id="query-filled-sell-orders" class="btn btn-primary" type="button">查询近7天已成交订单</button>
           <span id="filled-sell-orders-status" class="muted">尚未查询</span>
         </div>
         <div id="filled-sell-orders-error" class="account-error"></div>
-        <div class="tip">数据来自 Binance USDⓈ-M Futures <code>userTrades</code> 成交明细；同一订单如发生多笔成交会按成交明细逐行显示。</div>
+        <div class="tip">数据来自 Binance USDⓈ-M Futures <code>userTrades</code> 成交明细；同一 symbol、同一成交时间、同一方向的多笔成交会合并为一行；成交价格为按成交额/成交数量计算的均价。</div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -1112,7 +1112,7 @@
               </tr>
             </thead>
             <tbody id="filled-sell-orders-rows">
-              <tr><td class="empty" colspan="11">点击“查询近7天卖出成交”后显示数据</td></tr>
+              <tr><td class="empty" colspan="11">点击“查询近7天已成交订单”后显示数据</td></tr>
             </tbody>
           </table>
         </div>
@@ -1595,7 +1595,7 @@
       const status = document.getElementById('filled-sell-orders-status');
       if (btn) {
         btn.disabled = isLoading;
-        btn.textContent = isLoading ? '查询中...' : '查询近7天卖出成交';
+        btn.textContent = isLoading ? '查询中...' : '查询近7天已成交订单';
       }
       if (status && isLoading) status.textContent = '正在请求 Binance REST API...';
     }
@@ -1613,18 +1613,18 @@
       }
       if (statusEl) {
         const queriedAt = payload.queried_at ? formatMsDatetime(payload.queried_at) : '未知时间';
-        statusEl.textContent = `${payload.testnet ? 'Demo/Testnet' : 'Real'} 查询完成：${queriedAt}；近${payload.days || 7}天卖出成交 ${orders.length} 笔`;
+        statusEl.textContent = `${payload.testnet ? 'Demo/Testnet' : 'Real'} 查询完成：${queriedAt}；近${payload.days || 7}天已成交合并记录 ${orders.length} 条`;
       }
       if (!rowsEl) return;
       if (!orders.length) {
-        rowsEl.innerHTML = '<tr><td class="empty" colspan="11">最近7天暂无卖出方向已成交订单</td></tr>';
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="11">最近7天暂无已成交订单</td></tr>';
         return;
       }
       rowsEl.innerHTML = orders.map(row => `
         <tr>
           <td>${formatMsDatetime(row.time)}</td>
           <td>${escapeHtml(row.symbol)}</td>
-          <td><span class="status-badge status-fail">${escapeHtml(row.side || 'SELL')}</span></td>
+          <td><span class="status-badge ${row.side === 'BUY' ? 'status-ok' : 'status-fail'}">${escapeHtml(row.side || '-')}</span></td>
           <td>${escapeHtml(row.order_id)}</td>
           <td>${escapeHtml(row.trade_id)}</td>
           <td>${escapeHtml(row.price)}</td>
