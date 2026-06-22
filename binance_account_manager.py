@@ -140,12 +140,7 @@ class BinanceAccountManager:
         days = max(1, min(int(days), 30))
         limit = max(1, min(int(limit), 1000))
         start_time = now_ms - days * 24 * 60 * 60 * 1000
-        raw_rows = self._signed_get(
-            "/fapi/v1/userTrades",
-            {"startTime": start_time, "endTime": now_ms, "limit": limit},
-        )
-        if not isinstance(raw_rows, list):
-            raise RuntimeError("Unexpected Binance user trades response format")
+        raw_rows = self._signed_get_user_trades_paginated(start_time=start_time, end_time=now_ms, limit=limit)
 
         orders = self._merge_filled_order_rows(
             self._normalize_filled_order_row(row)
@@ -162,6 +157,37 @@ class BinanceAccountManager:
             "end_time": now_ms,
             "orders": [row.__dict__ for row in orders],
         }
+
+    def _signed_get_user_trades_paginated(self, start_time: int, end_time: int, limit: int) -> list[dict[str, Any]]:
+        """Fetch all user trades in a time range, advancing past full pages.
+
+        Binance can return only the first ``limit`` rows for a start/end window.
+        A busy account may have more than 1000 fills in seven days, so a single
+        request can stop at older fills and make the UI look delayed. Keep moving
+        ``startTime`` to the millisecond after the newest trade returned until the
+        requested range is exhausted.
+        """
+        rows: list[dict[str, Any]] = []
+        next_start_time = start_time
+        while next_start_time <= end_time:
+            page = self._signed_get(
+                "/fapi/v1/userTrades",
+                {"startTime": next_start_time, "endTime": end_time, "limit": limit},
+            )
+            if not isinstance(page, list):
+                raise RuntimeError("Unexpected Binance user trades response format")
+            trade_rows = [row for row in page if isinstance(row, dict)]
+            rows.extend(trade_rows)
+            if len(page) < limit or not trade_rows:
+                break
+
+            max_trade_time = max(int(row.get("time", 0) or 0) for row in trade_rows)
+            advanced_start_time = max_trade_time + 1
+            if advanced_start_time <= next_start_time:
+                break
+            next_start_time = advanced_start_time
+
+        return rows
 
     def _signed_get(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
         response = self.session.get(
