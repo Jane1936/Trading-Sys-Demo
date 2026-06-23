@@ -81,3 +81,15 @@ def test_abnormal_wicks_template_mentions_recent_limits():
     assert "异常插针记录最多只显示近7天数据" in template
     assert "仅展示最近3天数据" in template
     assert "图表展示最近3天完整5分钟K线（约864根）" in template
+
+
+def test_score_page_includes_ma20_skip_warning_at_top():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    score_header_index = template.index("<h2>评分系统</h2>")
+    warning_index = template.index("MA20缺失跳过提示")
+    score_tabs_index = template.index('class="toolbar" style="padding-top:0;"')
+
+    assert score_header_index < warning_index < score_tabs_index
+    assert "scoring_ma20_skip_record.missing_symbols" in template
+    assert "避免卡住整个评分系统" in template

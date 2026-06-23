@@ -1,0 +1,65 @@
+import sqlite3
+
+from scoring_system import ScoringSystem
+
+
+def test_15m_ma20_readiness_reports_ready_and_missing_symbols(tmp_path):
+    db_path = tmp_path / "klines.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE ma20_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ma20 REAL)"
+        )
+        conn.execute(
+            "INSERT INTO ma20_indicators (symbol, interval, open_time, ma20) VALUES (?, ?, ?, ?)",
+            ("BTCUSDT", "15m", 900_000, 100.0),
+        )
+        conn.execute(
+            "INSERT INTO ma20_indicators (symbol, interval, open_time, ma20) VALUES (?, ?, ?, ?)",
+            ("ETHUSDT", "5m", 900_000, 100.0),
+        )
+
+    scoring = ScoringSystem(db_path=str(db_path))
+
+    readiness = scoring.get_15m_ma20_readiness_for_round(
+        decision_round_ts=1_800_000,
+        symbols=["ETHUSDT", "BTCUSDT", "BTCUSDT"],
+    )
+
+    assert readiness.target_open_time == 900_000
+    assert readiness.ready_symbols == ["BTCUSDT"]
+    assert readiness.missing_symbols == ["ETHUSDT"]
+    assert not readiness.ready
+    assert not scoring.is_15m_ma20_ready_for_round(1_800_000, ["BTCUSDT", "ETHUSDT"])
+    assert scoring.is_15m_ma20_ready_for_round(1_800_000, ["BTCUSDT"])
+
+
+def test_ma20_skip_record_round_trips_missing_symbols(tmp_path):
+    db_path = tmp_path / "klines.db"
+    scoring = ScoringSystem(db_path=str(db_path))
+    scoring.init_table()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE ma20_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ma20 REAL)"
+        )
+    readiness = scoring.get_15m_ma20_readiness_for_round(
+        decision_round_ts=1_800_000,
+        symbols=["BTCUSDT", "ETHUSDT"],
+    )
+
+    scoring.record_ma20_skip_for_round(
+        decision_round_ts=1_800_000,
+        readiness=readiness,
+        universe_count=2,
+        created_at=1_800_001,
+    )
+
+    record = scoring.get_latest_ma20_skip_record()
+
+    assert record is not None
+    assert record.decision_round_ts == 1_800_000
+    assert record.target_open_time == 900_000
+    assert record.universe_count == 2
+    assert record.ready_count == 0
+    assert record.missing_count == 2
+    assert record.missing_symbols == ["BTCUSDT", "ETHUSDT"]
+    assert record.created_at == 1_800_001

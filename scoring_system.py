@@ -194,6 +194,28 @@ class SymbolTotalScore:
     total_score: int
 
 
+@dataclass(frozen=True)
+class MA20Readiness:
+    target_open_time: int
+    ready_symbols: list[str]
+    missing_symbols: list[str]
+
+    @property
+    def ready(self) -> bool:
+        return not self.missing_symbols
+
+
+@dataclass(frozen=True)
+class MA20SkipRecord:
+    decision_round_ts: int
+    target_open_time: int
+    universe_count: int
+    ready_count: int
+    missing_count: int
+    missing_symbols: list[str]
+    created_at: int
+
+
 class ScoringSystem:
     """Score symbols after pre-safety using latest 3 rows of 15m MA20."""
 
@@ -596,6 +618,22 @@ class ScoringSystem:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS scoring_ma20_skip_records (
+                    decision_round_ts INTEGER PRIMARY KEY,
+                    target_open_time INTEGER NOT NULL,
+                    universe_count INTEGER NOT NULL,
+                    ready_count INTEGER NOT NULL,
+                    missing_count INTEGER NOT NULL,
+                    missing_symbols_json TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_scoring_ma20_skip_records_created ON scoring_ma20_skip_records(created_at DESC)"
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS symbol_structural_stop_losses (
                     symbol TEXT NOT NULL,
                     decision_round_ts INTEGER NOT NULL,
@@ -696,22 +734,93 @@ class ScoringSystem:
         self.persist_total_scores_for_round(decision_round_ts=decision_round_ts, updated_at=now_ms)
         return results
 
-    def is_15m_ma20_ready_for_round(self, decision_round_ts: int, symbols: Iterable[str]) -> bool:
+    def get_15m_ma20_readiness_for_round(
+        self, decision_round_ts: int, symbols: Iterable[str]
+    ) -> MA20Readiness:
         target_open_time = decision_round_ts - 15 * 60_000
-        symbol_list = list(set(symbols))
+        symbol_list = sorted(set(symbols))
         if not symbol_list:
-            return True
+            return MA20Readiness(target_open_time, [], [])
         placeholders = ",".join(["?"] * len(symbol_list))
         with self._connect() as conn:
-            row = conn.execute(
+            rows = conn.execute(
                 f"""
-                SELECT COUNT(DISTINCT symbol) AS cnt
+                SELECT DISTINCT symbol
                 FROM ma20_indicators
                 WHERE interval = '15m' AND open_time = ? AND symbol IN ({placeholders})
                 """,
                 [target_open_time, *symbol_list],
+            ).fetchall()
+        ready_set = {str(row["symbol"]) for row in rows}
+        ready_symbols = [symbol for symbol in symbol_list if symbol in ready_set]
+        missing_symbols = [symbol for symbol in symbol_list if symbol not in ready_set]
+        return MA20Readiness(target_open_time, ready_symbols, missing_symbols)
+
+    def is_15m_ma20_ready_for_round(self, decision_round_ts: int, symbols: Iterable[str]) -> bool:
+        return self.get_15m_ma20_readiness_for_round(decision_round_ts, symbols).ready
+
+    def record_ma20_skip_for_round(
+        self,
+        decision_round_ts: int,
+        readiness: MA20Readiness,
+        universe_count: int,
+        created_at: int | None = None,
+    ) -> None:
+        if not readiness.missing_symbols:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO scoring_ma20_skip_records
+                (decision_round_ts, target_open_time, universe_count, ready_count, missing_count, missing_symbols_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(decision_round_ts) DO UPDATE SET
+                    target_open_time=excluded.target_open_time,
+                    universe_count=excluded.universe_count,
+                    ready_count=excluded.ready_count,
+                    missing_count=excluded.missing_count,
+                    missing_symbols_json=excluded.missing_symbols_json,
+                    created_at=excluded.created_at
+                """,
+                (
+                    int(decision_round_ts),
+                    int(readiness.target_open_time),
+                    int(universe_count),
+                    len(readiness.ready_symbols),
+                    len(readiness.missing_symbols),
+                    json.dumps(readiness.missing_symbols, ensure_ascii=False),
+                    int(created_at if created_at is not None else time.time() * 1000),
+                ),
+            )
+
+    def get_latest_ma20_skip_record(self) -> MA20SkipRecord | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT decision_round_ts, target_open_time, universe_count, ready_count,
+                       missing_count, missing_symbols_json, created_at
+                FROM scoring_ma20_skip_records
+                ORDER BY decision_round_ts DESC
+                LIMIT 1
+                """
             ).fetchone()
-        return int(row["cnt"]) == len(symbol_list)
+        if row is None:
+            return None
+        try:
+            missing_symbols = json.loads(row["missing_symbols_json"])
+        except json.JSONDecodeError:
+            missing_symbols = []
+        if not isinstance(missing_symbols, list):
+            missing_symbols = []
+        return MA20SkipRecord(
+            decision_round_ts=int(row["decision_round_ts"]),
+            target_open_time=int(row["target_open_time"]),
+            universe_count=int(row["universe_count"]),
+            ready_count=int(row["ready_count"]),
+            missing_count=int(row["missing_count"]),
+            missing_symbols=[str(symbol) for symbol in missing_symbols],
+            created_at=int(row["created_at"]),
+        )
 
     def _latest_1m_close_and_15m_ma20(self, symbol: str) -> tuple[float, float] | None:
         with self._connect() as conn:

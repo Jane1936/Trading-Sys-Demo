@@ -42,6 +42,10 @@
     .btn-primary { background: var(--sky); color: var(--white); }
     .btn-secondary { background: var(--black); color: var(--white); text-decoration: none; display: inline-flex; align-items: center; }
     .tip { padding: 0 20px 12px; color: #4b5563; font-size: 12px; }
+    .score-ma20-warning { margin: 0 20px 14px; padding: 12px 14px; border: 1px solid #f59e0b; border-radius: 12px; background: #fffbeb; color: #92400e; font-size: 13px; line-height: 1.55; }
+    .score-ma20-warning strong { color: #b45309; }
+    .score-ma20-warning code { background: #fef3c7; padding: 2px 5px; border-radius: 6px; }
+    .score-ma20-warning .missing-symbols { margin-top: 6px; word-break: break-all; }
     .table-wrap { overflow: auto; border-top: 1px solid var(--line); }
     table { border-collapse: collapse; width: 100%; min-width: 980px; }
     th, td { padding: 10px 9px; font-size: 13px; border-bottom: 1px solid #e6f6ff; text-align: left; white-space: nowrap; }
@@ -320,6 +324,26 @@
     <div class="card">
       <div class="header"><h2>评分系统</h2></div>
       <div class="tip">评分对象：Universe 扣除本轮异常插针symbol。每15分钟更新。点击不同规则Tab可查看该规则下所有symbol得分明细。</div>
+      {% if scoring_ma20_skip_record %}
+      <div class="score-ma20-warning" role="status" aria-live="polite">
+        <strong>MA20缺失跳过提示：</strong>
+        最近一轮评分在 {{ scoring_ma20_skip_record.decision_round_ts|fmt_ms_datetime }} 发现
+        {{ scoring_ma20_skip_record.missing_count }} / {{ scoring_ma20_skip_record.universe_count }}
+        个 universe symbol 缺失本轮 15m MA20（目标 open_time：
+        <code>{{ scoring_ma20_skip_record.target_open_time|fmt_ms_datetime }}</code>）。
+        系统已跳过这些缺失 symbol，并继续对
+        {{ scoring_ma20_skip_record.ready_count }} 个 MA20 已准备好的 symbol 评分，避免卡住整个评分系统。
+        <div class="missing-symbols">
+          缺失symbol：
+          {% for skipped_symbol in scoring_ma20_skip_record.missing_symbols[:30] %}
+            <span class="chip">{{ skipped_symbol }}</span>
+          {% endfor %}
+          {% if scoring_ma20_skip_record.missing_count > 30 %}
+            <span class="muted">等 {{ scoring_ma20_skip_record.missing_count }} 个</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
       <div class="toolbar" style="padding-top:0;">
         <div class="score-tab-group trend">
           <span class="score-tab-group-label">趋势评分</span>

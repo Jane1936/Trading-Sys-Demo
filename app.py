@@ -181,17 +181,43 @@ def start_pre_safety_task() -> None:
                 _, abnormal_symbols = module.get_latest_round_abnormal_symbols(decision_round_ts=round_ts)
                 # 评分严格依赖15m MA20：先等待该轮对应已收盘15m K线的MA20写入完成，再打分。
                 # 当前轮次 round_ts 对应的最新已收盘15m K线 open_time=round_ts-15m。
-                if not scoring.is_15m_ma20_ready_for_round(decision_round_ts=round_ts, symbols=symbols):
-                    print(f"⏳ scoring round={round_ts} waiting MA20 readiness")
+                readiness = scoring.get_15m_ma20_readiness_for_round(
+                    decision_round_ts=round_ts,
+                    symbols=symbols,
+                )
+                if not readiness.ready and not readiness.ready_symbols:
+                    print(
+                        f"⏳ scoring round={round_ts} waiting MA20 readiness "
+                        f"target_open_time={readiness.target_open_time} "
+                        f"missing={len(readiness.missing_symbols)}/{len(symbols)}"
+                    )
                     time.sleep(5)
                     continue
+                if not readiness.ready:
+                    scoring.record_ma20_skip_for_round(
+                        decision_round_ts=round_ts,
+                        readiness=readiness,
+                        universe_count=len(symbols),
+                        created_at=now_ms,
+                    )
+                    missing_preview = ",".join(readiness.missing_symbols[:10])
+                    if len(readiness.missing_symbols) > 10:
+                        missing_preview += ",..."
+                    print(
+                        f"⚠️ scoring round={round_ts} skipping symbols missing 15m MA20 "
+                        f"target_open_time={readiness.target_open_time} "
+                        f"ready={len(readiness.ready_symbols)} "
+                        f"missing={len(readiness.missing_symbols)} "
+                        f"missing_symbols={missing_preview}"
+                    )
                 scored = scoring.score_round(
                     decision_round_ts=round_ts,
-                    all_symbols=symbols,
+                    all_symbols=readiness.ready_symbols,
                     abnormal_symbols=abnormal_symbols,
                 )
                 print(
                     f"🧮 scoring round={round_ts} universe={len(symbols)} "
+                    f"ready={len(readiness.ready_symbols)} "
                     f"abnormal={len(set(abnormal_symbols))} scored={len(scored)}"
                 )
                 # 持仓评分系统只依赖本轮总分评分完成后生成的结构止损位，
