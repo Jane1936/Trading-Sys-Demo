@@ -382,11 +382,15 @@ def abnormal_wicks():
     abnormal_events_since_ms = int((datetime.now(timezone.utc) - timedelta(days=3)).timestamp() * 1000)
     cooldown = CooldownModule(db_path=DB_PATH)
     cooldown.init_table()
-    events = (
-        module.get_recent_events_by_symbol(symbol=symbol, limit=limit, since_ms=abnormal_events_since_ms)
-        if symbol
-        else module.get_recent_events(limit=limit, since_ms=abnormal_events_since_ms)
-    )
+    should_load_abnormal_events = request.args.get("wick_refresh") == "1"
+    if should_load_abnormal_events:
+        events = (
+            module.get_recent_events_by_symbol(symbol=symbol, limit=limit, since_ms=abnormal_events_since_ms)
+            if symbol
+            else module.get_recent_events(limit=limit, since_ms=abnormal_events_since_ms)
+        )
+    else:
+        events = []
     symbols = module.get_event_symbols(since_ms=abnormal_events_since_ms)
     current_round_ts = module._decision_round_ts_ms()
     latest_round_ts, latest_round_symbols = module.get_latest_round_abnormal_symbols(decision_round_ts=current_round_ts)
@@ -423,7 +427,7 @@ def abnormal_wicks():
     score_trend_symbol = requested_score_trend_symbol or default_score_trend_symbol
     if score_trend_symbol and score_trend_symbol not in score_trend_symbols:
         score_trend_symbols = sorted(set(score_trend_symbols) | {score_trend_symbol})
-    score_trend_rows = scoring.get_total_score_trend(score_trend_symbol, days=3) if score_trend_symbol else []
+    score_trend_rows = []
     trading_experiment = TradingExperiment(db_path=DB_PATH)
     trading_records_since_ms = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp() * 1000)
     trading_trade_records = trading_experiment.recent_trade_records(limit=100, since_ms=trading_records_since_ms)
@@ -530,6 +534,7 @@ def abnormal_wicks():
         btc_page=btc_page,
         btc_page_size=btc_page_size,
         btc_total_rows=btc_total_rows,
+        should_load_abnormal_events=should_load_abnormal_events,
         btc_total_pages=btc_total_pages,
     )
 
