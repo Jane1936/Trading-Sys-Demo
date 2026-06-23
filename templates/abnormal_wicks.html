@@ -202,6 +202,7 @@
   </div>
   <div class="toolbar">
     <form method="get" action="/safety/abnormal-wicks" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;">
+      <input type="hidden" name="wick_refresh" value="1" />
       <label class="field">记录数量
         <input type="number" name="limit" value="{{ limit }}" min="1" max="1000" />
       </label>
@@ -219,7 +220,7 @@
       </div>
     </form>
   </div>
-  <div class="tip">时间字段均已转换为日期格式（UTC）。异常插针记录最多只显示近3天数据；建议结合浏览器自动刷新或手动 F5 查看最新数据。</div>
+  <div class="tip">时间字段均已转换为日期格式（UTC）。默认不加载历史表格；点击“筛选/刷新”后显示近3天异常插针记录。异常插针记录最多只显示近3天数据。</div>
 
   <div class="table-wrap">
   <table>
@@ -257,7 +258,7 @@
       </tr>
       {% else %}
       <tr>
-        <td class="empty" colspan="14">暂无异常插针记录</td>
+        <td class="empty" colspan="14">{% if should_load_abnormal_events %}暂无异常插针记录{% else %}默认不显示记录，请点击“筛选/刷新”加载本轮或筛选结果{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -697,8 +698,8 @@
 
   <section id="tab-score-trend" class="panel {{ 'active' if active_tab == 'tab-score-trend' else '' }}">
     <div class="card score-trend-card">
-      <div class="header"><h2>评分变化趋势</h2></div>
-      <div class="tip">展示所选 symbol 最近3天内已入库的总分变化趋势。默认选中当前总分最高的 symbol；若多个并列第一，则按 symbol 字母升序取第一个。</div>
+      <div class="header"><div class="section-title-row"><h2>评分变化趋势</h2><button class="btn btn-primary btn-small" type="submit" form="score-trend-form">刷新</button></div></div>
+      <div class="tip">展示所选 symbol 最近3天内已入库的总分变化趋势。页面默认不加载趋势数据，整体刷新页面也不会自动刷新；请手动点击“刷新”按钮。</div>
       <div class="toolbar">
         <form id="score-trend-form" method="get" action="/safety/abnormal-wicks" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;">
           <input type="hidden" name="active_tab" value="tab-score-trend" />
@@ -710,13 +711,13 @@
             </select>
           </label>
           <div class="actions">
-            <button class="btn btn-primary" type="submit">查询</button>
+            <button class="btn btn-primary" type="submit">刷新</button>
           </div>
         </form>
       </div>
       <div id="score-trend-status" class="tip">
         {% if score_trend_symbol %}
-          当前 symbol：<span id="score-trend-current-symbol">{{ score_trend_symbol }}</span>；数据点数量：<span id="score-trend-count">{{ score_trend_rows|length }}</span>。
+          尚未加载趋势数据。当前默认 symbol：<span id="score-trend-current-symbol">{{ score_trend_symbol }}</span>；请点击“刷新”。
         {% else %}
           当前暂无可查询 symbol。
         {% endif %}
@@ -2298,15 +2299,6 @@
       scoreTrendChart.setOption(buildScoreTrendOption(rawRows, symbolName), true);
       requestAnimationFrame(refreshScoreTrendChartLayout);
     }
-
-    (function initScoreTrendChart() {
-      const rawRows = [
-        {% for r in score_trend_rows %}
-          [{{ r.decision_round_ts }}, {{ r.total_score }}],
-        {% endfor %}
-      ];
-      updateScoreTrendChart(rawRows, {{ score_trend_symbol|tojson }});
-    })();
 
     (function initScoreTrendAjax() {
       const form = document.getElementById('score-trend-form');
