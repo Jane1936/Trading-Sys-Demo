@@ -28,6 +28,7 @@
     .content .panel.active { display: block; }
     .score-rule-panel { display: none; }
     .score-rule-panel.active { display: block; }
+    .score-refresh-row { padding: 0 20px 14px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
     .container { display: flex; flex-direction: column; gap: 16px; }
     .card { background: var(--white); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 24px rgba(14, 116, 144, 0.10); overflow: hidden; }
     .header { padding: 18px 20px; background: var(--sky-soft); border-bottom: 1px solid var(--line); }
@@ -330,7 +331,7 @@
   <section id="tab-score" class="panel {{ 'active' if active_tab == 'tab-score' else '' }}">
     <div class="card">
       <div class="header"><h2>评分系统</h2></div>
-      <div class="tip">评分对象：Universe 扣除本轮异常插针symbol。每15分钟更新。点击不同规则Tab可查看该规则下所有symbol得分明细。</div>
+      <div class="tip">评分对象：Universe 扣除本轮异常插针symbol。每15分钟更新。默认仅展示总分结果；点击“刷新查看各规则详细数据”后可查看各规则下所有symbol得分明细。</div>
       {% if scoring_ma20_skip_record %}
       <div class="score-ma20-warning" role="status" aria-live="polite">
         <strong>MA20缺失跳过提示：</strong>
@@ -351,10 +352,14 @@
         </div>
       </div>
       {% endif %}
-      <div class="toolbar" style="padding-top:0;">
+      <div class="score-refresh-row">
+        <button class="btn btn-primary" type="button" id="show-score-rule-details">刷新查看各规则详细数据</button>
+        <span class="muted" id="score-rule-details-status">当前仅展示总分；各规则详细数据需手动刷新查看。</span>
+      </div>
+      <div class="toolbar" style="padding-top:0;" id="score-rule-details" hidden>
         <div class="score-tab-group trend">
           <span class="score-tab-group-label">趋势评分</span>
-          <button class="tab-btn score-rule-tab active" data-score-tab="score-rule-1" style="width:auto;">规则1：15m MA20三连降（{{ rule_score_weights[1] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-1" style="width:auto;">规则1：15m MA20三连降（{{ rule_score_weights[1] }}分）</button>
         <button class="tab-btn score-rule-tab" data-score-tab="score-rule-2" style="width:auto;">规则2：1m收盘&gt;15m MA20（{{ rule_score_weights[2] }}分）</button>
         <button class="tab-btn score-rule-tab" data-score-tab="score-rule-3" style="width:auto;">规则3：最近1h收盘&gt;前1h收盘（{{ rule_score_weights[3] }}分）</button>
         <button class="tab-btn score-rule-tab" data-score-tab="score-rule-4" style="width:auto;">规则4：最近4条15m中≥3条收涨（{{ rule_score_weights[4] }}分）</button>
@@ -382,10 +387,10 @@
           <button class="tab-btn score-rule-tab" data-score-tab="score-rule-17" style="width:auto;">规则17：15m低点反弹≥6%（{{ rule_score_weights[17] }}分）</button>
           <button class="tab-btn score-rule-tab" data-score-tab="score-rule-18" style="width:auto;">规则18：结构止损位距离+15m节奏（{{ rule_score_weights[18] }}分）</button>
         </div>
-        <button class="tab-btn score-rule-tab score-total-tab" data-score-tab="score-total" style="width:auto;">总分</button>
+        <button class="tab-btn score-rule-tab score-total-tab active" data-score-tab="score-total" style="width:auto;">总分</button>
       </div>
 
-      <div id="score-rule-1" class="score-rule-panel active">
+      <div id="score-rule-1" class="score-rule-panel">
         {% if score_round_ts %}
         <div class="tip">规则1轮次：{{ score_round_ts|fmt_ms_datetime }}</div>
         {% endif %}
@@ -658,7 +663,7 @@
         </table></div>
       </div>
 
-      <div id="score-total" class="score-rule-panel">
+      <div id="score-total" class="score-rule-panel active">
         {% if score_total_round_ts %}
         <div class="tip">总分轮次：{{ score_total_round_ts|fmt_ms_datetime }}{% if score_total_updated_at %}；实际计算完成时间：{{ score_total_updated_at|fmt_ms_datetime }}{% endif %}</div>
         {% endif %}
@@ -698,8 +703,8 @@
 
   <section id="tab-score-trend" class="panel {{ 'active' if active_tab == 'tab-score-trend' else '' }}">
     <div class="card score-trend-card">
-      <div class="header"><div class="section-title-row"><h2>评分变化趋势</h2><button class="btn btn-primary btn-small" type="submit" form="score-trend-form">刷新</button></div></div>
-      <div class="tip">展示所选 symbol 最近3天内已入库的总分变化趋势。页面默认不加载趋势数据，整体刷新页面也不会自动刷新；请手动点击“刷新”按钮。</div>
+      <div class="header"><div class="section-title-row"><h2>评分变化趋势</h2></div></div>
+      <div class="tip">展示所选 symbol 最近3天内已入库的总分变化趋势。页面默认不加载趋势数据，整体刷新页面也不会自动刷新；请使用下方筛选栏中的“刷新”按钮。</div>
       <div class="toolbar">
         <form id="score-trend-form" method="get" action="/safety/abnormal-wicks" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;">
           <input type="hidden" name="active_tab" value="tab-score-trend" />
@@ -1643,13 +1648,29 @@
     (function initScoreRuleTabs() {
       const btns = document.querySelectorAll('.score-rule-tab');
       const panels = document.querySelectorAll('.score-rule-panel');
+      const detailsEl = document.getElementById('score-rule-details');
+      const showDetailsBtn = document.getElementById('show-score-rule-details');
+      const detailsStatusEl = document.getElementById('score-rule-details-status');
+      const activateScoreTab = (tabName) => {
+        btns.forEach(x => x.classList.remove('active'));
+        panels.forEach(x => x.classList.remove('active'));
+        const btn = Array.from(btns).find(x => x.dataset.scoreTab === tabName);
+        const panel = document.getElementById(tabName);
+        if (btn) btn.classList.add('active');
+        if (panel) panel.classList.add('active');
+      };
+      if (showDetailsBtn && detailsEl) {
+        showDetailsBtn.addEventListener('click', () => {
+          detailsEl.hidden = false;
+          activateScoreTab('score-rule-1');
+          showDetailsBtn.textContent = '已刷新各规则详细数据';
+          showDetailsBtn.disabled = true;
+          if (detailsStatusEl) detailsStatusEl.textContent = '已展示各规则Tab，点击不同规则查看明细；可点击“总分”返回总分结果。';
+        });
+      }
       btns.forEach((b) => {
         b.addEventListener('click', () => {
-          btns.forEach(x => x.classList.remove('active'));
-          panels.forEach(x => x.classList.remove('active'));
-          b.classList.add('active');
-          const panel = document.getElementById(b.dataset.scoreTab);
-          if (panel) panel.classList.add('active');
+          activateScoreTab(b.dataset.scoreTab);
         });
       });
     })();
