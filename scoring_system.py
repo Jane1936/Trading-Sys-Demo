@@ -2642,6 +2642,23 @@ class ScoringSystem:
         self._save_total_scores(totals, updated_at or int(time.time() * 1000))
         return totals
 
+
+    def get_total_score_round_updated_at(self, decision_round_ts: int | None) -> int | None:
+        if decision_round_ts is None:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT MAX(updated_at) AS updated_at
+                FROM symbol_total_scores
+                WHERE decision_round_ts = ?
+                """,
+                (int(decision_round_ts),),
+            ).fetchone()
+        if row is None or row["updated_at"] is None:
+            return None
+        return int(row["updated_at"])
+
     def get_latest_round_total_scores(self) -> tuple[int | None, list[SymbolTotalScore]]:
         with self._connect() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_total_scores").fetchone()

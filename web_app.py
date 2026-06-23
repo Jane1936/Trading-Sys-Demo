@@ -416,6 +416,7 @@ def abnormal_wicks():
     score_rule17_round_ts, round_scores_rule17 = scoring.get_latest_round_scores_15m_low_rebound_3bars()
     score_rule18_round_ts, round_scores_rule18 = scoring.get_latest_round_scores_structural_stop_loss_distance()
     score_total_round_ts, round_scores_total = scoring.get_latest_round_total_scores()
+    score_total_updated_at = scoring.get_total_score_round_updated_at(score_total_round_ts)
     scoring_ma20_skip_record = scoring.get_latest_ma20_skip_record()
     openable = OpenableSymbolModule(db_path=DB_PATH)
     openable.init_table()
@@ -503,6 +504,7 @@ def abnormal_wicks():
         round_scores_rule18=round_scores_rule18,
         structural_stop_loss_coefficient=scoring.structural_stop_loss_coefficient,
         score_total_round_ts=score_total_round_ts,
+        score_total_updated_at=score_total_updated_at,
         round_scores_total=round_scores_total,
         scoring_ma20_skip_record=scoring_ma20_skip_record,
         openable_round_ts=openable_round_ts,
