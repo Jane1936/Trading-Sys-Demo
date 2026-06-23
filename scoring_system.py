@@ -817,17 +817,7 @@ class ScoringSystem:
                 ),
             )
 
-    def get_latest_ma20_skip_record(self) -> MA20SkipRecord | None:
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT decision_round_ts, target_open_time, universe_count, ready_count,
-                       missing_count, missing_symbols_json, created_at
-                FROM scoring_ma20_skip_records
-                ORDER BY decision_round_ts DESC
-                LIMIT 1
-                """
-            ).fetchone()
+    def _row_to_ma20_skip_record(self, row: sqlite3.Row | None) -> MA20SkipRecord | None:
         if row is None:
             return None
         try:
@@ -845,6 +835,35 @@ class ScoringSystem:
             missing_symbols=[str(symbol) for symbol in missing_symbols],
             created_at=int(row["created_at"]),
         )
+
+    def get_latest_ma20_skip_record(self) -> MA20SkipRecord | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT decision_round_ts, target_open_time, universe_count, ready_count,
+                       missing_count, missing_symbols_json, created_at
+                FROM scoring_ma20_skip_records
+                ORDER BY decision_round_ts DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        return self._row_to_ma20_skip_record(row)
+
+    def get_ma20_skip_record_for_round(self, decision_round_ts: int | None) -> MA20SkipRecord | None:
+        if decision_round_ts is None:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT decision_round_ts, target_open_time, universe_count, ready_count,
+                       missing_count, missing_symbols_json, created_at
+                FROM scoring_ma20_skip_records
+                WHERE decision_round_ts = ?
+                LIMIT 1
+                """,
+                (int(decision_round_ts),),
+            ).fetchone()
+        return self._row_to_ma20_skip_record(row)
 
     def _latest_1m_close_and_15m_ma20(self, symbol: str) -> tuple[float, float] | None:
         with self._connect() as conn:
