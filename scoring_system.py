@@ -35,6 +35,86 @@ RULE_SCORE_WEIGHTS_PATH = Path(__file__).with_name("scoring_rule_weights.json")
 DEFAULT_STRUCTURAL_STOP_LOSS_COEFFICIENT = 0.98
 
 
+def _strip_json_comments_and_trailing_commas(raw: str) -> str:
+    """Return JSON text with common hand-edited config conveniences removed."""
+    result: list[str] = []
+    in_string = False
+    escape = False
+    i = 0
+    while i < len(raw):
+        ch = raw[i]
+        nxt = raw[i + 1] if i + 1 < len(raw) else ""
+        if in_string:
+            result.append(ch)
+            if escape:
+                escape = False
+            elif ch == '\\':
+                escape = True
+            elif ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            result.append(ch)
+            i += 1
+            continue
+        if ch == "#":
+            while i < len(raw) and raw[i] not in "\r\n":
+                i += 1
+            continue
+        if ch == "/" and nxt == "/":
+            i += 2
+            while i < len(raw) and raw[i] not in "\r\n":
+                i += 1
+            continue
+        result.append(ch)
+        i += 1
+
+    without_comments = "".join(result)
+    cleaned: list[str] = []
+    in_string = False
+    escape = False
+    i = 0
+    while i < len(without_comments):
+        ch = without_comments[i]
+        if in_string:
+            cleaned.append(ch)
+            if escape:
+                escape = False
+            elif ch == '\\':
+                escape = True
+            elif ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            cleaned.append(ch)
+            i += 1
+            continue
+        if ch == ",":
+            j = i + 1
+            while j < len(without_comments) and without_comments[j].isspace():
+                j += 1
+            if j < len(without_comments) and without_comments[j] in "}]":
+                i += 1
+                continue
+        cleaned.append(ch)
+        i += 1
+    return "".join(cleaned)
+
+
+def _load_json_config(path: Path) -> dict:
+    raw = path.read_text(encoding="utf-8")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        data = json.loads(_strip_json_comments_and_trailing_commas(raw))
+    if not isinstance(data, dict):
+        raise ValueError("Rule score config must be a JSON object")
+    return data
+
 def load_rule_score_weights(config_path: str | Path = RULE_SCORE_WEIGHTS_PATH) -> dict[int, int]:
     """Load rule score weights from JSON config, falling back to defaults."""
     weights = DEFAULT_RULE_SCORE_WEIGHTS.copy()
@@ -42,7 +122,7 @@ def load_rule_score_weights(config_path: str | Path = RULE_SCORE_WEIGHTS_PATH) -
     if not path.exists():
         return weights
 
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = _load_json_config(path)
     rules = data.get("rules", data)
     if not isinstance(rules, dict):
         raise ValueError("Rule score config must be a JSON object or contain a 'rules' object")
@@ -66,7 +146,7 @@ def load_structural_stop_loss_coefficient(
     if not path.exists():
         return DEFAULT_STRUCTURAL_STOP_LOSS_COEFFICIENT
 
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = _load_json_config(path)
     raw_coefficient = data.get(
         "structural_stop_loss_coefficient",
         DEFAULT_STRUCTURAL_STOP_LOSS_COEFFICIENT,
