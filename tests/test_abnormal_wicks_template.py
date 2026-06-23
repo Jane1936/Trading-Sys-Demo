@@ -95,4 +95,12 @@ def test_score_page_includes_ma20_skip_warning_at_top():
 
     assert score_header_index < warning_index < score_tabs_index
     assert "scoring_ma20_skip_record.missing_symbols" in template
+    assert "scoring_ma20_skip_record.created_at" in template
     assert "避免卡住整个评分系统" in template
+
+
+def test_score_page_shows_total_score_actual_completion_time():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    assert "实际计算完成时间" in template
+    assert "score_total_updated_at" in template

@@ -334,7 +334,7 @@
       {% if scoring_ma20_skip_record %}
       <div class="score-ma20-warning" role="status" aria-live="polite">
         <strong>MA20缺失跳过提示：</strong>
-        最近一轮评分在 {{ scoring_ma20_skip_record.decision_round_ts|fmt_ms_datetime }} 发现
+        最近一轮评分在 {{ scoring_ma20_skip_record.decision_round_ts|fmt_ms_datetime }} 轮次（实际检查时间：{{ scoring_ma20_skip_record.created_at|fmt_ms_datetime }}）发现
         {{ scoring_ma20_skip_record.missing_count }} / {{ scoring_ma20_skip_record.universe_count }}
         个 universe symbol 缺失本轮 15m MA20（目标 open_time：
         <code>{{ scoring_ma20_skip_record.target_open_time|fmt_ms_datetime }}</code>）。
@@ -660,7 +660,7 @@
 
       <div id="score-total" class="score-rule-panel">
         {% if score_total_round_ts %}
-        <div class="tip">总分轮次：{{ score_total_round_ts|fmt_ms_datetime }}</div>
+        <div class="tip">总分轮次：{{ score_total_round_ts|fmt_ms_datetime }}{% if score_total_updated_at %}；实际计算完成时间：{{ score_total_updated_at|fmt_ms_datetime }}{% endif %}</div>
         {% endif %}
         <div class="table-wrap">
           <table>

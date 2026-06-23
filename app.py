@@ -187,10 +187,13 @@ def start_pre_safety_task() -> None:
                 _, abnormal_symbols = module.get_latest_round_abnormal_symbols(decision_round_ts=round_ts)
                 # 评分系统固定在整15分钟后第30秒执行（如 15:30:30）。
                 # 当前轮次 round_ts 对应的最新已收盘15m K线 open_time=round_ts-15m；
-                # 此时仍缺少15m MA20的 symbol 直接跳过，不再重试或等待。
-                readiness = scoring.get_15m_ma20_readiness_for_round(
+                # 若 MA20 写入与评分任务存在轻微竞态，最多等到整15分钟后约第60秒；
+                # 仍缺少15m MA20的 symbol 才跳过，避免在 :30.5 附近误跳过已即将入库的数据。
+                readiness = scoring.wait_for_15m_ma20_readiness_for_round(
                     decision_round_ts=round_ts,
                     symbols=symbols,
+                    retries=6,
+                    retry_delay_seconds=5.0,
                 )
                 if not readiness.ready:
                     scoring.record_ma20_skip_for_round(

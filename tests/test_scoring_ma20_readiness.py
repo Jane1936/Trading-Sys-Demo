@@ -144,3 +144,29 @@ def test_wait_for_15m_ma20_readiness_can_retry_when_explicitly_requested(tmp_pat
     assert readiness.ready_symbols == ["BTCUSDT", "ETHUSDT"]
     assert readiness.missing_symbols == []
     assert readiness.ready
+
+
+def test_total_score_round_updated_at_returns_latest_update_time(tmp_path):
+    db_path = tmp_path / "klines.db"
+    scoring = ScoringSystem(db_path=str(db_path))
+    scoring.init_table()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO symbol_total_scores
+            (symbol, decision_round_ts, rule1_score, rule2_score, rule3_score, rule4_score, rule5_score, rule6_score, rule7_score, rule8_score, rule9_score, rule10_score, rule11_score, rule12_score, rule13_score, rule14_score, rule15_score, rule16_score, rule17_score, rule18_score, total_score, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("BTCUSDT", 1_800_000, *([0] * 18), 0, 1_830_500),
+        )
+        conn.execute(
+            """
+            INSERT INTO symbol_total_scores
+            (symbol, decision_round_ts, rule1_score, rule2_score, rule3_score, rule4_score, rule5_score, rule6_score, rule7_score, rule8_score, rule9_score, rule10_score, rule11_score, rule12_score, rule13_score, rule14_score, rule15_score, rule16_score, rule17_score, rule18_score, total_score, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("ETHUSDT", 1_800_000, *([0] * 18), 0, 1_831_000),
+        )
+
+    assert scoring.get_total_score_round_updated_at(1_800_000) == 1_831_000
+    assert scoring.get_total_score_round_updated_at(None) is None
