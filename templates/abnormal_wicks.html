@@ -219,7 +219,7 @@
       </div>
     </form>
   </div>
-  <div class="tip">时间字段均已转换为日期格式（UTC）。异常插针记录最多只显示近7天数据；建议结合浏览器自动刷新或手动 F5 查看最新数据。</div>
+  <div class="tip">时间字段均已转换为日期格式（UTC）。异常插针记录最多只显示近3天数据；建议结合浏览器自动刷新或手动 F5 查看最新数据。</div>
 
   <div class="table-wrap">
   <table>
@@ -269,10 +269,16 @@
   <section id="tab-btc" class="panel {{ 'active' if active_tab == 'tab-btc' else '' }}">
   <div class="card" style="margin-top:16px;">
     <div class="header"><h2>BTC 5分钟K线</h2></div>
-    <div class="tip">仅展示最近3天数据。红涨绿跌（close >= open 为红色，close &lt; open 为绿色），按开盘时间倒序展示，每页最多24条。</div>
+    <div class="tip">仅展示最近3天数据。红涨绿跌（close >= open 为红色，close &lt; open 为绿色），按开盘时间倒序展示，每页最多24条。刷新整个页面不会拉取 BTC 数据，请手动点击下方按钮刷新。</div>
+    <div class="toolbar">
+      <div class="actions">
+        <button class="btn btn-primary" type="button" id="refresh-btc-data">刷新BTC数据并渲染图表</button>
+      </div>
+      <div class="muted" id="btc-refresh-status">尚未加载 BTC 数据。</div>
+    </div>
     <div class="chart-wrap">
       <div class="chart-meta">
-        <span>图表展示最近3天完整5分钟K线（约864根）。</span>
+        <span>图表在点击刷新按钮后展示最近3天完整5分钟K线（约864根）。</span>
         <span>下方表格仍按每页24条分页显示。</span>
       </div>
       <div id="btc-kline-chart"></div>
@@ -290,7 +296,7 @@
             <th>volume</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody id="btc-5m-rows">
           {% for k in btc_5m_rows %}
           {% set up = k[4] >= k[1] %}
           <tr>
@@ -312,10 +318,10 @@
     </div>
     <div class="pager">
       <div class="actions">
-        <a class="btn btn-secondary" href="/safety/abnormal-wicks?limit={{ limit }}&symbol={{ selected_symbol|urlencode }}&btc_page={{ btc_page - 1 if btc_page > 1 else 1 }}">上一页</a>
-        <a class="btn btn-secondary" href="/safety/abnormal-wicks?limit={{ limit }}&symbol={{ selected_symbol|urlencode }}&btc_page={{ btc_page + 1 if btc_page < btc_total_pages else btc_total_pages }}">下一页</a>
+        <button class="btn btn-secondary" type="button" id="btc-prev-page" disabled>上一页</button>
+        <button class="btn btn-secondary" type="button" id="btc-next-page" disabled>下一页</button>
       </div>
-      <div class="pager-info">第 {{ btc_page }} / {{ btc_total_pages }} 页，共 {{ btc_total_rows }} 条（最近3天）</div>
+      <div class="pager-info" id="btc-pager-info">第 {{ btc_page }} / {{ btc_total_pages }} 页，共 {{ btc_total_rows }} 条（最近3天）</div>
     </div>
   </div>
   </section>
@@ -2330,21 +2336,27 @@
       });
     })();
 
-    (function renderBtcKlineChart() {
-      const rawRowsDesc = [
-        {% for k in btc_chart_rows %}
-          [{{ k[0] }}, {{ k[1] }}, {{ k[2] }}, {{ k[3] }}, {{ k[4] }}, {{ k[5] }}, {{ k[6] }}],
-        {% endfor %}
-      ];
-      if (!rawRowsDesc.length || !window.echarts) return;
-
+    function renderBtcKlineChart(rawRowsDesc) {
+      const chartEl = document.getElementById('btc-kline-chart');
+      if (!chartEl || !window.echarts) return;
+      if (!rawRowsDesc.length) {
+        if (btcChart) {
+          btcChart.dispose();
+          btcChart = null;
+        }
+        chartEl.innerHTML = '<div class="empty">暂无 BTC 5分钟K线图表数据</div>';
+        return;
+      }
       const rows = rawRowsDesc.slice().reverse();
       const categoryData = rows.map(r => new Date(r[0]).toISOString().slice(5, 16).replace('T', ' '));
       const values = rows.map(r => [r[1], r[4], r[3], r[2]]);
       const volumes = rows.map(r => r[5]);
 
-      const chartEl = document.getElementById('btc-kline-chart');
-      btcChart = echarts.init(chartEl);
+      if (!btcChart) {
+        chartEl.innerHTML = '';
+        btcChart = echarts.init(chartEl);
+        window.addEventListener('resize', refreshBtcChartLayout);
+      }
       btcChart.setOption({
         animation: false,
         grid: [
@@ -2385,9 +2397,88 @@
             itemStyle: { color: '#93c5fd' }
           }
         ]
-      });
-      window.addEventListener('resize', refreshBtcChartLayout);
+      }, true);
       requestAnimationFrame(refreshBtcChartLayout);
+    }
+
+    function setBtcLoading(isLoading) {
+      const btn = document.getElementById('refresh-btc-data');
+      const statusEl = document.getElementById('btc-refresh-status');
+      if (btn) {
+        btn.disabled = isLoading;
+        btn.textContent = isLoading ? '刷新中...' : '刷新BTC数据并渲染图表';
+      }
+      if (statusEl && isLoading) statusEl.textContent = '正在读取最近3天 BTC 5分钟K线...';
+    }
+
+    function updateBtcPager(payload) {
+      const prevBtn = document.getElementById('btc-prev-page');
+      const nextBtn = document.getElementById('btc-next-page');
+      const infoEl = document.getElementById('btc-pager-info');
+      const page = Number(payload.page || 1);
+      const totalPages = Number(payload.total_pages || 1);
+      if (prevBtn) {
+        prevBtn.disabled = page <= 1;
+        prevBtn.dataset.page = String(Math.max(1, page - 1));
+      }
+      if (nextBtn) {
+        nextBtn.disabled = page >= totalPages;
+        nextBtn.dataset.page = String(Math.min(totalPages, page + 1));
+      }
+      if (infoEl) infoEl.textContent = `第 ${page} / ${totalPages} 页，共 ${payload.total_rows || 0} 条（最近3天）`;
+    }
+
+    function renderBtcTable(rows) {
+      const rowsEl = document.getElementById('btc-5m-rows');
+      if (!rowsEl) return;
+      if (!rows.length) {
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="7">暂无 BTC 5分钟K线数据</td></tr>';
+        return;
+      }
+      rowsEl.innerHTML = rows.map((row) => {
+        const up = Number(row[4]) >= Number(row[1]);
+        const klass = up ? 'k-up' : 'k-down';
+        return `
+          <tr>
+            <td>${formatMsDatetime(row[0])}</td>
+            <td>${formatMsDatetime(row[6])}</td>
+            <td class="${klass}">${Number(row[1]).toFixed(6)}</td>
+            <td class="${klass}">${Number(row[2]).toFixed(6)}</td>
+            <td class="${klass}">${Number(row[3]).toFixed(6)}</td>
+            <td class="${klass}">${Number(row[4]).toFixed(6)}</td>
+            <td>${Number(row[5]).toFixed(6)}</td>
+          </tr>`;
+      }).join('');
+    }
+
+    async function refreshBtcData(page = 1) {
+      setBtcLoading(true);
+      try {
+        const response = await fetch(`/api/btc/5m?page=${encodeURIComponent(page)}`, {
+          headers: { 'Accept': 'application/json' },
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+        renderBtcTable(payload.table_rows || []);
+        renderBtcKlineChart(payload.chart_rows || []);
+        updateBtcPager(payload);
+        const statusEl = document.getElementById('btc-refresh-status');
+        if (statusEl) statusEl.textContent = `刷新完成：${formatMsDatetime(payload.queried_at)}；图表数据 ${payload.chart_rows?.length || 0} 条。`;
+      } catch (error) {
+        const statusEl = document.getElementById('btc-refresh-status');
+        if (statusEl) statusEl.textContent = `刷新失败：${error.message}`;
+      } finally {
+        setBtcLoading(false);
+      }
+    }
+
+    (function initBtcManualRefresh() {
+      const refreshBtn = document.getElementById('refresh-btc-data');
+      const prevBtn = document.getElementById('btc-prev-page');
+      const nextBtn = document.getElementById('btc-next-page');
+      if (refreshBtn) refreshBtn.addEventListener('click', () => refreshBtcData(1));
+      if (prevBtn) prevBtn.addEventListener('click', () => refreshBtcData(Number(prevBtn.dataset.page || 1)));
+      if (nextBtn) nextBtn.addEventListener('click', () => refreshBtcData(Number(nextBtn.dataset.page || 1)));
     })();
   </script>
 </body>

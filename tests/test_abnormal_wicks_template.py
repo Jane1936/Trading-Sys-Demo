@@ -78,9 +78,12 @@ def test_abnormal_wick_recent_event_queries_support_since_filter():
 def test_abnormal_wicks_template_mentions_recent_limits():
     template = Path("templates/abnormal_wicks.html").read_text()
 
-    assert "异常插针记录最多只显示近7天数据" in template
+    assert "异常插针记录最多只显示近3天数据" in template
     assert "仅展示最近3天数据" in template
-    assert "图表展示最近3天完整5分钟K线（约864根）" in template
+    assert "刷新整个页面不会拉取 BTC 数据" in template
+    assert "图表在点击刷新按钮后展示最近3天完整5分钟K线（约864根）" in template
+    assert "refreshBtcData(1)" in template
+    assert "/api/btc/5m?page=" in template
 
 
 def test_score_page_includes_ma20_skip_warning_at_top():
