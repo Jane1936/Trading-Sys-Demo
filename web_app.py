@@ -285,6 +285,76 @@ def trailing_stop_summary_api():
         return jsonify({"error": str(exc)}), 502
 
 
+def _btc_5m_payload(page: int = 1) -> dict:
+    page = max(1, page)
+    page_size = 24
+    since_ms = int((datetime.now(timezone.utc) - timedelta(days=3)).timestamp() * 1000)
+    with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        total_rows = conn.execute(
+            f"""
+            SELECT COUNT(1)
+            FROM {collector.BTC_5M_TABLE}
+            WHERE open_time >= ?
+            """,
+            (since_ms,),
+        ).fetchone()[0]
+        total_pages = max(1, (total_rows + page_size - 1) // page_size)
+        page = min(page, total_pages)
+        offset = (page - 1) * page_size
+        table_rows = conn.execute(
+            f"""
+            SELECT open_time, open, high, low, close, volume, close_time
+            FROM {collector.BTC_5M_TABLE}
+            WHERE open_time >= ?
+            ORDER BY open_time DESC
+            LIMIT ? OFFSET ?
+            """,
+            (since_ms, page_size, offset),
+        ).fetchall()
+        chart_rows = conn.execute(
+            f"""
+            SELECT open_time, open, high, low, close, volume, close_time
+            FROM {collector.BTC_5M_TABLE}
+            WHERE open_time >= ?
+            ORDER BY open_time DESC
+            """,
+            (since_ms,),
+        ).fetchall()
+
+    return {
+        "days": 3,
+        "page": page,
+        "page_size": page_size,
+        "total_rows": total_rows,
+        "total_pages": total_pages,
+        "table_rows": [list(row) for row in table_rows],
+        "chart_rows": [list(row) for row in chart_rows],
+        "queried_at": int(datetime.now(timezone.utc).timestamp() * 1000),
+    }
+
+
+@app.get("/api/btc/5m")
+def btc_5m_api():
+    page = request.args.get("page", default=1, type=int)
+    try:
+        return jsonify(_btc_5m_payload(page=page))
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            return jsonify(
+                {
+                    "days": 3,
+                    "page": 1,
+                    "page_size": 24,
+                    "total_rows": 0,
+                    "total_pages": 1,
+                    "table_rows": [],
+                    "chart_rows": [],
+                    "queried_at": int(datetime.now(timezone.utc).timestamp() * 1000),
+                }
+            )
+        return jsonify({"error": str(exc)}), 502
+
+
 @app.post("/api/trading-experiment/run")
 def trading_experiment_run_api():
     try:
@@ -309,7 +379,7 @@ def abnormal_wicks():
 
     module = PreSafetyModule(db_path=DB_PATH)
     module.init_table()
-    abnormal_events_since_ms = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp() * 1000)
+    abnormal_events_since_ms = int((datetime.now(timezone.utc) - timedelta(days=3)).timestamp() * 1000)
     cooldown = CooldownModule(db_path=DB_PATH)
     cooldown.init_table()
     events = (
@@ -380,45 +450,7 @@ def abnormal_wicks():
     btc_5m_rows = []
     btc_chart_rows = []
     btc_total_rows = 0
-    btc_chart_since_ms = int((datetime.now(timezone.utc) - timedelta(days=3)).timestamp() * 1000)
-    try:
-        with sqlite3.connect(DB_PATH, timeout=30) as conn:
-            btc_total_rows = conn.execute(
-                f"""
-                SELECT COUNT(1)
-                FROM {collector.BTC_5M_TABLE}
-                WHERE open_time >= ?
-                """,
-                (btc_chart_since_ms,),
-            ).fetchone()[0]
-            btc_total_pages = max(1, (btc_total_rows + btc_page_size - 1) // btc_page_size)
-            btc_page = min(btc_page, btc_total_pages)
-            btc_offset = (btc_page - 1) * btc_page_size
-            btc_5m_rows = conn.execute(
-                f"""
-                SELECT open_time, open, high, low, close, volume, close_time
-                FROM {collector.BTC_5M_TABLE}
-                WHERE open_time >= ?
-                ORDER BY open_time DESC
-                LIMIT ? OFFSET ?
-                """,
-                (btc_chart_since_ms, btc_page_size, btc_offset),
-            ).fetchall()
-            btc_chart_rows = conn.execute(
-                f"""
-                SELECT open_time, open, high, low, close, volume, close_time
-                FROM {collector.BTC_5M_TABLE}
-                WHERE open_time >= ?
-                ORDER BY open_time DESC
-                """,
-                (btc_chart_since_ms,),
-            ).fetchall()
-    except sqlite3.OperationalError:
-        # table may not exist before collector.init_db() first run
-        btc_5m_rows = []
-        btc_chart_rows = []
-        btc_total_rows = 0
-        btc_total_pages = 1
+    btc_total_pages = 1
 
     return render_template(
         "abnormal_wicks.html",
