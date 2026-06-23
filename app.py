@@ -200,7 +200,7 @@ def start_pre_safety_task() -> None:
                         decision_round_ts=round_ts,
                         readiness=readiness,
                         universe_count=len(symbols),
-                        created_at=now_ms,
+                        created_at=int(time.time() * 1000),
                     )
                     missing_preview = ",".join(readiness.missing_symbols[:10])
                     if len(readiness.missing_symbols) > 10:

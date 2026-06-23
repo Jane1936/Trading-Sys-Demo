@@ -170,3 +170,27 @@ def test_total_score_round_updated_at_returns_latest_update_time(tmp_path):
 
     assert scoring.get_total_score_round_updated_at(1_800_000) == 1_831_000
     assert scoring.get_total_score_round_updated_at(None) is None
+
+
+def test_ma20_skip_record_for_round_only_returns_requested_round(tmp_path):
+    db_path = tmp_path / "klines.db"
+    scoring = ScoringSystem(db_path=str(db_path))
+    scoring.init_table()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE ma20_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ma20 REAL)"
+        )
+    older = scoring.get_15m_ma20_readiness_for_round(
+        decision_round_ts=1_800_000,
+        symbols=["BTCUSDT"],
+    )
+    scoring.record_ma20_skip_for_round(
+        decision_round_ts=1_800_000,
+        readiness=older,
+        universe_count=1,
+        created_at=1_800_001,
+    )
+
+    assert scoring.get_ma20_skip_record_for_round(1_800_000) is not None
+    assert scoring.get_ma20_skip_record_for_round(2_700_000) is None
+    assert scoring.get_ma20_skip_record_for_round(None) is None
