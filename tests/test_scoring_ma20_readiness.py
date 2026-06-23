@@ -63,3 +63,44 @@ def test_ma20_skip_record_round_trips_missing_symbols(tmp_path):
     assert record.missing_count == 2
     assert record.missing_symbols == ["BTCUSDT", "ETHUSDT"]
     assert record.created_at == 1_800_001
+
+
+def test_wait_for_15m_ma20_readiness_retries_missing_symbols(tmp_path, monkeypatch):
+    db_path = tmp_path / "klines.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE ma20_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ma20 REAL)"
+        )
+        conn.execute(
+            "INSERT INTO ma20_indicators (symbol, interval, open_time, ma20) VALUES (?, ?, ?, ?)",
+            ("BTCUSDT", "15m", 900_000, 100.0),
+        )
+
+    scoring = ScoringSystem(db_path=str(db_path))
+    original_get = scoring.get_15m_ma20_readiness_for_round
+    calls = 0
+
+    def wrapped_get(decision_round_ts, symbols):
+        nonlocal calls
+        if calls == 1:
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    "INSERT INTO ma20_indicators (symbol, interval, open_time, ma20) VALUES (?, ?, ?, ?)",
+                    ("ETHUSDT", "15m", 900_000, 100.0),
+                )
+        calls += 1
+        return original_get(decision_round_ts, symbols)
+
+    monkeypatch.setattr(scoring, "get_15m_ma20_readiness_for_round", wrapped_get)
+
+    readiness = scoring.wait_for_15m_ma20_readiness_for_round(
+        decision_round_ts=1_800_000,
+        symbols=["BTCUSDT", "ETHUSDT"],
+        retries=1,
+        retry_delay_seconds=0,
+    )
+
+    assert calls == 2
+    assert readiness.ready_symbols == ["BTCUSDT", "ETHUSDT"]
+    assert readiness.missing_symbols == []
+    assert readiness.ready

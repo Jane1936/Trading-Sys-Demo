@@ -756,6 +756,30 @@ class ScoringSystem:
         missing_symbols = [symbol for symbol in symbol_list if symbol not in ready_set]
         return MA20Readiness(target_open_time, ready_symbols, missing_symbols)
 
+
+    def wait_for_15m_ma20_readiness_for_round(
+        self,
+        decision_round_ts: int,
+        symbols: Iterable[str],
+        *,
+        retries: int = 1,
+        retry_delay_seconds: float = 5.0,
+    ) -> MA20Readiness:
+        """Check 15m MA20 readiness and retry once for missing symbols by default."""
+        readiness = self.get_15m_ma20_readiness_for_round(decision_round_ts, symbols)
+        remaining_retries = max(0, int(retries))
+        while readiness.missing_symbols and remaining_retries > 0:
+            if retry_delay_seconds > 0:
+                time.sleep(retry_delay_seconds)
+            retry_readiness = self.get_15m_ma20_readiness_for_round(
+                decision_round_ts, readiness.missing_symbols
+            )
+            ready_symbols = sorted(set(readiness.ready_symbols) | set(retry_readiness.ready_symbols))
+            missing_symbols = retry_readiness.missing_symbols
+            readiness = MA20Readiness(readiness.target_open_time, ready_symbols, missing_symbols)
+            remaining_retries -= 1
+        return readiness
+
     def is_15m_ma20_ready_for_round(self, decision_round_ts: int, symbols: Iterable[str]) -> bool:
         return self.get_15m_ma20_readiness_for_round(decision_round_ts, symbols).ready
 
