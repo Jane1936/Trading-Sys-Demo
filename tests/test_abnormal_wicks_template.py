@@ -99,6 +99,14 @@ def test_score_page_includes_ma20_skip_warning_at_top():
     assert "避免卡住整个评分系统" in template
 
 
+def test_score_page_does_not_require_manual_rule_detail_refresh():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    assert "刷新查看各规则详细数据" not in template
+    assert "show-score-rule-details" not in template
+    assert 'id="score-rule-details" hidden' not in template
+
+
 def test_score_page_shows_total_score_actual_completion_time():
     template = Path("templates/abnormal_wicks.html").read_text()
 
