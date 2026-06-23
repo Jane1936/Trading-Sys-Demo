@@ -30,7 +30,6 @@ class ExperimentConfig:
     risk_fraction: Decimal = Decimal("0.01")
     default_stop_loss_distance_ratio: Decimal = Decimal("0.05")
     default_opening_leverage: int = 5
-    take_profit_pct: Decimal = Decimal("0.20")
     max_stop_loss_pct: Decimal = Decimal("0.10")
     exit_order_missing_position_retries: int = 3
     exit_order_missing_position_retry_delay_seconds: Decimal = Decimal("0.5")
@@ -111,7 +110,7 @@ class TradingExperiment:
       and leverage: base margin = (equity * 1%) / (distance_ratio * leverage);
     * required margin uses the full formula result, and planned notional is margin * leverage;
     * stop-loss price distance remains capped by min(entry * 10%, equity * 1% / quantity);
-    * take-profit is 20% above entry;
+    * new entries do not place a hard take-profit order; only stop-loss is placed;
     * candidates come from the latest qualified openable-symbol round and are
       processed by total_score descending, then symbol ascending.
     """
@@ -460,11 +459,7 @@ class TradingExperiment:
         trigger_reference_price = self._latest_mark_price(trading_symbol, entry_price)
         notional = quantity * entry_price
         required_margin = notional / Decimal(leverage)
-        take_profit_price = self._valid_take_profit_price(
-            entry_price=entry_price,
-            trigger_reference_price=trigger_reference_price,
-            tick_size=exchange_info["tick_size"],
-        )
+        take_profit_price = Decimal("0")
         stop_loss_price = self._risk_capped_stop_loss_price(
             entry_price=entry_price,
             quantity=quantity,
@@ -474,7 +469,6 @@ class TradingExperiment:
         )
 
         sl_order = None
-        tp_order = None
         if position_visible:
             sl_order = self._place_exit_order(
                 candidate,
@@ -489,23 +483,10 @@ class TradingExperiment:
                 },
                 "place_stop_loss",
             )
-            tp_order = self._place_exit_order(
-                candidate,
-                trading_symbol,
-                {
-                    "symbol": trading_symbol,
-                    "side": "SELL",
-                    "type": "TAKE_PROFIT_MARKET",
-                    "stopPrice": self._fmt_decimal(take_profit_price),
-                    "closePosition": "true",
-                    "workingType": "MARK_PRICE",
-                },
-                "place_take_profit",
-            )
-        tp_order_id = self._exit_order_id(tp_order)
+        tp_order_id = ""
         sl_order_id = self._exit_order_id(sl_order)
         exit_order_status = []
-        exit_order_status.append("tp_order_id=" + (tp_order_id or "failed"))
+        exit_order_status.append("tp_order_id=not_placed")
         exit_order_status.append("sl_order_id=" + (sl_order_id or "failed"))
 
         self._insert_trade(
@@ -525,7 +506,7 @@ class TradingExperiment:
             take_profit_order_id=tp_order_id,
             stop_loss_order_id=sl_order_id,
             reason=f"market_order_id={market_order.get('orderId', '')}; " + "; ".join(exit_order_status),
-            raw_response=str({"market": market_order, "tp": tp_order, "sl": sl_order}),
+            raw_response=str({"market": market_order, "tp": None, "sl": sl_order}),
             now=now,
         )
         return {"status": "opened", "required_margin": self._fmt_decimal(required_margin)}
@@ -1073,16 +1054,6 @@ class TradingExperiment:
             return fallback
         price = self._decimal_from(payload.get("markPrice"), Decimal("0"))
         return price if price > 0 else fallback
-
-    def _valid_take_profit_price(
-        self,
-        entry_price: Decimal,
-        trigger_reference_price: Decimal,
-        tick_size: Decimal,
-    ) -> Decimal:
-        desired_price = entry_price * (Decimal("1") + self.config.take_profit_pct)
-        minimum_trigger_price = trigger_reference_price + tick_size
-        return self._ceil_to_tick(max(desired_price, minimum_trigger_price), tick_size)
 
     def _risk_capped_stop_loss_price(
         self,

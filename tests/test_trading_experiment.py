@@ -175,28 +175,28 @@ class TradingExperimentSymbolTests(unittest.TestCase):
             )
 
             result = experiment._open_long(candidate, Decimal("1000"), Decimal("10"))
+            trade_rows = experiment.recent_trade_records()
 
         self.assertEqual(result["status"], "opened")
         self.assertEqual(fake_account.latest_price_params, {"symbol": "BANKUSDT"})
         self.assertEqual(fake_account.latest_mark_price_params, {"symbol": "BANKUSDT"})
         symbol_params = [params["symbol"] for _, params in fake_account.signed_posts]
-        self.assertEqual(symbol_params, ["BANKUSDT", "BANKUSDT", "BANKUSDT", "BANKUSDT"])
+        self.assertEqual(symbol_params, ["BANKUSDT", "BANKUSDT", "BANKUSDT"])
         endpoints = [endpoint for endpoint, _ in fake_account.signed_posts]
         self.assertEqual(
             endpoints,
-            ["/fapi/v1/leverage", "/fapi/v1/order", "/fapi/v1/algoOrder", "/fapi/v1/algoOrder"],
+            ["/fapi/v1/leverage", "/fapi/v1/order", "/fapi/v1/algoOrder"],
         )
         order_types = [params.get("type", "LEVERAGE") for _, params in fake_account.signed_posts]
-        self.assertEqual(order_types, ["LEVERAGE", "MARKET", "STOP_MARKET", "TAKE_PROFIT_MARKET"])
+        self.assertEqual(order_types, ["LEVERAGE", "MARKET", "STOP_MARKET"])
         self.assertEqual(fake_account.signed_posts[1][1]["quantity"], "1000")
         stop_loss_params = fake_account.signed_posts[2][1]
-        take_profit_params = fake_account.signed_posts[3][1]
         self.assertEqual(stop_loss_params["algoType"], "CONDITIONAL")
-        self.assertEqual(take_profit_params["algoType"], "CONDITIONAL")
         self.assertEqual(stop_loss_params["triggerPrice"], "0.99")
-        self.assertEqual(take_profit_params["triggerPrice"], "1.2")
         self.assertNotIn("stopPrice", stop_loss_params)
-        self.assertNotIn("stopPrice", take_profit_params)
+        self.assertEqual(trade_rows[0].take_profit_price, "0")
+        self.assertEqual(trade_rows[0].take_profit_order_id, "")
+        self.assertIn("tp_order_id=not_placed", trade_rows[0].reason)
 
     def test_open_long_waits_until_position_amt_is_positive_before_exit_orders(self):
         fake_account = DelayedPositionAccountManager()
@@ -235,7 +235,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         )
         endpoints = [endpoint for endpoint, _ in fake_account.signed_posts]
         self.assertEqual(endpoints[:2], ["/fapi/v1/leverage", "/fapi/v1/order"])
-        self.assertEqual(endpoints[2:], ["/fapi/v1/algoOrder", "/fapi/v1/algoOrder"])
+        self.assertEqual(endpoints[2:], ["/fapi/v1/algoOrder"])
 
     def test_latest_price_falls_back_to_mark_price_when_ticker_payload_is_empty(self):
         fake_account = EmptyTickerAccountManager()
@@ -437,7 +437,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
 
         self.assertEqual([row.status for row in rows], ["opened"])
 
-    def test_take_profit_failure_does_not_hide_opened_trade_or_stop_loss_order(self):
+    def test_no_take_profit_order_is_placed_for_new_opened_trade(self):
         fake_account = FailingTakeProfitAccountManager()
         with tempfile.TemporaryDirectory() as tmpdir:
             experiment = TradingExperiment(
@@ -466,11 +466,12 @@ class TradingExperimentSymbolTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "opened")
         self.assertEqual(trade_rows[0].status, "opened")
+        self.assertEqual(trade_rows[0].take_profit_price, "0")
         self.assertEqual(trade_rows[0].take_profit_order_id, "")
         self.assertEqual(trade_rows[0].stop_loss_order_id, "3")
-        self.assertEqual(error_rows[0].operation, "place_take_profit:BANKUSDT")
+        self.assertEqual(error_rows, [])
 
-    def test_exit_order_retries_missing_position_algo_order_error(self):
+    def test_exit_order_does_not_place_take_profit_after_stop_loss(self):
         fake_account = MissingPositionOnceAccountManager()
         with tempfile.TemporaryDirectory() as tmpdir:
             experiment = TradingExperiment(
@@ -499,15 +500,14 @@ class TradingExperimentSymbolTests(unittest.TestCase):
             error_rows = experiment.recent_error_records()
 
         self.assertEqual(result["status"], "opened")
-        self.assertEqual(fake_account.take_profit_failures, 1)
+        self.assertEqual(fake_account.take_profit_failures, 0)
         self.assertEqual(
             fake_account.position_risk_requests,
-            [
-                ("/fapi/v3/positionRisk", {"symbol": "BANKUSDT"}),
-                ("/fapi/v3/positionRisk", {"symbol": "BANKUSDT"}),
-            ],
+            [("/fapi/v3/positionRisk", {"symbol": "BANKUSDT"})],
         )
-        self.assertEqual(trade_rows[0].take_profit_order_id, "5")
+        self.assertEqual(trade_rows[0].take_profit_price, "0")
+        self.assertEqual(trade_rows[0].take_profit_order_id, "")
+        self.assertEqual(trade_rows[0].stop_loss_order_id, "3")
         self.assertEqual(error_rows, [])
 
 
