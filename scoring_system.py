@@ -762,10 +762,10 @@ class ScoringSystem:
         decision_round_ts: int,
         symbols: Iterable[str],
         *,
-        retries: int = 1,
+        retries: int = 0,
         retry_delay_seconds: float = 5.0,
     ) -> MA20Readiness:
-        """Check 15m MA20 readiness and retry once for missing symbols by default."""
+        """Check 15m MA20 readiness; callers opt in if they need retries."""
         readiness = self.get_15m_ma20_readiness_for_round(decision_round_ts, symbols)
         remaining_retries = max(0, int(retries))
         while readiness.missing_symbols and remaining_retries > 0:

@@ -144,7 +144,8 @@ def start_pre_safety_task() -> None:
     holding_scoring = HoldingPositionScoringSystem(db_path=collector.DB_PATH)
     holding_scoring.init_tables()
 
-    last_round_ts = None
+    last_pre_safety_round_ts = None
+    last_scoring_round_ts = None
     round_ms = 15 * 60_000
 
     print("🛡️ Pre-safety task started")
@@ -153,7 +154,9 @@ def start_pre_safety_task() -> None:
         now_ms = int(time.time() * 1000)
         round_ts = (now_ms // round_ms) * round_ms
 
-        if round_ts != last_round_ts:
+        scoring_execute_ts = round_ts + 30_000
+
+        if round_ts != last_pre_safety_round_ts:
             for symbol in symbols:
                 try:
                     events = module.detect_for_symbol(symbol, now_ms=now_ms)
@@ -177,24 +180,18 @@ def start_pre_safety_task() -> None:
             except Exception as exc:
                 print(f"⚠️ cooldown failed round={round_ts}: {exc}")
 
+            last_pre_safety_round_ts = round_ts
+
+        if round_ts != last_scoring_round_ts and now_ms >= scoring_execute_ts:
             try:
                 _, abnormal_symbols = module.get_latest_round_abnormal_symbols(decision_round_ts=round_ts)
-                # 评分严格依赖15m MA20：先等待该轮对应已收盘15m K线的MA20写入完成，再打分。
-                # 当前轮次 round_ts 对应的最新已收盘15m K线 open_time=round_ts-15m。
-                readiness = scoring.wait_for_15m_ma20_readiness_for_round(
+                # 评分系统固定在整15分钟后第30秒执行（如 15:30:30）。
+                # 当前轮次 round_ts 对应的最新已收盘15m K线 open_time=round_ts-15m；
+                # 此时仍缺少15m MA20的 symbol 直接跳过，不再重试或等待。
+                readiness = scoring.get_15m_ma20_readiness_for_round(
                     decision_round_ts=round_ts,
                     symbols=symbols,
-                    retries=1,
-                    retry_delay_seconds=5,
                 )
-                if not readiness.ready and not readiness.ready_symbols:
-                    print(
-                        f"⏳ scoring round={round_ts} waiting MA20 readiness "
-                        f"target_open_time={readiness.target_open_time} "
-                        f"missing={len(readiness.missing_symbols)}/{len(symbols)}"
-                    )
-                    time.sleep(5)
-                    continue
                 if not readiness.ready:
                     scoring.record_ma20_skip_for_round(
                         decision_round_ts=round_ts,
@@ -248,7 +245,7 @@ def start_pre_safety_task() -> None:
             except Exception as exc:
                 print(f"⚠️ scoring failed round={round_ts}: {exc}")
 
-            last_round_ts = round_ts
+            last_scoring_round_ts = round_ts
 
         time.sleep(5)
 
