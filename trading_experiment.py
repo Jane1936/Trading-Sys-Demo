@@ -217,12 +217,26 @@ class TradingExperiment:
                 f"ON {self.ERRORS_TABLE}(created_at DESC, symbol ASC)"
             )
 
-    def run_latest_round(self) -> dict[str, Any]:
-        """Run one experiment pass against the latest openable-symbol round."""
+    @staticmethod
+    def current_decision_round_ts(now_ms: int | None = None) -> int:
+        """Return the current 15-minute decision-round timestamp in milliseconds."""
+        now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
+        round_ms = 15 * 60_000
+        return (now_ms // round_ms) * round_ms
+
+    def run_latest_round(self, decision_round_ts: int | None = None) -> dict[str, Any]:
+        """Run one experiment pass against openable symbols already evaluated for a round.
+
+        When ``decision_round_ts`` is provided (for scheduled 15-minute scans),
+        only that exact round is eligible. This prevents a timer from opening
+        positions from a stale previous round before the current round's
+        ``本轮可开仓 symbol 情况`` has completed.
+        """
         self.init_tables()
-        candidates = self._latest_openable_candidates()
+        candidates = self._latest_openable_candidates(decision_round_ts=decision_round_ts)
         if not candidates:
-            return {"opened": 0, "skipped": 0, "reason": "no_qualified_openable_symbols"}
+            reason = "current_round_openable_not_ready" if decision_round_ts is not None else "no_qualified_openable_symbols"
+            return {"opened": 0, "skipped": 0, "reason": reason}
         return self.run_round(candidates)
 
     def run_round(self, candidates: Iterable[OpenableSymbol]) -> dict[str, Any]:
@@ -371,14 +385,15 @@ class TradingExperiment:
             rows = conn.execute(query, params).fetchall()
         return [self._error_from_row(row) for row in rows]
 
-    def _latest_openable_candidates(self) -> list[OpenableSymbol]:
+    def _latest_openable_candidates(self, decision_round_ts: int | None = None) -> list[OpenableSymbol]:
         module = OpenableSymbolModule(db_path=self.db_path)
         module.init_table()
         with module._connect() as conn:
-            round_row = conn.execute(
-                f"SELECT MAX(decision_round_ts) AS decision_round_ts FROM {module.TABLE_NAME} WHERE qualified = 1"
-            ).fetchone()
-            decision_round_ts = round_row["decision_round_ts"] if round_row else None
+            if decision_round_ts is None:
+                round_row = conn.execute(
+                    f"SELECT MAX(decision_round_ts) AS decision_round_ts FROM {module.TABLE_NAME} WHERE qualified = 1"
+                ).fetchone()
+                decision_round_ts = round_row["decision_round_ts"] if round_row else None
             if decision_round_ts is None:
                 return []
             rows = conn.execute(
@@ -1121,7 +1136,12 @@ class TradingExperiment:
         return format(value.normalize(), "f")
 
 
-
 if __name__ == "__main__":
-    result = TradingExperiment().run_latest_round()
+    # Standalone 15-minute scans must not use stale openable results from a
+    # previous round. They are allowed to trade only after the current round's
+    # openable-symbol evaluation has already persisted qualified candidates.
+    experiment = TradingExperiment()
+    result = experiment.run_latest_round(
+        decision_round_ts=experiment.current_decision_round_ts(),
+    )
     print(result)

@@ -4,7 +4,7 @@ import unittest
 from decimal import Decimal
 from pathlib import Path
 
-from openable_symbol_module import OpenableSymbol
+from openable_symbol_module import OpenableSymbol, OpenableSymbolModule
 from trading_experiment import ExperimentConfig, TradingExperiment
 
 
@@ -510,6 +510,32 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(trade_rows[0].stop_loss_order_id, "3")
         self.assertEqual(error_rows, [])
 
+    def test_scheduled_run_latest_round_ignores_stale_openable_round(self):
+        fake_account = FakeAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "klines.db")
+            module = OpenableSymbolModule(db_path=db_path)
+            module.init_table()
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    f"""
+                    INSERT INTO {module.TABLE_NAME}
+                    (symbol, decision_round_ts, total_score, score_band, stop_loss_distance_ratio,
+                     distance_threshold, stop_loss_distance_tier, opening_leverage,
+                     distance_qualified, qualified, reason, evaluated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("BANK", 900_000, 90, "确定性强趋势单", 0.01, 0.08, "A档", "4x", 1, 1, "test", 1),
+                )
+
+            experiment = TradingExperiment(db_path=db_path, account_manager=fake_account)
+            result = experiment.run_latest_round(decision_round_ts=1_800_000)
+
+        self.assertEqual(result, {"opened": 0, "skipped": 0, "reason": "current_round_openable_not_ready"})
+        self.assertEqual(fake_account.signed_posts, [])
+
+    def test_current_decision_round_ts_uses_15_minute_floor(self):
+        self.assertEqual(TradingExperiment.current_decision_round_ts(now_ms=1_830_000), 1_800_000)
 
     def test_run_round_requires_qualified_candidate_and_positive_leverage(self):
         fake_account = FakeAccountManager()
