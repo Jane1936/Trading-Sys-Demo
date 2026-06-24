@@ -137,3 +137,34 @@ def test_recent_filled_orders_paginates_when_first_user_trades_page_is_full(monk
     assert manager.calls[1]["startTime"] == 2001
     assert manager.calls[1]["endTime"] == 10000
     assert manager.calls[1]["limit"] == 2
+
+
+def test_recent_filled_orders_splits_user_trades_requests_into_seven_day_windows(monkeypatch):
+    class WindowedRecentTradesManager(BinanceAccountManager):
+        def __init__(self):
+            super().__init__(api_key="key", secret_key="secret")
+            self.calls = []
+
+        def validate_config(self):
+            return None
+
+        def _signed_get(self, endpoint, params=None):
+            assert endpoint == "/fapi/v1/userTrades"
+            self.calls.append(dict(params or {}))
+            return []
+
+    day_ms = 24 * 60 * 60 * 1000
+    monkeypatch.setattr("binance_account_manager.time.time", lambda: 30 * day_ms / 1000)
+    manager = WindowedRecentTradesManager()
+
+    orders = manager.futures_recent_filled_orders(days=15)["orders"]
+
+    assert orders == []
+    assert len(manager.calls) == 3
+    assert manager.calls[0]["startTime"] == 15 * day_ms
+    assert manager.calls[0]["endTime"] == 22 * day_ms
+    assert manager.calls[1]["startTime"] == 22 * day_ms + 1
+    assert manager.calls[1]["endTime"] == 29 * day_ms + 1
+    assert manager.calls[2]["startTime"] == 29 * day_ms + 2
+    assert manager.calls[2]["endTime"] == 30 * day_ms
+    assert all(call["endTime"] - call["startTime"] <= 7 * day_ms for call in manager.calls)
