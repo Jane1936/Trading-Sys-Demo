@@ -32,6 +32,32 @@ app = Flask(__name__)
 DB_PATH = os.getenv("DB_PATH", collector.DB_PATH)
 
 
+def _score_band_context() -> tuple[list[dict], str, str, int]:
+    bands = [
+        {
+            "label": band.label,
+            "lower": band.lower,
+            "upper": band.upper,
+            "distance_threshold": band.distance_threshold,
+            "tier_leverages": band.tier_leverages,
+            "css_class": band.css_class,
+            "chart_color": band.chart_color,
+            "chart_border_color": band.chart_border_color,
+        }
+        for band in OpenableSymbolModule.SCORE_BANDS
+    ]
+    threshold_text = "，".join(
+        f"{band['lower']}-{band['upper']}分≤{band['distance_threshold'] * 100:.0f}%" for band in bands
+    )
+    leverage_text = "；".join(
+        f"{band['lower']}-{band['upper']}：A/B/C/D="
+        f"{band['tier_leverages']['A档']}/{band['tier_leverages']['B档']}/"
+        f"{band['tier_leverages']['C档']}/{band['tier_leverages']['D档']}"
+        for band in bands
+    )
+    return bands, threshold_text, leverage_text, OpenableSymbolModule.MIN_TOTAL_SCORE
+
+
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -418,6 +444,7 @@ def abnormal_wicks():
     score_total_round_ts, round_scores_total = scoring.get_latest_round_total_scores()
     score_total_updated_at = scoring.get_total_score_round_updated_at(score_total_round_ts)
     scoring_ma20_skip_record = scoring.get_ma20_skip_record_for_round(score_total_round_ts)
+    score_band_configs, score_distance_threshold_text, score_leverage_mapping_text, openable_min_total_score = _score_band_context()
     openable = OpenableSymbolModule(db_path=DB_PATH)
     openable.init_table()
     openable_round_ts = score_total_round_ts
@@ -509,6 +536,10 @@ def abnormal_wicks():
         scoring_ma20_skip_record=scoring_ma20_skip_record,
         openable_round_ts=openable_round_ts,
         openable_symbols=openable_symbols,
+        score_band_configs=score_band_configs,
+        score_distance_threshold_text=score_distance_threshold_text,
+        score_leverage_mapping_text=score_leverage_mapping_text,
+        openable_min_total_score=openable_min_total_score,
         trading_trade_records=trading_trade_records,
         trading_position_snapshots=trading_position_snapshots,
         trading_error_records=trading_error_records,

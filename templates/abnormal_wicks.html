@@ -670,22 +670,15 @@
               {% set top_score = round_scores_total[0].total_score if round_scores_total else none %}
               {% for r in round_scores_total %}
                 {% set total_score_value = r.total_score|int %}
-                {% if total_score_value >= 89 %}
-                  {% set band_label = '确定性强趋势单' %}
-                  {% set band_class = 'score-band-strong-trend' %}
-                {% elif total_score_value >= 81 %}
-                  {% set band_label = '趋势标准单' %}
-                  {% set band_class = 'score-band-trend-standard' %}
-                {% elif total_score_value >= 73 %}
-                  {% set band_label = '标准试错单' %}
-                  {% set band_class = 'score-band-standard-trial' %}
-                {% elif total_score_value >= 65 %}
-                  {% set band_label = '低档试错单' %}
-                  {% set band_class = 'score-band-low-trial' %}
-                {% else %}
-                  {% set band_label = 'NA' %}
-                  {% set band_class = 'score-band-na' %}
-                {% endif %}
+                {% set band = namespace(label='NA', css_class='score-band-na') %}
+                {% for config in score_band_configs %}
+                  {% if total_score_value >= config.lower and total_score_value <= config.upper %}
+                    {% set band.label = config.label %}
+                    {% set band.css_class = config.css_class %}
+                  {% endif %}
+                {% endfor %}
+                {% set band_label = band.label %}
+                {% set band_class = band.css_class %}
               <tr class="{{ 'top-score-row' if top_score is not none and r.total_score == top_score else '' }}"><td>{{ loop.index }}</td><td>{{ r.symbol }}{% if top_score is not none and r.total_score == top_score %}<span class="top-score-badge">最高分</span>{% endif %}</td><td><span class="score-band-badge {{ band_class }}">{{ band_label }}</span></td><td>{{ r.rule1_score }}</td><td>{{ r.rule2_score }}</td><td>{{ r.rule3_score }}</td><td>{{ r.rule4_score }}</td><td>{{ r.rule5_score }}</td><td>{{ r.rule6_score }}</td><td>{{ r.rule7_score }}</td><td>{{ r.rule8_score }}</td><td>{{ r.rule9_score }}</td><td>{{ r.rule10_score }}</td><td>{{ r.rule11_score }}</td><td>{{ r.rule12_score }}</td><td>{{ r.rule13_score }}</td><td>{{ r.rule14_score }}</td><td>{{ r.rule15_score }}</td><td>{{ r.rule16_score }}</td><td>{{ r.rule17_score }}</td><td>{{ r.rule18_score }}</td><td>{{ r.total_score }}</td></tr>
               {% else %}
               <tr><td class="empty" colspan="22">暂无总分数据</td></tr>
@@ -763,7 +756,7 @@
             </div>
           {% endif %}
         </div>
-        <div class="tip">可开仓基础条件：本轮总分 ≥ 65，且不在冷却期。止损距离筛查使用规则18的 distance_ratio：65-72分≤5%，73-80分≤6%，81-88分≤7%，89-100分≤8%；止损距离档位：0&lt;distance_ratio≤2% 为A档，2%&lt;distance_ratio≤3% 为B档，3%&lt;distance_ratio≤4% 为C档，distance_ratio&gt;4% 为D档。杠杆评定：趋势标准单及以上且 distance_ratio 为0时统一为5x；其他情况按总分区间和止损距离档位映射（65-72：A/B/C/D=4x/3x/2x/1x；73-80：8x/6x/4x/2x；81-88：10x/7x/5x/3x；89-100：12x/8x/6x/4x）。下表展示基础条件命中的symbol及其止损距离筛查结果与本轮开仓杠杆倍数。</div>
+        <div class="tip">可开仓基础条件：本轮总分 ≥ {{ openable_min_total_score }}，且不在冷却期。止损距离筛查使用规则18的 distance_ratio：{{ score_distance_threshold_text }}；止损距离档位：0&lt;distance_ratio≤2% 为A档，2%&lt;distance_ratio≤3% 为B档，3%&lt;distance_ratio≤4% 为C档，distance_ratio&gt;4% 为D档。杠杆评定：趋势标准单及以上且 distance_ratio 为0时统一为5x；其他情况按总分区间和止损距离档位映射（{{ score_leverage_mapping_text }}）。下表展示基础条件命中的symbol及其止损距离筛查结果与本轮开仓杠杆倍数。</div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -2237,12 +2230,13 @@
     })();
 
 
-    const SCORE_BANDS = [
-      { min: 89, max: 100, name: '确定性强趋势单', color: 'rgba(249, 115, 22, 0.14)', borderColor: 'rgba(249, 115, 22, 0.38)' },
-      { min: 81, max: 88, name: '趋势标准单', color: 'rgba(34, 197, 94, 0.13)', borderColor: 'rgba(34, 197, 94, 0.34)' },
-      { min: 73, max: 80, name: '标准试错单', color: 'rgba(99, 102, 241, 0.13)', borderColor: 'rgba(99, 102, 241, 0.34)' },
-      { min: 65, max: 72, name: '低档试错单', color: 'rgba(6, 182, 212, 0.14)', borderColor: 'rgba(6, 182, 212, 0.35)' },
-    ];
+    const SCORE_BANDS = {{ score_band_configs|tojson }}.map((band) => ({
+      min: band.lower,
+      max: band.upper,
+      name: band.label,
+      color: band.chart_color,
+      borderColor: band.chart_border_color,
+    })).sort((a, b) => b.min - a.min);
 
     function buildScoreTrendOption(rawRows, symbolName) {
       const hasRows = rawRows.length > 0;
@@ -2323,7 +2317,7 @@
             symbol: 'none',
             lineStyle: { color: '#94a3b8', type: 'dashed', width: 1 },
             label: { show: false },
-            data: [{ yAxis: 65 }, { yAxis: 73 }, { yAxis: 81 }, { yAxis: 89 }]
+            data: SCORE_BANDS.map((band) => ({ yAxis: band.min }))
           }
         }]
       };
