@@ -138,6 +138,10 @@ class TrailingStopTracker:
             return False
         try:
             high = self._latest_1m_high(symbol)
+            latest_15m_low = self._latest_15m_low(symbol)
+            current_price = self._decimal_from(position.get("markPrice"), Decimal("0"))
+            if current_price <= 0:
+                raise RuntimeError("invalid_current_mark_price")
             pnl = self._unrealized_pnl_at_high(amount, entry_price, high)
             previous = self._previous_max(symbol, entry_price)
             if previous and previous[0] >= pnl:
@@ -149,7 +153,8 @@ class TrailingStopTracker:
             drawdown = self._current_profit_drawdown(pnl, max_pnl)
             total_score = self._latest_total_score(symbol)
             threshold = self._drawdown_threshold(total_score)
-            should_trigger = threshold > 0 and drawdown >= threshold
+            price_below_latest_15m_low = current_price < latest_15m_low
+            should_trigger = threshold > 0 and drawdown >= threshold and price_below_latest_15m_low
             cancel_order_id = ""
             cancel_status = "not_required"
             close_quantity = Decimal("0")
@@ -164,8 +169,10 @@ class TrailingStopTracker:
                     reason = f"{reason}; {action_reason}"
             elif total_score is None:
                 reason = f"{reason}; missing_total_score"
-            else:
+            elif threshold <= 0 or drawdown < threshold:
                 reason = f"{reason}; drawdown_below_threshold"
+            else:
+                reason = f"{reason}; current_price_not_below_latest_15m_low(current_price={self._fmt_decimal(current_price)}, latest_15m_low={self._fmt_decimal(latest_15m_low)})"
             self._insert_check(symbol, now, entry_price, amount, high, pnl, max_pnl, drawdown, max_at, total_score, threshold, should_trigger, cancel_order_id, cancel_status, close_quantity, close_order_id, close_status, True, reason)
             return True
         except Exception as exc:
@@ -274,6 +281,19 @@ class TrailingStopTracker:
         if high <= 0:
             raise RuntimeError("invalid_1m_kline_high")
         return high
+
+    def _latest_15m_low(self, symbol: str) -> Decimal:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT low FROM klines_15m WHERE symbol = ? ORDER BY open_time DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("missing_15m_kline_low")
+        low = self._decimal_from(row["low"], Decimal("0"))
+        if low <= 0:
+            raise RuntimeError("invalid_15m_kline_low")
+        return low
 
     @staticmethod
     def _unrealized_pnl_at_high(amount: Decimal, entry_price: Decimal, high: Decimal) -> Decimal:
