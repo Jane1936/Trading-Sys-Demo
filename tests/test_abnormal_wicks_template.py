@@ -43,6 +43,21 @@ def test_filled_orders_summary_includes_expectancy_metric():
     assert "setPnl('filled-expectancy', summary?.expectancy ?? 0);" in template
 
 
+
+def test_filled_orders_query_supports_configurable_days_dropdown():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    panel_index = template.index('<div id="strategy-filled-orders"')
+    select_index = template.index('id="filled-orders-days"')
+    button_index = template.index('id="query-filled-sell-orders"')
+
+    assert panel_index < select_index < button_index
+    assert 'value="1"' in template
+    assert 'value="30"' in template
+    assert 'function getFilledOrdersDays()' in template
+    assert 'Math.max(1, Math.min(Math.trunc(days), 30))' in template
+    assert 'days=${encodeURIComponent(days)}' in template
+
 def _insert_abnormal_wick_event(conn, symbol, detected_at):
     conn.execute(
         """
