@@ -1,7 +1,7 @@
 """Current-round openable symbol evaluator.
 
 This task must run after total scores are persisted for a decision round. It
-selects symbols with total_score >= 65 that are not in the cooldown table, then
+selects symbols in the configured openable score bands that are not in the cooldown table, then
 performs an extra stop-loss-distance screening using rule18's distance_ratio.
 """
 
@@ -11,6 +11,18 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from typing import List
+
+
+@dataclass(frozen=True)
+class ScoreBandConfig:
+    label: str
+    lower: int
+    upper: int
+    distance_threshold: float
+    tier_leverages: dict[str, str]
+    css_class: str
+    chart_color: str
+    chart_border_color: str
 
 
 @dataclass
@@ -33,7 +45,49 @@ class OpenableSymbolModule:
     """Persist symbols that can be considered for opening in this round."""
 
     TABLE_NAME = "current_round_openable_symbols"
-    MIN_TOTAL_SCORE = 65
+    SCORE_BANDS = (
+        ScoreBandConfig(
+            label="低档试错单",
+            lower=67,
+            upper=72,
+            distance_threshold=0.05,
+            tier_leverages={"A档": "4x", "B档": "3x", "C档": "2x", "D档": "1x"},
+            css_class="score-band-low-trial",
+            chart_color="rgba(6, 182, 212, 0.14)",
+            chart_border_color="rgba(6, 182, 212, 0.35)",
+        ),
+        ScoreBandConfig(
+            label="标准试错单",
+            lower=73,
+            upper=80,
+            distance_threshold=0.06,
+            tier_leverages={"A档": "8x", "B档": "6x", "C档": "4x", "D档": "2x"},
+            css_class="score-band-standard-trial",
+            chart_color="rgba(99, 102, 241, 0.13)",
+            chart_border_color="rgba(99, 102, 241, 0.34)",
+        ),
+        ScoreBandConfig(
+            label="趋势标准单",
+            lower=81,
+            upper=88,
+            distance_threshold=0.07,
+            tier_leverages={"A档": "10x", "B档": "7x", "C档": "5x", "D档": "3x"},
+            css_class="score-band-trend-standard",
+            chart_color="rgba(34, 197, 94, 0.13)",
+            chart_border_color="rgba(34, 197, 94, 0.34)",
+        ),
+        ScoreBandConfig(
+            label="确定性强趋势单",
+            lower=89,
+            upper=100,
+            distance_threshold=0.08,
+            tier_leverages={"A档": "12x", "B档": "8x", "C档": "6x", "D档": "4x"},
+            css_class="score-band-strong-trend",
+            chart_color="rgba(249, 115, 22, 0.14)",
+            chart_border_color="rgba(249, 115, 22, 0.38)",
+        ),
+    )
+    MIN_TOTAL_SCORE = min(band.lower for band in SCORE_BANDS)
 
     def __init__(self, db_path: str = "data/klines.db") -> None:
         self.db_path = db_path
@@ -80,29 +134,22 @@ class OpenableSymbolModule:
                 f"ON {self.TABLE_NAME}(decision_round_ts DESC, qualified DESC, total_score DESC, symbol ASC)"
             )
 
-    @staticmethod
-    def score_band_for_total(total_score: int) -> str:
-        if 65 <= total_score <= 72:
-            return "低档试错单"
-        if 73 <= total_score <= 80:
-            return "标准试错单"
-        if 81 <= total_score <= 88:
-            return "趋势标准单"
-        if 89 <= total_score <= 100:
-            return "确定性强趋势单"
-        return "NA"
-
-    @staticmethod
-    def distance_threshold_for_total(total_score: int) -> float | None:
-        if 65 <= total_score <= 72:
-            return 0.05
-        if 73 <= total_score <= 80:
-            return 0.06
-        if 81 <= total_score <= 88:
-            return 0.07
-        if 89 <= total_score <= 100:
-            return 0.08
+    @classmethod
+    def score_band_config_for_total(cls, total_score: int) -> ScoreBandConfig | None:
+        for band in cls.SCORE_BANDS:
+            if band.lower <= total_score <= band.upper:
+                return band
         return None
+
+    @classmethod
+    def score_band_for_total(cls, total_score: int) -> str:
+        band = cls.score_band_config_for_total(total_score)
+        return band.label if band else "NA"
+
+    @classmethod
+    def distance_threshold_for_total(cls, total_score: int) -> float | None:
+        band = cls.score_band_config_for_total(total_score)
+        return band.distance_threshold if band else None
 
     @staticmethod
     def stop_loss_distance_tier_for_ratio(distance_ratio: float | None) -> str:
@@ -127,15 +174,9 @@ class OpenableSymbolModule:
         if total_score >= 81 and distance_ratio == 0:
             return "5x"
 
-        leverage_map = {
-            (65, 72): {"A档": "4x", "B档": "3x", "C档": "2x", "D档": "1x"},
-            (73, 80): {"A档": "8x", "B档": "6x", "C档": "4x", "D档": "2x"},
-            (81, 88): {"A档": "10x", "B档": "7x", "C档": "5x", "D档": "3x"},
-            (89, 100): {"A档": "12x", "B档": "8x", "C档": "6x", "D档": "4x"},
-        }
-        for (lower, upper), tier_leverages in leverage_map.items():
-            if lower <= total_score <= upper:
-                return tier_leverages.get(distance_tier, "NA")
+        band = cls.score_band_config_for_total(total_score)
+        if band:
+            return band.tier_leverages.get(distance_tier, "NA")
         return "NA"
 
     def run_round(
