@@ -1130,7 +1130,7 @@
             <span id="trailing-stop-refresh-status" class="muted">可单独刷新移动追踪止盈数据</span>
           </div>
           {% if trailing_stop_round_ts %}
-            <div id="trailing-stop-round-note" class="muted">最近判断轮次：{{ trailing_stop_round_ts|fmt_ms_datetime }}。仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；每分钟读取数据库 klines_1m 最新high，计算 持仓数量 × (high - 开仓价)，维护“最大未变现盈利”，并计算当前盈利回撤幅度 = (最大未变现盈利 - 当下未变现盈利) / 最大未变现盈利；若满足对应 total_score 分层阈值，则取消原止盈单并 reduceOnly MARKET 全部止盈。</div>
+            <div id="trailing-stop-round-note" class="muted">最近判断轮次：{{ trailing_stop_round_ts|fmt_ms_datetime }}。仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；每分钟读取数据库 klines_1m 最新high，计算 持仓数量 × (high - 开仓价)，维护“最大未变现盈利”，并计算当前盈利回撤幅度 = (最大未变现盈利 - 当下未变现盈利) / 最大未变现盈利；若满足对应 total_score 分层阈值，且当前标记价格小于最近一条15分钟K线low，则取消原止盈单并 reduceOnly MARKET 全部止盈。</div>
           {% else %}
             <div id="trailing-stop-round-note" class="muted">暂无移动追踪止盈扫描结果。</div>
           {% endif %}
@@ -1626,7 +1626,7 @@
     let btcChart = null;
     let scoreTrendChart = null;
     let experimentEquityTrendChart = null;
-    const TRAILING_STOP_RULE_NOTE = '仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；每分钟读取数据库 klines_1m 最新high，计算 持仓数量 × (high - 开仓价)，维护“最大未变现盈利”，并计算当前盈利回撤幅度 = (最大未变现盈利 - 当下未变现盈利) / 最大未变现盈利；若满足对应 total_score 分层阈值，则取消原止盈单并 reduceOnly MARKET 全部止盈。';
+    const TRAILING_STOP_RULE_NOTE = '仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；每分钟读取数据库 klines_1m 最新high，计算 持仓数量 × (high - 开仓价)，维护“最大未变现盈利”，并计算当前盈利回撤幅度 = (最大未变现盈利 - 当下未变现盈利) / 最大未变现盈利；若满足对应 total_score 分层阈值，且当前标记价格小于最近一条15分钟K线low，则取消原止盈单并 reduceOnly MARKET 全部止盈。';
 
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));

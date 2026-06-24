@@ -82,6 +82,32 @@ def _insert_1m_kline(db_path, high, open_time):
         )
 
 
+def _insert_15m_kline(db_path, low, open_time):
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS klines_15m (
+                symbol TEXT NOT NULL,
+                open_time INTEGER NOT NULL,
+                open REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                close REAL NOT NULL,
+                volume REAL NOT NULL,
+                close_time INTEGER NOT NULL,
+                funding_rate REAL,
+                PRIMARY KEY (symbol, open_time)
+            )
+            """
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO klines_15m (symbol, open_time, open, high, low, close, volume, close_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("BANK", open_time, 10, 14, low, 12, 100, open_time + 899999),
+        )
+
+
 def _insert_total_score(db_path, total_score):
     import sqlite3
 
@@ -134,6 +160,7 @@ def test_trailing_stop_tracker_updates_max_after_partial_take_profit():
         db_path = str(Path(tmpdir) / "klines.db")
         _insert_partial_take_profit_record(db_path)
         _insert_1m_kline(db_path, high=13, open_time=1000)
+        _insert_15m_kline(db_path, low=13, open_time=1000)
         tracker = TrailingStopTracker(db_path=db_path, account_manager=fake_account)
 
         first = tracker.run_round()
@@ -173,10 +200,12 @@ def test_trailing_stop_tracker_closes_position_when_drawdown_threshold_hit():
         _insert_open_trade(db_path)
         _insert_total_score(db_path, total_score=80)
         _insert_1m_kline(db_path, high=13, open_time=1000)
+        _insert_15m_kline(db_path, low=13, open_time=1000)
         tracker = TrailingStopTracker(db_path=db_path, account_manager=fake_account)
 
         tracker.run_round()
         _insert_1m_kline(db_path, high=12.3, open_time=2000)
+        _insert_15m_kline(db_path, low=13, open_time=2000)
         result = tracker.run_round()
         _, checks = tracker.get_latest_round_checks()
         action_records = tracker.recent_action_records()
@@ -197,6 +226,31 @@ def test_trailing_stop_tracker_closes_position_when_drawdown_threshold_hit():
     assert fake_account.signed_posts == [
         ("/fapi/v1/order", {"symbol": "BANKUSDT", "side": "SELL", "type": "MARKET", "quantity": "10", "reduceOnly": "true"})
     ]
+
+
+def test_trailing_stop_tracker_requires_current_price_below_latest_15m_low():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        _insert_partial_take_profit_record(db_path)
+        _insert_open_trade(db_path)
+        _insert_total_score(db_path, total_score=80)
+        _insert_1m_kline(db_path, high=13, open_time=1000)
+        _insert_15m_kline(db_path, low=13, open_time=1000)
+        tracker = TrailingStopTracker(db_path=db_path, account_manager=fake_account)
+
+        tracker.run_round()
+        _insert_1m_kline(db_path, high=12.3, open_time=2000)
+        _insert_15m_kline(db_path, low=12.4, open_time=2000)
+        result = tracker.run_round()
+        _, checks = tracker.get_latest_round_checks()
+
+    assert result["eligible"] == 1
+    assert checks[0].trailing_stop_triggered is False
+    assert checks[0].close_status == "not_required"
+    assert "current_price_not_below_latest_15m_low" in checks[0].reason
+    assert fake_account.signed_deletes == []
+    assert fake_account.signed_posts == []
 
 
 def test_drawdown_thresholds_follow_total_score_tiers():
