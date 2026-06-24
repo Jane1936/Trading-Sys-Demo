@@ -159,33 +159,40 @@ class BinanceAccountManager:
         }
 
     def _signed_get_user_trades_paginated(self, start_time: int, end_time: int, limit: int) -> list[dict[str, Any]]:
-        """Fetch all user trades in a time range, advancing past full pages.
+        """Fetch all user trades in a time range using Binance-safe windows.
 
-        Binance can return only the first ``limit`` rows for a start/end window.
-        A busy account may have more than 1000 fills in seven days, so a single
-        request can stop at older fills and make the UI look delayed. Keep moving
-        ``startTime`` to the millisecond after the newest trade returned until the
-        requested range is exhausted.
+        The USDⓈ-M Futures ``userTrades`` endpoint rejects requests whose
+        ``startTime``/``endTime`` interval is greater than seven days. The UI can
+        request up to 30 days, so split the requested range into seven-day chunks
+        and still paginate within each chunk when Binance returns a full page.
         """
         rows: list[dict[str, Any]] = []
-        next_start_time = start_time
-        while next_start_time <= end_time:
-            page = self._signed_get(
-                "/fapi/v1/userTrades",
-                {"startTime": next_start_time, "endTime": end_time, "limit": limit},
-            )
-            if not isinstance(page, list):
-                raise RuntimeError("Unexpected Binance user trades response format")
-            trade_rows = [row for row in page if isinstance(row, dict)]
-            rows.extend(trade_rows)
-            if len(page) < limit or not trade_rows:
-                break
+        max_window_ms = 7 * 24 * 60 * 60 * 1000
+        chunk_start_time = start_time
 
-            max_trade_time = max(int(row.get("time", 0) or 0) for row in trade_rows)
-            advanced_start_time = max_trade_time + 1
-            if advanced_start_time <= next_start_time:
-                break
-            next_start_time = advanced_start_time
+        while chunk_start_time <= end_time:
+            chunk_end_time = min(chunk_start_time + max_window_ms, end_time)
+            next_start_time = chunk_start_time
+
+            while next_start_time <= chunk_end_time:
+                page = self._signed_get(
+                    "/fapi/v1/userTrades",
+                    {"startTime": next_start_time, "endTime": chunk_end_time, "limit": limit},
+                )
+                if not isinstance(page, list):
+                    raise RuntimeError("Unexpected Binance user trades response format")
+                trade_rows = [row for row in page if isinstance(row, dict)]
+                rows.extend(trade_rows)
+                if len(page) < limit or not trade_rows:
+                    break
+
+                max_trade_time = max(int(row.get("time", 0) or 0) for row in trade_rows)
+                advanced_start_time = max_trade_time + 1
+                if advanced_start_time <= next_start_time:
+                    break
+                next_start_time = advanced_start_time
+
+            chunk_start_time = chunk_end_time + 1
 
         return rows
 
