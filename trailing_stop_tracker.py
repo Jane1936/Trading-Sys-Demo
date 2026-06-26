@@ -36,6 +36,9 @@ class TrailingStopCheck:
     max_unrealized_pnl_at: int
     total_score: int | None
     drawdown_threshold: str
+    current_mark_price: str
+    latest_15m_low: str
+    price_below_latest_15m_low: bool
     trailing_stop_triggered: bool
     cancel_take_profit_order_id: str
     cancel_status: str
@@ -81,6 +84,9 @@ class TrailingStopTracker:
                     max_unrealized_pnl_at INTEGER NOT NULL,
                     total_score INTEGER,
                     drawdown_threshold TEXT NOT NULL DEFAULT '0',
+                    current_mark_price TEXT NOT NULL DEFAULT '0',
+                    latest_15m_low TEXT NOT NULL DEFAULT '0',
+                    price_below_latest_15m_low INTEGER NOT NULL DEFAULT 0,
                     trailing_stop_triggered INTEGER NOT NULL DEFAULT 0,
                     cancel_take_profit_order_id TEXT NOT NULL DEFAULT '',
                     cancel_status TEXT NOT NULL DEFAULT 'not_required',
@@ -97,6 +103,9 @@ class TrailingStopTracker:
                 "current_profit_drawdown": "TEXT NOT NULL DEFAULT '0'",
                 "total_score": "INTEGER",
                 "drawdown_threshold": "TEXT NOT NULL DEFAULT '0'",
+                "current_mark_price": "TEXT NOT NULL DEFAULT '0'",
+                "latest_15m_low": "TEXT NOT NULL DEFAULT '0'",
+                "price_below_latest_15m_low": "INTEGER NOT NULL DEFAULT 0",
                 "trailing_stop_triggered": "INTEGER NOT NULL DEFAULT 0",
                 "cancel_take_profit_order_id": "TEXT NOT NULL DEFAULT ''",
                 "cancel_status": "TEXT NOT NULL DEFAULT 'not_required'",
@@ -134,7 +143,7 @@ class TrailingStopTracker:
         if amount == 0 or entry_price <= 0:
             return False
         if not self._has_partial_take_profit_record(symbol, entry_price):
-            self._insert_check(symbol, now, entry_price, amount, Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), now, None, Decimal("0"), False, "", "not_required", Decimal("0"), "", "not_required", False, "partial_take_profit_not_triggered")
+            self._insert_check(symbol, now, entry_price, amount, Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), now, None, Decimal("0"), Decimal("0"), Decimal("0"), False, False, "", "not_required", Decimal("0"), "", "not_required", False, "partial_take_profit_not_triggered")
             return False
         try:
             high = self._latest_1m_high(symbol)
@@ -173,13 +182,13 @@ class TrailingStopTracker:
                 reason = f"{reason}; drawdown_below_threshold"
             else:
                 reason = f"{reason}; current_price_not_below_latest_15m_low(current_price={self._fmt_decimal(current_price)}, latest_15m_low={self._fmt_decimal(latest_15m_low)})"
-            self._insert_check(symbol, now, entry_price, amount, high, pnl, max_pnl, drawdown, max_at, total_score, threshold, should_trigger, cancel_order_id, cancel_status, close_quantity, close_order_id, close_status, True, reason)
+            self._insert_check(symbol, now, entry_price, amount, high, pnl, max_pnl, drawdown, max_at, total_score, threshold, current_price, latest_15m_low, price_below_latest_15m_low, should_trigger, cancel_order_id, cancel_status, close_quantity, close_order_id, close_status, True, reason)
             return True
         except Exception as exc:
             previous = self._previous_max(symbol, entry_price)
             max_pnl, max_at = previous if previous else (Decimal("0"), now)
             drawdown = self._current_profit_drawdown(Decimal("0"), max_pnl)
-            self._insert_check(symbol, now, entry_price, amount, Decimal("0"), Decimal("0"), max_pnl, drawdown, max_at, None, Decimal("0"), False, "", "not_required", Decimal("0"), "", "not_required", True, f"trailing_stop_tracker_failed: {type(exc).__name__}: {exc}")
+            self._insert_check(symbol, now, entry_price, amount, Decimal("0"), Decimal("0"), max_pnl, drawdown, max_at, None, Decimal("0"), Decimal("0"), Decimal("0"), False, False, "", "not_required", Decimal("0"), "", "not_required", True, f"trailing_stop_tracker_failed: {type(exc).__name__}: {exc}")
             return False
 
     def _has_partial_take_profit_record(self, symbol: str, entry_price: Decimal) -> bool:
@@ -322,9 +331,9 @@ class TrailingStopTracker:
             return None
         return self._decimal_from(row["max_unrealized_pnl"], Decimal("0")), int(row["max_unrealized_pnl_at"] or 0)
 
-    def _insert_check(self, symbol: str, checked_at: int, entry: Decimal, amount: Decimal, high: Decimal, pnl: Decimal, max_pnl: Decimal, drawdown: Decimal, max_at: int, total_score: int | None, threshold: Decimal, trailing_triggered: bool, cancel_order_id: str, cancel_status: str, close_quantity: Decimal, close_order_id: str, close_status: str, eligible: bool, reason: str) -> None:
+    def _insert_check(self, symbol: str, checked_at: int, entry: Decimal, amount: Decimal, high: Decimal, pnl: Decimal, max_pnl: Decimal, drawdown: Decimal, max_at: int, total_score: int | None, threshold: Decimal, current_mark_price: Decimal, latest_15m_low: Decimal, price_below_latest_15m_low: bool, trailing_triggered: bool, cancel_order_id: str, cancel_status: str, close_quantity: Decimal, close_order_id: str, close_status: str, eligible: bool, reason: str) -> None:
         with self._connect() as conn:
-            conn.execute(f"INSERT INTO {self.CHECKS_TABLE} (symbol, checked_at, entry_price, position_amt, kline_high, unrealized_pnl_at_high, max_unrealized_pnl, current_profit_drawdown, max_unrealized_pnl_at, total_score, drawdown_threshold, trailing_stop_triggered, cancel_take_profit_order_id, cancel_status, close_quantity, close_order_id, close_status, eligible, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, self._fmt_decimal(entry), self._fmt_decimal(amount), self._fmt_decimal(high), self._fmt_decimal(pnl), self._fmt_decimal(max_pnl), self._fmt_decimal(drawdown), int(max_at), total_score, self._fmt_decimal(threshold), int(trailing_triggered), cancel_order_id, cancel_status, self._fmt_decimal(close_quantity), close_order_id, close_status, int(eligible), reason))
+            conn.execute(f"INSERT INTO {self.CHECKS_TABLE} (symbol, checked_at, entry_price, position_amt, kline_high, unrealized_pnl_at_high, max_unrealized_pnl, current_profit_drawdown, max_unrealized_pnl_at, total_score, drawdown_threshold, current_mark_price, latest_15m_low, price_below_latest_15m_low, trailing_stop_triggered, cancel_take_profit_order_id, cancel_status, close_quantity, close_order_id, close_status, eligible, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, self._fmt_decimal(entry), self._fmt_decimal(amount), self._fmt_decimal(high), self._fmt_decimal(pnl), self._fmt_decimal(max_pnl), self._fmt_decimal(drawdown), int(max_at), total_score, self._fmt_decimal(threshold), self._fmt_decimal(current_mark_price), self._fmt_decimal(latest_15m_low), int(price_below_latest_15m_low), int(trailing_triggered), cancel_order_id, cancel_status, self._fmt_decimal(close_quantity), close_order_id, close_status, int(eligible), reason))
 
     def get_latest_round_checks(self) -> tuple[int | None, list[TrailingStopCheck]]:
         self.init_tables()
@@ -354,7 +363,7 @@ class TrailingStopTracker:
 
     @staticmethod
     def _check_from_row(row: sqlite3.Row) -> TrailingStopCheck:
-        return TrailingStopCheck(**{**dict(row), "eligible": bool(row["eligible"]), "trailing_stop_triggered": bool(row["trailing_stop_triggered"])})
+        return TrailingStopCheck(**{**dict(row), "eligible": bool(row["eligible"]), "price_below_latest_15m_low": bool(row["price_below_latest_15m_low"]), "trailing_stop_triggered": bool(row["trailing_stop_triggered"])})
 
     @staticmethod
     def _base_symbol(symbol: Any) -> str:
