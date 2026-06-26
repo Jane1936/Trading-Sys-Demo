@@ -203,7 +203,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         endpoints = [endpoint for endpoint, _ in fake_account.signed_posts]
         self.assertEqual(
             endpoints,
-            ["/fapi/v1/leverage", "/fapi/v1/order", "/fapi/v1/order"],
+            ["/fapi/v1/leverage", "/fapi/v1/order", "/fapi/v1/algoOrder"],
         )
         order_types = [params.get("type", "LEVERAGE") for _, params in fake_account.signed_posts]
         self.assertEqual(order_types, ["LEVERAGE", "MARKET", "STOP"])
@@ -211,7 +211,8 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         stop_loss_params = fake_account.signed_posts[2][1]
         self.assertEqual(stop_loss_params["type"], "STOP")
         self.assertEqual(stop_loss_params["price"], "0.99")
-        self.assertEqual(stop_loss_params["stopPrice"], "0.99")
+        self.assertEqual(stop_loss_params["triggerPrice"], "0.99")
+        self.assertEqual(stop_loss_params["algoType"], "CONDITIONAL")
         self.assertEqual(stop_loss_params["timeInForce"], "GTC")
         self.assertEqual(stop_loss_params["reduceOnly"], "true")
         self.assertEqual(trade_rows[0].take_profit_price, "0")
@@ -258,7 +259,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         )
         endpoints = [endpoint for endpoint, _ in fake_account.signed_posts]
         self.assertEqual(endpoints[:2], ["/fapi/v1/leverage", "/fapi/v1/order"])
-        self.assertEqual(endpoints[2:], ["/fapi/v1/order"])
+        self.assertEqual(endpoints[2:], ["/fapi/v1/algoOrder"])
 
     def test_latest_price_falls_back_to_mark_price_when_ticker_payload_is_empty(self):
         fake_account = EmptyTickerAccountManager()
@@ -430,7 +431,8 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(order_params["quantity"], "497")
         self.assertEqual(stop_loss_params["type"], "STOP")
         self.assertEqual(stop_loss_params["price"], "0.979879")
-        self.assertEqual(stop_loss_params["stopPrice"], "0.979879")
+        self.assertEqual(stop_loss_params["triggerPrice"], "0.979879")
+        self.assertEqual(stop_loss_params["algoType"], "CONDITIONAL")
         self.assertIn("quantity=497", rows[0].stop_loss_calculation)
         self.assertIn("risk_distance=max_loss/quantity=0.02012072434607645875251509054", rows[0].stop_loss_calculation)
         self.assertIn("final_stop_loss_price=floor_to_tick(raw_stop_price)=0.979879", rows[0].stop_loss_calculation)

@@ -720,8 +720,15 @@ class TradingExperiment:
 
     @staticmethod
     def _exit_order_request(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-        order_type = str(params.get("type", ""))
-        if order_type not in {"STOP_MARKET", "TAKE_PROFIT_MARKET"}:
+        order_type = str(params.get("type", "")).upper()
+        conditional_order_types = {
+            "STOP",
+            "STOP_MARKET",
+            "TAKE_PROFIT",
+            "TAKE_PROFIT_MARKET",
+            "TRAILING_STOP_MARKET",
+        }
+        if order_type not in conditional_order_types:
             return "/fapi/v1/order", dict(params)
 
         algo_params = dict(params)
