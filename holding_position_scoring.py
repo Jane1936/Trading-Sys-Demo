@@ -36,6 +36,29 @@ class HoldingStopLossCheck:
 
 
 @dataclass(frozen=True)
+class PortfolioRiskPosition:
+    symbol: str
+    decision_round_ts: int
+    position_amt: str
+    latest_15m_close: str
+    account_equity_usdt: str
+    leverage: str
+    risk: str
+    reason: str
+    calculated_at: int
+
+
+@dataclass(frozen=True)
+class PortfolioRiskSummary:
+    decision_round_ts: int
+    total_risk: str
+    position_count: int
+    account_equity_usdt: str
+    calculated_at: int
+    positions: list[PortfolioRiskPosition]
+
+
+@dataclass(frozen=True)
 class HoldingStopLossRecord:
     id: int
     symbol: str
@@ -59,6 +82,8 @@ class HoldingPositionScoringSystem:
 
     CHECKS_TABLE = "holding_stop_loss_checks"
     RECORDS_TABLE = "holding_stop_loss_records"
+    PORTFOLIO_RISK_TABLE = "holding_portfolio_risk_checks"
+    PORTFOLIO_RISK_SUMMARY_TABLE = "holding_portfolio_risk_summaries"
 
     def __init__(
         self,
@@ -120,6 +145,33 @@ class HoldingPositionScoringSystem:
                 """
             )
             conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.PORTFOLIO_RISK_TABLE} (
+                    symbol TEXT NOT NULL,
+                    decision_round_ts INTEGER NOT NULL,
+                    position_amt TEXT NOT NULL,
+                    latest_15m_close TEXT NOT NULL,
+                    account_equity_usdt TEXT NOT NULL,
+                    leverage TEXT NOT NULL,
+                    risk TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    calculated_at INTEGER NOT NULL,
+                    PRIMARY KEY(symbol, decision_round_ts)
+                )
+                """
+            )
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.PORTFOLIO_RISK_SUMMARY_TABLE} (
+                    decision_round_ts INTEGER PRIMARY KEY,
+                    total_risk TEXT NOT NULL,
+                    position_count INTEGER NOT NULL,
+                    account_equity_usdt TEXT NOT NULL,
+                    calculated_at INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_round "
                 f"ON {self.CHECKS_TABLE}(decision_round_ts DESC, triggered DESC, symbol ASC)"
             )
@@ -157,7 +209,131 @@ class HoldingPositionScoringSystem:
                 record = self._execute_stop_loss(position, check, now_ms)
                 self._save_record(record)
                 records += 1
-        return {"decision_round_ts": round_ts, "checked": checked, "triggered": triggered, "records": records}
+        portfolio_risk = self.calculate_portfolio_risk(positions=positions, decision_round_ts=round_ts, calculated_at=now_ms)
+        return {
+            "decision_round_ts": round_ts,
+            "checked": checked,
+            "triggered": triggered,
+            "records": records,
+            "total_risk": portfolio_risk.total_risk,
+            "risk_position_count": portfolio_risk.position_count,
+        }
+
+    def calculate_portfolio_risk(
+        self,
+        positions: list[dict[str, Any]] | None = None,
+        decision_round_ts: int | None = None,
+        calculated_at: int | None = None,
+    ) -> PortfolioRiskSummary:
+        """Calculate and persist total portfolio risk for active holdings."""
+        self.init_tables()
+        round_ts = decision_round_ts if decision_round_ts is not None else self._current_decision_round_ts()
+        now_ms = calculated_at if calculated_at is not None else int(time.time() * 1000)
+        active_positions = positions if positions is not None else self._active_positions()
+        equity = TradingExperiment(self.db_path, account_manager=self.account_manager)._fetch_experiment_usdt_equity()
+        total_risk = Decimal("0")
+        rows: list[PortfolioRiskPosition] = []
+        for position in active_positions[:10]:
+            symbol = self._base_symbol(str(position.get("symbol", "")))
+            amount = abs(self._decimal_from(position.get("positionAmt"), Decimal("0")))
+            latest_close = self._latest_15m_close(symbol) if symbol else Decimal("0")
+            leverage = self._position_leverage(position)
+            risk = Decimal("0")
+            reason = "ok"
+            if not symbol or amount == 0:
+                reason = "empty_symbol_or_zero_position"
+            elif equity <= 0:
+                reason = "non_positive_experiment_usdt_equity"
+            elif latest_close <= 0:
+                reason = "missing_or_invalid_latest_15m_close"
+            elif leverage <= 0:
+                reason = "missing_or_invalid_leverage"
+            else:
+                risk = (amount * latest_close / equity) * leverage
+                total_risk += risk
+            rows.append(
+                PortfolioRiskPosition(
+                    symbol=symbol,
+                    decision_round_ts=round_ts,
+                    position_amt=self._fmt_decimal(amount),
+                    latest_15m_close=self._fmt_decimal(latest_close),
+                    account_equity_usdt=self._fmt_decimal(equity),
+                    leverage=self._fmt_decimal(leverage),
+                    risk=self._fmt_decimal(risk),
+                    reason=reason,
+                    calculated_at=now_ms,
+                )
+            )
+        summary = PortfolioRiskSummary(round_ts, self._fmt_decimal(total_risk), len(rows), self._fmt_decimal(equity), now_ms, rows)
+        self._save_portfolio_risk_summary(summary)
+        self._save_portfolio_risk_rows(round_ts, rows)
+        return summary
+
+    def _latest_15m_close(self, symbol: str) -> Decimal:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT close FROM klines_15m WHERE symbol = ? ORDER BY open_time DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
+        return self._decimal_from(row["close"], Decimal("0")) if row else Decimal("0")
+
+    def _position_leverage(self, position: dict[str, Any]) -> Decimal:
+        raw = str(position.get("leverage", "")).strip().lower().replace("x", "")
+        if raw:
+            return self._decimal_from(raw, Decimal("0"))
+        fallback = TradingExperiment(self.db_path, account_manager=self.account_manager)._latest_opened_trade_leverages()
+        return self._decimal_from(fallback.get(self._base_symbol(position.get("symbol", "")), "0"), Decimal("0"))
+
+    def _save_portfolio_risk_summary(self, summary: PortfolioRiskSummary) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {self.PORTFOLIO_RISK_SUMMARY_TABLE}
+                (decision_round_ts, total_risk, position_count, account_equity_usdt, calculated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(decision_round_ts) DO UPDATE SET
+                    total_risk=excluded.total_risk,
+                    position_count=excluded.position_count,
+                    account_equity_usdt=excluded.account_equity_usdt,
+                    calculated_at=excluded.calculated_at
+                """,
+                (summary.decision_round_ts, summary.total_risk, summary.position_count, summary.account_equity_usdt, summary.calculated_at),
+            )
+
+    def _save_portfolio_risk_rows(self, decision_round_ts: int, rows: list[PortfolioRiskPosition]) -> None:
+        with self._connect() as conn:
+            conn.execute(f"DELETE FROM {self.PORTFOLIO_RISK_TABLE} WHERE decision_round_ts = ?", (decision_round_ts,))
+            conn.executemany(
+                f"""
+                INSERT INTO {self.PORTFOLIO_RISK_TABLE}
+                (symbol, decision_round_ts, position_amt, latest_15m_close, account_equity_usdt, leverage, risk, reason, calculated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [(row.symbol, row.decision_round_ts, row.position_amt, row.latest_15m_close, row.account_equity_usdt, row.leverage, row.risk, row.reason, row.calculated_at) for row in rows],
+            )
+
+    def get_latest_portfolio_risk(self) -> PortfolioRiskSummary | None:
+        self.init_tables()
+        with self._connect() as conn:
+            summary_row = conn.execute(
+                f"SELECT * FROM {self.PORTFOLIO_RISK_SUMMARY_TABLE} ORDER BY decision_round_ts DESC LIMIT 1"
+            ).fetchone()
+            if summary_row is None:
+                return None
+            round_ts = int(summary_row["decision_round_ts"])
+            db_rows = conn.execute(
+                f"SELECT * FROM {self.PORTFOLIO_RISK_TABLE} WHERE decision_round_ts = ? ORDER BY CAST(risk AS REAL) DESC, symbol ASC",
+                (round_ts,),
+            ).fetchall()
+        positions = [PortfolioRiskPosition(**dict(row)) for row in db_rows]
+        return PortfolioRiskSummary(
+            round_ts,
+            str(summary_row["total_risk"]),
+            int(summary_row["position_count"]),
+            str(summary_row["account_equity_usdt"]),
+            int(summary_row["calculated_at"]),
+            positions,
+        )
 
     def evaluate_symbol(self, symbol: str, decision_round_ts: int, checked_at: int | None = None) -> HoldingStopLossCheck:
         checked_at = checked_at if checked_at is not None else int(time.time() * 1000)

@@ -464,6 +464,7 @@ def abnormal_wicks():
     trading_equity_trend_rows = _experiment_equity_trend_rows(trading_records_since_ms)
     holding_scoring = HoldingPositionScoringSystem(db_path=DB_PATH)
     holding_stop_loss_round_ts, holding_stop_loss_checks = holding_scoring.get_latest_round_checks()
+    holding_portfolio_risk = holding_scoring.get_latest_portfolio_risk()
     holding_stop_loss_records = holding_scoring.recent_stop_loss_records(limit=100)
     break_even_strategy = BreakEvenTakeProfitStrategy(db_path=DB_PATH)
     break_even_round_ts, break_even_checks = break_even_strategy.get_latest_round_checks()
@@ -546,6 +547,7 @@ def abnormal_wicks():
         trading_equity_trend_rows=trading_equity_trend_rows,
         holding_stop_loss_round_ts=holding_stop_loss_round_ts,
         holding_stop_loss_checks=holding_stop_loss_checks,
+        holding_portfolio_risk=holding_portfolio_risk,
         holding_stop_loss_records=holding_stop_loss_records,
         break_even_round_ts=break_even_round_ts,
         break_even_checks=break_even_checks,
