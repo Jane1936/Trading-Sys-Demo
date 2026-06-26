@@ -69,6 +69,24 @@ def test_filled_sell_order_exit_reason_uses_structural_stop_loss_match(tmp_path,
     assert "two_15m_closes_below_structural_stop_loss" not in str(annotated["orders"][0])
 
 
+def test_filled_sell_order_exit_reason_uses_portfolio_liquidation_match(tmp_path, monkeypatch):
+    db_path = tmp_path / "orders.db"
+    _create_exit_reason_tables(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"INSERT INTO {HoldingPositionScoringSystem.RECORDS_TABLE} (symbol, side, quantity, reason, created_at) VALUES (?, ?, ?, ?, ?)",
+            ("BANK", "SELL", "2", "portfolio_total_risk_gt_18; total_risk=20; total_score=60", 1000),
+        )
+    monkeypatch.setattr(web_app, "DB_PATH", str(db_path))
+
+    payload = {"orders": [{"symbol": "BANKUSDT", "side": "SELL", "time": 1000, "quantity": "2.0", "realized_pnl": "-1"}]}
+
+    annotated = web_app._annotate_filled_order_exit_reasons(payload)
+
+    assert annotated["orders"][0]["exit_reason"] == "组合风险强平"
+    assert annotated["orders"][0]["exit_reason_matches"] == [{"type": "组合风险强平", "matched_at": "1000"}]
+
+
 def test_filled_sell_order_exit_reason_uses_partial_take_profit_match(tmp_path, monkeypatch):
     db_path = tmp_path / "orders.db"
     _create_exit_reason_tables(db_path)
