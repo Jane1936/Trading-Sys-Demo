@@ -71,7 +71,7 @@ def test_partial_take_profit_sells_30_percent_when_unrealized_pnl_reaches_2r():
     assert fake_account.signed_posts == [
         (
             "/fapi/v1/order",
-            {"symbol": "BANKUSDT", "side": "SELL", "quantity": "3", "reduceOnly": "true", "type": "LIMIT", "timeInForce": "IOC", "price": "12.37", "newOrderRespType": "RESULT"},
+            {"symbol": "BANKUSDT", "side": "SELL", "quantity": "3", "reduceOnly": "true", "type": "MARKET", "newOrderRespType": "RESULT"},
         )
     ]
     assert records[0].take_profit_order_id == "789"
