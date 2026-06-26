@@ -149,6 +149,24 @@ class MissingPositionOnceAccountManager(FakeAccountManager):
         return super()._signed_get(endpoint, params)
 
 
+class HighRiskAccountManager(FakeAccountManager):
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/positionRisk" and not params:
+            return [
+                {
+                    "symbol": "OTHERUSDT",
+                    "positionAmt": "3",
+                    "entryPrice": "1000",
+                    "markPrice": "1000",
+                    "unRealizedProfit": "0",
+                    "leverage": "4",
+                    "notional": "3000",
+                    "liquidationPrice": "0",
+                }
+            ]
+        return super()._signed_get(endpoint, params)
+
+
 class TradingExperimentSymbolTests(unittest.TestCase):
     def test_base_symbol_is_expanded_to_binance_usdt_pair_for_order_api_calls(self):
         fake_account = FakeAccountManager()
@@ -271,6 +289,49 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(fake_account.latest_price_params, {"symbol": "BANKUSDT"})
         self.assertEqual(fake_account.latest_mark_price_params, {"symbol": "BANKUSDT"})
         self.assertEqual(fake_account.signed_posts[1][1]["quantity"], "500")
+
+    def test_run_round_skips_new_entries_when_current_total_risk_exceeds_ten(self):
+        fake_account = HighRiskAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "klines.db"
+            experiment = TradingExperiment(
+                db_path=str(db_path),
+                account_manager=fake_account,
+            )
+            experiment.init_tables()
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("CREATE TABLE klines_15m (symbol TEXT NOT NULL, open_time INTEGER NOT NULL, close REAL NOT NULL)")
+                conn.execute("INSERT INTO klines_15m (symbol, open_time, close) VALUES ('OTHER', 1, 1000)")
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=80,
+                score_band="标准试错单",
+                stop_loss_distance_ratio=0.01,
+                distance_threshold=0.02,
+                stop_loss_distance_tier="A档",
+                opening_leverage="4x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            result = experiment.run_round([candidate])
+            with sqlite3.connect(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                trade_row = conn.execute(
+                    f"SELECT status, reason FROM {experiment.TRADES_TABLE} ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                risk_row = conn.execute(
+                    "SELECT total_risk FROM holding_portfolio_risk_summaries ORDER BY decision_round_ts DESC LIMIT 1"
+                ).fetchone()
+
+        self.assertEqual(result, {"opened": 0, "skipped": 1, "reason": "completed"})
+        self.assertEqual(fake_account.signed_posts, [])
+        self.assertEqual(trade_row["status"], "skipped")
+        self.assertEqual(trade_row["reason"], "current_total_risk_gt_10")
+        self.assertEqual(risk_row["total_risk"], "12")
 
     def test_run_round_skips_candidate_when_latest_price_is_unavailable(self):
         fake_account = InvalidPriceAccountManager()
