@@ -49,6 +49,18 @@ class FakeAccountManager:
         return {"code": 200, "msg": "success"}
 
 
+class HighPortfolioRiskAccountManager(FakeAccountManager):
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/positionRisk":
+            return [
+                {"symbol": "BANKUSDT", "positionAmt": "200", "leverage": "10"},
+                {"symbol": "COINUSDT", "positionAmt": "200", "leverage": "10"},
+            ]
+        if endpoint == "/fapi/v1/userTrades":
+            return []
+        return super()._signed_get(endpoint, params)
+
+
 class RetryThenSuccessAccountManager(FakeAccountManager):
     def __init__(self):
         super().__init__()
@@ -174,6 +186,42 @@ def test_portfolio_risk_runs_after_holding_stop_loss_round():
     assert risk.positions[0].account_equity_usdt == "1000"
     assert risk.positions[0].leverage == "5"
     assert risk.positions[0].risk == "0.08"
+
+
+
+def test_portfolio_risk_displays_scores_and_market_closes_lowest_score_when_total_risk_gt_18():
+    fake_account = HighPortfolioRiskAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, close REAL)")
+            conn.execute("CREATE TABLE symbol_structural_stop_losses (symbol TEXT, decision_round_ts INTEGER, structural_stop_loss REAL)")
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.executemany(
+                "INSERT INTO klines_15m (symbol, open_time, close) VALUES (?, ?, ?)",
+                [("BANK", 2000, 5), ("BANK", 1000, 5), ("COIN", 2000, 5), ("COIN", 1000, 5)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
+                [("BANK", 2000, 1), ("BANK", 1000, 1), ("COIN", 2000, 1), ("COIN", 1000, 1)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
+                [("BANK", 2000, 80), ("COIN", 2000, 60)],
+            )
+
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account, realized_pnl_retry_delays=())
+        result = scoring.run_round(decision_round_ts=3000)
+        risk = scoring.get_latest_portfolio_risk()
+
+    assert result["total_risk"] == "20"
+    assert result["portfolio_risk_action"].startswith("submitted_market_close_symbol=COIN")
+    assert risk is not None
+    assert {row.symbol: row.total_score for row in risk.positions} == {"BANK": "80", "COIN": "60"}
+    assert fake_account.signed_posts[-1] == (
+        "/fapi/v1/order",
+        {"symbol": "COINUSDT", "side": "SELL", "type": "MARKET", "quantity": "200", "reduceOnly": "true", "newOrderRespType": "RESULT"},
+    )
 
 
 def _seed_triggered_stop_loss_db(db_path: str) -> None:

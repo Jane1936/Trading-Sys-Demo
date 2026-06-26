@@ -821,7 +821,7 @@
             <div class="chips"><span class="chip">本轮无触发止损规则symbol</span></div>
           {% endif %}
         </div>
-        <div class="tip">止损规则：查询最近两条15分钟K线数据，以及最近两条 <code>symbol_structural_stop_losses</code> 结构止损位数据；若最近第1条15m close &lt; 最近第1条 structural_stop_loss，且最近第2条15m close &lt; 最近第2条 structural_stop_loss，则立刻提交 reduceOnly LIMIT IOC 订单平掉该持仓，并写入下方止损记录。</div>
+        <div class="tip">止损规则：查询最近两条15分钟K线数据，以及最近两条 <code>symbol_structural_stop_losses</code> 结构止损位数据；若最近第1条15m close &lt; 最近第1条 structural_stop_loss，且最近第2条15m close &lt; 最近第2条 structural_stop_loss，则立刻提交 reduceOnly MARKET 订单平掉该持仓，并写入下方止损记录。</div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -876,7 +876,7 @@
               <span class="chip">实验组USDT净值：{{ holding_portfolio_risk.account_equity_usdt if holding_portfolio_risk else '0' }}</span>
             </div>
           </div>
-          <div class="tip">当前总风险 = Σ((第i个仓位的持仓数量 × latest_15m_close) / 当前实验组USDT净值 × 第i个仓位杠杆)。下表按当前最多10个持仓逐仓展示 risk_i 计算结果。</div>
+          <div class="tip">当前总风险 = Σ((第i个仓位的持仓数量 × latest_15m_close) / 当前实验组USDT净值 × 第i个仓位杠杆)。下表按当前最多10个持仓逐仓展示 risk_i 与最新 total_score；若当前总风险 > 18，会选择 total_score 最低的持仓并立即通过 reduceOnly MARKET 市价单全平。</div>
           <div class="table-wrap">
             <table>
               <thead>
@@ -887,6 +887,7 @@
                   <th>account_equity_usdt</th>
                   <th>leverage</th>
                   <th>risk_i</th>
+                  <th>total_score</th>
                   <th>reason</th>
                   <th>calculated_at</th>
                 </tr>
@@ -901,14 +902,15 @@
                     <td>{{ row.account_equity_usdt }}</td>
                     <td>{{ row.leverage }}x</td>
                     <td>{{ row.risk }}</td>
+                    <td>{{ row.total_score if row.total_score else '-' }}</td>
                     <td>{{ row.reason }}</td>
                     <td>{{ row.calculated_at|fmt_ms_datetime }}</td>
                   </tr>
                   {% else %}
-                  <tr><td class="empty" colspan="8">当前无持仓，总风险为0</td></tr>
+                  <tr><td class="empty" colspan="9">当前无持仓，总风险为0</td></tr>
                   {% endfor %}
                 {% else %}
-                <tr><td class="empty" colspan="8">暂无组合风险约束计算结果</td></tr>
+                <tr><td class="empty" colspan="9">暂无组合风险约束计算结果</td></tr>
                 {% endif %}
               </tbody>
             </table>
@@ -1075,7 +1077,7 @@
         <div class="symbol-strip">
           <div><strong>分批止盈规则：5分钟扫描结果</strong></div>
           {% if partial_take_profit_round_ts %}
-            <div class="muted">最近判断轮次：{{ partial_take_profit_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；若未变现盈亏 ≥ 2 × R，则提交 reduceOnly LIMIT IOC 订单卖出当前仓位的30%。</div>
+            <div class="muted">最近判断轮次：{{ partial_take_profit_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；若未变现盈亏 ≥ 2 × R，则提交 reduceOnly MARKET 订单卖出当前仓位的30%。</div>
           {% else %}
             <div class="muted">暂无分批止盈扫描结果。</div>
           {% endif %}
@@ -1135,7 +1137,7 @@
           <div class="symbol-strip collapsible-header">
             <div>
               <div><strong>分批止盈卖出记录</strong></div>
-              <div class="muted">记录分批止盈 LIMIT IOC 卖出方向、卖出数量、订单ID与接口执行状态。</div>
+              <div class="muted">记录分批止盈 MARKET 卖出方向、卖出数量、订单ID与接口执行状态。</div>
             </div>
             <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
           </div>

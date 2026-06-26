@@ -2,7 +2,7 @@
 
 Every run scans current Binance Futures positions and the current experiment USDT
 net equity. R is defined as ``experiment_equity * 1%``. When a position's
-unrealized profit reaches ``2 * R``, the module submits a reduce-only LIMIT IOC
+unrealized profit reaches ``2 * R``, the module submits a reduce-only MARKET
 order for 30% of the current position size and records both the scan and the
 submitted take-profit operation.
 """
@@ -177,18 +177,17 @@ class PartialTakeProfitStrategy:
             quantity = self._floor_to_step(abs(amount) * self.TAKE_PROFIT_FRACTION, step)
             if quantity <= 0:
                 raise RuntimeError("take_profit_quantity_rounded_to_zero")
-            limit_params = helper._limit_ioc_order_params(
+            response = self.account_manager._signed_post(
+                "/fapi/v1/order",
                 {
                     "symbol": exchange_symbol,
                     "side": side,
                     "type": "MARKET",
                     "quantity": self._fmt_decimal(quantity),
                     "reduceOnly": "true",
+                    "newOrderRespType": "RESULT",
                 },
-                trading_symbol=exchange_symbol,
-                tick_size=exchange_info["tick_size"],
             )
-            response = self.account_manager._signed_post("/fapi/v1/order", limit_params)
             raw_response = str(response)
             order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
         except Exception as exc:

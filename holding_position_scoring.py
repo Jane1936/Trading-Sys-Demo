@@ -3,7 +3,7 @@
 This module is intentionally independent from ``scoring_system.py``.  It
 queries current Binance Futures positions, compares the latest two closed 15m
 candles with the latest two structural stop-loss rows, and immediately submits
-an opposite LIMIT IOC order with ``reduceOnly=true`` when both candles close below
+an opposite MARKET order with ``reduceOnly=true`` when both candles close below
 their corresponding structural stop-loss levels.
 """
 
@@ -44,6 +44,7 @@ class PortfolioRiskPosition:
     account_equity_usdt: str
     leverage: str
     risk: str
+    total_score: str
     reason: str
     calculated_at: int
 
@@ -154,6 +155,7 @@ class HoldingPositionScoringSystem:
                     account_equity_usdt TEXT NOT NULL,
                     leverage TEXT NOT NULL,
                     risk TEXT NOT NULL,
+                    total_score TEXT NOT NULL DEFAULT '',
                     reason TEXT NOT NULL,
                     calculated_at INTEGER NOT NULL,
                     PRIMARY KEY(symbol, decision_round_ts)
@@ -178,6 +180,9 @@ class HoldingPositionScoringSystem:
             record_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.RECORDS_TABLE})").fetchall()}
             if "realized_pnl" not in record_columns:
                 conn.execute(f"ALTER TABLE {self.RECORDS_TABLE} ADD COLUMN realized_pnl TEXT NOT NULL DEFAULT ''")
+            risk_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.PORTFOLIO_RISK_TABLE})").fetchall()}
+            if "total_score" not in risk_columns:
+                conn.execute(f"ALTER TABLE {self.PORTFOLIO_RISK_TABLE} ADD COLUMN total_score TEXT NOT NULL DEFAULT ''")
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_created "
                 f"ON {self.RECORDS_TABLE}(created_at DESC, symbol ASC)"
@@ -210,6 +215,7 @@ class HoldingPositionScoringSystem:
                 self._save_record(record)
                 records += 1
         portfolio_risk = self.calculate_portfolio_risk(positions=positions, decision_round_ts=round_ts, calculated_at=now_ms)
+        risk_action = self._enforce_portfolio_risk_limit(portfolio_risk, positions, now_ms)
         return {
             "decision_round_ts": round_ts,
             "checked": checked,
@@ -217,6 +223,7 @@ class HoldingPositionScoringSystem:
             "records": records,
             "total_risk": portfolio_risk.total_risk,
             "risk_position_count": portfolio_risk.position_count,
+            "portfolio_risk_action": risk_action,
         }
 
     def calculate_portfolio_risk(
@@ -251,6 +258,7 @@ class HoldingPositionScoringSystem:
             else:
                 risk = (amount * latest_close / equity) * leverage
                 total_risk += risk
+            total_score = self._latest_total_score(symbol) if symbol else ""
             rows.append(
                 PortfolioRiskPosition(
                     symbol=symbol,
@@ -260,6 +268,7 @@ class HoldingPositionScoringSystem:
                     account_equity_usdt=self._fmt_decimal(equity),
                     leverage=self._fmt_decimal(leverage),
                     risk=self._fmt_decimal(risk),
+                    total_score=total_score,
                     reason=reason,
                     calculated_at=now_ms,
                 )
@@ -268,6 +277,53 @@ class HoldingPositionScoringSystem:
         self._save_portfolio_risk_summary(summary)
         self._save_portfolio_risk_rows(round_ts, rows)
         return summary
+
+
+    def _latest_total_score(self, symbol: str) -> str:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT total_score FROM symbol_total_scores WHERE symbol = ? ORDER BY decision_round_ts DESC LIMIT 1",
+                    (symbol,),
+                ).fetchone()
+        except sqlite3.Error:
+            return ""
+        return str(row["total_score"]) if row and row["total_score"] is not None else ""
+
+    def _enforce_portfolio_risk_limit(self, summary: PortfolioRiskSummary, positions: list[dict[str, Any]], now_ms: int) -> str:
+        if self._decimal_from(summary.total_risk, Decimal("0")) <= Decimal("18") or not summary.positions:
+            return ""
+        lowest = min(summary.positions, key=lambda row: (self._decimal_from(row.total_score, Decimal("999999999")), row.symbol))
+        position = next((p for p in positions if self._base_symbol(str(p.get("symbol", ""))) == lowest.symbol), None)
+        if not position:
+            return f"portfolio_risk_gt_18_no_position_found_for_lowest_score_symbol={lowest.symbol}"
+        amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
+        if amount == 0:
+            return f"portfolio_risk_gt_18_lowest_score_symbol_zero_position={lowest.symbol}"
+        exchange_symbol = self._exchange_symbol(position, lowest.symbol)
+        side = "SELL" if amount > 0 else "BUY"
+        quantity = abs(amount)
+        cancel_reason = self._cancel_existing_exit_orders(exchange_symbol)
+        try:
+            response = self.account_manager._signed_post("/fapi/v1/order", self._market_close_order_params(exchange_symbol, side, quantity))
+            order_id = str(response.get("orderId", "")) if isinstance(response, dict) else ""
+            check = HoldingStopLossCheck(lowest.symbol, summary.decision_round_ts, True, None, None, None, None, None, None, "portfolio_total_risk_gt_18_lowest_total_score_liquidation", now_ms)
+            record = HoldingStopLossRecord(0, lowest.symbol, summary.decision_round_ts, side, self._fmt_decimal(quantity), 0, 0, 0, 0, "submitted", order_id, "", f"portfolio_total_risk_gt_18; total_risk={summary.total_risk}; total_score={lowest.total_score}; {cancel_reason}", str(response), now_ms)
+            self._save_record(record)
+            return f"submitted_market_close_symbol={lowest.symbol}; order_id={order_id}"
+        except Exception as exc:
+            return f"portfolio_risk_market_close_failed_symbol={lowest.symbol}: {type(exc).__name__}: {exc}; {cancel_reason}"
+
+    @classmethod
+    def _market_close_order_params(cls, exchange_symbol: str, side: str, quantity: Decimal) -> dict[str, str]:
+        return {
+            "symbol": exchange_symbol,
+            "side": side,
+            "type": "MARKET",
+            "quantity": cls._fmt_decimal(quantity),
+            "reduceOnly": "true",
+            "newOrderRespType": "RESULT",
+        }
 
     def _latest_15m_close(self, symbol: str) -> Decimal:
         with self._connect() as conn:
@@ -306,10 +362,10 @@ class HoldingPositionScoringSystem:
             conn.executemany(
                 f"""
                 INSERT INTO {self.PORTFOLIO_RISK_TABLE}
-                (symbol, decision_round_ts, position_amt, latest_15m_close, account_equity_usdt, leverage, risk, reason, calculated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (symbol, decision_round_ts, position_amt, latest_15m_close, account_equity_usdt, leverage, risk, total_score, reason, calculated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                [(row.symbol, row.decision_round_ts, row.position_amt, row.latest_15m_close, row.account_equity_usdt, row.leverage, row.risk, row.reason, row.calculated_at) for row in rows],
+                [(row.symbol, row.decision_round_ts, row.position_amt, row.latest_15m_close, row.account_equity_usdt, row.leverage, row.risk, row.total_score, row.reason, row.calculated_at) for row in rows],
             )
 
     def get_latest_portfolio_risk(self) -> PortfolioRiskSummary | None:
@@ -389,21 +445,7 @@ class HoldingPositionScoringSystem:
         if cancel_reason:
             reason = f"{reason}; {cancel_reason}"
         try:
-            helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
-            exchange_info = helper._exchange_symbol_info(exchange_symbol)
-            limit_params = helper._limit_ioc_order_params(
-                {
-                    "symbol": exchange_symbol,
-                    "side": side,
-                    "type": "MARKET",
-                    "quantity": self._fmt_decimal(quantity),
-                    "reduceOnly": "true",
-                    "newOrderRespType": "RESULT",
-                },
-                trading_symbol=exchange_symbol,
-                tick_size=exchange_info["tick_size"],
-            )
-            response = self.account_manager._signed_post("/fapi/v1/order", limit_params)
+            response = self.account_manager._signed_post("/fapi/v1/order", self._market_close_order_params(exchange_symbol, side, quantity))
             order_id = str(response.get("orderId", "")) if isinstance(response, dict) else ""
             raw_response = str(response)
             no_fill_reason = self._no_fill_order_response_reason(response)
@@ -430,7 +472,7 @@ class HoldingPositionScoringSystem:
         return HoldingStopLossRecord(0, check.symbol, check.decision_round_ts, side, self._fmt_decimal(quantity), float(check.latest_15m_close or 0), float(check.latest_structural_stop_loss or 0), float(check.prev_15m_close or 0), float(check.prev_structural_stop_loss or 0), status, order_id, realized_pnl, reason, raw_response, now_ms)
 
     def _cancel_existing_exit_orders(self, exchange_symbol: str) -> str:
-        """Cancel normal and conditional open orders before a reduce-only LIMIT close."""
+        """Cancel normal and conditional open orders before a reduce-only MARKET close."""
         failures: list[str] = []
         for endpoint, label in (
             ("/fapi/v1/allOpenOrders", "open_orders_cancel"),
