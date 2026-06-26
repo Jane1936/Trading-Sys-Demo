@@ -13,3 +13,7 @@ def test_low_trial_threshold_and_leverage_are_config_driven():
     assert OpenableSymbolModule.distance_threshold_for_total(67) == 0.05
     assert OpenableSymbolModule.opening_leverage_for_total_and_distance(67, 0.02, "A档") == "4x"
     assert OpenableSymbolModule.opening_leverage_for_total_and_distance(66, 0.02, "A档") == "NA"
+
+
+def test_trend_zero_distance_ratio_has_no_default_leverage():
+    assert OpenableSymbolModule.opening_leverage_for_total_and_distance(81, 0, "NA") == "NA"

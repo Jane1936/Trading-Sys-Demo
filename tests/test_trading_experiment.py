@@ -612,7 +612,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(plan.required_margin_usdt, Decimal("50"))
         self.assertEqual(plan.planned_notional_usdt, Decimal("500"))
 
-    def test_trade_plan_defaults_zero_distance_trend_candidate_to_five_percent_and_5x(self):
+    def test_trade_plan_does_not_default_zero_distance_trend_candidate(self):
         fake_account = FakeAccountManager()
         with tempfile.TemporaryDirectory() as tmpdir:
             experiment = TradingExperiment(
@@ -628,19 +628,19 @@ class TradingExperimentSymbolTests(unittest.TestCase):
                 distance_threshold=0.07,
                 stop_loss_distance_tier="NA",
                 opening_leverage="NA",
-                distance_qualified=True,
-                qualified=True,
-                reason="test",
+                distance_qualified=False,
+                qualified=False,
+                reason="trend_zero_distance_ratio_not_openable",
                 evaluated_at=1,
             )
 
             plan = experiment._trade_plan(candidate, Decimal("1000"))
 
-        self.assertTrue(TradingExperiment._candidate_allows_open(candidate))
-        self.assertEqual(plan.leverage, 5)
-        self.assertEqual(plan.stop_loss_distance_ratio, Decimal("0.05"))
-        self.assertEqual(plan.required_margin_usdt, Decimal("40"))
-        self.assertEqual(plan.planned_notional_usdt, Decimal("200"))
+        self.assertFalse(TradingExperiment._candidate_allows_open(candidate))
+        self.assertEqual(plan.leverage, 0)
+        self.assertEqual(plan.stop_loss_distance_ratio, Decimal("0"))
+        self.assertEqual(plan.required_margin_usdt, Decimal("0"))
+        self.assertEqual(plan.planned_notional_usdt, Decimal("0"))
 
     def test_recent_records_can_be_filtered_by_created_at(self):
         fake_account = FakeAccountManager()
