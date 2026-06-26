@@ -28,8 +28,6 @@ class ExperimentConfig:
     total_margin_budget_usdt: Decimal = Decimal("1000")
     max_open_positions: int = 10
     risk_fraction: Decimal = Decimal("0.01")
-    default_stop_loss_distance_ratio: Decimal = Decimal("0.05")
-    default_opening_leverage: int = 5
     max_stop_loss_pct: Decimal = Decimal("0.10")
     exit_order_missing_position_retries: int = 3
     exit_order_missing_position_retry_delay_seconds: Decimal = Decimal("0.5")
@@ -428,9 +426,7 @@ class TradingExperiment:
         """Only first-experiment rows with final-openable=yes and usable leverage may open."""
         if not candidate.qualified:
             return False
-        if cls._parse_leverage(candidate.opening_leverage) > 0:
-            return True
-        return candidate.total_score >= 81 and cls._candidate_distance_ratio(candidate) == 0
+        return cls._parse_leverage(candidate.opening_leverage) > 0
 
     def _open_long(
         self,
@@ -977,16 +973,10 @@ class TradingExperiment:
         return TradePlan(leverage, distance_ratio, required_margin, planned_notional)
 
     def _effective_leverage(self, candidate: OpenableSymbol) -> int:
-        leverage = self._parse_leverage(candidate.opening_leverage)
-        if leverage <= 0 and candidate.total_score >= 81 and self._candidate_distance_ratio(candidate) == 0:
-            return int(self.config.default_opening_leverage)
-        return leverage
+        return self._parse_leverage(candidate.opening_leverage)
 
     def _effective_stop_loss_distance_ratio(self, candidate: OpenableSymbol) -> Decimal:
-        ratio = self._candidate_distance_ratio(candidate)
-        if ratio == 0 and candidate.total_score >= 81:
-            return self.config.default_stop_loss_distance_ratio
-        return ratio
+        return self._candidate_distance_ratio(candidate)
 
     @classmethod
     def _candidate_distance_ratio(cls, candidate: OpenableSymbol) -> Decimal:
