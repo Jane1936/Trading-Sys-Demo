@@ -206,8 +206,7 @@ class BreakEvenTakeProfitStrategy:
             quantity = self._floor_to_step(abs(amount), exchange_info["step_size"])
             if quantity <= 0:
                 raise RuntimeError("break_even_stop_loss_quantity_rounded_to_zero")
-            response = self.account_manager._signed_post(
-                "/fapi/v1/order",
+            endpoint, request_params = TradingExperiment._exit_order_request(
                 {
                     "symbol": exchange_symbol,
                     "side": side,
@@ -218,8 +217,9 @@ class BreakEvenTakeProfitStrategy:
                     "timeInForce": "GTC",
                     "reduceOnly": "true",
                     "workingType": "MARK_PRICE",
-                },
+                }
             )
+            response = self.account_manager._signed_post(endpoint, request_params)
             raw_parts.append(str({"new_stop_loss": response}))
             new_order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
         except Exception as exc:
