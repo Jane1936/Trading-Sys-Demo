@@ -60,6 +60,7 @@ class ExperimentTradeRecord:
     notional_usdt: str
     take_profit_price: str
     stop_loss_price: str
+    stop_loss_calculation: str
     take_profit_order_id: str
     stop_loss_order_id: str
     reason: str
@@ -156,6 +157,7 @@ class TradingExperiment:
                     notional_usdt TEXT NOT NULL,
                     take_profit_price TEXT NOT NULL,
                     stop_loss_price TEXT NOT NULL,
+                    stop_loss_calculation TEXT NOT NULL DEFAULT '',
                     take_profit_order_id TEXT NOT NULL DEFAULT '',
                     stop_loss_order_id TEXT NOT NULL DEFAULT '',
                     reason TEXT NOT NULL,
@@ -201,6 +203,11 @@ class TradingExperiment:
                 conn.execute(
                     f"ALTER TABLE {self.TRADES_TABLE} "
                     "ADD COLUMN required_margin_usdt TEXT NOT NULL DEFAULT '0'"
+                )
+            if "stop_loss_calculation" not in columns:
+                conn.execute(
+                    f"ALTER TABLE {self.TRADES_TABLE} "
+                    "ADD COLUMN stop_loss_calculation TEXT NOT NULL DEFAULT ''"
                 )
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.TRADES_TABLE}_created "
@@ -471,7 +478,7 @@ class TradingExperiment:
         notional = quantity * entry_price
         required_margin = notional / Decimal(leverage)
         take_profit_price = Decimal("0")
-        stop_loss_price = self._risk_capped_stop_loss_price(
+        stop_loss_price, stop_loss_calculation = self._risk_capped_stop_loss_price_with_detail(
             entry_price=entry_price,
             quantity=quantity,
             max_loss=max_loss,
@@ -481,15 +488,21 @@ class TradingExperiment:
 
         sl_order = None
         if position_visible:
+            stop_loss_quantity = self._floor_to_step(abs(position_amt), exchange_info["step_size"])
+            if stop_loss_quantity <= 0:
+                stop_loss_quantity = quantity
             sl_order = self._place_exit_order(
                 candidate,
                 trading_symbol,
                 {
                     "symbol": trading_symbol,
                     "side": "SELL",
-                    "type": "STOP_MARKET",
+                    "type": "STOP",
+                    "quantity": self._fmt_decimal(stop_loss_quantity),
+                    "price": self._fmt_decimal(stop_loss_price),
                     "stopPrice": self._fmt_decimal(stop_loss_price),
-                    "closePosition": "true",
+                    "timeInForce": "GTC",
+                    "reduceOnly": "true",
                     "workingType": "MARK_PRICE",
                 },
                 "place_stop_loss",
@@ -514,6 +527,7 @@ class TradingExperiment:
             allocated_notional=planned_notional,
             take_profit_price=take_profit_price,
             stop_loss_price=stop_loss_price,
+            stop_loss_calculation=stop_loss_calculation,
             take_profit_order_id=tp_order_id,
             stop_loss_order_id=sl_order_id,
             reason=f"market_order_id={market_order.get('orderId', '')}; " + "; ".join(exit_order_status),
@@ -532,7 +546,7 @@ class TradingExperiment:
         """Submit an order and retry Binance -4131 MARKET rejections as LIMIT IOC.
 
         Binance can reject MARKET orders with -4131 when the counterparty best
-        price violates the PERCENT_PRICE filter.  The retry keeps the original
+        price violates the PERCENT_PRICE filter. The retry keeps the original
         side/quantity/reduceOnly flags, changes the order to LIMIT IOC, and caps
         the limit price at 1% slippage from the latest observed price.
         """
@@ -556,6 +570,14 @@ class TradingExperiment:
         return response if isinstance(response, dict) else {"raw_response": response}
 
     def _limit_ioc_retry_params(
+        self,
+        params: dict[str, Any],
+        trading_symbol: str | None = None,
+        tick_size: Decimal | None = None,
+    ) -> dict[str, Any]:
+        return self._limit_ioc_order_params(params, trading_symbol=trading_symbol, tick_size=tick_size)
+
+    def _limit_ioc_order_params(
         self,
         params: dict[str, Any],
         trading_symbol: str | None = None,
@@ -812,6 +834,7 @@ class TradingExperiment:
             allocated_notional=self._trade_plan(candidate, account_equity).planned_notional_usdt,
             take_profit_price=Decimal("0"),
             stop_loss_price=Decimal("0"),
+            stop_loss_calculation="",
             take_profit_order_id="",
             stop_loss_order_id="",
             reason=reason,
@@ -834,6 +857,7 @@ class TradingExperiment:
         allocated_notional: Decimal,
         take_profit_price: Decimal,
         stop_loss_price: Decimal,
+        stop_loss_calculation: str,
         take_profit_order_id: str,
         stop_loss_order_id: str,
         reason: str,
@@ -846,9 +870,9 @@ class TradingExperiment:
                 INSERT INTO {self.TRADES_TABLE}
                 (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt,
                  required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity,
-                 notional_usdt, take_profit_price, stop_loss_price, take_profit_order_id,
-                 stop_loss_order_id, reason, raw_response, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation,
+                 take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     candidate.symbol,
@@ -866,6 +890,7 @@ class TradingExperiment:
                     self._fmt_decimal(notional),
                     self._fmt_decimal(take_profit_price),
                     self._fmt_decimal(stop_loss_price),
+                    stop_loss_calculation,
                     take_profit_order_id,
                     stop_loss_order_id,
                     reason,
@@ -894,6 +919,7 @@ class TradingExperiment:
             notional_usdt=str(row["notional_usdt"]),
             take_profit_price=str(row["take_profit_price"]),
             stop_loss_price=str(row["stop_loss_price"]),
+            stop_loss_calculation=str(row["stop_loss_calculation"] if "stop_loss_calculation" in row.keys() else ""),
             take_profit_order_id=str(row["take_profit_order_id"]),
             stop_loss_order_id=str(row["stop_loss_order_id"]),
             reason=str(row["reason"]),
@@ -1068,15 +1094,51 @@ class TradingExperiment:
         trigger_reference_price: Decimal,
         tick_size: Decimal,
     ) -> Decimal:
+        stop_loss_price, _ = self._risk_capped_stop_loss_price_with_detail(
+            entry_price=entry_price,
+            quantity=quantity,
+            max_loss=max_loss,
+            trigger_reference_price=trigger_reference_price,
+            tick_size=tick_size,
+        )
+        return stop_loss_price
+
+    def _risk_capped_stop_loss_price_with_detail(
+        self,
+        entry_price: Decimal,
+        quantity: Decimal,
+        max_loss: Decimal,
+        trigger_reference_price: Decimal,
+        tick_size: Decimal,
+    ) -> tuple[Decimal, str]:
         ten_pct_price_distance = entry_price * self.config.max_stop_loss_pct
         risk_price_distance = max_loss / quantity if quantity > 0 else ten_pct_price_distance
         stop_loss_price_distance = min(ten_pct_price_distance, risk_price_distance)
+        selected_cap = "risk_loss_cap" if risk_price_distance <= ten_pct_price_distance else "max_stop_loss_pct_cap"
         desired_price = entry_price - stop_loss_price_distance
-        return self._valid_stop_loss_price(
+        maximum_trigger_price = trigger_reference_price - tick_size
+        raw_stop_price = min(desired_price, maximum_trigger_price) if maximum_trigger_price > 0 else desired_price
+        stop_loss_price = self._valid_stop_loss_price(
             desired_price=desired_price,
             trigger_reference_price=trigger_reference_price,
             tick_size=tick_size,
         )
+        detail = (
+            f"max_loss={self._fmt_decimal(max_loss)}; "
+            f"entry_price={self._fmt_decimal(entry_price)}; "
+            f"quantity={self._fmt_decimal(quantity)}; "
+            f"max_stop_loss_pct={self._fmt_decimal(self.config.max_stop_loss_pct)}; "
+            f"ten_pct_distance=entry_price*max_stop_loss_pct={self._fmt_decimal(ten_pct_price_distance)}; "
+            f"risk_distance=max_loss/quantity={self._fmt_decimal(risk_price_distance)}; "
+            f"selected_distance=min(ten_pct_distance,risk_distance)={self._fmt_decimal(stop_loss_price_distance)} ({selected_cap}); "
+            f"desired_price=entry_price-selected_distance={self._fmt_decimal(desired_price)}; "
+            f"trigger_reference_price={self._fmt_decimal(trigger_reference_price)}; "
+            f"tick_size={self._fmt_decimal(tick_size)}; "
+            f"maximum_trigger_price=trigger_reference_price-tick_size={self._fmt_decimal(maximum_trigger_price)}; "
+            f"raw_stop_price=min(desired_price,maximum_trigger_price)={self._fmt_decimal(raw_stop_price)}; "
+            f"final_stop_loss_price=floor_to_tick(raw_stop_price)={self._fmt_decimal(stop_loss_price)}"
+        )
+        return stop_loss_price, detail
 
     def _valid_stop_loss_price(
         self,

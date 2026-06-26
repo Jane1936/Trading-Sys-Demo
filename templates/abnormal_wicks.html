@@ -51,6 +51,7 @@
     table { border-collapse: collapse; width: 100%; min-width: 980px; }
     th, td { padding: 10px 9px; font-size: 13px; border-bottom: 1px solid #e6f6ff; text-align: left; white-space: nowrap; }
     th { background: #f0f9ff; position: sticky; top: 0; }
+    .mono-cell { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; white-space: normal; min-width: 360px; line-height: 1.45; }
     tbody tr:hover { background: #f8fdff; }
     .empty { text-align: center; color: #6b7280; padding: 22px; }
     .k-up { color: #ef4444; font-weight: 600; }
@@ -820,7 +821,7 @@
             <div class="chips"><span class="chip">本轮无触发止损规则symbol</span></div>
           {% endif %}
         </div>
-        <div class="tip">止损规则：查询最近两条15分钟K线数据，以及最近两条 <code>symbol_structural_stop_losses</code> 结构止损位数据；若最近第1条15m close &lt; 最近第1条 structural_stop_loss，且最近第2条15m close &lt; 最近第2条 structural_stop_loss，则立刻提交 reduceOnly MARKET 订单平掉该持仓，并写入下方止损记录。</div>
+        <div class="tip">止损规则：查询最近两条15分钟K线数据，以及最近两条 <code>symbol_structural_stop_losses</code> 结构止损位数据；若最近第1条15m close &lt; 最近第1条 structural_stop_loss，且最近第2条15m close &lt; 最近第2条 structural_stop_loss，则立刻提交 reduceOnly LIMIT IOC 订单平掉该持仓，并写入下方止损记录。</div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -912,7 +913,7 @@
         <div class="symbol-strip">
           <div><strong>保本止盈策略：5分钟扫描结果</strong></div>
           {% if break_even_round_ts %}
-            <div class="muted">最近判断轮次：{{ break_even_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；若未变现盈亏 ≥ R，则取消原止损单并按开仓价新建 STOP_MARKET 止损单。</div>
+            <div class="muted">最近判断轮次：{{ break_even_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；若未变现盈亏 ≥ R，则取消原止损单并按开仓价新建 STOP 限价止损单。</div>
           {% else %}
             <div class="muted">暂无保本止盈扫描结果。</div>
           {% endif %}
@@ -1020,7 +1021,7 @@
         <div class="symbol-strip">
           <div><strong>分批止盈规则：5分钟扫描结果</strong></div>
           {% if partial_take_profit_round_ts %}
-            <div class="muted">最近判断轮次：{{ partial_take_profit_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；若未变现盈亏 ≥ 2 × R，则提交 reduceOnly MARKET 订单卖出当前仓位的30%。</div>
+            <div class="muted">最近判断轮次：{{ partial_take_profit_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；若未变现盈亏 ≥ 2 × R，则提交 reduceOnly LIMIT IOC 订单卖出当前仓位的30%。</div>
           {% else %}
             <div class="muted">暂无分批止盈扫描结果。</div>
           {% endif %}
@@ -1080,7 +1081,7 @@
           <div class="symbol-strip collapsible-header">
             <div>
               <div><strong>分批止盈卖出记录</strong></div>
-              <div class="muted">记录分批止盈 MARKET 卖出方向、卖出数量、订单ID与接口执行状态。</div>
+              <div class="muted">记录分批止盈 LIMIT IOC 卖出方向、卖出数量、订单ID与接口执行状态。</div>
             </div>
             <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
           </div>
@@ -1130,7 +1131,7 @@
             <span id="trailing-stop-refresh-status" class="muted">可单独刷新移动追踪止盈数据</span>
           </div>
           {% if trailing_stop_round_ts %}
-            <div id="trailing-stop-round-note" class="muted">最近判断轮次：{{ trailing_stop_round_ts|fmt_ms_datetime }}。仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；每分钟读取数据库 klines_1m 最新high，计算 持仓数量 × (high - 开仓价)，维护“最大未变现盈利”，并计算当前盈利回撤幅度 = (最大未变现盈利 - 当下未变现盈利) / 最大未变现盈利；若满足对应 total_score 分层阈值，且当前标记价格小于最近一条15分钟K线low，则取消原止盈单并 reduceOnly MARKET 全部止盈。</div>
+            <div id="trailing-stop-round-note" class="muted">最近判断轮次：{{ trailing_stop_round_ts|fmt_ms_datetime }}。仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；每分钟读取数据库 klines_1m 最新high，计算 持仓数量 × (high - 开仓价)，维护“最大未变现盈利”，并计算当前盈利回撤幅度 = (最大未变现盈利 - 当下未变现盈利) / 最大未变现盈利；若满足对应 total_score 分层阈值，且当前标记价格小于最近一条15分钟K线low，则取消原止盈单并 reduceOnly LIMIT IOC 全部止盈。</div>
           {% else %}
             <div id="trailing-stop-round-note" class="muted">暂无移动追踪止盈扫描结果。</div>
           {% endif %}
@@ -1198,7 +1199,7 @@
           <div class="symbol-strip collapsible-header">
             <div>
               <div><strong>移动追踪止盈操作记录</strong></div>
-              <div class="muted">记录移动追踪止盈触发后的原止盈单取消状态、当前仓位 reduceOnly MARKET 全部止盈数量、订单ID与接口执行状态。</div>
+              <div class="muted">记录移动追踪止盈触发后的原止盈单取消状态、当前仓位 reduceOnly LIMIT IOC 全部止盈数量、订单ID与接口执行状态。</div>
             </div>
             <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
           </div>
@@ -1441,6 +1442,7 @@
                 <th>notional</th>
                 <th>take_profit_price</th>
                 <th>stop_loss_price</th>
+                <th>stop_loss_calculation</th>
                 <th>tp_order_id</th>
                 <th>sl_order_id</th>
                 <th>reason</th>
@@ -1465,12 +1467,13 @@
                 <td>{{ row.notional_usdt }}</td>
                 <td>{{ row.take_profit_price }}</td>
                 <td>{{ row.stop_loss_price }}</td>
+                <td class="mono-cell">{{ row.stop_loss_calculation or '-' }}</td>
                 <td>{{ row.take_profit_order_id or '-' }}</td>
                 <td>{{ row.stop_loss_order_id or '-' }}</td>
                 <td>{{ row.reason }}</td>
               </tr>
               {% else %}
-              <tr><td class="empty" colspan="19">暂无交易实验记录；执行实验后显示数据</td></tr>
+              <tr><td class="empty" colspan="20">暂无交易实验记录；执行实验后显示数据</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -1628,7 +1631,7 @@
     let btcChart = null;
     let scoreTrendChart = null;
     let experimentEquityTrendChart = null;
-    const TRAILING_STOP_RULE_NOTE = '仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；每分钟读取数据库 klines_1m 最新high，计算 持仓数量 × (high - 开仓价)，维护“最大未变现盈利”，并计算当前盈利回撤幅度 = (最大未变现盈利 - 当下未变现盈利) / 最大未变现盈利；若满足对应 total_score 分层阈值，且当前标记价格小于最近一条15分钟K线low，则取消原止盈单并 reduceOnly MARKET 全部止盈。';
+    const TRAILING_STOP_RULE_NOTE = '仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；每分钟读取数据库 klines_1m 最新high，计算 持仓数量 × (high - 开仓价)，维护“最大未变现盈利”，并计算当前盈利回撤幅度 = (最大未变现盈利 - 当下未变现盈利) / 最大未变现盈利；若满足对应 total_score 分层阈值，且当前标记价格小于最近一条15分钟K线low，则取消原止盈单并 reduceOnly LIMIT IOC 全部止盈。';
 
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));

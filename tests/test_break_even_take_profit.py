@@ -100,15 +100,17 @@ def test_break_even_strategy_moves_stop_loss_to_entry_when_unrealized_pnl_reache
     assert fake_account.signed_deletes == [("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "123"})]
     assert fake_account.signed_posts == [
         (
-            "/fapi/v1/algoOrder",
+            "/fapi/v1/order",
             {
                 "symbol": "BANKUSDT",
                 "side": "SELL",
-                "type": "STOP_MARKET",
-                "closePosition": "true",
+                "type": "STOP",
+                "quantity": "2",
+                "price": "10",
+                "stopPrice": "10",
+                "timeInForce": "GTC",
+                "reduceOnly": "true",
                 "workingType": "MARK_PRICE",
-                "triggerPrice": "10",
-                "algoType": "CONDITIONAL",
             },
         )
     ]
@@ -267,15 +269,17 @@ def test_break_even_strategy_skips_stale_db_only_stop_loss_cancel_and_creates_ne
     assert fake_account.signed_deletes == []
     assert fake_account.signed_posts == [
         (
-            "/fapi/v1/algoOrder",
+            "/fapi/v1/order",
             {
                 "symbol": "BANKUSDT",
                 "side": "SELL",
-                "type": "STOP_MARKET",
-                "closePosition": "true",
+                "type": "STOP",
+                "quantity": "2",
+                "price": "10",
+                "stopPrice": "10",
+                "timeInForce": "GTC",
+                "reduceOnly": "true",
                 "workingType": "MARK_PRICE",
-                "triggerPrice": "10",
-                "algoType": "CONDITIONAL",
             },
         )
     ]

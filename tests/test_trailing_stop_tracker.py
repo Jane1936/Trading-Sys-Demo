@@ -34,6 +34,8 @@ class FakeAccountManager:
         raise AssertionError(f"unexpected signed endpoint {endpoint}")
 
     def _public_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v1/ticker/price":
+            return {"price": "12.5"}
         if endpoint == "/fapi/v1/exchangeInfo":
             return {
                 "symbols": [
@@ -227,7 +229,7 @@ def test_trailing_stop_tracker_closes_position_when_drawdown_threshold_hit():
     assert action_records[0].close_order_id == "456"
     assert fake_account.signed_deletes == [("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "123"})]
     assert fake_account.signed_posts == [
-        ("/fapi/v1/order", {"symbol": "BANKUSDT", "side": "SELL", "type": "MARKET", "quantity": "10", "reduceOnly": "true"})
+        ("/fapi/v1/order", {"symbol": "BANKUSDT", "side": "SELL", "quantity": "10", "reduceOnly": "true", "type": "LIMIT", "timeInForce": "IOC", "price": "12.37", "newOrderRespType": "RESULT"})
     ]
 
 
