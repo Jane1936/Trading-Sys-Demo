@@ -61,6 +61,19 @@ class HighPortfolioRiskAccountManager(FakeAccountManager):
         return super()._signed_get(endpoint, params)
 
 
+class TiedLowestScorePortfolioRiskAccountManager(FakeAccountManager):
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/positionRisk":
+            return [
+                {"symbol": "BANKUSDT", "positionAmt": "200", "leverage": "10", "unRealizedProfit": "5"},
+                {"symbol": "COINUSDT", "positionAmt": "200", "leverage": "10", "unRealizedProfit": "-3"},
+                {"symbol": "FUNDUSDT", "positionAmt": "200", "leverage": "10", "unRealizedProfit": "-1.5"},
+            ]
+        if endpoint == "/fapi/v1/userTrades":
+            return []
+        return super()._signed_get(endpoint, params)
+
+
 class RetryThenSuccessAccountManager(FakeAccountManager):
     def __init__(self):
         super().__init__()
@@ -213,6 +226,8 @@ def test_portfolio_risk_displays_scores_and_market_closes_lowest_score_when_tota
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account, realized_pnl_retry_delays=())
         result = scoring.run_round(decision_round_ts=3000)
         risk = scoring.get_latest_portfolio_risk()
+        risk_liquidation_records = scoring.recent_portfolio_liquidation_records()
+        stop_loss_records = scoring.recent_stop_loss_records()
 
     assert result["total_risk"] == "20"
     assert result["portfolio_risk_action"].startswith("submitted_market_close_symbol=COIN")
@@ -222,6 +237,48 @@ def test_portfolio_risk_displays_scores_and_market_closes_lowest_score_when_tota
         "/fapi/v1/order",
         {"symbol": "COINUSDT", "side": "SELL", "type": "MARKET", "quantity": "200", "reduceOnly": "true", "newOrderRespType": "RESULT"},
     )
+    assert len(risk_liquidation_records) == 1
+    assert risk_liquidation_records[0]["symbol"] == "COIN"
+    assert risk_liquidation_records[0]["reason"].startswith("portfolio_total_risk_gt_18")
+    assert stop_loss_records == []
+
+
+def test_portfolio_risk_closes_all_negative_pnl_positions_when_lowest_score_ties():
+    fake_account = TiedLowestScorePortfolioRiskAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, close REAL)")
+            conn.execute("CREATE TABLE symbol_structural_stop_losses (symbol TEXT, decision_round_ts INTEGER, structural_stop_loss REAL)")
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.executemany(
+                "INSERT INTO klines_15m (symbol, open_time, close) VALUES (?, ?, ?)",
+                [(symbol, 2000, 5) for symbol in ("BANK", "COIN", "FUND")],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
+                [(symbol, 2000, 1) for symbol in ("BANK", "COIN", "FUND")],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
+                [("BANK", 2000, 60), ("COIN", 2000, 60), ("FUND", 2000, 60)],
+            )
+
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account, realized_pnl_retry_delays=())
+        result = scoring.run_round(decision_round_ts=3000)
+        risk_liquidation_records = scoring.recent_portfolio_liquidation_records()
+
+    close_orders = [params for endpoint, params in fake_account.signed_posts if endpoint == "/fapi/v1/order"]
+    assert result["total_risk"] == "30"
+    assert "skipped_non_negative_unrealized_pnl_symbol=BANK; unrealized_pnl=5" in result["portfolio_risk_action"]
+    assert "submitted_market_close_symbol=COIN" in result["portfolio_risk_action"]
+    assert "submitted_market_close_symbol=FUND" in result["portfolio_risk_action"]
+    assert close_orders == [
+        {"symbol": "COINUSDT", "side": "SELL", "type": "MARKET", "quantity": "200", "reduceOnly": "true", "newOrderRespType": "RESULT"},
+        {"symbol": "FUNDUSDT", "side": "SELL", "type": "MARKET", "quantity": "200", "reduceOnly": "true", "newOrderRespType": "RESULT"},
+    ]
+    assert {row["symbol"] for row in risk_liquidation_records} == {"COIN", "FUND"}
+    assert all("unrealized_pnl=-" in row["reason"] for row in risk_liquidation_records)
 
 
 def _seed_triggered_stop_loss_db(db_path: str) -> None:

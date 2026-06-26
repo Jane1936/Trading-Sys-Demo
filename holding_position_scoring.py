@@ -293,26 +293,60 @@ class HoldingPositionScoringSystem:
     def _enforce_portfolio_risk_limit(self, summary: PortfolioRiskSummary, positions: list[dict[str, Any]], now_ms: int) -> str:
         if self._decimal_from(summary.total_risk, Decimal("0")) <= Decimal("18") or not summary.positions:
             return ""
-        lowest = min(summary.positions, key=lambda row: (self._decimal_from(row.total_score, Decimal("999999999")), row.symbol))
-        position = next((p for p in positions if self._base_symbol(str(p.get("symbol", ""))) == lowest.symbol), None)
+
+        lowest_score = min(self._decimal_from(row.total_score, Decimal("999999999")) for row in summary.positions)
+        lowest_rows = [
+            row
+            for row in sorted(summary.positions, key=lambda item: item.symbol)
+            if self._decimal_from(row.total_score, Decimal("999999999")) == lowest_score
+        ]
+
+        if len(lowest_rows) == 1:
+            return self._execute_portfolio_risk_liquidation(lowest_rows[0], positions, summary, now_ms)
+
+        actions: list[str] = []
+        for row in lowest_rows:
+            position = next((p for p in positions if self._base_symbol(str(p.get("symbol", ""))) == row.symbol), None)
+            if not position:
+                actions.append(f"portfolio_risk_gt_18_no_position_found_for_lowest_score_symbol={row.symbol}")
+                continue
+            unrealized_pnl = self._position_unrealized_pnl(position)
+            if unrealized_pnl < 0:
+                actions.append(self._execute_portfolio_risk_liquidation(row, positions, summary, now_ms, unrealized_pnl=unrealized_pnl))
+            else:
+                actions.append(f"skipped_non_negative_unrealized_pnl_symbol={row.symbol}; unrealized_pnl={self._fmt_decimal(unrealized_pnl)}")
+        return " | ".join(actions)
+
+    def _execute_portfolio_risk_liquidation(
+        self,
+        risk_row: PortfolioRiskPosition,
+        positions: list[dict[str, Any]],
+        summary: PortfolioRiskSummary,
+        now_ms: int,
+        unrealized_pnl: Decimal | None = None,
+    ) -> str:
+        position = next((p for p in positions if self._base_symbol(str(p.get("symbol", ""))) == risk_row.symbol), None)
         if not position:
-            return f"portfolio_risk_gt_18_no_position_found_for_lowest_score_symbol={lowest.symbol}"
+            return f"portfolio_risk_gt_18_no_position_found_for_lowest_score_symbol={risk_row.symbol}"
         amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
         if amount == 0:
-            return f"portfolio_risk_gt_18_lowest_score_symbol_zero_position={lowest.symbol}"
-        exchange_symbol = self._exchange_symbol(position, lowest.symbol)
+            return f"portfolio_risk_gt_18_lowest_score_symbol_zero_position={risk_row.symbol}"
+        exchange_symbol = self._exchange_symbol(position, risk_row.symbol)
         side = "SELL" if amount > 0 else "BUY"
         quantity = abs(amount)
         cancel_reason = self._cancel_existing_exit_orders(exchange_symbol)
         try:
             response = self.account_manager._signed_post("/fapi/v1/order", self._market_close_order_params(exchange_symbol, side, quantity))
             order_id = str(response.get("orderId", "")) if isinstance(response, dict) else ""
-            check = HoldingStopLossCheck(lowest.symbol, summary.decision_round_ts, True, None, None, None, None, None, None, "portfolio_total_risk_gt_18_lowest_total_score_liquidation", now_ms)
-            record = HoldingStopLossRecord(0, lowest.symbol, summary.decision_round_ts, side, self._fmt_decimal(quantity), 0, 0, 0, 0, "submitted", order_id, "", f"portfolio_total_risk_gt_18; total_risk={summary.total_risk}; total_score={lowest.total_score}; {cancel_reason}", str(response), now_ms)
+            pnl_reason = f"; unrealized_pnl={self._fmt_decimal(unrealized_pnl)}" if unrealized_pnl is not None else ""
+            record = HoldingStopLossRecord(0, risk_row.symbol, summary.decision_round_ts, side, self._fmt_decimal(quantity), 0, 0, 0, 0, "submitted", order_id, "", f"portfolio_total_risk_gt_18; total_risk={summary.total_risk}; total_score={risk_row.total_score}{pnl_reason}; {cancel_reason}", str(response), now_ms)
             self._save_record(record)
-            return f"submitted_market_close_symbol={lowest.symbol}; order_id={order_id}"
+            return f"submitted_market_close_symbol={risk_row.symbol}; order_id={order_id}"
         except Exception as exc:
-            return f"portfolio_risk_market_close_failed_symbol={lowest.symbol}: {type(exc).__name__}: {exc}; {cancel_reason}"
+            return f"portfolio_risk_market_close_failed_symbol={risk_row.symbol}: {type(exc).__name__}: {exc}; {cancel_reason}"
+
+    def _position_unrealized_pnl(self, position: dict[str, Any]) -> Decimal:
+        return self._decimal_from(position.get("unRealizedProfit", position.get("unrealizedProfit")), Decimal("0"))
 
     @classmethod
     def _market_close_order_params(cls, exchange_symbol: str, side: str, quantity: Decimal) -> dict[str, str]:
@@ -648,7 +682,25 @@ class HoldingPositionScoringSystem:
         self.init_tables()
         with self._connect() as conn:
             return conn.execute(
-                f"SELECT * FROM {self.RECORDS_TABLE} ORDER BY created_at DESC, id DESC LIMIT ?",
+                f"""
+                SELECT * FROM {self.RECORDS_TABLE}
+                WHERE reason NOT LIKE 'portfolio_total_risk_gt_18%'
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+    def recent_portfolio_liquidation_records(self, limit: int = 100) -> list[sqlite3.Row]:
+        self.init_tables()
+        with self._connect() as conn:
+            return conn.execute(
+                f"""
+                SELECT * FROM {self.RECORDS_TABLE}
+                WHERE reason LIKE 'portfolio_total_risk_gt_18%'
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
                 (limit,),
             ).fetchall()
 

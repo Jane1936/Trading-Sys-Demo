@@ -142,7 +142,7 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
     if _table_exists(conn, HoldingPositionScoringSystem.RECORDS_TABLE):
         rows = conn.execute(
             f"""
-            SELECT created_at AS matched_at, quantity
+            SELECT created_at AS matched_at, quantity, reason
             FROM {HoldingPositionScoringSystem.RECORDS_TABLE}
             WHERE symbol = ?
               AND side = 'SELL'
@@ -153,7 +153,9 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
         ).fetchall()
         for row in rows:
             if _decimal_text_equal(row["quantity"], quantity):
-                matches.append({"type": "结构止损", "matched_at": str(row["matched_at"] or "")})
+                reason = str(row["reason"] or "")
+                match_type = "组合风险强平" if reason.startswith("portfolio_total_risk_gt_18") else "结构止损"
+                matches.append({"type": match_type, "matched_at": str(row["matched_at"] or "")})
                 break
 
     if _table_exists(conn, TrailingStopTracker.CHECKS_TABLE):
@@ -199,6 +201,8 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
         return ""
 
     match_types = {match.get("type", "") for match in matches}
+    if "组合风险强平" in match_types:
+        return "组合风险强平"
     if "结构止损" in match_types:
         return "结构止损"
     if "移动追踪止盈" in match_types:
@@ -466,6 +470,7 @@ def abnormal_wicks():
     holding_stop_loss_round_ts, holding_stop_loss_checks = holding_scoring.get_latest_round_checks()
     holding_portfolio_risk = holding_scoring.get_latest_portfolio_risk()
     holding_stop_loss_records = holding_scoring.recent_stop_loss_records(limit=100)
+    holding_portfolio_liquidation_records = holding_scoring.recent_portfolio_liquidation_records(limit=100)
     break_even_strategy = BreakEvenTakeProfitStrategy(db_path=DB_PATH)
     break_even_round_ts, break_even_checks = break_even_strategy.get_latest_round_checks()
     break_even_records = break_even_strategy.recent_records(limit=100)
@@ -549,6 +554,7 @@ def abnormal_wicks():
         holding_stop_loss_checks=holding_stop_loss_checks,
         holding_portfolio_risk=holding_portfolio_risk,
         holding_stop_loss_records=holding_stop_loss_records,
+        holding_portfolio_liquidation_records=holding_portfolio_liquidation_records,
         break_even_round_ts=break_even_round_ts,
         break_even_checks=break_even_checks,
         break_even_records=break_even_records,
