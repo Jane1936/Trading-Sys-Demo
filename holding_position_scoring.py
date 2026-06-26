@@ -3,7 +3,7 @@
 This module is intentionally independent from ``scoring_system.py``.  It
 queries current Binance Futures positions, compares the latest two closed 15m
 candles with the latest two structural stop-loss rows, and immediately submits
-an opposite MARKET order with ``reduceOnly=true`` when both candles close below
+an opposite LIMIT IOC order with ``reduceOnly=true`` when both candles close below
 their corresponding structural stop-loss levels.
 """
 
@@ -214,8 +214,8 @@ class HoldingPositionScoringSystem:
             reason = f"{reason}; {cancel_reason}"
         try:
             helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
-            response = helper._signed_post_order_with_ioc_retry(
-                "/fapi/v1/order",
+            exchange_info = helper._exchange_symbol_info(exchange_symbol)
+            limit_params = helper._limit_ioc_order_params(
                 {
                     "symbol": exchange_symbol,
                     "side": side,
@@ -224,7 +224,10 @@ class HoldingPositionScoringSystem:
                     "reduceOnly": "true",
                     "newOrderRespType": "RESULT",
                 },
+                trading_symbol=exchange_symbol,
+                tick_size=exchange_info["tick_size"],
             )
+            response = self.account_manager._signed_post("/fapi/v1/order", limit_params)
             order_id = str(response.get("orderId", "")) if isinstance(response, dict) else ""
             raw_response = str(response)
             no_fill_reason = self._no_fill_order_response_reason(response)
@@ -251,7 +254,7 @@ class HoldingPositionScoringSystem:
         return HoldingStopLossRecord(0, check.symbol, check.decision_round_ts, side, self._fmt_decimal(quantity), float(check.latest_15m_close or 0), float(check.latest_structural_stop_loss or 0), float(check.prev_15m_close or 0), float(check.prev_structural_stop_loss or 0), status, order_id, realized_pnl, reason, raw_response, now_ms)
 
     def _cancel_existing_exit_orders(self, exchange_symbol: str) -> str:
-        """Cancel normal and conditional open orders before a MARKET close."""
+        """Cancel normal and conditional open orders before a reduce-only LIMIT close."""
         failures: list[str] = []
         for endpoint, label in (
             ("/fapi/v1/allOpenOrders", "open_orders_cancel"),
@@ -333,7 +336,7 @@ class HoldingPositionScoringSystem:
         Binance USDⓈ-M exposes realized PnL per fill via the account trades API;
         summing fills by orderId gives the final realized profit/loss for this
         reduce-only stop-loss order. The user-trades endpoint can lag right after
-        a MARKET close, so retry with configured delays before returning an empty
+        a close order, so retry with configured delays before returning an empty
         PnL and writing the failure reason into the stop-loss audit record.
         """
         attempts = len(self.realized_pnl_retry_delays) + 1

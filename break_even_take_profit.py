@@ -201,15 +201,25 @@ class BreakEvenTakeProfitStrategy:
             else:
                 reason_parts.append("old_stop_loss_order_id_missing")
             stop_loss_price = stop_loss_price or self._break_even_stop_price(exchange_symbol, entry_price, side)
-            endpoint, params = TradingExperiment._exit_order_request({
-                "symbol": exchange_symbol,
-                "side": side,
-                "type": "STOP_MARKET",
-                "stopPrice": self._fmt_decimal(stop_loss_price),
-                "closePosition": "true",
-                "workingType": "MARK_PRICE",
-            })
-            response = self.account_manager._signed_post(endpoint, params)
+            helper = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)
+            exchange_info = helper._exchange_symbol_info(exchange_symbol)
+            quantity = self._floor_to_step(abs(amount), exchange_info["step_size"])
+            if quantity <= 0:
+                raise RuntimeError("break_even_stop_loss_quantity_rounded_to_zero")
+            response = self.account_manager._signed_post(
+                "/fapi/v1/order",
+                {
+                    "symbol": exchange_symbol,
+                    "side": side,
+                    "type": "STOP",
+                    "quantity": self._fmt_decimal(quantity),
+                    "price": self._fmt_decimal(stop_loss_price),
+                    "stopPrice": self._fmt_decimal(stop_loss_price),
+                    "timeInForce": "GTC",
+                    "reduceOnly": "true",
+                    "workingType": "MARK_PRICE",
+                },
+            )
             raw_parts.append(str({"new_stop_loss": response}))
             new_order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
         except Exception as exc:

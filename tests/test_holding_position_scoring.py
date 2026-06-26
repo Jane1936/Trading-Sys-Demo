@@ -21,6 +21,23 @@ class FakeAccountManager:
             return [{"realizedPnl": "1.25"}, {"realizedPnl": "-0.5"}]
         raise AssertionError(f"unexpected endpoint {endpoint}")
 
+    def _public_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v1/ticker/price":
+            return {"price": "8"}
+        if endpoint == "/fapi/v1/exchangeInfo":
+            return {
+                "symbols": [
+                    {
+                        "symbol": "BANKUSDT",
+                        "filters": [
+                            {"filterType": "LOT_SIZE", "stepSize": "0.1"},
+                            {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+                        ],
+                    }
+                ]
+            }
+        raise AssertionError(f"unexpected public endpoint {endpoint}")
+
     def _signed_post(self, endpoint, params=None):
         self.signed_posts.append((endpoint, dict(params or {})))
         return {"orderId": 123}

@@ -260,8 +260,7 @@ class TrailingStopTracker:
             quantity = self._floor_to_step(abs(amount), exchange_info["step_size"])
             if quantity <= 0:
                 raise RuntimeError("close_quantity_rounded_to_zero")
-            response = helper._signed_post_order_with_ioc_retry(
-                "/fapi/v1/order",
+            limit_params = helper._limit_ioc_order_params(
                 {
                     "symbol": exchange_symbol,
                     "side": side,
@@ -272,6 +271,7 @@ class TrailingStopTracker:
                 trading_symbol=exchange_symbol,
                 tick_size=exchange_info["tick_size"],
             )
+            response = self.account_manager._signed_post("/fapi/v1/order", limit_params)
             raw_parts.append(str({"close_position": response}))
             close_order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
             return cancel_order_id, cancel_status, quantity, close_order_id, "submitted", "trailing_stop_triggered_close_position; " + " | ".join(raw_parts)
