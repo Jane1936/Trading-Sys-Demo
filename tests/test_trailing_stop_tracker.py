@@ -214,6 +214,9 @@ def test_trailing_stop_tracker_closes_position_when_drawdown_threshold_hit():
     assert checks[0].trailing_stop_triggered is True
     assert checks[0].total_score == 80
     assert checks[0].drawdown_threshold == "0.22"
+    assert checks[0].current_mark_price == "12.5"
+    assert checks[0].latest_15m_low == "13"
+    assert checks[0].price_below_latest_15m_low is True
     assert checks[0].current_profit_drawdown == "0.2333333333333333333333333333"
     assert checks[0].cancel_take_profit_order_id == "123"
     assert checks[0].cancel_status == "submitted"
@@ -248,6 +251,9 @@ def test_trailing_stop_tracker_requires_current_price_below_latest_15m_low():
     assert result["eligible"] == 1
     assert checks[0].trailing_stop_triggered is False
     assert checks[0].close_status == "not_required"
+    assert checks[0].current_mark_price == "12.5"
+    assert checks[0].latest_15m_low == "12.4"
+    assert checks[0].price_below_latest_15m_low is False
     assert "current_price_not_below_latest_15m_low" in checks[0].reason
     assert fake_account.signed_deletes == []
     assert fake_account.signed_posts == []

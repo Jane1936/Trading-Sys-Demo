@@ -1158,6 +1158,7 @@
                 <th>最大未变现盈利</th>
                 <th>当前盈利回撤幅度</th>
                 <th>total_score / 阈值</th>
+                <th>标记价 &lt; 15m low</th>
                 <th>触发移动止损</th>
                 <th>取消止盈单</th>
                 <th>全部止盈单</th>
@@ -1178,6 +1179,7 @@
                 <td>{{ row.max_unrealized_pnl }}</td>
                 <td>{{ row.current_profit_drawdown }}</td>
                 <td>{{ row.total_score if row.total_score is not none else '-' }} / {{ row.drawdown_threshold }}</td>
+                <td>{{ row.current_mark_price }} / {{ row.latest_15m_low }} <span class="status-badge {{ 'status-pass' if row.price_below_latest_15m_low else 'status-fail' }}">{{ '是' if row.price_below_latest_15m_low else '否' }}</span></td>
                 <td><span class="status-badge {{ 'status-pass' if row.trailing_stop_triggered else 'status-fail' }}">{{ '是' if row.trailing_stop_triggered else '否' }}</span></td>
                 <td>{{ row.cancel_take_profit_order_id or '-' }} / {{ row.cancel_status }}</td>
                 <td>{{ row.close_quantity }} / {{ row.close_order_id or '-' }} / {{ row.close_status }}</td>
@@ -1186,7 +1188,7 @@
                 <td>{{ row.reason }}</td>
               </tr>
               {% else %}
-              <tr><td class="empty" colspan="15">暂无移动追踪止盈扫描结果</td></tr>
+              <tr><td class="empty" colspan="16">暂无移动追踪止盈扫描结果</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -1843,7 +1845,7 @@
       const rowsEl = document.getElementById('trailing-stop-checks-body');
       if (!rowsEl) return;
       if (!rows.length) {
-        rowsEl.innerHTML = '<tr><td class="empty" colspan="15">暂无移动追踪止盈扫描结果</td></tr>';
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="16">暂无移动追踪止盈扫描结果</td></tr>';
         return;
       }
       rowsEl.innerHTML = rows.map(row => `
@@ -1857,6 +1859,7 @@
           <td>${escapeHtml(row.max_unrealized_pnl)}</td>
           <td>${escapeHtml(row.current_profit_drawdown)}</td>
           <td>${row.total_score ?? '-'} / ${escapeHtml(row.drawdown_threshold)}</td>
+          <td>${escapeHtml(row.current_mark_price)} / ${escapeHtml(row.latest_15m_low)} ${statusBadge(row.price_below_latest_15m_low)}</td>
           <td>${statusBadge(row.trailing_stop_triggered)}</td>
           <td>${escapeHtml(row.cancel_take_profit_order_id || '-')} / ${escapeHtml(row.cancel_status)}</td>
           <td>${escapeHtml(row.close_quantity)} / ${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td>
