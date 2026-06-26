@@ -32,6 +32,7 @@ class ExperimentConfig:
     exit_order_missing_position_retries: int = 3
     exit_order_missing_position_retry_delay_seconds: Decimal = Decimal("0.5")
     percent_price_ioc_slippage: Decimal = Decimal("0.01")
+    max_total_risk: Decimal = Decimal("10")
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,8 @@ class TradingExperiment:
     * experiment equity matches the web page "experiment USDT equity" metric;
     * before opening, query current positions and skip if there are already 10;
     * the experiment's total margin budget is capped at 1,000 USDT;
+    * before each new entry, query current total portfolio risk and skip the
+      rest of the round if it is already greater than 10;
     * before each new entry, query the latest experiment USDT equity from Binance;
     * each candidate's base margin is sized from 1% equity risk, stop-loss distance,
       and leverage: base margin = (equity * 1%) / (distance_ratio * leverage);
@@ -275,6 +278,14 @@ class TradingExperiment:
                 self._record_skip(candidate, account_equity, max_loss, "symbol_position_already_open")
                 skipped += 1
                 continue
+            current_total_risk = self._current_total_risk(
+                positions=positions,
+                decision_round_ts=candidate.decision_round_ts,
+            )
+            if current_total_risk > self.config.max_total_risk:
+                self._record_skip(candidate, account_equity, max_loss, "current_total_risk_gt_10")
+                skipped += 1
+                break
             account = self._fetch_account()
             available_balance = self._decimal_from(account.get("availableBalance"), Decimal("0"))
             account_equity = self._fetch_experiment_usdt_equity()
@@ -321,6 +332,7 @@ class TradingExperiment:
                 available_balance -= required_margin
                 reserved_margin_budget += required_margin
                 open_positions.add(trading_symbol)
+                positions = self._fetch_and_store_positions()
             else:
                 skipped += 1
 
@@ -1020,6 +1032,21 @@ class TradingExperiment:
                 reserved += notional / leverage
         return reserved
 
+    def _current_total_risk(
+        self,
+        positions: list[dict[str, Any]],
+        decision_round_ts: int | None = None,
+    ) -> Decimal:
+        from holding_position_scoring import HoldingPositionScoringSystem
+
+        summary = HoldingPositionScoringSystem(
+            db_path=self.db_path,
+            account_manager=self.account_manager,
+        ).calculate_portfolio_risk(
+            positions=positions,
+            decision_round_ts=decision_round_ts,
+        )
+        return self._decimal_from(summary.total_risk, Decimal("0"))
 
     @staticmethod
     def _base_symbol(symbol: Any) -> str:
