@@ -60,6 +60,25 @@ class PortfolioRiskSummary:
 
 
 @dataclass(frozen=True)
+class PositionReductionCheck:
+    symbol: str
+    decision_round_ts: int
+    highest_15m_high: str
+    current_price: str
+    price_drawdown_ratio: str
+    account_equity_usdt: str
+    two_r_usdt: str
+    unrealized_pnl: str
+    open_total_score: str
+    latest_total_score: str
+    score_drawdown: str
+    triggered: bool
+    tag: str
+    reason: str
+    checked_at: int
+
+
+@dataclass(frozen=True)
 class HoldingStopLossRecord:
     id: int
     symbol: str
@@ -85,6 +104,8 @@ class HoldingPositionScoringSystem:
     RECORDS_TABLE = "holding_stop_loss_records"
     PORTFOLIO_RISK_TABLE = "holding_portfolio_risk_checks"
     PORTFOLIO_RISK_SUMMARY_TABLE = "holding_portfolio_risk_summaries"
+    REDUCTION_CHECKS_TABLE = "holding_position_reduction_checks"
+    REDUCTION_TAG_ABSOLUTE_SCORE_DRAWDOWN = "绝对分数大幅回撤"
 
     def __init__(
         self,
@@ -164,6 +185,28 @@ class HoldingPositionScoringSystem:
             )
             conn.execute(
                 f"""
+                CREATE TABLE IF NOT EXISTS {self.REDUCTION_CHECKS_TABLE} (
+                    symbol TEXT NOT NULL,
+                    decision_round_ts INTEGER NOT NULL,
+                    highest_15m_high TEXT NOT NULL,
+                    current_price TEXT NOT NULL,
+                    price_drawdown_ratio TEXT NOT NULL,
+                    account_equity_usdt TEXT NOT NULL,
+                    two_r_usdt TEXT NOT NULL,
+                    unrealized_pnl TEXT NOT NULL,
+                    open_total_score TEXT NOT NULL,
+                    latest_total_score TEXT NOT NULL,
+                    score_drawdown TEXT NOT NULL,
+                    triggered INTEGER NOT NULL,
+                    tag TEXT NOT NULL DEFAULT '',
+                    reason TEXT NOT NULL,
+                    checked_at INTEGER NOT NULL,
+                    PRIMARY KEY(symbol, decision_round_ts)
+                )
+                """
+            )
+            conn.execute(
+                f"""
                 CREATE TABLE IF NOT EXISTS {self.PORTFOLIO_RISK_SUMMARY_TABLE} (
                     decision_round_ts INTEGER PRIMARY KEY,
                     total_risk TEXT NOT NULL,
@@ -172,6 +215,10 @@ class HoldingPositionScoringSystem:
                     calculated_at INTEGER NOT NULL
                 )
                 """
+            )
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{self.REDUCTION_CHECKS_TABLE}_round "
+                f"ON {self.REDUCTION_CHECKS_TABLE}(decision_round_ts DESC, triggered DESC, symbol ASC)"
             )
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_round "
@@ -214,6 +261,7 @@ class HoldingPositionScoringSystem:
                 record = self._execute_stop_loss(position, check, now_ms)
                 self._save_record(record)
                 records += 1
+        reduction_checks = self.evaluate_reduction_conditions(positions=positions, decision_round_ts=round_ts, checked_at=now_ms)
         portfolio_risk = self.calculate_portfolio_risk(positions=positions, decision_round_ts=round_ts, calculated_at=now_ms)
         risk_action = self._enforce_portfolio_risk_limit(portfolio_risk, positions, now_ms)
         return {
@@ -221,10 +269,105 @@ class HoldingPositionScoringSystem:
             "checked": checked,
             "triggered": triggered,
             "records": records,
+            "reduction_checked": len(reduction_checks),
+            "reduction_triggered": sum(1 for row in reduction_checks if row.triggered),
             "total_risk": portfolio_risk.total_risk,
             "risk_position_count": portfolio_risk.position_count,
             "portfolio_risk_action": risk_action,
         }
+
+
+    def evaluate_reduction_conditions(
+        self,
+        positions: list[dict[str, Any]] | None = None,
+        decision_round_ts: int | None = None,
+        checked_at: int | None = None,
+    ) -> list[PositionReductionCheck]:
+        """Evaluate 15m position-reduction condition rule 1 for active holdings."""
+        self.init_tables()
+        round_ts = decision_round_ts if decision_round_ts is not None else self._current_decision_round_ts()
+        now_ms = checked_at if checked_at is not None else int(time.time() * 1000)
+        active_positions = positions if positions is not None else self._active_positions()
+        equity = TradingExperiment(self.db_path, account_manager=self.account_manager)._fetch_experiment_usdt_equity()
+        two_r = equity * Decimal("0.02")
+        checks: list[PositionReductionCheck] = []
+        for position in active_positions:
+            symbol = self._base_symbol(str(position.get("symbol", "")))
+            amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
+            if not symbol or amount == 0:
+                continue
+            check = self._evaluate_reduction_rule_one(position, symbol, round_ts, equity, two_r, now_ms)
+            self._save_reduction_check(check)
+            checks.append(check)
+        return checks
+
+    def _evaluate_reduction_rule_one(
+        self, position: dict[str, Any], symbol: str, round_ts: int, equity: Decimal, two_r: Decimal, now_ms: int
+    ) -> PositionReductionCheck:
+        highest = self._highest_recent_15m_high(symbol, limit=3)
+        exchange_symbol = self._exchange_symbol(position, symbol)
+        current_price = self._current_symbol_price(exchange_symbol, position)
+        drawdown = (highest - current_price) / highest if highest > 0 and current_price > 0 else Decimal("0")
+        unrealized_pnl = self._position_unrealized_pnl(position)
+        latest_score = self._latest_total_score(symbol)
+        open_score = self._latest_open_trade_total_score(symbol)
+        score_drawdown = Decimal("0")
+        triggered = False
+        tag = ""
+        reason = "price_drawdown_lt_3_percent"
+        if highest <= 0:
+            reason = "missing_recent_three_15m_highs"
+        elif current_price <= 0:
+            reason = "missing_current_price"
+        elif drawdown < Decimal("0.03"):
+            reason = "price_drawdown_lt_3_percent"
+        elif unrealized_pnl >= two_r:
+            reason = "unrealized_pnl_ge_2r"
+        elif open_score == "" or latest_score == "":
+            reason = "missing_open_or_latest_total_score"
+        else:
+            score_drawdown = self._decimal_from(open_score, Decimal("0")) - self._decimal_from(latest_score, Decimal("0"))
+            if score_drawdown >= Decimal("25"):
+                triggered = True
+                tag = self.REDUCTION_TAG_ABSOLUTE_SCORE_DRAWDOWN
+                reason = "absolute_score_large_drawdown"
+            else:
+                reason = "score_drawdown_lt_25"
+        return PositionReductionCheck(symbol, round_ts, self._fmt_decimal(highest), self._fmt_decimal(current_price), self._fmt_decimal(drawdown), self._fmt_decimal(equity), self._fmt_decimal(two_r), self._fmt_decimal(unrealized_pnl), open_score, latest_score, self._fmt_decimal(score_drawdown), triggered, tag, reason, now_ms)
+
+    def _highest_recent_15m_high(self, symbol: str, limit: int = 3) -> Decimal:
+        try:
+            with self._connect() as conn:
+                rows = conn.execute("SELECT high FROM klines_15m WHERE symbol = ? ORDER BY open_time DESC LIMIT ?", (symbol, limit)).fetchall()
+        except sqlite3.Error:
+            return Decimal("0")
+        if len(rows) < limit:
+            return Decimal("0")
+        return max((self._decimal_from(row["high"], Decimal("0")) for row in rows), default=Decimal("0"))
+
+    def _current_symbol_price(self, exchange_symbol: str, position: dict[str, Any]) -> Decimal:
+        for key in ("markPrice", "mark_price"):
+            price = self._decimal_from(position.get(key), Decimal("0"))
+            if price > 0:
+                return price
+        try:
+            response = self.account_manager._public_get("/fapi/v1/ticker/price", {"symbol": exchange_symbol})
+            if isinstance(response, dict):
+                return self._decimal_from(response.get("price"), Decimal("0"))
+        except Exception:
+            return Decimal("0")
+        return Decimal("0")
+
+    def _latest_open_trade_total_score(self, symbol: str) -> str:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT total_score FROM trading_experiment_trades WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1",
+                    (symbol,),
+                ).fetchone()
+        except sqlite3.Error:
+            return ""
+        return str(row["total_score"]) if row and row["total_score"] is not None else ""
 
     def calculate_portfolio_risk(
         self,
@@ -624,6 +767,45 @@ class HoldingPositionScoringSystem:
                 time.sleep(float(self.realized_pnl_retry_delays[attempt - 1]))
 
         return "", f"realized_pnl_query_failed_after_{attempts}_attempts: {last_error}"
+
+
+    def _save_reduction_check(self, check: PositionReductionCheck) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {self.REDUCTION_CHECKS_TABLE}
+                (symbol, decision_round_ts, highest_15m_high, current_price, price_drawdown_ratio, account_equity_usdt, two_r_usdt, unrealized_pnl, open_total_score, latest_total_score, score_drawdown, triggered, tag, reason, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
+                    highest_15m_high=excluded.highest_15m_high,
+                    current_price=excluded.current_price,
+                    price_drawdown_ratio=excluded.price_drawdown_ratio,
+                    account_equity_usdt=excluded.account_equity_usdt,
+                    two_r_usdt=excluded.two_r_usdt,
+                    unrealized_pnl=excluded.unrealized_pnl,
+                    open_total_score=excluded.open_total_score,
+                    latest_total_score=excluded.latest_total_score,
+                    score_drawdown=excluded.score_drawdown,
+                    triggered=excluded.triggered,
+                    tag=excluded.tag,
+                    reason=excluded.reason,
+                    checked_at=excluded.checked_at
+                """,
+                (check.symbol, check.decision_round_ts, check.highest_15m_high, check.current_price, check.price_drawdown_ratio, check.account_equity_usdt, check.two_r_usdt, check.unrealized_pnl, check.open_total_score, check.latest_total_score, check.score_drawdown, int(check.triggered), check.tag, check.reason, check.checked_at),
+            )
+
+    def get_latest_reduction_checks(self) -> tuple[int | None, list[sqlite3.Row]]:
+        self.init_tables()
+        with self._connect() as conn:
+            row = conn.execute(f"SELECT MAX(decision_round_ts) AS ts FROM {self.REDUCTION_CHECKS_TABLE}").fetchone()
+            round_ts = int(row["ts"]) if row and row["ts"] is not None else None
+            if round_ts is None:
+                return None, []
+            rows = conn.execute(
+                f"SELECT * FROM {self.REDUCTION_CHECKS_TABLE} WHERE decision_round_ts = ? ORDER BY triggered DESC, symbol ASC",
+                (round_ts,),
+            ).fetchall()
+        return round_ts, rows
 
     def _save_check(self, check: HoldingStopLossCheck) -> None:
         with self._connect() as conn:
