@@ -353,21 +353,19 @@ class HoldingPositionScoringSystem:
             reasons.append("rule1_missing_recent_three_15m_highs")
         elif current_price <= 0:
             reasons.append("rule1_missing_current_price")
-        elif drawdown < Decimal("0.03"):
-            reasons.append("rule1_price_drawdown_lt_3_percent")
-        elif unrealized_pnl >= two_r:
-            reasons.append("rule1_unrealized_pnl_ge_2r")
-        elif open_score == "" or latest_score == "":
-            reasons.append("rule1_missing_open_or_latest_total_score")
+        elif drawdown < Decimal("0.035"):
+            reasons.append("rule1_price_drawdown_lt_3_5_percent")
+        elif unrealized_pnl >= one_r:
+            reasons.append("rule1_unrealized_pnl_ge_1r")
+        elif latest_score == "" or previous_score == "":
+            reasons.append("rule1_missing_recent_two_total_scores")
+        elif self._decimal_from(latest_score, Decimal("0")) >= self._decimal_from(previous_score, Decimal("0")):
+            reasons.append("rule1_latest_score_not_below_previous_score")
         else:
-            score_drawdown = self._decimal_from(open_score, Decimal("0")) - self._decimal_from(latest_score, Decimal("0"))
-            if score_drawdown >= Decimal("25"):
-                triggered = True
-                tags.append(self.REDUCTION_TAG_ABSOLUTE_SCORE_DRAWDOWN)
-                matched_rules.append("规则一")
-                reasons.append("rule1_absolute_score_large_drawdown")
-            else:
-                reasons.append("rule1_score_drawdown_lt_25")
+            triggered = True
+            tags.append(self.REDUCTION_TAG_PRICE_LEADING_DETERIORATION)
+            matched_rules.append("规则一")
+            reasons.append("rule1_price_leading_deterioration")
 
         latest_open = latest_kline[0] if latest_kline else Decimal("0")
         latest_close = latest_kline[1] if latest_kline else Decimal("0")
@@ -398,19 +396,22 @@ class HoldingPositionScoringSystem:
             reasons.append("rule3_missing_recent_three_15m_highs")
         elif current_price <= 0:
             reasons.append("rule3_missing_current_price")
-        elif drawdown < Decimal("0.035"):
-            reasons.append("rule3_price_drawdown_lt_3_5_percent")
-        elif unrealized_pnl >= one_r:
-            reasons.append("rule3_unrealized_pnl_ge_1r")
-        elif latest_score == "" or previous_score == "":
-            reasons.append("rule3_missing_recent_two_total_scores")
-        elif self._decimal_from(latest_score, Decimal("0")) >= self._decimal_from(previous_score, Decimal("0")):
-            reasons.append("rule3_latest_score_not_below_previous_score")
+        elif drawdown < Decimal("0.03"):
+            reasons.append("rule3_price_drawdown_lt_3_percent")
+        elif unrealized_pnl >= two_r:
+            reasons.append("rule3_unrealized_pnl_ge_2r")
+        elif open_score == "" or latest_score == "":
+            reasons.append("rule3_missing_open_or_latest_total_score")
         else:
-            triggered = True
-            tags.append(self.REDUCTION_TAG_PRICE_LEADING_DETERIORATION)
-            matched_rules.append("规则三")
-            reasons.append("rule3_price_leading_deterioration")
+            rule3_score_drawdown = self._decimal_from(open_score, Decimal("0")) - self._decimal_from(latest_score, Decimal("0"))
+            score_drawdown = max(score_drawdown, rule3_score_drawdown)
+            if rule3_score_drawdown >= Decimal("25"):
+                triggered = True
+                tags.append(self.REDUCTION_TAG_ABSOLUTE_SCORE_DRAWDOWN)
+                matched_rules.append("规则三")
+                reasons.append("rule3_absolute_score_large_drawdown")
+            else:
+                reasons.append("rule3_score_drawdown_lt_25")
 
         if latest_score == "":
             reasons.append("rule4_missing_latest_total_score")
@@ -440,9 +441,9 @@ class HoldingPositionScoringSystem:
 
         reason = "; ".join(reasons)
         matched_reason_map = {
-            "规则一": "absolute_score_large_drawdown",
+            "规则一": "price_leading_deterioration",
             "规则二": "medium_drawdown_and_continuous_weakening",
-            "规则三": "price_leading_deterioration",
+            "规则三": "absolute_score_large_drawdown",
             "规则四": "score_danger_zone",
             "规则五": "medium_danger_zone_price_confirmation",
         }

@@ -414,6 +414,7 @@ def test_position_reduction_rule_tags_absolute_score_large_drawdown():
     assert checks[0]["triggered"] == 1
     assert checks[0]["tag"] == "绝对分数大幅回撤"
     assert checks[0]["reason"] == "absolute_score_large_drawdown"
+    assert checks[0]["rule_name"] == "规则三"
     assert checks[0]["highest_15m_high"] == "10"
     assert checks[0]["current_price"] == "8"
     assert checks[0]["two_r_usdt"] == "20"
@@ -522,7 +523,7 @@ def test_position_reduction_rule_tags_price_leading_deterioration():
     assert checks[0]["triggered"] == 1
     assert checks[0]["tag"] == "价格领先恶化"
     assert checks[0]["reason"] == "price_leading_deterioration"
-    assert checks[0]["rule_name"] == "规则三"
+    assert checks[0]["rule_name"] == "规则一"
     assert checks[0]["one_r_usdt"] == "10"
     assert checks[0]["two_r_usdt"] == "20"
     assert checks[0]["latest_total_score"] == "79"
