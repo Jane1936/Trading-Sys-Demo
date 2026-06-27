@@ -100,15 +100,15 @@ def test_break_even_strategy_moves_stop_loss_to_entry_when_unrealized_pnl_reache
     assert fake_account.signed_deletes == [("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "123"})]
     assert fake_account.signed_posts == [
         (
-            "/fapi/v1/order",
+            "/fapi/v1/algoOrder",
             {
                 "symbol": "BANKUSDT",
                 "side": "SELL",
-                "type": "LIMIT",
+                "type": "STOP_MARKET",
                 "quantity": "2",
-                "price": "10",
-                "timeInForce": "GTC",
+                "triggerPrice": "10",
                 "reduceOnly": "true",
+                "algoType": "CONDITIONAL",
             },
         )
     ]
@@ -137,18 +137,18 @@ def test_break_even_strategy_skips_when_current_stop_loss_is_already_at_entry():
                 }
             ]
         if endpoint == "/fapi/v1/openAlgoOrders":
-            return []
-        if endpoint == "/fapi/v1/openOrders":
             return [
                 {
                     "symbol": "BANKUSDT",
                     "side": "SELL",
-                    "type": "LIMIT",
+                    "type": "STOP_MARKET",
                     "status": "NEW",
-                    "orderId": "123",
-                    "price": "10",
+                    "algoId": "123",
+                    "triggerPrice": "10",
                 }
             ]
+        if endpoint == "/fapi/v1/openOrders":
+            return []
         raise AssertionError(f"unexpected signed endpoint {endpoint}")
 
     fake_account._signed_get = signed_get
@@ -300,15 +300,15 @@ def test_break_even_strategy_skips_stale_db_only_stop_loss_cancel_and_creates_ne
     assert fake_account.signed_deletes == []
     assert fake_account.signed_posts == [
         (
-            "/fapi/v1/order",
+            "/fapi/v1/algoOrder",
             {
                 "symbol": "BANKUSDT",
                 "side": "SELL",
-                "type": "LIMIT",
+                "type": "STOP_MARKET",
                 "quantity": "2",
-                "price": "10",
-                "timeInForce": "GTC",
+                "triggerPrice": "10",
                 "reduceOnly": "true",
+                "algoType": "CONDITIONAL",
             },
         )
     ]
@@ -363,7 +363,7 @@ def test_break_even_strategy_records_failure_when_new_stop_loss_response_has_no_
     assert "new_stop_loss" in records[0].raw_response
 
 
-def test_break_even_strategy_cancels_stale_limit_orders_and_reuses_entry_limit_order():
+def test_break_even_strategy_cancels_stale_limit_orders_and_creates_stop_market_order():
     fake_account = FakeAccountManager()
 
     def signed_get(endpoint, params=None):
@@ -404,8 +404,21 @@ def test_break_even_strategy_cancels_stale_limit_orders_and_reuses_entry_limit_o
     assert result["triggered"] == 1
     assert fake_account.signed_deletes == [
         ("/fapi/v1/order", {"symbol": "BANKUSDT", "orderId": "321"}),
+        ("/fapi/v1/order", {"symbol": "BANKUSDT", "orderId": "322"}),
         ("/fapi/v1/order", {"symbol": "BANKUSDT", "orderId": "323"}),
     ]
-    assert fake_account.signed_posts == []
-    assert records[0].new_stop_loss_order_id == "322"
-    assert "new_stop_loss_not_required" in records[0].reason
+    assert fake_account.signed_posts == [
+        (
+            "/fapi/v1/algoOrder",
+            {
+                "symbol": "BANKUSDT",
+                "side": "SELL",
+                "type": "STOP_MARKET",
+                "quantity": "2",
+                "triggerPrice": "10",
+                "reduceOnly": "true",
+                "algoType": "CONDITIONAL",
+            },
+        )
+    ]
+    assert records[0].new_stop_loss_order_id == "456"

@@ -4,7 +4,10 @@ Every run scans current Binance Futures positions and the current experiment USD
 net equity.  R is defined as ``experiment_equity * 1%``.  When a position's
 unrealized profit reaches R, the module cancels the original stop-loss order and
 creates a new stop-loss order at the position entry price, so the remaining
-position is protected at break-even.
+position is protected at break-even.  The replacement order is a conditional
+``STOP_MARKET`` reduce-only order, so it does not sell immediately while price
+is still above the entry price; it only triggers if price falls back to the
+break-even trigger price.
 """
 
 from __future__ import annotations
@@ -150,8 +153,8 @@ class BreakEvenTakeProfitStrategy:
 
         current_stop_losses = self._current_stop_loss_orders(exchange_symbol, amount)
         target_stop_price = self._break_even_stop_price(exchange_symbol, entry_price, "SELL" if amount > 0 else "BUY")
-        matching_stop_losses = [order for order in current_stop_losses if self._is_limit_order(order) and self._stop_loss_order_price(order) == target_stop_price]
-        stale_stop_losses = [order for order in current_stop_losses if not (self._is_limit_order(order) and self._stop_loss_order_price(order) == target_stop_price)]
+        matching_stop_losses = [order for order in current_stop_losses if self._is_break_even_stop_order(order, target_stop_price)]
+        stale_stop_losses = [order for order in current_stop_losses if not self._is_break_even_stop_order(order, target_stop_price)]
         if matching_stop_losses and not stale_stop_losses:
             self._insert_check(symbol, now, equity, r_value, unrealized_pnl, entry_price, amount, True, "break_even_already_completed")
             return False
@@ -184,8 +187,8 @@ class BreakEvenTakeProfitStrategy:
         entry_price = self._decimal_from(position.get("entryPrice"), Decimal("0"))
         side = "SELL" if amount > 0 else "BUY"
         current_stop_losses = current_stop_losses if current_stop_losses is not None else self._current_stop_loss_orders(exchange_symbol, amount)
-        target_stop_loss = next((order for order in current_stop_losses if self._is_limit_order(order) and self._stop_loss_order_price(order) == stop_loss_price), None)
-        stale_stop_losses = [order for order in current_stop_losses if not (self._is_limit_order(order) and self._stop_loss_order_price(order) == stop_loss_price)]
+        target_stop_loss = next((order for order in current_stop_losses if self._is_break_even_stop_order(order, stop_loss_price)), None)
+        stale_stop_losses = [order for order in current_stop_losses if not self._is_break_even_stop_order(order, stop_loss_price)]
         current_stop_loss_order_ids = [self._stop_loss_order_id(order) for order in current_stop_losses if self._stop_loss_order_id(order)]
         db_stop_loss_order_id = self._latest_stop_loss_order_id(symbol)
         old_order_id = ",".join(current_stop_loss_order_ids) or db_stop_loss_order_id
@@ -220,10 +223,9 @@ class BreakEvenTakeProfitStrategy:
                     {
                         "symbol": exchange_symbol,
                         "side": side,
-                        "type": "LIMIT",
+                        "type": "STOP_MARKET",
                         "quantity": self._fmt_decimal(quantity),
-                        "price": self._fmt_decimal(stop_loss_price),
-                        "timeInForce": "GTC",
+                        "stopPrice": self._fmt_decimal(stop_loss_price),
                         "reduceOnly": "true",
                     }
                 )
@@ -279,6 +281,10 @@ class BreakEvenTakeProfitStrategy:
     @staticmethod
     def _is_limit_order(order: dict[str, Any]) -> bool:
         return str(order.get("type") or order.get("orderType") or "").upper() == "LIMIT"
+
+    def _is_break_even_stop_order(self, order: dict[str, Any], stop_loss_price: Decimal | None) -> bool:
+        order_type = str(order.get("type") or order.get("orderType") or "").upper()
+        return order_type == "STOP_MARKET" and self._stop_loss_order_price(order) == stop_loss_price
 
     def _stop_loss_order_price(self, order: dict[str, Any] | None) -> Decimal | None:
         if not order:

@@ -1175,7 +1175,7 @@
         <div class="symbol-strip">
           <div><strong>保本止盈策略：5分钟扫描结果</strong></div>
           {% if break_even_round_ts %}
-            <div class="muted">最近判断轮次：{{ break_even_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；若未变现盈亏 ≥ R，则取消原止损单并按开仓价新建 STOP 限价止损单。</div>
+            <div class="muted">最近判断轮次：{{ break_even_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；若未变现盈亏 ≥ R，则取消原止损单并按开仓价新建 reduceOnly STOP_MARKET 条件止损单，等待价格回落到保本价时触发市价平仓。</div>
           {% else %}
             <div class="muted">暂无保本止盈扫描结果。</div>
           {% endif %}
