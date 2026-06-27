@@ -76,6 +76,7 @@ class PositionReductionCheck:
     latest_15m_open: str
     latest_15m_close: str
     previous_total_score: str
+    open_entry_price: str
     rule_name: str
     triggered: bool
     tag: str
@@ -114,6 +115,7 @@ class HoldingPositionScoringSystem:
     REDUCTION_TAG_MEDIUM_DRAWDOWN_WEAKENING = "中等回撤且趋势连续弱化"
     REDUCTION_TAG_PRICE_LEADING_DETERIORATION = "价格领先恶化"
     REDUCTION_TAG_SCORE_DANGER_ZONE = "评分进入危险区"
+    REDUCTION_TAG_MEDIUM_DANGER_PRICE_CONFIRMATION = "中危险区+价格确认"
 
     def __init__(
         self,
@@ -209,6 +211,7 @@ class HoldingPositionScoringSystem:
                     latest_15m_open TEXT NOT NULL DEFAULT '',
                     latest_15m_close TEXT NOT NULL DEFAULT '',
                     previous_total_score TEXT NOT NULL DEFAULT '',
+                    open_entry_price TEXT NOT NULL DEFAULT '',
                     rule_name TEXT NOT NULL DEFAULT '',
                     triggered INTEGER NOT NULL,
                     tag TEXT NOT NULL DEFAULT '',
@@ -250,6 +253,7 @@ class HoldingPositionScoringSystem:
                 "previous_total_score": "TEXT NOT NULL DEFAULT ''",
                 "rule_name": "TEXT NOT NULL DEFAULT ''",
                 "one_r_usdt": "TEXT NOT NULL DEFAULT ''",
+                "open_entry_price": "TEXT NOT NULL DEFAULT ''",
             }.items():
                 if column not in reduction_columns:
                     conn.execute(f"ALTER TABLE {self.REDUCTION_CHECKS_TABLE} ADD COLUMN {column} {ddl}")
@@ -338,6 +342,7 @@ class HoldingPositionScoringSystem:
         latest_score = recent_scores[0] if recent_scores else ""
         previous_score = recent_scores[1] if len(recent_scores) > 1 else ""
         open_score = self._latest_open_trade_total_score(symbol)
+        open_entry_price = self._latest_open_trade_entry_price(symbol)
         score_drawdown = Decimal("0")
         triggered = False
         tags: list[str] = []
@@ -417,16 +422,33 @@ class HoldingPositionScoringSystem:
         else:
             reasons.append("rule4_latest_total_score_gte_30")
 
+        if latest_score == "":
+            reasons.append("rule5_missing_latest_total_score")
+        elif current_price <= 0:
+            reasons.append("rule5_missing_current_price")
+        elif open_entry_price == "":
+            reasons.append("rule5_missing_open_entry_price")
+        elif self._decimal_from(latest_score, Decimal("0")) <= Decimal("30") and current_price <= self._decimal_from(open_entry_price, Decimal("0")):
+            triggered = True
+            tags.append(self.REDUCTION_TAG_MEDIUM_DANGER_PRICE_CONFIRMATION)
+            matched_rules.append("规则五")
+            reasons.append("rule5_medium_danger_zone_price_confirmation")
+        elif self._decimal_from(latest_score, Decimal("0")) > Decimal("30"):
+            reasons.append("rule5_latest_total_score_gt_30")
+        else:
+            reasons.append("rule5_current_price_gt_open_entry_price")
+
         reason = "; ".join(reasons)
         matched_reason_map = {
             "规则一": "absolute_score_large_drawdown",
             "规则二": "medium_drawdown_and_continuous_weakening",
             "规则三": "price_leading_deterioration",
             "规则四": "score_danger_zone",
+            "规则五": "medium_danger_zone_price_confirmation",
         }
         if matched_rules:
             reason = "; ".join(matched_reason_map[rule] for rule in matched_rules)
-        return PositionReductionCheck(symbol, round_ts, self._fmt_decimal(highest), self._fmt_decimal(current_price), self._fmt_decimal(drawdown), self._fmt_decimal(equity), self._fmt_decimal(two_r), self._fmt_decimal(one_r), self._fmt_decimal(unrealized_pnl), open_score, latest_score, self._fmt_decimal(score_drawdown), self._fmt_decimal(latest_open), self._fmt_decimal(latest_close), previous_score, "+".join(matched_rules), triggered, "、".join(dict.fromkeys(tags)), reason, now_ms)
+        return PositionReductionCheck(symbol, round_ts, self._fmt_decimal(highest), self._fmt_decimal(current_price), self._fmt_decimal(drawdown), self._fmt_decimal(equity), self._fmt_decimal(two_r), self._fmt_decimal(one_r), self._fmt_decimal(unrealized_pnl), open_score, latest_score, self._fmt_decimal(score_drawdown), self._fmt_decimal(latest_open), self._fmt_decimal(latest_close), previous_score, self._fmt_decimal(self._decimal_from(open_entry_price, Decimal("0"))) if open_entry_price else "", "+".join(matched_rules), triggered, "、".join(dict.fromkeys(tags)), reason, now_ms)
 
     def _highest_recent_15m_high(self, symbol: str, limit: int = 3) -> Decimal:
         try:
@@ -461,6 +483,21 @@ class HoldingPositionScoringSystem:
         except sqlite3.Error:
             return ""
         return str(row["total_score"]) if row and row["total_score"] is not None else ""
+
+
+    def _latest_open_trade_entry_price(self, symbol: str) -> str:
+        try:
+            with self._connect() as conn:
+                columns = {row["name"] for row in conn.execute("PRAGMA table_info(trading_experiment_trades)").fetchall()}
+                if "entry_price" not in columns:
+                    return ""
+                row = conn.execute(
+                    "SELECT entry_price FROM trading_experiment_trades WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1",
+                    (symbol,),
+                ).fetchone()
+        except sqlite3.Error:
+            return ""
+        return str(row["entry_price"]) if row and row["entry_price"] is not None else ""
 
     def calculate_portfolio_risk(
         self,
@@ -887,8 +924,8 @@ class HoldingPositionScoringSystem:
             conn.execute(
                 f"""
                 INSERT INTO {self.REDUCTION_CHECKS_TABLE}
-                (symbol, decision_round_ts, highest_15m_high, current_price, price_drawdown_ratio, account_equity_usdt, two_r_usdt, one_r_usdt, unrealized_pnl, open_total_score, latest_total_score, score_drawdown, latest_15m_open, latest_15m_close, previous_total_score, rule_name, triggered, tag, reason, checked_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (symbol, decision_round_ts, highest_15m_high, current_price, price_drawdown_ratio, account_equity_usdt, two_r_usdt, one_r_usdt, unrealized_pnl, open_total_score, latest_total_score, score_drawdown, latest_15m_open, latest_15m_close, previous_total_score, open_entry_price, rule_name, triggered, tag, reason, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
                     highest_15m_high=excluded.highest_15m_high,
                     current_price=excluded.current_price,
@@ -903,13 +940,14 @@ class HoldingPositionScoringSystem:
                     latest_15m_open=excluded.latest_15m_open,
                     latest_15m_close=excluded.latest_15m_close,
                     previous_total_score=excluded.previous_total_score,
+                    open_entry_price=excluded.open_entry_price,
                     rule_name=excluded.rule_name,
                     triggered=excluded.triggered,
                     tag=excluded.tag,
                     reason=excluded.reason,
                     checked_at=excluded.checked_at
                 """,
-                (check.symbol, check.decision_round_ts, check.highest_15m_high, check.current_price, check.price_drawdown_ratio, check.account_equity_usdt, check.two_r_usdt, check.one_r_usdt, check.unrealized_pnl, check.open_total_score, check.latest_total_score, check.score_drawdown, check.latest_15m_open, check.latest_15m_close, check.previous_total_score, check.rule_name, int(check.triggered), check.tag, check.reason, check.checked_at),
+                (check.symbol, check.decision_round_ts, check.highest_15m_high, check.current_price, check.price_drawdown_ratio, check.account_equity_usdt, check.two_r_usdt, check.one_r_usdt, check.unrealized_pnl, check.open_total_score, check.latest_total_score, check.score_drawdown, check.latest_15m_open, check.latest_15m_close, check.previous_total_score, check.open_entry_price, check.rule_name, int(check.triggered), check.tag, check.reason, check.checked_at),
             )
 
     def get_latest_reduction_checks(self) -> tuple[int | None, list[sqlite3.Row]]:
