@@ -177,6 +177,19 @@ class PartialTakeProfitStrategy:
             quantity = self._floor_to_step(abs(amount) * self.TAKE_PROFIT_FRACTION, step)
             if quantity <= 0:
                 raise RuntimeError("take_profit_quantity_rounded_to_zero")
+            remaining_quantity = self._floor_to_step(abs(amount) - quantity, step)
+            if remaining_quantity <= 0:
+                raise RuntimeError("remaining_position_quantity_rounded_to_zero")
+            raw_parts: list[str] = []
+            cancel_reason = self._cancel_existing_exit_orders(exchange_symbol, raw_parts)
+            replacement_reason = self._replace_remaining_stop_loss(
+                helper,
+                exchange_symbol,
+                symbol,
+                side,
+                remaining_quantity,
+                raw_parts,
+            )
             response = self.account_manager._signed_post(
                 "/fapi/v1/order",
                 {
@@ -188,13 +201,69 @@ class PartialTakeProfitStrategy:
                     "newOrderRespType": "RESULT",
                 },
             )
-            raw_response = str(response)
+            raw_parts.append(str({"partial_take_profit": response}))
+            raw_response = " | ".join(raw_parts)
             order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
+            reason = f"{reason}; {cancel_reason}; {replacement_reason}"
         except Exception as exc:
             status = "failed"
             quantity = Decimal("0")
             reason = f"partial_take_profit_failed: {type(exc).__name__}: {exc}"
         self._insert_record(symbol, now, side, amount, quantity, entry_price, equity, r_value, trigger_r, unrealized_pnl, order_id, status, reason, raw_response)
+
+    def _cancel_existing_exit_orders(self, exchange_symbol: str, raw_parts: list[str]) -> str:
+        for endpoint, label in (
+            ("/fapi/v1/allOpenOrders", "open_orders_cancel"),
+            ("/fapi/v1/algoOpenOrders", "algo_orders_cancel"),
+        ):
+            response = self.account_manager._signed_delete(endpoint, {"symbol": exchange_symbol})
+            raw_parts.append(str({label: response}))
+        return "pre_partial_take_profit_cancelled_existing_open_orders"
+
+    def _replace_remaining_stop_loss(
+        self,
+        helper: TradingExperiment,
+        exchange_symbol: str,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        raw_parts: list[str],
+    ) -> str:
+        stop_loss_price = self._latest_open_stop_loss_price(symbol)
+        if stop_loss_price <= 0:
+            raise RuntimeError("remaining_stop_loss_not_recreated_missing_price")
+        endpoint, params = TradingExperiment._exit_order_request(
+            {
+                "symbol": exchange_symbol,
+                "side": side,
+                "type": "STOP",
+                "quantity": self._fmt_decimal(quantity),
+                "price": self._fmt_decimal(stop_loss_price),
+                "stopPrice": self._fmt_decimal(stop_loss_price),
+                "timeInForce": "GTC",
+                "reduceOnly": "true",
+                "workingType": "MARK_PRICE",
+            }
+        )
+        response = helper._signed_post_order_with_ioc_retry(endpoint, params, trading_symbol=exchange_symbol)
+        raw_parts.append(str({"remaining_stop_loss": response}))
+        order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
+        return f"remaining_stop_loss_recreated; quantity={self._fmt_decimal(quantity)}; order_id={order_id}"
+
+    def _latest_open_stop_loss_price(self, symbol: str) -> Decimal:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    f"""
+                    SELECT stop_loss_price FROM {TradingExperiment.TRADES_TABLE}
+                    WHERE symbol = ? AND status = 'opened' AND stop_loss_price != '0'
+                    ORDER BY created_at DESC, id DESC LIMIT 1
+                    """,
+                    (symbol,),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return Decimal("0")
+        return self._decimal_from(row["stop_loss_price"], Decimal("0")) if row else Decimal("0")
 
     def _has_success_record(self, symbol: str, entry_price: Decimal) -> bool:
         with self._connect() as conn:
