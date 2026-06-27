@@ -230,7 +230,9 @@ def start_pre_safety_task() -> None:
                         f"📊 holding scoring round={round_ts} "
                         f"checked={holding_result.get('checked', 0)} "
                         f"triggered={holding_result.get('triggered', 0)} "
-                        f"records={holding_result.get('records', 0)}"
+                        f"records={holding_result.get('records', 0)} "
+                        f"reduction_checked={holding_result.get('reduction_checked', 0)} "
+                        f"reduction_triggered={holding_result.get('reduction_triggered', 0)}"
                     )
                 except Exception as exc:
                     print(f"⚠️ holding scoring failed round={round_ts}: {exc}")

@@ -910,6 +910,68 @@
           </table>
         </div>
         </div>
+        <div class="critical-section" aria-label="减仓条件模块">
+          <div class="symbol-strip">
+            <div><strong>减仓条件模块：本轮执行结果</strong></div>
+            {% if holding_reduction_round_ts %}
+              <div class="muted">最近判断轮次：{{ holding_reduction_round_ts|fmt_ms_datetime }}。该15分钟定时任务在“评分系统”总分结果出来后执行；规则一先检查最近3条15m high回撤，再检查未变现盈亏是否小于2R，最后比较最新总分与开仓总分。</div>
+            {% else %}
+              <div class="muted">暂无减仓条件模块执行结果。</div>
+            {% endif %}
+            {% set triggered_reduction_checks = holding_reduction_checks|selectattr('triggered')|list %}
+            {% if triggered_reduction_checks %}
+              <div class="chips">
+                {% for row in triggered_reduction_checks %}
+                  <span class="chip" title="{{ row.reason }}">{{ row.symbol }}：{{ row.tag }}</span>
+                {% endfor %}
+              </div>
+            {% else %}
+              <div class="chips"><span class="chip">本轮无触发减仓条件symbol</span></div>
+            {% endif %}
+          </div>
+          <div class="tip">规则一：对当前已持仓 symbol 查询最近3条15分钟K线 high 并取最高价 highest；若当前价从 highest 回撤 ≥ 3%，则检查当前未变现盈亏是否 &lt; 2R（2R = 实验组USDT净值 × 2%）；若满足，再查询“交易实验交易记录”中该 symbol 开仓时 total_score，并与最新 total_score 比较。最新总分较开仓总分回撤 ≥ 25分时，tag 标记为“绝对分数大幅回撤”。</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>symbol</th>
+                  <th>decision_round_ts</th>
+                  <th>tag</th>
+                  <th>highest</th>
+                  <th>current_price</th>
+                  <th>价格回撤</th>
+                  <th>未变现盈亏 / 2R</th>
+                  <th>开仓总分</th>
+                  <th>最新总分</th>
+                  <th>分数回撤</th>
+                  <th>reason</th>
+                  <th>checked_at</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in holding_reduction_checks %}
+                <tr>
+                  <td>{{ row.symbol }}</td>
+                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                  <td>{% if row.tag %}<span class="chip">{{ row.tag }}</span>{% else %}-{% endif %}</td>
+                  <td>{{ row.highest_15m_high }}</td>
+                  <td>{{ row.current_price }}</td>
+                  <td>{{ '%.2f%%'|format((row.price_drawdown_ratio|float) * 100) }}</td>
+                  <td>{{ row.unrealized_pnl }} / {{ row.two_r_usdt }}</td>
+                  <td>{{ row.open_total_score if row.open_total_score else '-' }}</td>
+                  <td>{{ row.latest_total_score if row.latest_total_score else '-' }}</td>
+                  <td>{{ row.score_drawdown }}</td>
+                  <td>{{ row.reason }}</td>
+                  <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                </tr>
+                {% else %}
+                <tr><td class="empty" colspan="12">暂无减仓条件模块执行结果</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="critical-section" aria-label="组合风险约束">
           <div class="symbol-strip">
             <div><strong>组合风险约束</strong></div>
