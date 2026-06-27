@@ -286,9 +286,10 @@ class BinanceAccountManager:
 
     @staticmethod
     def _merge_filled_order_rows(rows: Any) -> list[BinanceFilledOrderRow]:
-        merged: dict[tuple[str, int, str], dict[str, Any]] = {}
+        merged: dict[tuple[str, str, str], dict[str, Any]] = {}
         for row in rows:
-            key = (row.symbol, row.time, row.side)
+            order_key = row.order_id or f"time:{row.time}"
+            key = (row.symbol, order_key, row.side)
             bucket = merged.setdefault(
                 key,
                 {
@@ -305,6 +306,7 @@ class BinanceAccountManager:
                     "maker_values": [],
                 },
             )
+            bucket["time"] = min(bucket["time"], row.time)
             if row.order_id and row.order_id not in bucket["order_ids"]:
                 bucket["order_ids"].append(row.order_id)
             if row.trade_id and row.trade_id not in bucket["trade_ids"]:
