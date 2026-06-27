@@ -13,7 +13,7 @@ import os
 import sqlite3
 import time
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from typing import Any, Iterable
 
 from binance_account_manager import BinanceAccountManager
@@ -103,6 +103,27 @@ class HoldingStopLossRecord:
     created_at: int
 
 
+@dataclass(frozen=True)
+class PositionReductionRecord:
+    id: int
+    symbol: str
+    decision_round_ts: int
+    side: str
+    matched_rule: str
+    reduction_percent: str
+    original_quantity: str
+    reduced_quantity: str
+    remaining_quantity: str
+    old_limit_order_id: str
+    new_limit_order_id: str
+    market_order_id: str
+    limit_price: str
+    status: str
+    reason: str
+    raw_response: str
+    created_at: int
+
+
 class HoldingPositionScoringSystem:
     """Evaluate held symbols and execute structural stop-loss exits."""
 
@@ -111,6 +132,7 @@ class HoldingPositionScoringSystem:
     PORTFOLIO_RISK_TABLE = "holding_portfolio_risk_checks"
     PORTFOLIO_RISK_SUMMARY_TABLE = "holding_portfolio_risk_summaries"
     REDUCTION_CHECKS_TABLE = "holding_position_reduction_checks"
+    REDUCTION_RECORDS_TABLE = "holding_position_reduction_records"
     REDUCTION_TAG_ABSOLUTE_SCORE_DRAWDOWN = "绝对分数大幅回撤"
     REDUCTION_TAG_MEDIUM_DRAWDOWN_WEAKENING = "中等回撤且趋势连续弱化"
     REDUCTION_TAG_PRICE_LEADING_DETERIORATION = "价格领先恶化"
@@ -233,6 +255,29 @@ class HoldingPositionScoringSystem:
                 """
             )
             conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.REDUCTION_RECORDS_TABLE} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    decision_round_ts INTEGER NOT NULL,
+                    side TEXT NOT NULL,
+                    matched_rule TEXT NOT NULL,
+                    reduction_percent TEXT NOT NULL,
+                    original_quantity TEXT NOT NULL,
+                    reduced_quantity TEXT NOT NULL,
+                    remaining_quantity TEXT NOT NULL,
+                    old_limit_order_id TEXT NOT NULL DEFAULT '',
+                    new_limit_order_id TEXT NOT NULL DEFAULT '',
+                    market_order_id TEXT NOT NULL DEFAULT '',
+                    limit_price TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    raw_response TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.REDUCTION_CHECKS_TABLE}_round "
                 f"ON {self.REDUCTION_CHECKS_TABLE}(decision_round_ts DESC, triggered DESC, symbol ASC)"
             )
@@ -260,6 +305,10 @@ class HoldingPositionScoringSystem:
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_created "
                 f"ON {self.RECORDS_TABLE}(created_at DESC, symbol ASC)"
+            )
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{self.REDUCTION_RECORDS_TABLE}_created "
+                f"ON {self.REDUCTION_RECORDS_TABLE}(created_at DESC, symbol ASC)"
             )
 
     def run_round(self, decision_round_ts: int | None = None) -> dict[str, Any]:
@@ -289,6 +338,7 @@ class HoldingPositionScoringSystem:
                 self._save_record(record)
                 records += 1
         reduction_checks = self.evaluate_reduction_conditions(positions=positions, decision_round_ts=round_ts, checked_at=now_ms)
+        reduction_records = self._execute_reduction_actions(reduction_checks, positions, now_ms)
         portfolio_risk = self.calculate_portfolio_risk(positions=positions, decision_round_ts=round_ts, calculated_at=now_ms)
         risk_action = self._enforce_portfolio_risk_limit(portfolio_risk, positions, now_ms)
         return {
@@ -298,6 +348,7 @@ class HoldingPositionScoringSystem:
             "records": records,
             "reduction_checked": len(reduction_checks),
             "reduction_triggered": sum(1 for row in reduction_checks if row.triggered),
+            "reduction_records": reduction_records,
             "total_risk": portfolio_risk.total_risk,
             "risk_position_count": portfolio_risk.position_count,
             "portfolio_risk_action": risk_action,
@@ -450,6 +501,113 @@ class HoldingPositionScoringSystem:
         if matched_rules:
             reason = "; ".join(matched_reason_map[rule] for rule in matched_rules)
         return PositionReductionCheck(symbol, round_ts, self._fmt_decimal(highest), self._fmt_decimal(current_price), self._fmt_decimal(drawdown), self._fmt_decimal(equity), self._fmt_decimal(two_r), self._fmt_decimal(one_r), self._fmt_decimal(unrealized_pnl), open_score, latest_score, self._fmt_decimal(score_drawdown), self._fmt_decimal(latest_open), self._fmt_decimal(latest_close), previous_score, self._fmt_decimal(self._decimal_from(open_entry_price, Decimal("0"))) if open_entry_price else "", "+".join(matched_rules), triggered, "、".join(dict.fromkeys(tags)), reason, now_ms)
+
+    def _execute_reduction_actions(self, checks: list[PositionReductionCheck], positions: list[dict[str, Any]], now_ms: int) -> int:
+        records = 0
+        for check in checks:
+            if not check.triggered or self._has_reduction_record(check.symbol, check.decision_round_ts):
+                continue
+            position = next((p for p in positions if self._base_symbol(str(p.get("symbol", ""))) == check.symbol), None)
+            if not position:
+                continue
+            record = self._execute_reduction_action(position, check, now_ms)
+            self._save_reduction_record(record)
+            records += 1
+        return records
+
+    def _execute_reduction_action(self, position: dict[str, Any], check: PositionReductionCheck, now_ms: int) -> PositionReductionRecord:
+        amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
+        exchange_symbol = self._exchange_symbol(position, check.symbol)
+        side = "SELL" if amount > 0 else "BUY"
+        original_quantity = abs(amount)
+        matched_rule, percent = self._reduction_action_for_rules(check.rule_name)
+        reduced_quantity = Decimal("0")
+        remaining_quantity = Decimal("0")
+        old_limit_order_id = self._latest_open_trade_stop_loss_order_id(check.symbol)
+        new_limit_order_id = ""
+        market_order_id = ""
+        limit_price = self._latest_open_trade_stop_loss_price(check.symbol)
+        status = "submitted"
+        reason_parts = [check.reason, f"matched_rule={matched_rule}", f"reduction_percent={self._fmt_decimal(percent * Decimal('100'))}%"]
+        raw_parts: list[str] = []
+        cancel_reason = self._cancel_existing_exit_orders(exchange_symbol)
+        if cancel_reason:
+            reason_parts.append(cancel_reason)
+        try:
+            helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
+            exchange_info = helper._exchange_symbol_info(exchange_symbol)
+            if percent >= Decimal("1"):
+                reduced_quantity = self._floor_to_step(original_quantity, exchange_info["step_size"])
+                remaining_quantity = Decimal("0")
+            else:
+                reduced_quantity = self._floor_to_step(original_quantity * percent, exchange_info["step_size"])
+                remaining_quantity = self._floor_to_step(original_quantity - reduced_quantity, exchange_info["step_size"])
+                if remaining_quantity <= 0:
+                    raise RuntimeError("reduction_remaining_quantity_rounded_to_zero")
+                if reduced_quantity <= 0:
+                    raise RuntimeError("reduction_market_quantity_rounded_to_zero")
+                if not limit_price or self._decimal_from(limit_price, Decimal("0")) <= 0:
+                    raise RuntimeError("reduction_limit_price_missing")
+                endpoint, params = TradingExperiment._exit_order_request({
+                    "symbol": exchange_symbol,
+                    "side": side,
+                    "type": "STOP",
+                    "quantity": self._fmt_decimal(remaining_quantity),
+                    "price": limit_price,
+                    "stopPrice": limit_price,
+                    "timeInForce": "GTC",
+                    "reduceOnly": "true",
+                    "workingType": "MARK_PRICE",
+                })
+                new_limit_response = self.account_manager._signed_post(endpoint, params)
+                raw_parts.append(str({"new_limit_order": new_limit_response}))
+                new_limit_order_id = TradingExperiment._exit_order_id(new_limit_response if isinstance(new_limit_response, dict) else None)
+                if not new_limit_order_id:
+                    raise RuntimeError(f"reduction_new_limit_order_id_missing: response={new_limit_response}")
+            market_response = self.account_manager._signed_post("/fapi/v1/order", self._market_close_order_params(exchange_symbol, side, reduced_quantity))
+            raw_parts.append(str({"market_order": market_response}))
+            market_order_id = str(market_response.get("orderId", "")) if isinstance(market_response, dict) else ""
+            no_fill_reason = self._no_fill_order_response_reason(market_response)
+            if no_fill_reason:
+                status = "failed"
+                reason_parts.append(no_fill_reason.replace("stop_loss", "reduction"))
+                market_order_id = ""
+        except Exception as exc:
+            status = "failed"
+            reason_parts.append(f"reduction_action_failed: {type(exc).__name__}: {exc}")
+            if self._is_reduce_only_rejected(exc):
+                reason_parts.append(f"reduce_only_diagnostics: {self._reduce_only_diagnostics(exchange_symbol)}")
+        return PositionReductionRecord(0, check.symbol, check.decision_round_ts, side, matched_rule, self._fmt_decimal(percent), self._fmt_decimal(original_quantity), self._fmt_decimal(reduced_quantity), self._fmt_decimal(remaining_quantity), old_limit_order_id, new_limit_order_id, market_order_id, limit_price, status, "; ".join(reason_parts), " | ".join(raw_parts), now_ms)
+
+    @staticmethod
+    def _reduction_action_for_rules(rule_name: str) -> tuple[str, Decimal]:
+        mapping = {"规则五": Decimal("1"), "规则四": Decimal("0.5"), "规则三": Decimal("0.3"), "规则二": Decimal("0.25"), "规则一": Decimal("0.25")}
+        for rule in ("规则五", "规则四", "规则三", "规则二", "规则一"):
+            if rule in rule_name:
+                return rule, mapping[rule]
+        return "", Decimal("0")
+
+    def _latest_open_trade_stop_loss_order_id(self, symbol: str) -> str:
+        try:
+            with self._connect() as conn:
+                row = conn.execute("SELECT stop_loss_order_id FROM trading_experiment_trades WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1", (symbol,)).fetchone()
+        except sqlite3.Error:
+            return ""
+        return str(row["stop_loss_order_id"]) if row and row["stop_loss_order_id"] is not None else ""
+
+    def _latest_open_trade_stop_loss_price(self, symbol: str) -> str:
+        try:
+            with self._connect() as conn:
+                row = conn.execute("SELECT stop_loss_price FROM trading_experiment_trades WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1", (symbol,)).fetchone()
+        except sqlite3.Error:
+            return ""
+        return str(row["stop_loss_price"]) if row and row["stop_loss_price"] is not None else ""
+
+    @staticmethod
+    def _floor_to_step(value: Decimal, step: Decimal) -> Decimal:
+        if step <= 0:
+            return value
+        return (value / step).to_integral_value(rounding=ROUND_DOWN) * step
 
     def _highest_recent_15m_high(self, symbol: str, limit: int = 3) -> Decimal:
         try:
@@ -950,6 +1108,33 @@ class HoldingPositionScoringSystem:
                 """,
                 (check.symbol, check.decision_round_ts, check.highest_15m_high, check.current_price, check.price_drawdown_ratio, check.account_equity_usdt, check.two_r_usdt, check.one_r_usdt, check.unrealized_pnl, check.open_total_score, check.latest_total_score, check.score_drawdown, check.latest_15m_open, check.latest_15m_close, check.previous_total_score, check.open_entry_price, check.rule_name, int(check.triggered), check.tag, check.reason, check.checked_at),
             )
+
+    def _save_reduction_record(self, record: PositionReductionRecord) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {self.REDUCTION_RECORDS_TABLE}
+                (symbol, decision_round_ts, side, matched_rule, reduction_percent, original_quantity, reduced_quantity, remaining_quantity, old_limit_order_id, new_limit_order_id, market_order_id, limit_price, status, reason, raw_response, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (record.symbol, record.decision_round_ts, record.side, record.matched_rule, record.reduction_percent, record.original_quantity, record.reduced_quantity, record.remaining_quantity, record.old_limit_order_id, record.new_limit_order_id, record.market_order_id, record.limit_price, record.status, record.reason, record.raw_response, record.created_at),
+            )
+
+    def _has_reduction_record(self, symbol: str, decision_round_ts: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT 1 FROM {self.REDUCTION_RECORDS_TABLE} WHERE symbol = ? AND decision_round_ts = ? LIMIT 1",
+                (symbol, decision_round_ts),
+            ).fetchone()
+        return row is not None
+
+    def recent_reduction_records(self, limit: int = 100) -> list[sqlite3.Row]:
+        self.init_tables()
+        with self._connect() as conn:
+            return conn.execute(
+                f"SELECT * FROM {self.REDUCTION_RECORDS_TABLE} ORDER BY created_at DESC, id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
 
     def get_latest_reduction_checks(self) -> tuple[int | None, list[sqlite3.Row]]:
         self.init_tables()

@@ -623,3 +623,50 @@ def test_position_reduction_rule_tags_medium_danger_zone_price_confirmation():
     assert checks[0]["latest_total_score"] == "30"
     assert checks[0]["current_price"] == "8"
     assert checks[0]["open_entry_price"] == "8.5"
+
+
+def test_reduction_action_uses_highest_rule_replaces_limit_and_market_reduces():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, open REAL, high REAL, close REAL)")
+            conn.execute("CREATE TABLE symbol_structural_stop_losses (symbol TEXT, decision_round_ts INTEGER, structural_stop_loss REAL)")
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.execute(
+                "CREATE TABLE trading_experiment_trades (symbol TEXT, status TEXT, total_score INTEGER, entry_price TEXT, stop_loss_price TEXT, stop_loss_order_id TEXT, created_at INTEGER, id INTEGER)"
+            )
+            conn.executemany(
+                "INSERT INTO klines_15m (symbol, open_time, open, high, close) VALUES (?, ?, ?, ?, ?)",
+                [("BANK", 3000, 10, 10, 8), ("BANK", 2000, 10, 11, 10), ("BANK", 1000, 10, 10, 10)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
+                [("BANK", 3000, 1), ("BANK", 2000, 1)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
+                [("BANK", 3000, 20), ("BANK", 2000, 50)],
+            )
+            conn.execute(
+                "INSERT INTO trading_experiment_trades (symbol, status, total_score, entry_price, stop_loss_price, stop_loss_order_id, created_at, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                ("BANK", "opened", 80, "9", "7", "old-sl-1", 1, 1),
+            )
+
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account, realized_pnl_retry_delays=())
+        result = scoring.run_round(decision_round_ts=4000)
+        records = scoring.recent_reduction_records()
+
+    assert result["reduction_records"] == 1
+    assert records[0]["matched_rule"] == "规则五"
+    assert records[0]["reduction_percent"] == "1"
+    assert records[0]["reduced_quantity"] == "2"
+    assert records[0]["remaining_quantity"] == "0"
+    assert records[0]["old_limit_order_id"] == "old-sl-1"
+    assert records[0]["new_limit_order_id"] == ""
+    assert records[0]["market_order_id"] == "123"
+    assert ("/fapi/v1/allOpenOrders", {"symbol": "BANKUSDT"}) in fake_account.signed_deletes
+    assert fake_account.signed_posts[-1] == (
+        "/fapi/v1/order",
+        {"symbol": "BANKUSDT", "side": "SELL", "type": "MARKET", "quantity": "2", "reduceOnly": "true", "newOrderRespType": "RESULT"},
+    )
