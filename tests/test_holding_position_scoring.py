@@ -573,3 +573,52 @@ def test_position_reduction_rule_tags_score_danger_zone():
     assert checks[0]["reason"] == "score_danger_zone"
     assert checks[0]["rule_name"] == "规则四"
     assert checks[0]["latest_total_score"] == "29"
+
+
+def test_position_reduction_rule_tags_medium_danger_zone_price_confirmation():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, open REAL, high REAL, close REAL)")
+            conn.execute("CREATE TABLE symbol_structural_stop_losses (symbol TEXT, decision_round_ts INTEGER, structural_stop_loss REAL)")
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.execute("""
+                CREATE TABLE trading_experiment_trades (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    total_score INTEGER,
+                    entry_price TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+            """)
+            conn.executemany(
+                "INSERT INTO klines_15m (symbol, open_time, open, high, close) VALUES (?, ?, ?, ?, ?)",
+                [("BANK", 3000, 8, 8.1, 8), ("BANK", 2000, 8, 8.1, 8), ("BANK", 1000, 8, 8.1, 8)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
+                [("BANK", 3000, 7), ("BANK", 2000, 7)],
+            )
+            conn.execute("INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)", ("BANK", 4000, 30))
+            conn.execute(
+                "INSERT INTO trading_experiment_trades (symbol, status, total_score, entry_price, created_at) VALUES (?, ?, ?, ?, ?)",
+                ("BANK", "opened", 35, "8.5", 1000),
+            )
+
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        result = scoring.run_round(decision_round_ts=4000)
+        round_ts, checks = scoring.get_latest_reduction_checks()
+
+    assert result["reduction_checked"] == 1
+    assert result["reduction_triggered"] == 1
+    assert round_ts == 4000
+    assert checks[0]["symbol"] == "BANK"
+    assert checks[0]["triggered"] == 1
+    assert checks[0]["tag"] == "中危险区+价格确认"
+    assert checks[0]["reason"] == "medium_danger_zone_price_confirmation"
+    assert checks[0]["rule_name"] == "规则五"
+    assert checks[0]["latest_total_score"] == "30"
+    assert checks[0]["current_price"] == "8"
+    assert checks[0]["open_entry_price"] == "8.5"

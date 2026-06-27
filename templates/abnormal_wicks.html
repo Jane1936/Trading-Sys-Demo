@@ -70,6 +70,14 @@
     .section-title-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
     .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
     .chip { padding: 4px 10px; border-radius: 999px; background: #dbeafe; color: #1e3a8a; font-size: 12px; font-weight: 600; }
+    .reduction-tags { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .reduction-tag { display:inline-flex; align-items:center; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:800; border:1px solid transparent; white-space:nowrap; }
+    .reduction-tag-rule1 { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+    .reduction-tag-rule2 { background:#ffedd5; color:#c2410c; border-color:#fdba74; }
+    .reduction-tag-rule3 { background:#fef3c7; color:#92400e; border-color:#fbbf24; }
+    .reduction-tag-rule4 { background:#ede9fe; color:#5b21b6; border-color:#c4b5fd; }
+    .reduction-tag-rule5 { background:#dcfce7; color:#166534; border-color:#86efac; }
+    .reduction-tag-default { background:#e0f2fe; color:#075985; border-color:#7dd3fc; }
     .muted { color: #6b7280; font-size: 12px; }
     .top-score-row { background: #fff7cc; font-weight: 700; }
     .top-score-badge { display:inline-block; margin-left:6px; padding:2px 8px; border-radius:999px; background:#f59e0b; color:white; font-size:11px; }
@@ -920,7 +928,7 @@
           <div class="symbol-strip">
             <div><strong>减仓条件模块：本轮执行结果</strong></div>
             {% if holding_reduction_round_ts %}
-              <div class="muted">最近判断轮次：{{ holding_reduction_round_ts|fmt_ms_datetime }}。该15分钟定时任务在“评分系统”总分结果出来后执行；规则一检查价格与总分大幅回撤，规则二检查15m收阴、未变现盈亏小于2R、开仓至最新总分中等回撤以及最近两次总分连续弱化，规则三检查价格从3根15m high最高价回撤、未变现盈亏小于1R以及最近总分弱化，规则四检查最新总分是否进入危险区。</div>
+              <div class="muted">最近判断轮次：{{ holding_reduction_round_ts|fmt_ms_datetime }}。该15分钟定时任务在“评分系统”总分结果出来后执行；规则一检查价格与总分大幅回撤，规则二检查15m收阴、未变现盈亏小于2R、开仓至最新总分中等回撤以及最近两次总分连续弱化，规则三检查价格从3根15m high最高价回撤、未变现盈亏小于1R以及最近总分弱化，规则四检查最新总分是否进入危险区，规则五检查最新总分≤30且当前价格≤开仓价。</div>
             {% else %}
               <div class="muted">暂无减仓条件模块执行结果。</div>
             {% endif %}
@@ -928,14 +936,14 @@
             {% if triggered_reduction_checks %}
               <div class="chips">
                 {% for row in triggered_reduction_checks %}
-                  <span class="chip" title="{{ row.reason }}">{{ row.symbol }}：{{ row.tag }}</span>
+                  <span class="reduction-tags" title="{{ row.reason }}"><span class="chip">{{ row.symbol }}</span>{% for tag in row.tag.split('、') %}{% if tag == '绝对分数大幅回撤' %}<span class="reduction-tag reduction-tag-rule1">{{ tag }}</span>{% elif tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>{% elif tag == '价格领先恶化' %}<span class="reduction-tag reduction-tag-rule3">{{ tag }}</span>{% elif tag == '评分进入危险区' %}<span class="reduction-tag reduction-tag-rule4">{{ tag }}</span>{% elif tag == '中危险区+价格确认' %}<span class="reduction-tag reduction-tag-rule5">{{ tag }}</span>{% else %}<span class="reduction-tag reduction-tag-default">{{ tag }}</span>{% endif %}{% endfor %}</span>
                 {% endfor %}
               </div>
             {% else %}
               <div class="chips"><span class="chip">本轮无触发减仓条件symbol</span></div>
             {% endif %}
           </div>
-          <div class="tip">规则一：对当前已持仓 symbol 查询最近3条15分钟K线 high 并取最高价 highest；若当前价从 highest 回撤 ≥ 3%，则检查当前未变现盈亏是否 &lt; 2R（2R = 实验组USDT净值 × 2%）；若满足，再查询“交易实验交易记录”中该 symbol 开仓时 total_score，并与最新 total_score 比较。最新总分较开仓总分回撤 ≥ 25分时，tag 标记为“绝对分数大幅回撤”。<br>规则二：查询最近1条15分钟K线，若收阴（close &lt; open），且当前未变现盈亏 &lt; 2R；再比较开仓总分与最新总分，回撤 ≥ 15分（包含15分）后继续查询最近2条总分数据，若最新总分低于上一次总分，则 tag 标记为“中等回撤且趋势连续弱化”。<br>规则三：对当前已持仓 symbol 查询最近3条15分钟K线 high 并取最高价 highest；若当前价从 highest 回撤 ≥ 3.5%（包含3.5%），则检查当前未变现盈亏是否 &lt; 1R（1R = 实验组USDT净值 × 1%）；若满足，再查询最近2条总分数据，若最新总分低于上一次总分，则说明触发“价格领先恶化”，tag 标记为“价格领先恶化”。<br>规则四：对于当前已持仓的 symbol，查询最新 total_score；若最新总分 &lt; 30分，则说明该 symbol 已触发“评分进入危险区”，tag 标记为“评分进入危险区”。</div>
+          <div class="tip">规则一：对当前已持仓 symbol 查询最近3条15分钟K线 high 并取最高价 highest；若当前价从 highest 回撤 ≥ 3%，则检查当前未变现盈亏是否 &lt; 2R（2R = 实验组USDT净值 × 2%）；若满足，再查询“交易实验交易记录”中该 symbol 开仓时 total_score，并与最新 total_score 比较。最新总分较开仓总分回撤 ≥ 25分时，tag 标记为“绝对分数大幅回撤”。<br>规则二：查询最近1条15分钟K线，若收阴（close &lt; open），且当前未变现盈亏 &lt; 2R；再比较开仓总分与最新总分，回撤 ≥ 15分（包含15分）后继续查询最近2条总分数据，若最新总分低于上一次总分，则 tag 标记为“中等回撤且趋势连续弱化”。<br>规则三：对当前已持仓 symbol 查询最近3条15分钟K线 high 并取最高价 highest；若当前价从 highest 回撤 ≥ 3.5%（包含3.5%），则检查当前未变现盈亏是否 &lt; 1R（1R = 实验组USDT净值 × 1%）；若满足，再查询最近2条总分数据，若最新总分低于上一次总分，则说明触发“价格领先恶化”，tag 标记为“价格领先恶化”。<br>规则四：对于当前已持仓的 symbol，查询最新 total_score；若最新总分 &lt; 30分，则说明该 symbol 已触发“评分进入危险区”，tag 标记为“评分进入危险区”。<br>规则五：对于当前已持仓的 symbol，查询最新 total_score；若最新总分 ≤ 30分，并且当前价格 ≤ “交易实验交易记录”中匹配到的开仓价，则说明该 symbol 已触发“中危险区+价格确认”，tag 标记为“中危险区+价格确认”。</div>
           <div class="table-wrap">
             <table>
               <thead>
@@ -950,6 +958,7 @@
                   <th>价格回撤</th>
                   <th>未变现盈亏 / 1R / 2R</th>
                   <th>开仓总分</th>
+                  <th>开仓价</th>
                   <th>最新总分</th>
                   <th>上次总分</th>
                   <th>分数回撤</th>
@@ -962,7 +971,18 @@
                 <tr>
                   <td>{{ row.symbol }}</td>
                   <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
-                  <td>{% if row.tag %}<span class="chip">{{ row.tag }}</span>{% else %}-{% endif %}</td>
+                  <td>{% if row.tag %}
+                    <span class="reduction-tags">
+                      {% for tag in row.tag.split('、') %}
+                        {% if tag == '绝对分数大幅回撤' %}<span class="reduction-tag reduction-tag-rule1">{{ tag }}</span>
+                        {% elif tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>
+                        {% elif tag == '价格领先恶化' %}<span class="reduction-tag reduction-tag-rule3">{{ tag }}</span>
+                        {% elif tag == '评分进入危险区' %}<span class="reduction-tag reduction-tag-rule4">{{ tag }}</span>
+                        {% elif tag == '中危险区+价格确认' %}<span class="reduction-tag reduction-tag-rule5">{{ tag }}</span>
+                        {% else %}<span class="reduction-tag reduction-tag-default">{{ tag }}</span>{% endif %}
+                      {% endfor %}
+                    </span>
+                  {% else %}-{% endif %}</td>
                   <td>{{ row.rule_name if row.rule_name else '-' }}</td>
                   <td>{{ row.latest_15m_open if row.latest_15m_open else '-' }} / {{ row.latest_15m_close if row.latest_15m_close else '-' }}</td>
                   <td>{{ row.highest_15m_high }}</td>
@@ -970,6 +990,7 @@
                   <td>{{ '%.2f%%'|format((row.price_drawdown_ratio|float) * 100) }}</td>
                   <td>{{ row.unrealized_pnl }} / {{ row.one_r_usdt if row.one_r_usdt else '-' }} / {{ row.two_r_usdt }}</td>
                   <td>{{ row.open_total_score if row.open_total_score else '-' }}</td>
+                  <td>{{ row.open_entry_price if row.open_entry_price else '-' }}</td>
                   <td>{{ row.latest_total_score if row.latest_total_score else '-' }}</td>
                   <td>{{ row.previous_total_score if row.previous_total_score else '-' }}</td>
                   <td>{{ row.score_drawdown }}</td>
@@ -977,7 +998,7 @@
                   <td>{{ row.checked_at|fmt_ms_datetime }}</td>
                 </tr>
                 {% else %}
-                <tr><td class="empty" colspan="15">暂无减仓条件模块执行结果</td></tr>
+                <tr><td class="empty" colspan="16">暂无减仓条件模块执行结果</td></tr>
                 {% endfor %}
               </tbody>
             </table>
