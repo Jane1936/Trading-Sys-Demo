@@ -14,7 +14,7 @@ class FakeRecentTradesManager(BinanceAccountManager):
         return self.rows
 
 
-def test_recent_filled_orders_include_buy_and_sell_then_merge_same_symbol_time_side():
+def test_recent_filled_orders_include_buy_and_sell_then_keep_distinct_order_ids():
     manager = FakeRecentTradesManager(
         [
             {
@@ -64,19 +64,66 @@ def test_recent_filled_orders_include_buy_and_sell_then_merge_same_symbol_time_s
 
     orders = manager.futures_recent_filled_orders(days=7)["orders"]
 
-    assert len(orders) == 2
-    buy_order = next(order for order in orders if order["side"] == "BUY")
+    assert len(orders) == 3
+    buy_orders = sorted((order for order in orders if order["side"] == "BUY"), key=lambda order: order["order_id"])
     sell_order = next(order for order in orders if order["side"] == "SELL")
-    assert buy_order["symbol"] == "BANKUSDT"
-    assert buy_order["time"] == 1000
-    assert buy_order["order_id"] == "1,2"
-    assert buy_order["trade_id"] == "10,11"
-    assert buy_order["price"] == "2.5"
-    assert buy_order["quantity"] == "4"
-    assert buy_order["quote_quantity"] == "10"
-    assert buy_order["commission"] == "0.03"
+    assert buy_orders[0]["symbol"] == "BANKUSDT"
+    assert buy_orders[0]["time"] == 1000
+    assert buy_orders[0]["order_id"] == "1"
+    assert buy_orders[0]["trade_id"] == "10"
+    assert buy_orders[0]["price"] == "2"
+    assert buy_orders[0]["quantity"] == "3"
+    assert buy_orders[0]["quote_quantity"] == "6"
+    assert buy_orders[0]["commission"] == "0.01"
+    assert buy_orders[1]["order_id"] == "2"
+    assert buy_orders[1]["quantity"] == "1"
     assert sell_order["order_id"] == "3"
     assert sell_order["realized_pnl"] == "1.5"
+
+
+def test_recent_filled_orders_merge_same_order_id_across_fill_times():
+    manager = FakeRecentTradesManager(
+        [
+            {
+                "symbol": "BANKUSDT",
+                "orderId": 9,
+                "id": 20,
+                "time": 2000,
+                "buyer": False,
+                "price": "2",
+                "qty": "300",
+                "quoteQty": "600",
+                "realizedPnl": "-1",
+                "commission": "0.01",
+                "commissionAsset": "USDT",
+            },
+            {
+                "symbol": "BANKUSDT",
+                "orderId": 9,
+                "id": 21,
+                "time": 2500,
+                "buyer": False,
+                "price": "3",
+                "qty": "400",
+                "quoteQty": "1200",
+                "realizedPnl": "-2",
+                "commission": "0.02",
+                "commissionAsset": "USDT",
+            },
+        ]
+    )
+
+    orders = manager.futures_recent_filled_orders(days=7)["orders"]
+
+    assert len(orders) == 1
+    assert orders[0]["order_id"] == "9"
+    assert orders[0]["trade_id"] == "20,21"
+    assert orders[0]["time"] == 2000
+    assert orders[0]["price"] == "2.571428571428571428571428571"
+    assert orders[0]["quantity"] == "700"
+    assert orders[0]["quote_quantity"] == "1800"
+    assert orders[0]["realized_pnl"] == "-3"
+    assert orders[0]["commission"] == "0.03"
 
 
 def test_recent_filled_orders_paginates_when_first_user_trades_page_is_full(monkeypatch):
