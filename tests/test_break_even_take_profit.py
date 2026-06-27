@@ -100,18 +100,15 @@ def test_break_even_strategy_moves_stop_loss_to_entry_when_unrealized_pnl_reache
     assert fake_account.signed_deletes == [("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "123"})]
     assert fake_account.signed_posts == [
         (
-            "/fapi/v1/algoOrder",
+            "/fapi/v1/order",
             {
                 "symbol": "BANKUSDT",
                 "side": "SELL",
-                "type": "STOP",
+                "type": "LIMIT",
                 "quantity": "2",
                 "price": "10",
-                "triggerPrice": "10",
                 "timeInForce": "GTC",
                 "reduceOnly": "true",
-                "workingType": "MARK_PRICE",
-                "algoType": "CONDITIONAL",
             },
         )
     ]
@@ -122,6 +119,39 @@ def test_break_even_strategy_moves_stop_loss_to_entry_when_unrealized_pnl_reache
 def test_break_even_strategy_skips_when_current_stop_loss_is_already_at_entry():
     fake_account = FakeAccountManager()
     fake_account.current_stop_price = "10"
+
+    def signed_get(endpoint, params=None):
+        if endpoint == "/fapi/v3/balance":
+            return [{"asset": "USDT", "balance": "5100"}]
+        if endpoint == "/fapi/v3/positionRisk":
+            return [
+                {
+                    "symbol": "BANKUSDT",
+                    "positionAmt": "2",
+                    "entryPrice": "10",
+                    "markPrice": "11",
+                    "unRealizedProfit": "20",
+                    "leverage": "5",
+                    "notional": "22",
+                    "liquidationPrice": "0",
+                }
+            ]
+        if endpoint == "/fapi/v1/openAlgoOrders":
+            return []
+        if endpoint == "/fapi/v1/openOrders":
+            return [
+                {
+                    "symbol": "BANKUSDT",
+                    "side": "SELL",
+                    "type": "LIMIT",
+                    "status": "NEW",
+                    "orderId": "123",
+                    "price": "10",
+                }
+            ]
+        raise AssertionError(f"unexpected signed endpoint {endpoint}")
+
+    fake_account._signed_get = signed_get
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
         strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
@@ -270,18 +300,15 @@ def test_break_even_strategy_skips_stale_db_only_stop_loss_cancel_and_creates_ne
     assert fake_account.signed_deletes == []
     assert fake_account.signed_posts == [
         (
-            "/fapi/v1/algoOrder",
+            "/fapi/v1/order",
             {
                 "symbol": "BANKUSDT",
                 "side": "SELL",
-                "type": "STOP",
+                "type": "LIMIT",
                 "quantity": "2",
                 "price": "10",
-                "triggerPrice": "10",
                 "timeInForce": "GTC",
                 "reduceOnly": "true",
-                "workingType": "MARK_PRICE",
-                "algoType": "CONDITIONAL",
             },
         )
     ]
@@ -334,3 +361,51 @@ def test_break_even_strategy_records_failure_when_new_stop_loss_response_has_no_
     assert records[0].new_stop_loss_order_id == ""
     assert "break_even_stop_loss_order_id_missing" in records[0].reason
     assert "new_stop_loss" in records[0].raw_response
+
+
+def test_break_even_strategy_cancels_stale_limit_orders_and_reuses_entry_limit_order():
+    fake_account = FakeAccountManager()
+
+    def signed_get(endpoint, params=None):
+        if endpoint == "/fapi/v3/balance":
+            return [{"asset": "USDT", "balance": "5100"}]
+        if endpoint == "/fapi/v3/positionRisk":
+            return [
+                {
+                    "symbol": "BANKUSDT",
+                    "positionAmt": "2",
+                    "entryPrice": "10",
+                    "unRealizedProfit": "20",
+                }
+            ]
+        if endpoint == "/fapi/v1/openAlgoOrders":
+            return []
+        if endpoint == "/fapi/v1/openOrders":
+            return [
+                {"symbol": "BANKUSDT", "side": "SELL", "type": "LIMIT", "status": "NEW", "orderId": "321", "price": "9"},
+                {"symbol": "BANKUSDT", "side": "SELL", "type": "LIMIT", "status": "NEW", "orderId": "322", "price": "10"},
+                {"symbol": "BANKUSDT", "side": "SELL", "type": "LIMIT", "status": "NEW", "orderId": "323", "price": "10.5"},
+            ]
+        raise AssertionError(f"unexpected signed endpoint {endpoint}")
+
+    def signed_delete(endpoint, params=None):
+        fake_account.signed_deletes.append((endpoint, dict(params or {})))
+        return {"orderId": params["orderId"], "status": "CANCELED"}
+
+    fake_account._signed_get = signed_get
+    fake_account._signed_delete = signed_delete
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        result = strategy.run_round()
+        records = strategy.recent_records()
+
+    assert result["triggered"] == 1
+    assert fake_account.signed_deletes == [
+        ("/fapi/v1/order", {"symbol": "BANKUSDT", "orderId": "321"}),
+        ("/fapi/v1/order", {"symbol": "BANKUSDT", "orderId": "323"}),
+    ]
+    assert fake_account.signed_posts == []
+    assert records[0].new_stop_loss_order_id == "322"
+    assert "new_stop_loss_not_required" in records[0].reason
