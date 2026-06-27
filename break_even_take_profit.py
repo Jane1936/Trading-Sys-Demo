@@ -148,14 +148,12 @@ class BreakEvenTakeProfitStrategy:
             self._insert_check(symbol, now, equity, r_value, unrealized_pnl, entry_price, amount, False, "unrealized_pnl_lt_r")
             return False
 
-        current_stop_loss = self._current_stop_loss_order(exchange_symbol, amount)
+        current_stop_losses = self._current_stop_loss_orders(exchange_symbol, amount)
         target_stop_price = self._break_even_stop_price(exchange_symbol, entry_price, "SELL" if amount > 0 else "BUY")
-        current_stop_price = self._stop_loss_order_price(current_stop_loss)
-        if current_stop_price == entry_price:
+        matching_stop_losses = [order for order in current_stop_losses if self._is_limit_order(order) and self._stop_loss_order_price(order) == target_stop_price]
+        stale_stop_losses = [order for order in current_stop_losses if not (self._is_limit_order(order) and self._stop_loss_order_price(order) == target_stop_price)]
+        if matching_stop_losses and not stale_stop_losses:
             self._insert_check(symbol, now, equity, r_value, unrealized_pnl, entry_price, amount, True, "break_even_already_completed")
-            return False
-        if current_stop_price == target_stop_price:
-            self._insert_check(symbol, now, equity, r_value, unrealized_pnl, entry_price, amount, True, "break_even_stop_loss_already_at_target")
             return False
 
         self._insert_check(symbol, now, equity, r_value, unrealized_pnl, entry_price, amount, True, "unrealized_pnl_ge_r")
@@ -165,7 +163,7 @@ class BreakEvenTakeProfitStrategy:
             r_value,
             unrealized_pnl,
             now,
-            current_stop_loss=current_stop_loss,
+            current_stop_losses=current_stop_losses,
             stop_loss_price=target_stop_price,
         )
         return True
@@ -177,7 +175,7 @@ class BreakEvenTakeProfitStrategy:
         r_value: Decimal,
         unrealized_pnl: Decimal,
         now: int,
-        current_stop_loss: dict[str, Any] | None = None,
+        current_stop_losses: list[dict[str, Any]] | None = None,
         stop_loss_price: Decimal | None = None,
     ) -> None:
         exchange_symbol = str(position.get("symbol", "")).upper()
@@ -185,17 +183,25 @@ class BreakEvenTakeProfitStrategy:
         amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
         entry_price = self._decimal_from(position.get("entryPrice"), Decimal("0"))
         side = "SELL" if amount > 0 else "BUY"
-        current_stop_loss_order_id = self._stop_loss_order_id(current_stop_loss)
+        current_stop_losses = current_stop_losses if current_stop_losses is not None else self._current_stop_loss_orders(exchange_symbol, amount)
+        target_stop_loss = next((order for order in current_stop_losses if self._is_limit_order(order) and self._stop_loss_order_price(order) == stop_loss_price), None)
+        stale_stop_losses = [order for order in current_stop_losses if not (self._is_limit_order(order) and self._stop_loss_order_price(order) == stop_loss_price)]
+        current_stop_loss_order_ids = [self._stop_loss_order_id(order) for order in current_stop_losses if self._stop_loss_order_id(order)]
         db_stop_loss_order_id = self._latest_stop_loss_order_id(symbol)
-        old_order_id = current_stop_loss_order_id or db_stop_loss_order_id
+        old_order_id = ",".join(current_stop_loss_order_ids) or db_stop_loss_order_id
         status = "submitted"
         reason_parts = ["unrealized_pnl_ge_r_move_stop_loss_to_entry"]
         raw_parts: list[str] = []
         try:
-            if current_stop_loss_order_id:
-                cancel_response = self._cancel_stop_loss_order(exchange_symbol, current_stop_loss_order_id, current_stop_loss)
-                raw_parts.append(str({"cancel_stop_loss": cancel_response}))
+            for stale_order in stale_stop_losses:
+                stale_order_id = self._stop_loss_order_id(stale_order)
+                if stale_order_id:
+                    cancel_response = self._cancel_stop_loss_order(exchange_symbol, stale_order_id, stale_order)
+                    raw_parts.append(str({"cancel_stop_loss": cancel_response}))
+            if stale_stop_losses:
                 reason_parts.append("old_stop_loss_cancelled")
+            elif target_stop_loss:
+                reason_parts.append("current_stop_loss_already_at_target")
             elif db_stop_loss_order_id:
                 reason_parts.append("db_stop_loss_order_id_not_open_skip_cancel")
             else:
@@ -206,20 +212,22 @@ class BreakEvenTakeProfitStrategy:
             quantity = self._floor_to_step(abs(amount), exchange_info["step_size"])
             if quantity <= 0:
                 raise RuntimeError("break_even_stop_loss_quantity_rounded_to_zero")
-            endpoint, request_params = TradingExperiment._exit_order_request(
-                {
-                    "symbol": exchange_symbol,
-                    "side": side,
-                    "type": "STOP",
-                    "quantity": self._fmt_decimal(quantity),
-                    "price": self._fmt_decimal(stop_loss_price),
-                    "stopPrice": self._fmt_decimal(stop_loss_price),
-                    "timeInForce": "GTC",
-                    "reduceOnly": "true",
-                    "workingType": "MARK_PRICE",
-                }
-            )
-            response = self.account_manager._signed_post(endpoint, request_params)
+            if target_stop_loss:
+                response = target_stop_loss
+                reason_parts.append("new_stop_loss_not_required")
+            else:
+                endpoint, request_params = TradingExperiment._exit_order_request(
+                    {
+                        "symbol": exchange_symbol,
+                        "side": side,
+                        "type": "LIMIT",
+                        "quantity": self._fmt_decimal(quantity),
+                        "price": self._fmt_decimal(stop_loss_price),
+                        "timeInForce": "GTC",
+                        "reduceOnly": "true",
+                    }
+                )
+                response = self.account_manager._signed_post(endpoint, request_params)
             raw_parts.append(str({"new_stop_loss": response}))
             new_order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
             if not new_order_id:
@@ -232,8 +240,9 @@ class BreakEvenTakeProfitStrategy:
         self._insert_record(symbol, now, side, amount, entry_price, equity, r_value, unrealized_pnl, old_order_id, new_order_id, stop_loss_price, status, "; ".join(reason_parts), " | ".join(raw_parts))
 
 
-    def _current_stop_loss_order(self, exchange_symbol: str, amount: Decimal) -> dict[str, Any] | None:
+    def _current_stop_loss_orders(self, exchange_symbol: str, amount: Decimal) -> list[dict[str, Any]]:
         side = "SELL" if amount > 0 else "BUY"
+        orders: list[dict[str, Any]] = []
         for endpoint in ("/fapi/v1/openAlgoOrders", "/fapi/v1/openOrders"):
             try:
                 rows = self.account_manager._signed_get(endpoint, {"symbol": exchange_symbol})
@@ -248,13 +257,13 @@ class BreakEvenTakeProfitStrategy:
                     continue
                 if str(row.get("side", "")).upper() != side:
                     continue
-                if not self._is_stop_market_order(row):
+                if not self._is_stop_loss_order(row):
                     continue
                 status = str(row.get("status", "NEW")).upper()
                 if status and status != "NEW":
                     continue
-                return {**row, "_source_endpoint": endpoint}
-        return None
+                orders.append({**row, "_source_endpoint": endpoint})
+        return orders
 
     @staticmethod
     def _stop_loss_order_id(order: dict[str, Any] | None) -> str:
@@ -263,9 +272,13 @@ class BreakEvenTakeProfitStrategy:
         return str(order.get("algoId") or order.get("orderId") or "")
 
     @staticmethod
-    def _is_stop_market_order(order: dict[str, Any]) -> bool:
+    def _is_stop_loss_order(order: dict[str, Any]) -> bool:
         order_type = str(order.get("type") or order.get("orderType") or "").upper()
-        return order_type == "STOP_MARKET"
+        return order_type in {"STOP_MARKET", "LIMIT"}
+
+    @staticmethod
+    def _is_limit_order(order: dict[str, Any]) -> bool:
+        return str(order.get("type") or order.get("orderType") or "").upper() == "LIMIT"
 
     def _stop_loss_order_price(self, order: dict[str, Any] | None) -> Decimal | None:
         if not order:
