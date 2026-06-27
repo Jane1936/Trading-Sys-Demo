@@ -400,7 +400,7 @@ def test_position_reduction_rule_tags_absolute_score_large_drawdown():
                 "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
                 [("BANK", 3000, 7), ("BANK", 2000, 7)],
             )
-            conn.execute("INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)", ("BANK", 4000, 54))
+            conn.executemany("INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)", [("BANK", 4000, 54), ("BANK", 3000, 70), ("BANK", 2000, 80)])
             conn.execute("INSERT INTO trading_experiment_trades (symbol, status, total_score, created_at) VALUES (?, ?, ?, ?)", ("BANK", "opened", 80, 1000))
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
@@ -412,9 +412,9 @@ def test_position_reduction_rule_tags_absolute_score_large_drawdown():
     assert round_ts == 4000
     assert checks[0]["symbol"] == "BANK"
     assert checks[0]["triggered"] == 1
-    assert checks[0]["tag"] == "绝对分数大幅回撤"
-    assert checks[0]["reason"] == "absolute_score_large_drawdown"
-    assert checks[0]["rule_name"] == "规则三"
+    assert checks[0]["tag"] == "价格领先恶化、绝对分数大幅回撤"
+    assert checks[0]["reason"] == "price_leading_deterioration; absolute_score_large_drawdown"
+    assert checks[0]["rule_name"] == "规则一+规则三"
     assert checks[0]["highest_15m_high"] == "10"
     assert checks[0]["current_price"] == "8"
     assert checks[0]["two_r_usdt"] == "20"
@@ -422,6 +422,7 @@ def test_position_reduction_rule_tags_absolute_score_large_drawdown():
     assert checks[0]["open_total_score"] == "80"
     assert checks[0]["latest_total_score"] == "54"
     assert checks[0]["score_drawdown"] == "26"
+    assert checks[0]["recent_score_drawdown"] == "16"
 
 
 def test_position_reduction_rule_tags_medium_drawdown_and_continuous_weakening():
@@ -451,7 +452,7 @@ def test_position_reduction_rule_tags_medium_drawdown_and_continuous_weakening()
             )
             conn.executemany(
                 "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
-                [("BANK", 4000, 55), ("BANK", 3000, 70)],
+                [("BANK", 4000, 55), ("BANK", 3000, 70), ("BANK", 2000, 80)],
             )
             conn.execute(
                 "INSERT INTO trading_experiment_trades (symbol, status, total_score, created_at) VALUES (?, ?, ?, ?)",
@@ -474,7 +475,8 @@ def test_position_reduction_rule_tags_medium_drawdown_and_continuous_weakening()
     assert checks[0]["open_total_score"] == "80"
     assert checks[0]["latest_total_score"] == "55"
     assert checks[0]["previous_total_score"] == "70"
-    assert checks[0]["score_drawdown"] == "15"
+    assert checks[0]["score_drawdown"] == "0"
+    assert checks[0]["recent_score_drawdown"] == "15"
     assert checks[0]["rule_name"] == "规则二"
 
 
@@ -505,7 +507,7 @@ def test_position_reduction_rule_tags_price_leading_deterioration():
             )
             conn.executemany(
                 "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
-                [("BANK", 4000, 79), ("BANK", 3000, 80)],
+                [("BANK", 4000, 79), ("BANK", 3000, 80), ("BANK", 2000, 81)],
             )
             conn.execute(
                 "INSERT INTO trading_experiment_trades (symbol, status, total_score, created_at) VALUES (?, ?, ?, ?)",
