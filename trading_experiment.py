@@ -318,11 +318,19 @@ class TradingExperiment:
                     self._record_skip(candidate, account_equity, max_loss, "invalid_binance_symbol")
                     skipped += 1
                     continue
+                if self._is_invalid_leverage_error(exc):
+                    self._record_skip(candidate, account_equity, max_loss, "invalid_binance_leverage")
+                    skipped += 1
+                    continue
                 raise
             except Exception as exc:
                 self._record_error(candidate, "open_long", exc)
                 if self._is_invalid_symbol_error(exc):
                     self._record_skip(candidate, account_equity, max_loss, "invalid_binance_symbol")
+                    skipped += 1
+                    continue
+                if self._is_invalid_leverage_error(exc):
+                    self._record_skip(candidate, account_equity, max_loss, "invalid_binance_leverage")
                     skipped += 1
                     continue
                 raise
@@ -717,6 +725,11 @@ class TradingExperiment:
     def _is_invalid_symbol_error(exc: Exception) -> bool:
         message = str(exc)
         return "-1121" in message or "Invalid symbol" in message
+
+    @staticmethod
+    def _is_invalid_leverage_error(exc: Exception) -> bool:
+        message = str(exc)
+        return "-4028" in message or ("not valid" in message and "Leverage" in message)
 
     @staticmethod
     def _exit_order_request(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:

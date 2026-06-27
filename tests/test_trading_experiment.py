@@ -108,6 +108,41 @@ class InvalidSymbolOrderAccountManager(FakeAccountManager):
         return {"orderId": len(self.signed_posts)}
 
 
+class InvalidLeverageAccountManager(FakeAccountManager):
+    def _public_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v1/exchangeInfo":
+            return {
+                "symbols": [
+                    {
+                        "symbol": "STABLEUSDT",
+                        "filters": [
+                            {"filterType": "LOT_SIZE", "stepSize": "1"},
+                            {"filterType": "PRICE_FILTER", "tickSize": "0.000001"},
+                        ],
+                    },
+                    {
+                        "symbol": "BANKUSDT",
+                        "filters": [
+                            {"filterType": "LOT_SIZE", "stepSize": "1"},
+                            {"filterType": "PRICE_FILTER", "tickSize": "0.000001"},
+                        ],
+                    },
+                ]
+            }
+        return super()._public_get(endpoint, params)
+
+    def _signed_post(self, endpoint, params=None):
+        self.signed_posts.append((endpoint, dict(params or {})))
+        if endpoint == "/fapi/v1/leverage" and params and params.get("symbol") == "STABLEUSDT":
+            raise RuntimeError(
+                "400 Client Error: Bad Request response_body="
+                '{"code":-4028,"msg":"Leverage 7 is not valid"}'
+            )
+        if endpoint == "/fapi/v1/algoOrder":
+            return {"algoId": len(self.signed_posts)}
+        return {"orderId": len(self.signed_posts)}
+
+
 class DelayedPositionAccountManager(FakeAccountManager):
     def __init__(self):
         super().__init__()
@@ -653,6 +688,70 @@ class TradingExperimentSymbolTests(unittest.TestCase):
 
         self.assertEqual(result, {"opened": 0, "skipped": 0, "reason": "completed"})
         self.assertEqual(fake_account.signed_posts, [])
+
+    def test_run_round_skips_invalid_binance_leverage_and_continues_next_symbol(self):
+        fake_account = InvalidLeverageAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "klines.db"
+            experiment = TradingExperiment(
+                db_path=str(db_path),
+                account_manager=fake_account,
+            )
+            candidates = [
+                OpenableSymbol(
+                    symbol="STABLE",
+                    decision_round_ts=1,
+                    total_score=90,
+                    score_band="确定性强趋势单",
+                    stop_loss_distance_ratio=0.01,
+                    distance_threshold=0.08,
+                    stop_loss_distance_tier="A档",
+                    opening_leverage="7x",
+                    distance_qualified=True,
+                    qualified=True,
+                    reason="test",
+                    evaluated_at=1,
+                ),
+                OpenableSymbol(
+                    symbol="BANK",
+                    decision_round_ts=1,
+                    total_score=89,
+                    score_band="确定性强趋势单",
+                    stop_loss_distance_ratio=0.01,
+                    distance_threshold=0.08,
+                    stop_loss_distance_tier="A档",
+                    opening_leverage="4x",
+                    distance_qualified=True,
+                    qualified=True,
+                    reason="test",
+                    evaluated_at=1,
+                ),
+            ]
+
+            result = experiment.run_round(candidates)
+            errors = experiment.recent_error_records()
+            with sqlite3.connect(db_path) as conn:
+                rows = conn.execute(
+                    f"SELECT symbol, status, reason FROM {TradingExperiment.TRADES_TABLE} ORDER BY id ASC"
+                ).fetchall()
+
+        self.assertEqual(result, {"opened": 1, "skipped": 1, "reason": "completed"})
+        self.assertEqual(rows[0], ("STABLE", "skipped", "invalid_binance_leverage"))
+        self.assertEqual(rows[1][0:2], ("BANK", "opened"))
+        self.assertEqual(errors[0].symbol, "STABLE")
+        self.assertIn("-4028", errors[0].error_message)
+        leverage_calls = [
+            params
+            for endpoint, params in fake_account.signed_posts
+            if endpoint == "/fapi/v1/leverage"
+        ]
+        self.assertEqual(
+            leverage_calls,
+            [
+                {"symbol": "STABLEUSDT", "leverage": 7},
+                {"symbol": "BANKUSDT", "leverage": 4},
+            ],
+        )
 
     def test_usdt_pair_symbol_is_not_double_suffixed(self):
         self.assertEqual(TradingExperiment._binance_symbol("BANKUSDT"), "BANKUSDT")

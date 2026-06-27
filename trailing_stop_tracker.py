@@ -244,34 +244,38 @@ class TrailingStopTracker:
     def _execute_trailing_stop_close(self, exchange_symbol: str, symbol: str, amount: Decimal, entry_price: Decimal) -> tuple[str, str, Decimal, str, str, str]:
         side = "SELL" if amount > 0 else "BUY"
         cancel_order_id = self._latest_take_profit_order_id(symbol, entry_price)
-        cancel_status = "missing"
+        cancel_status = "submitted"
         raw_parts: list[str] = []
-        if cancel_order_id:
+        cancel_failures: list[str] = []
+        for endpoint, label in (
+            ("/fapi/v1/allOpenOrders", "open_orders_cancel"),
+            ("/fapi/v1/algoOpenOrders", "algo_orders_cancel"),
+        ):
             try:
-                cancel_response = self.account_manager._signed_delete("/fapi/v1/algoOrder", {"symbol": exchange_symbol, "algoId": cancel_order_id})
-                cancel_status = "submitted"
-                raw_parts.append(str({"cancel_take_profit": cancel_response}))
+                cancel_response = self.account_manager._signed_delete(endpoint, {"symbol": exchange_symbol})
+                raw_parts.append(str({label: cancel_response}))
             except Exception as exc:
-                cancel_status = "failed"
-                return cancel_order_id, cancel_status, Decimal("0"), "", "failed", f"trailing_stop_cancel_take_profit_failed: {type(exc).__name__}: {exc}"
+                cancel_failures.append(f"{label}_failed: {type(exc).__name__}: {exc}")
+        if cancel_failures:
+            cancel_status = "failed"
+            return cancel_order_id, cancel_status, Decimal("0"), "", "failed", "trailing_stop_cancel_existing_orders_failed: " + " | ".join(cancel_failures)
         try:
             helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
             exchange_info = helper._exchange_symbol_info(exchange_symbol)
             quantity = self._floor_to_step(abs(amount), exchange_info["step_size"])
             if quantity <= 0:
                 raise RuntimeError("close_quantity_rounded_to_zero")
-            limit_params = helper._limit_ioc_order_params(
+            response = self.account_manager._signed_post(
+                "/fapi/v1/order",
                 {
                     "symbol": exchange_symbol,
                     "side": side,
                     "type": "MARKET",
                     "quantity": self._fmt_decimal(quantity),
                     "reduceOnly": "true",
+                    "newOrderRespType": "RESULT",
                 },
-                trading_symbol=exchange_symbol,
-                tick_size=exchange_info["tick_size"],
             )
-            response = self.account_manager._signed_post("/fapi/v1/order", limit_params)
             raw_parts.append(str({"close_position": response}))
             close_order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
             return cancel_order_id, cancel_status, quantity, close_order_id, "submitted", "trailing_stop_triggered_close_position; " + " | ".join(raw_parts)
