@@ -133,6 +133,21 @@ class ReduceOnlyRejectedAccountManager(FakeAccountManager):
         return super()._signed_get(endpoint, params)
 
 
+class StopLossBeforeReductionScoring(HoldingPositionScoringSystem):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.reduction_started_after_stop_loss_check = False
+
+    def evaluate_reduction_conditions(self, positions=None, decision_round_ts=None, checked_at=None):
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                f"SELECT COUNT(*) FROM {self.CHECKS_TABLE} WHERE decision_round_ts = ?",
+                (decision_round_ts,),
+            ).fetchone()
+        self.reduction_started_after_stop_loss_check = bool(row and row[0] == 1)
+        return []
+
+
 def test_holding_position_scoring_strips_usdt_for_database_lookups_and_records():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -166,6 +181,30 @@ def test_holding_position_scoring_strips_usdt_for_database_lookups_and_records()
         ("/fapi/v1/algoOpenOrders", {"symbol": "BANKUSDT"}),
     ]
     assert fake_account.signed_posts[0][1]["symbol"] == "BANKUSDT"
+
+
+def test_position_reduction_runs_after_stop_loss_judgement_is_persisted():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, close REAL)")
+            conn.execute("CREATE TABLE symbol_structural_stop_losses (symbol TEXT, decision_round_ts INTEGER, structural_stop_loss REAL)")
+            conn.executemany(
+                "INSERT INTO klines_15m (symbol, open_time, close) VALUES (?, ?, ?)",
+                [("BANK", 2000, 8), ("BANK", 1000, 9)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
+                [("BANK", 2000, 7), ("BANK", 1000, 7)],
+            )
+
+        scoring = StopLossBeforeReductionScoring(db_path=db_path, account_manager=fake_account)
+        result = scoring.run_round(decision_round_ts=3000)
+
+    assert result["checked"] == 1
+    assert result["reduction_checked"] == 0
+    assert scoring.reduction_started_after_stop_loss_check is True
 
 
 
