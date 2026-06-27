@@ -315,12 +315,44 @@ class HoldingPositionScoringSystem:
             )
 
     def run_round(self, decision_round_ts: int | None = None) -> dict[str, Any]:
-        """Run one 15m holding-position stop-loss round."""
+        """Run one 15m holding-position round.
+
+        The round is intentionally sequenced so the position-reduction module
+        only starts after the stop-loss rule has finished evaluating and
+        persisting the current round's judgement results.
+        """
         self.account_manager.validate_config()
         self.init_tables()
         round_ts = decision_round_ts if decision_round_ts is not None else self._current_decision_round_ts()
         now_ms = int(time.time() * 1000)
         positions = self._active_positions()
+        stop_loss_result = self._run_stop_loss_rule_round(positions=positions, decision_round_ts=round_ts, checked_at=now_ms)
+        reduction_checks = self.evaluate_reduction_conditions(positions=positions, decision_round_ts=round_ts, checked_at=now_ms)
+        reduction_records = self._execute_reduction_actions(reduction_checks, positions, now_ms)
+        portfolio_risk = self.calculate_portfolio_risk(positions=positions, decision_round_ts=round_ts, calculated_at=now_ms)
+        risk_action = self._enforce_portfolio_risk_limit(portfolio_risk, positions, now_ms)
+        return {
+            "decision_round_ts": round_ts,
+            "checked": stop_loss_result["checked"],
+            "triggered": stop_loss_result["triggered"],
+            "records": stop_loss_result["records"],
+            "reduction_checked": len(reduction_checks),
+            "reduction_triggered": sum(1 for row in reduction_checks if row.triggered),
+            "reduction_records": reduction_records,
+            "total_risk": portfolio_risk.total_risk,
+            "risk_position_count": portfolio_risk.position_count,
+            "portfolio_risk_action": risk_action,
+        }
+
+    def _run_stop_loss_rule_round(
+        self,
+        positions: list[dict[str, Any]],
+        decision_round_ts: int,
+        checked_at: int,
+    ) -> dict[str, int]:
+        """Evaluate and persist stop-loss judgement results before dependants run."""
+        round_ts = decision_round_ts
+        now_ms = checked_at
         checked = 0
         triggered = 0
         records = 0
@@ -340,21 +372,10 @@ class HoldingPositionScoringSystem:
                 record = self._execute_stop_loss(position, check, now_ms)
                 self._save_record(record)
                 records += 1
-        reduction_checks = self.evaluate_reduction_conditions(positions=positions, decision_round_ts=round_ts, checked_at=now_ms)
-        reduction_records = self._execute_reduction_actions(reduction_checks, positions, now_ms)
-        portfolio_risk = self.calculate_portfolio_risk(positions=positions, decision_round_ts=round_ts, calculated_at=now_ms)
-        risk_action = self._enforce_portfolio_risk_limit(portfolio_risk, positions, now_ms)
         return {
-            "decision_round_ts": round_ts,
             "checked": checked,
             "triggered": triggered,
             "records": records,
-            "reduction_checked": len(reduction_checks),
-            "reduction_triggered": sum(1 for row in reduction_checks if row.triggered),
-            "reduction_records": reduction_records,
-            "total_risk": portfolio_risk.total_risk,
-            "risk_position_count": portfolio_risk.position_count,
-            "portfolio_risk_action": risk_action,
         }
 
 
