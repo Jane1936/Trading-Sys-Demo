@@ -327,10 +327,14 @@ class HoldingPositionScoringSystem:
         now_ms = int(time.time() * 1000)
         positions = self._active_positions()
         stop_loss_result = self._run_stop_loss_rule_round(positions=positions, decision_round_ts=round_ts, checked_at=now_ms)
-        reduction_checks = self.evaluate_reduction_conditions(positions=positions, decision_round_ts=round_ts, checked_at=now_ms)
-        reduction_records = self._execute_reduction_actions(reduction_checks, positions, now_ms)
-        portfolio_risk = self.calculate_portfolio_risk(positions=positions, decision_round_ts=round_ts, calculated_at=now_ms)
-        risk_action = self._enforce_portfolio_risk_limit(portfolio_risk, positions, now_ms)
+        reduction_positions = self._positions_after_stop_loss_records_are_persisted(
+            positions=positions,
+            stop_loss_records=stop_loss_result["records"],
+        )
+        reduction_checks = self.evaluate_reduction_conditions(positions=reduction_positions, decision_round_ts=round_ts, checked_at=now_ms)
+        reduction_records = self._execute_reduction_actions(reduction_checks, reduction_positions, now_ms)
+        portfolio_risk = self.calculate_portfolio_risk(positions=reduction_positions, decision_round_ts=round_ts, calculated_at=now_ms)
+        risk_action = self._enforce_portfolio_risk_limit(portfolio_risk, reduction_positions, now_ms)
         return {
             "decision_round_ts": round_ts,
             "checked": stop_loss_result["checked"],
@@ -378,6 +382,32 @@ class HoldingPositionScoringSystem:
             "records": records,
         }
 
+    def _positions_after_stop_loss_records_are_persisted(
+        self,
+        positions: list[dict[str, Any]],
+        stop_loss_records: int,
+    ) -> list[dict[str, Any]]:
+        """Return holdings for downstream modules after stop-loss records are durable.
+
+        Stop-loss execution can close or shrink a position.  Re-reading active
+        positions after at least one stop-loss record has been saved prevents the
+        reduction module from acting on a stale pre-stop-loss snapshot.
+        """
+        if stop_loss_records <= 0:
+            return positions
+        return self._active_positions()
+
+    def _has_total_scores_for_round(self, decision_round_ts: int) -> bool:
+        """Return True only after the scoring system has persisted this round's totals."""
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM symbol_total_scores WHERE decision_round_ts = ? LIMIT 1",
+                    (int(decision_round_ts),),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return row is not None
 
     def evaluate_reduction_conditions(
         self,
@@ -388,6 +418,8 @@ class HoldingPositionScoringSystem:
         """Evaluate 15m position-reduction condition rules for active holdings."""
         self.init_tables()
         round_ts = decision_round_ts if decision_round_ts is not None else self._current_decision_round_ts()
+        if not self._has_total_scores_for_round(round_ts):
+            return []
         now_ms = checked_at if checked_at is not None else int(time.time() * 1000)
         active_positions = positions if positions is not None else self._active_positions()
         equity = TradingExperiment(self.db_path, account_manager=self.account_manager)._fetch_experiment_usdt_equity()
