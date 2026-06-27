@@ -38,6 +38,18 @@ def _create_exit_reason_tables(db_path):
         )
         conn.execute(
             f"""
+            CREATE TABLE {HoldingPositionScoringSystem.REDUCTION_RECORDS_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                side TEXT NOT NULL,
+                reduced_quantity TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            f"""
             CREATE TABLE {TrailingStopTracker.CHECKS_TABLE} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL,
@@ -104,6 +116,25 @@ def test_filled_sell_order_exit_reason_uses_partial_take_profit_match(tmp_path, 
     assert annotated["orders"][0]["exit_reason"] == "分批止盈"
     assert annotated["orders"][0]["exit_reason_matches"] == [{"type": "分批止盈", "matched_at": "1000"}]
     assert "unrealized_pnl_ge_2r_take_profit_30_percent" not in str(annotated["orders"][0])
+
+
+def test_filled_sell_order_exit_reason_uses_reduction_match(tmp_path, monkeypatch):
+    db_path = tmp_path / "orders.db"
+    _create_exit_reason_tables(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"INSERT INTO {HoldingPositionScoringSystem.REDUCTION_RECORDS_TABLE} (symbol, side, reduced_quantity, reason, created_at) VALUES (?, ?, ?, ?, ?)",
+            ("BANK", "SELL", "1.25", "matched_rule=rule4; reduction_percent=50%", 1000),
+        )
+    monkeypatch.setattr(web_app, "DB_PATH", str(db_path))
+
+    payload = {"orders": [{"symbol": "BANKUSDT", "side": "SELL", "time": 1000, "quantity": "1.250", "realized_pnl": "1"}]}
+
+    annotated = web_app._annotate_filled_order_exit_reasons(payload)
+
+    assert annotated["orders"][0]["exit_reason"] == "减仓"
+    assert annotated["orders"][0]["exit_reason_matches"] == [{"type": "减仓", "matched_at": "1000"}]
+    assert "reduction_percent" not in str(annotated["orders"][0])
 
 
 def test_filled_sell_order_exit_reason_uses_trailing_stop_match(tmp_path, monkeypatch):

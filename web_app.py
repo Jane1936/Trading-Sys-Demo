@@ -158,6 +158,23 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
                 matches.append({"type": match_type, "matched_at": str(row["matched_at"] or "")})
                 break
 
+    if _table_exists(conn, HoldingPositionScoringSystem.REDUCTION_RECORDS_TABLE):
+        rows = conn.execute(
+            f"""
+            SELECT created_at AS matched_at, reduced_quantity
+            FROM {HoldingPositionScoringSystem.REDUCTION_RECORDS_TABLE}
+            WHERE symbol = ?
+              AND side = 'SELL'
+              AND created_at BETWEEN ? AND ?
+            ORDER BY ABS(created_at - ?) ASC, id DESC
+            """,
+            (symbol, order_time - time_tolerance_ms, order_time + time_tolerance_ms, order_time),
+        ).fetchall()
+        for row in rows:
+            if _decimal_text_equal(row["reduced_quantity"], quantity):
+                matches.append({"type": "减仓", "matched_at": str(row["matched_at"] or "")})
+                break
+
     if _table_exists(conn, TrailingStopTracker.CHECKS_TABLE):
         rows = conn.execute(
             f"""
@@ -205,6 +222,8 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
         return "组合风险强平"
     if "结构止损" in match_types:
         return "结构止损"
+    if "减仓" in match_types:
+        return "减仓"
     if "移动追踪止盈" in match_types:
         return "移动追踪止盈"
     if "分批止盈" in match_types:

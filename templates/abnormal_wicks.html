@@ -1549,6 +1549,7 @@
         </div>
         <div id="filled-sell-orders-error" class="account-error"></div>
         <div class="tip">数据来自 Binance USDⓈ-M Futures <code>userTrades</code> 成交明细；同一 symbol、同一成交时间、同一方向的多笔成交会合并为一行；成交价格为按成交额/成交数量计算的均价。</div>
+        <div class="tip"><strong>止盈/止损原因显示规则：</strong>仅对 SELL 成交标注原因；优先按 symbol、成交时间（±5分钟）和成交数量匹配本地策略记录，命中优先级依次为：组合风险强平（止损记录 reason 以 <code>portfolio_total_risk_gt_18</code> 开头）、结构止损（止损记录）、减仓（减仓操作记录）、移动追踪止盈、分批止盈。若没有匹配到策略记录，则按已实现盈亏判断：realized_pnl &gt; 0 显示“硬止盈”，否则显示“硬止损”；BUY 成交不显示原因。</div>
         <div id="filled-orders-summary" class="filled-orders-summary" aria-label="已完成订单统计">
           <div class="account-metric">
             <div class="account-metric-label">已完成订单数量</div>
