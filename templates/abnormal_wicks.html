@@ -67,10 +67,6 @@
     .pager { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
     .pager-info { color: #4b5563; font-size: 12px; }
     .symbol-strip { padding: 14px 20px; border-bottom: 1px solid var(--line); background: #f8fdff; }
-    .sky-theme-section { border-color:#7dd3fc; background:linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 55%, #bae6fd 100%); box-shadow:0 10px 28px rgba(14, 165, 233, 0.16); }
-    .sky-theme-section > .symbol-strip { background:linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%); border-bottom-color:#7dd3fc; color:#075985; }
-    .sky-theme-section th { background:#e0f2fe; color:#075985; }
-    .sky-theme-section .chip { background:#0ea5e9; color:#fff; }
     .section-title-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
     .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
     .chip { padding: 4px 10px; border-radius: 999px; background: #dbeafe; color: #1e3a8a; font-size: 12px; font-weight: 600; }
@@ -166,6 +162,12 @@
     .critical-section .table-wrap { border-top: none; }
     .critical-section th { background: #ffedd5; color: #7c2d12; }
     .critical-section tbody tr:hover { background: #fff7ed; }
+    .critical-section.sky-theme-section { border-color:#7dd3fc; background:linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 55%, #bae6fd 100%); box-shadow:0 10px 28px rgba(14, 165, 233, 0.16); }
+    .critical-section.sky-theme-section > .symbol-strip { background:linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%); border-bottom-color:#7dd3fc; color:#075985; }
+    .critical-section.sky-theme-section .symbol-strip strong::before { color:#0284c7; }
+    .critical-section.sky-theme-section th { background:#e0f2fe; color:#075985; }
+    .critical-section.sky-theme-section tbody tr:hover { background:#f0f9ff; }
+    .critical-section.sky-theme-section .chip { background:#0ea5e9; color:#fff; }
     .collapsible-section { border-top: 1px solid var(--line); }
     .collapsible-header { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
     .collapsible-toggle { border: 1px solid #93c5fd; border-radius: 999px; background: #eff6ff; color: #1d4ed8; cursor: pointer; font-size: 12px; font-weight: 800; padding: 6px 12px; white-space: nowrap; }
@@ -918,7 +920,7 @@
           <div class="symbol-strip">
             <div><strong>减仓条件模块：本轮执行结果</strong></div>
             {% if holding_reduction_round_ts %}
-              <div class="muted">最近判断轮次：{{ holding_reduction_round_ts|fmt_ms_datetime }}。该15分钟定时任务在“评分系统”总分结果出来后执行；规则一检查价格与总分大幅回撤，规则二检查15m收阴、未变现盈亏小于2R、开仓至最新总分中等回撤以及最近两次总分连续弱化，规则三检查价格从3根15m high最高价回撤、未变现盈亏小于1R以及最近总分弱化。</div>
+              <div class="muted">最近判断轮次：{{ holding_reduction_round_ts|fmt_ms_datetime }}。该15分钟定时任务在“评分系统”总分结果出来后执行；规则一检查价格与总分大幅回撤，规则二检查15m收阴、未变现盈亏小于2R、开仓至最新总分中等回撤以及最近两次总分连续弱化，规则三检查价格从3根15m high最高价回撤、未变现盈亏小于1R以及最近总分弱化，规则四检查最新总分是否进入危险区。</div>
             {% else %}
               <div class="muted">暂无减仓条件模块执行结果。</div>
             {% endif %}
@@ -933,7 +935,7 @@
               <div class="chips"><span class="chip">本轮无触发减仓条件symbol</span></div>
             {% endif %}
           </div>
-          <div class="tip">规则一：对当前已持仓 symbol 查询最近3条15分钟K线 high 并取最高价 highest；若当前价从 highest 回撤 ≥ 3%，则检查当前未变现盈亏是否 &lt; 2R（2R = 实验组USDT净值 × 2%）；若满足，再查询“交易实验交易记录”中该 symbol 开仓时 total_score，并与最新 total_score 比较。最新总分较开仓总分回撤 ≥ 25分时，tag 标记为“绝对分数大幅回撤”。<br>规则二：查询最近1条15分钟K线，若收阴（close &lt; open），且当前未变现盈亏 &lt; 2R；再比较开仓总分与最新总分，回撤 ≥ 15分（包含15分）后继续查询最近2条总分数据，若最新总分低于上一次总分，则 tag 标记为“中等回撤且趋势连续弱化”。<br>规则三：对当前已持仓 symbol 查询最近3条15分钟K线 high 并取最高价 highest；若当前价从 highest 回撤 ≥ 3.5%（包含3.5%），则检查当前未变现盈亏是否 &lt; 1R（1R = 实验组USDT净值 × 1%）；若满足，再查询最近2条总分数据，若最新总分低于上一次总分，则说明触发“价格领先恶化”，tag 标记为“价格领先恶化”。</div>
+          <div class="tip">规则一：对当前已持仓 symbol 查询最近3条15分钟K线 high 并取最高价 highest；若当前价从 highest 回撤 ≥ 3%，则检查当前未变现盈亏是否 &lt; 2R（2R = 实验组USDT净值 × 2%）；若满足，再查询“交易实验交易记录”中该 symbol 开仓时 total_score，并与最新 total_score 比较。最新总分较开仓总分回撤 ≥ 25分时，tag 标记为“绝对分数大幅回撤”。<br>规则二：查询最近1条15分钟K线，若收阴（close &lt; open），且当前未变现盈亏 &lt; 2R；再比较开仓总分与最新总分，回撤 ≥ 15分（包含15分）后继续查询最近2条总分数据，若最新总分低于上一次总分，则 tag 标记为“中等回撤且趋势连续弱化”。<br>规则三：对当前已持仓 symbol 查询最近3条15分钟K线 high 并取最高价 highest；若当前价从 highest 回撤 ≥ 3.5%（包含3.5%），则检查当前未变现盈亏是否 &lt; 1R（1R = 实验组USDT净值 × 1%）；若满足，再查询最近2条总分数据，若最新总分低于上一次总分，则说明触发“价格领先恶化”，tag 标记为“价格领先恶化”。<br>规则四：对于当前已持仓的 symbol，查询最新 total_score；若最新总分 &lt; 30分，则说明该 symbol 已触发“评分进入危险区”，tag 标记为“评分进入危险区”。</div>
           <div class="table-wrap">
             <table>
               <thead>

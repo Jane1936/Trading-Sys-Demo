@@ -113,6 +113,7 @@ class HoldingPositionScoringSystem:
     REDUCTION_TAG_ABSOLUTE_SCORE_DRAWDOWN = "绝对分数大幅回撤"
     REDUCTION_TAG_MEDIUM_DRAWDOWN_WEAKENING = "中等回撤且趋势连续弱化"
     REDUCTION_TAG_PRICE_LEADING_DETERIORATION = "价格领先恶化"
+    REDUCTION_TAG_SCORE_DANGER_ZONE = "评分进入危险区"
 
     def __init__(
         self,
@@ -406,11 +407,22 @@ class HoldingPositionScoringSystem:
             matched_rules.append("规则三")
             reasons.append("rule3_price_leading_deterioration")
 
+        if latest_score == "":
+            reasons.append("rule4_missing_latest_total_score")
+        elif self._decimal_from(latest_score, Decimal("0")) < Decimal("30"):
+            triggered = True
+            tags.append(self.REDUCTION_TAG_SCORE_DANGER_ZONE)
+            matched_rules.append("规则四")
+            reasons.append("rule4_score_danger_zone")
+        else:
+            reasons.append("rule4_latest_total_score_gte_30")
+
         reason = "; ".join(reasons)
         matched_reason_map = {
             "规则一": "absolute_score_large_drawdown",
             "规则二": "medium_drawdown_and_continuous_weakening",
             "规则三": "price_leading_deterioration",
+            "规则四": "score_danger_zone",
         }
         if matched_rules:
             reason = "; ".join(matched_reason_map[rule] for rule in matched_rules)
