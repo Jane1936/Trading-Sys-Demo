@@ -222,6 +222,8 @@ class BreakEvenTakeProfitStrategy:
             response = self.account_manager._signed_post(endpoint, request_params)
             raw_parts.append(str({"new_stop_loss": response}))
             new_order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
+            if not new_order_id:
+                raise RuntimeError(f"break_even_stop_loss_order_id_missing: response={response}")
         except Exception as exc:
             status = "failed"
             stop_loss_price = entry_price

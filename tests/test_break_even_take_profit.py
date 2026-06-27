@@ -310,3 +310,27 @@ def test_break_even_strategy_recognizes_open_algo_order_order_type_field():
 
     assert result["triggered"] == 1
     assert fake_account.signed_deletes == [("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "123"})]
+
+
+def test_break_even_strategy_records_failure_when_new_stop_loss_response_has_no_order_id():
+    fake_account = FakeAccountManager()
+
+    def signed_post(endpoint, params=None):
+        fake_account.signed_posts.append((endpoint, dict(params or {})))
+        return {"status": "NEW"}
+
+    fake_account._signed_post = signed_post
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        result = strategy.run_round()
+        records = strategy.recent_records()
+
+    assert result["triggered"] == 1
+    assert fake_account.signed_deletes == [("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "123"})]
+    assert len(fake_account.signed_posts) == 1
+    assert records[0].status == "failed"
+    assert records[0].new_stop_loss_order_id == ""
+    assert "break_even_stop_loss_order_id_missing" in records[0].reason
+    assert "new_stop_loss" in records[0].raw_response
