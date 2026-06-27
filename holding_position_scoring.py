@@ -384,7 +384,8 @@ class HoldingPositionScoringSystem:
         self, position: dict[str, Any], symbol: str, round_ts: int, equity: Decimal, one_r: Decimal, two_r: Decimal, now_ms: int
     ) -> PositionReductionCheck:
         highest = self._highest_recent_15m_high(symbol, limit=3)
-        latest_kline = self._latest_15m_open_close(symbol)
+        recent_15m_open_closes = self._recent_15m_open_closes(symbol, limit=2)
+        latest_kline = recent_15m_open_closes[0] if recent_15m_open_closes else None
         exchange_symbol = self._exchange_symbol(position, symbol)
         current_price = self._current_symbol_price(exchange_symbol, position)
         drawdown = (highest - current_price) / highest if highest > 0 and current_price > 0 else Decimal("0")
@@ -420,23 +421,21 @@ class HoldingPositionScoringSystem:
 
         latest_open = latest_kline[0] if latest_kline else Decimal("0")
         latest_close = latest_kline[1] if latest_kline else Decimal("0")
-        if latest_kline is None:
-            reasons.append("rule2_missing_latest_15m_kline")
-        elif latest_close >= latest_open:
-            reasons.append("rule2_latest_15m_not_bearish")
+        if len(recent_15m_open_closes) < 2:
+            reasons.append("rule2_missing_recent_two_15m_klines")
+        elif any(close >= open_ for open_, close in recent_15m_open_closes):
+            reasons.append("rule2_recent_two_15m_not_all_bearish")
         elif unrealized_pnl >= two_r:
             reasons.append("rule2_unrealized_pnl_ge_2r")
-        elif open_score == "" or latest_score == "":
-            reasons.append("rule2_missing_open_or_latest_total_score")
+        elif latest_score == "" or previous_score == "":
+            reasons.append("rule2_missing_recent_two_total_scores")
         else:
-            rule2_score_drawdown = self._decimal_from(open_score, Decimal("0")) - self._decimal_from(latest_score, Decimal("0"))
+            rule2_score_drawdown = self._decimal_from(previous_score, Decimal("0")) - self._decimal_from(latest_score, Decimal("0"))
             score_drawdown = max(score_drawdown, rule2_score_drawdown)
-            if rule2_score_drawdown < Decimal("15"):
-                reasons.append("rule2_score_drawdown_lt_15")
-            elif previous_score == "":
-                reasons.append("rule2_missing_previous_total_score")
-            elif self._decimal_from(latest_score, Decimal("0")) >= self._decimal_from(previous_score, Decimal("0")):
+            if self._decimal_from(latest_score, Decimal("0")) >= self._decimal_from(previous_score, Decimal("0")):
                 reasons.append("rule2_latest_score_not_below_previous_score")
+            elif rule2_score_drawdown < Decimal("15"):
+                reasons.append("rule2_score_drawdown_lt_15")
             else:
                 triggered = True
                 tags.append(self.REDUCTION_TAG_MEDIUM_DRAWDOWN_WEAKENING)
@@ -456,23 +455,23 @@ class HoldingPositionScoringSystem:
         else:
             rule3_score_drawdown = self._decimal_from(open_score, Decimal("0")) - self._decimal_from(latest_score, Decimal("0"))
             score_drawdown = max(score_drawdown, rule3_score_drawdown)
-            if rule3_score_drawdown >= Decimal("25"):
+            if rule3_score_drawdown >= Decimal("18"):
                 triggered = True
                 tags.append(self.REDUCTION_TAG_ABSOLUTE_SCORE_DRAWDOWN)
                 matched_rules.append("规则三")
                 reasons.append("rule3_absolute_score_large_drawdown")
             else:
-                reasons.append("rule3_score_drawdown_lt_25")
+                reasons.append("rule3_score_drawdown_lt_18")
 
         if latest_score == "":
             reasons.append("rule4_missing_latest_total_score")
-        elif self._decimal_from(latest_score, Decimal("0")) < Decimal("30"):
+        elif self._decimal_from(latest_score, Decimal("0")) < Decimal("40"):
             triggered = True
             tags.append(self.REDUCTION_TAG_SCORE_DANGER_ZONE)
             matched_rules.append("规则四")
             reasons.append("rule4_score_danger_zone")
         else:
-            reasons.append("rule4_latest_total_score_gte_30")
+            reasons.append("rule4_latest_total_score_gte_40")
 
         if latest_score == "":
             reasons.append("rule5_missing_latest_total_score")
@@ -818,6 +817,20 @@ class HoldingPositionScoringSystem:
         if not row:
             return None
         return self._decimal_from(row["open"], Decimal("0")), self._decimal_from(row["close"], Decimal("0"))
+
+    def _recent_15m_open_closes(self, symbol: str, limit: int = 2) -> list[tuple[Decimal, Decimal]]:
+        try:
+            with self._connect() as conn:
+                columns = {row["name"] for row in conn.execute("PRAGMA table_info(klines_15m)").fetchall()}
+                if "open" not in columns or "close" not in columns:
+                    return []
+                rows = conn.execute(
+                    "SELECT open, close FROM klines_15m WHERE symbol = ? ORDER BY open_time DESC LIMIT ?",
+                    (symbol, limit),
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        return [(self._decimal_from(row["open"], Decimal("0")), self._decimal_from(row["close"], Decimal("0"))) for row in rows]
 
     def _position_leverage(self, position: dict[str, Any]) -> Decimal:
         raw = str(position.get("leverage", "")).strip().lower().replace("x", "")
