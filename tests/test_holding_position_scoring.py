@@ -443,7 +443,7 @@ def test_position_reduction_rule_tags_medium_drawdown_and_continuous_weakening()
             """)
             conn.executemany(
                 "INSERT INTO klines_15m (symbol, open_time, open, high, close) VALUES (?, ?, ?, ?, ?)",
-                [("BANK", 3000, 10, 8, 8), ("BANK", 2000, 8, 8, 8), ("BANK", 1000, 8, 8, 8)],
+                [("BANK", 3000, 10, 8, 8), ("BANK", 2000, 9, 8, 8), ("BANK", 1000, 8, 8, 8)],
             )
             conn.executemany(
                 "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
@@ -451,7 +451,7 @@ def test_position_reduction_rule_tags_medium_drawdown_and_continuous_weakening()
             )
             conn.executemany(
                 "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
-                [("BANK", 4000, 64), ("BANK", 3000, 70)],
+                [("BANK", 4000, 55), ("BANK", 3000, 70)],
             )
             conn.execute(
                 "INSERT INTO trading_experiment_trades (symbol, status, total_score, created_at) VALUES (?, ?, ?, ?)",
@@ -472,9 +472,9 @@ def test_position_reduction_rule_tags_medium_drawdown_and_continuous_weakening()
     assert checks[0]["latest_15m_open"] == "10"
     assert checks[0]["latest_15m_close"] == "8"
     assert checks[0]["open_total_score"] == "80"
-    assert checks[0]["latest_total_score"] == "64"
+    assert checks[0]["latest_total_score"] == "55"
     assert checks[0]["previous_total_score"] == "70"
-    assert checks[0]["score_drawdown"] == "16"
+    assert checks[0]["score_drawdown"] == "15"
     assert checks[0]["rule_name"] == "规则二"
 
 
@@ -555,10 +555,10 @@ def test_position_reduction_rule_tags_score_danger_zone():
                 "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
                 [("BANK", 3000, 7), ("BANK", 2000, 7)],
             )
-            conn.execute("INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)", ("BANK", 4000, 29))
+            conn.execute("INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)", ("BANK", 4000, 39))
             conn.execute(
                 "INSERT INTO trading_experiment_trades (symbol, status, total_score, created_at) VALUES (?, ?, ?, ?)",
-                ("BANK", "opened", 35, 1000),
+                ("BANK", "opened", 45, 1000),
             )
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
@@ -573,7 +573,7 @@ def test_position_reduction_rule_tags_score_danger_zone():
     assert checks[0]["tag"] == "评分进入危险区"
     assert checks[0]["reason"] == "score_danger_zone"
     assert checks[0]["rule_name"] == "规则四"
-    assert checks[0]["latest_total_score"] == "29"
+    assert checks[0]["latest_total_score"] == "39"
 
 
 def test_position_reduction_rule_tags_medium_danger_zone_price_confirmation():
@@ -617,9 +617,9 @@ def test_position_reduction_rule_tags_medium_danger_zone_price_confirmation():
     assert round_ts == 4000
     assert checks[0]["symbol"] == "BANK"
     assert checks[0]["triggered"] == 1
-    assert checks[0]["tag"] == "中危险区+价格确认"
-    assert checks[0]["reason"] == "medium_danger_zone_price_confirmation"
-    assert checks[0]["rule_name"] == "规则五"
+    assert checks[0]["tag"] == "评分进入危险区、中危险区+价格确认"
+    assert checks[0]["reason"] == "score_danger_zone; medium_danger_zone_price_confirmation"
+    assert checks[0]["rule_name"] == "规则四+规则五"
     assert checks[0]["latest_total_score"] == "30"
     assert checks[0]["current_price"] == "8"
     assert checks[0]["open_entry_price"] == "8.5"
