@@ -148,6 +148,21 @@ class StopLossBeforeReductionScoring(HoldingPositionScoringSystem):
         return []
 
 
+class StopLossRecordBeforeReductionScoring(HoldingPositionScoringSystem):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.reduction_started_after_stop_loss_record = False
+
+    def evaluate_reduction_conditions(self, positions=None, decision_round_ts=None, checked_at=None):
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                f"SELECT COUNT(*) FROM {self.RECORDS_TABLE} WHERE decision_round_ts = ?",
+                (decision_round_ts,),
+            ).fetchone()
+        self.reduction_started_after_stop_loss_record = bool(row and row[0] == 1)
+        return []
+
+
 def test_holding_position_scoring_strips_usdt_for_database_lookups_and_records():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -206,6 +221,56 @@ def test_position_reduction_runs_after_stop_loss_judgement_is_persisted():
     assert result["reduction_checked"] == 0
     assert scoring.reduction_started_after_stop_loss_check is True
 
+
+def test_position_reduction_runs_after_triggered_stop_loss_record_is_persisted():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, close REAL)")
+            conn.execute("CREATE TABLE symbol_structural_stop_losses (symbol TEXT, decision_round_ts INTEGER, structural_stop_loss REAL)")
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.executemany(
+                "INSERT INTO klines_15m (symbol, open_time, close) VALUES (?, ?, ?)",
+                [("BANK", 2000, 8), ("BANK", 1000, 9)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
+                [("BANK", 2000, 10), ("BANK", 1000, 10)],
+            )
+            conn.execute("INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)", ("BANK", 3000, 30))
+
+        scoring = StopLossRecordBeforeReductionScoring(db_path=db_path, account_manager=fake_account)
+        result = scoring.run_round(decision_round_ts=3000)
+
+    assert result["records"] == 1
+    assert result["reduction_checked"] == 0
+    assert scoring.reduction_started_after_stop_loss_record is True
+
+
+def test_position_reduction_waits_for_current_round_total_scores():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, high REAL, close REAL)")
+            conn.execute("CREATE TABLE symbol_structural_stop_losses (symbol TEXT, decision_round_ts INTEGER, structural_stop_loss REAL)")
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.executemany(
+                "INSERT INTO klines_15m (symbol, open_time, high, close) VALUES (?, ?, ?, ?)",
+                [("BANK", 3000, 10, 8), ("BANK", 2000, 9, 8), ("BANK", 1000, 8, 8)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
+                [("BANK", 3000, 7), ("BANK", 2000, 7)],
+            )
+            conn.executemany("INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)", [("BANK", 3000, 20), ("BANK", 2000, 50)])
+
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        result = scoring.run_round(decision_round_ts=4000)
+
+    assert result["reduction_checked"] == 0
+    assert result["reduction_triggered"] == 0
 
 
 def test_portfolio_risk_runs_after_holding_stop_loss_round():
@@ -687,7 +752,7 @@ def test_reduction_action_uses_highest_rule_replaces_limit_and_market_reduces():
             )
             conn.executemany(
                 "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
-                [("BANK", 3000, 20), ("BANK", 2000, 50)],
+                [("BANK", 4000, 20), ("BANK", 3000, 50)],
             )
             conn.execute(
                 "INSERT INTO trading_experiment_trades (symbol, status, total_score, entry_price, stop_loss_price, stop_loss_order_id, created_at, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
