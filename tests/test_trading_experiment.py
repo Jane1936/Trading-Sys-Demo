@@ -326,7 +326,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(fake_account.latest_mark_price_params, {"symbol": "BANKUSDT"})
         self.assertEqual(fake_account.signed_posts[1][1]["quantity"], "500")
 
-    def test_run_round_skips_new_entries_when_current_total_risk_exceeds_ten(self):
+    def test_run_round_skips_new_entries_when_current_total_risk_exceeds_twelve(self):
         fake_account = HighRiskAccountManager()
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "klines.db"
@@ -337,7 +337,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
             experiment.init_tables()
             with sqlite3.connect(db_path) as conn:
                 conn.execute("CREATE TABLE klines_15m (symbol TEXT NOT NULL, open_time INTEGER NOT NULL, close REAL NOT NULL)")
-                conn.execute("INSERT INTO klines_15m (symbol, open_time, close) VALUES ('OTHER', 1, 1000)")
+                conn.execute("INSERT INTO klines_15m (symbol, open_time, close) VALUES ('OTHER', 1, 1100)")
             candidate = OpenableSymbol(
                 symbol="BANK",
                 decision_round_ts=1,
@@ -366,8 +366,8 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(result, {"opened": 0, "skipped": 1, "reason": "completed"})
         self.assertEqual(fake_account.signed_posts, [])
         self.assertEqual(trade_row["status"], "skipped")
-        self.assertEqual(trade_row["reason"], "current_total_risk_gt_10")
-        self.assertEqual(risk_row["total_risk"], "12")
+        self.assertEqual(trade_row["reason"], "current_total_risk_gt_12")
+        self.assertEqual(risk_row["total_risk"], "13.2")
 
     def test_run_round_skips_candidate_when_latest_price_is_unavailable(self):
         fake_account = InvalidPriceAccountManager()

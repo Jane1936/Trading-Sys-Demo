@@ -535,16 +535,6 @@ class HoldingPositionScoringSystem:
                 reasons.append("rule3_score_drawdown_lt_18")
 
         if latest_score == "":
-            reasons.append("rule4_missing_latest_total_score")
-        elif self._decimal_from(latest_score, Decimal("0")) < Decimal("40"):
-            triggered = True
-            tags.append(self.REDUCTION_TAG_SCORE_DANGER_ZONE)
-            matched_rules.append("规则四")
-            reasons.append("rule4_score_danger_zone")
-        else:
-            reasons.append("rule4_latest_total_score_gte_40")
-
-        if latest_score == "":
             reasons.append("rule5_missing_latest_total_score")
         elif current_price <= 0:
             reasons.append("rule5_missing_current_price")
@@ -565,7 +555,6 @@ class HoldingPositionScoringSystem:
             "规则一": "price_leading_deterioration",
             "规则二": "medium_drawdown_and_continuous_weakening",
             "规则三": "absolute_score_large_drawdown",
-            "规则四": "score_danger_zone",
             "规则五": "medium_danger_zone_price_confirmation",
         }
         if matched_rules:
@@ -651,8 +640,8 @@ class HoldingPositionScoringSystem:
 
     @staticmethod
     def _reduction_action_for_rules(rule_name: str) -> tuple[str, Decimal]:
-        mapping = {"规则五": Decimal("1"), "规则四": Decimal("0.5"), "规则三": Decimal("0.3"), "规则二": Decimal("0.25"), "规则一": Decimal("0.25")}
-        for rule in ("规则五", "规则四", "规则三", "规则二", "规则一"):
+        mapping = {"规则五": Decimal("1"), "规则三": Decimal("0.3"), "规则二": Decimal("0.25"), "规则一": Decimal("0.25")}
+        for rule in ("规则五", "规则三", "规则二", "规则一"):
             if rule in rule_name:
                 return rule, mapping[rule]
         return "", Decimal("0")
