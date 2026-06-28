@@ -636,7 +636,7 @@ def test_position_reduction_rule_tags_price_leading_deterioration():
     assert checks[0]["previous_total_score"] == "80"
 
 
-def test_position_reduction_rule_tags_score_danger_zone():
+def test_position_reduction_no_longer_triggers_on_removed_rule_four_score_danger_zone():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
@@ -672,13 +672,12 @@ def test_position_reduction_rule_tags_score_danger_zone():
         round_ts, checks = scoring.get_latest_reduction_checks()
 
     assert result["reduction_checked"] == 1
-    assert result["reduction_triggered"] == 1
+    assert result["reduction_triggered"] == 0
     assert round_ts == 4000
     assert checks[0]["symbol"] == "BANK"
-    assert checks[0]["triggered"] == 1
-    assert checks[0]["tag"] == "评分进入危险区"
-    assert checks[0]["reason"] == "score_danger_zone"
-    assert checks[0]["rule_name"] == "规则四"
+    assert checks[0]["triggered"] == 0
+    assert checks[0]["tag"] == ""
+    assert checks[0]["rule_name"] == ""
     assert checks[0]["latest_total_score"] == "39"
 
 
@@ -723,9 +722,9 @@ def test_position_reduction_rule_tags_medium_danger_zone_price_confirmation():
     assert round_ts == 4000
     assert checks[0]["symbol"] == "BANK"
     assert checks[0]["triggered"] == 1
-    assert checks[0]["tag"] == "评分进入危险区、中危险区+价格确认"
-    assert checks[0]["reason"] == "score_danger_zone; medium_danger_zone_price_confirmation"
-    assert checks[0]["rule_name"] == "规则四+规则五"
+    assert checks[0]["tag"] == "中危险区+价格确认"
+    assert checks[0]["reason"] == "medium_danger_zone_price_confirmation"
+    assert checks[0]["rule_name"] == "规则五"
     assert checks[0]["latest_total_score"] == "30"
     assert checks[0]["current_price"] == "8"
     assert checks[0]["open_entry_price"] == "8.5"
