@@ -781,7 +781,7 @@ def test_position_reduction_rule5_only_triggers_once_per_open_lifecycle():
         with sqlite3.connect(db_path) as conn:
             conn.execute(
                 f"INSERT INTO {scoring.REDUCTION_RECORDS_TABLE} (symbol, decision_round_ts, side, matched_rule, reduction_percent, original_quantity, reduced_quantity, remaining_quantity, status, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                ("BANK", 3500, "SELL", "规则五", "1", "2", "2", "0", "success", "first rule5", 2000),
+                ("BANK", 3500, "SELL", "规则五", "0.5", "2", "1", "1", "success", "first rule5", 2000),
             )
 
         result = scoring.run_round(decision_round_ts=4000)
@@ -831,16 +831,16 @@ def test_reduction_action_uses_highest_rule_replaces_limit_and_market_reduces():
 
     assert result["reduction_records"] == 1
     assert records[0]["matched_rule"] == "规则五"
-    assert records[0]["reduction_percent"] == "1"
-    assert records[0]["reduced_quantity"] == "2"
-    assert records[0]["remaining_quantity"] == "0"
+    assert records[0]["reduction_percent"] == "0.5"
+    assert records[0]["reduced_quantity"] == "1"
+    assert records[0]["remaining_quantity"] == "1"
     assert records[0]["old_limit_order_id"] == "old-sl-1"
-    assert records[0]["new_limit_order_id"] == ""
+    assert records[0]["new_limit_order_id"] == "123"
     assert records[0]["market_order_id"] == "123"
     assert ("/fapi/v1/allOpenOrders", {"symbol": "BANKUSDT"}) in fake_account.signed_deletes
     assert fake_account.signed_posts[-1] == (
         "/fapi/v1/order",
-        {"symbol": "BANKUSDT", "side": "SELL", "type": "MARKET", "quantity": "2", "reduceOnly": "true", "newOrderRespType": "RESULT"},
+        {"symbol": "BANKUSDT", "side": "SELL", "type": "MARKET", "quantity": "1", "reduceOnly": "true", "newOrderRespType": "RESULT"},
     )
 
 
