@@ -8,17 +8,18 @@ from pre_safety_module import Candle5m, PreSafetyModule
 
 
 def test_abnormal_wick_requires_70_percent_wick_1_percent_span_and_2_5x_body():
-    hit, cond1_ratio, cond2_ratio = PreSafetyModule._is_abnormal(
+    hit, cond1_ratio, cond2_ratio, cond3_ratio = PreSafetyModule._is_abnormal(
         Candle5m("BANK", 1, 2, 100.0, 110.0, 100.0, 102.0)
     )
 
     assert hit is True
     assert cond1_ratio == 0.8
     assert cond2_ratio == 0.1
+    assert cond3_ratio == 4.0
 
 
 def test_abnormal_wick_rejects_previous_60_percent_and_6_percent_only_rule():
-    hit, cond1_ratio, cond2_ratio = PreSafetyModule._is_abnormal(
+    hit, cond1_ratio, cond2_ratio, cond3_ratio = PreSafetyModule._is_abnormal(
         Candle5m("BANK", 1, 2, 100.0, 106.0, 100.0, 102.0)
     )
 
@@ -63,4 +64,7 @@ def test_detect_for_symbol_records_symbol_when_any_recent_three_closed_5m_candle
     assert len(events) == 1
     assert events[0].symbol == "BANK"
     assert events[0].candle_index == 2
+    assert events[0].candle_index_open_time == 2
+    assert events[0].candle_index_close_time == 3
+    assert events[0].cond3_ratio == 4.0
     assert symbols == ["BANK"]

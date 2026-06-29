@@ -127,3 +127,20 @@ def test_score_page_shows_total_score_actual_completion_time():
 
     assert "实际计算完成时间" in template
     assert "score_total_updated_at" in template
+
+
+def test_abnormal_wicks_template_uses_business_friendly_wick_labels():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    assert "candle_index_open_time" in template
+    assert "candle_index_close_time" in template
+    assert "first_candle_open_time" not in template
+    assert "first_candle_close_time" not in template
+    assert "长上/下影占比" in template
+    assert "振幅度大小" in template
+    assert "candle_index_open" in template
+    assert "candle_index_high" in template
+    assert "candle_index_low" in template
+    assert "candle_index_close" in template
+    assert "同方向长影/实体 ratio" in template
+    assert "是否≥2.5倍" in template

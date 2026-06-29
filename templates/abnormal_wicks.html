@@ -255,14 +255,16 @@
         <th>symbol</th>
         <th>decision_round_ts</th>
         <th>candle_index</th>
-        <th>first_candle_open_time</th>
-        <th>first_candle_close_time</th>
-        <th>open</th>
-        <th>high</th>
-        <th>low</th>
-        <th>close</th>
-        <th>cond1_ratio</th>
-        <th>cond2_ratio</th>
+        <th>candle_index_open_time</th>
+        <th>candle_index_close_time</th>
+        <th>candle_index_open</th>
+        <th>candle_index_high</th>
+        <th>candle_index_low</th>
+        <th>candle_index_close</th>
+        <th>长上/下影占比</th>
+        <th>振幅度大小</th>
+        <th>同方向长影/实体 ratio</th>
+        <th>是否≥2.5倍</th>
         <th>detected_at</th>
       </tr>
     </thead>
@@ -272,14 +274,16 @@
         <td>{{ e.symbol }}</td>
         <td>{{ e.decision_round_ts|fmt_ms_datetime }}</td>
         <td>{{ e.candle_index }}</td>
-        <td>{{ e.first_candle_open_time|fmt_ms_datetime }}</td>
-        <td>{{ e.first_candle_close_time|fmt_ms_datetime }}</td>
+        <td>{{ e.candle_index_open_time|fmt_ms_datetime }}</td>
+        <td>{{ e.candle_index_close_time|fmt_ms_datetime }}</td>
         <td>{{ '%.6f'|format(e.open) }}</td>
         <td>{{ '%.6f'|format(e.high) }}</td>
         <td>{{ '%.6f'|format(e.low) }}</td>
         <td>{{ '%.6f'|format(e.close) }}</td>
         <td>{{ '%.6f'|format(e.cond1_ratio) }}</td>
         <td>{{ '%.6f'|format(e.cond2_ratio) }}</td>
+        <td>{{ '%.6f'|format(e.cond3_ratio) }}</td>
+        <td>{{ '是' if e.cond3_ratio >= 2.5 else '否' }}</td>
         <td>{{ e.detected_at|fmt_ms_datetime }}</td>
       </tr>
       {% else %}
