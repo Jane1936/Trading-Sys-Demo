@@ -707,7 +707,7 @@ def test_position_reduction_rule_tags_medium_danger_zone_price_confirmation():
                 "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
                 [("BANK", 3000, 7), ("BANK", 2000, 7)],
             )
-            conn.execute("INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)", ("BANK", 4000, 30))
+            conn.executemany("INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)", [("BANK", 4000, 30), ("BANK", 3000, 25)])
             conn.execute(
                 "INSERT INTO trading_experiment_trades (symbol, status, total_score, entry_price, created_at) VALUES (?, ?, ?, ?, ?)",
                 ("BANK", "opened", 35, "8.5", 1000),
@@ -728,6 +728,111 @@ def test_position_reduction_rule_tags_medium_danger_zone_price_confirmation():
     assert checks[0]["latest_total_score"] == "30"
     assert checks[0]["current_price"] == "8"
     assert checks[0]["open_entry_price"] == "8.5"
+
+
+def test_position_reduction_rule5_condition2_requires_recent_two_closes_below_entry():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, open REAL, high REAL, close REAL)")
+            conn.execute("CREATE TABLE symbol_structural_stop_losses (symbol TEXT, decision_round_ts INTEGER, structural_stop_loss REAL)")
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.execute("""
+                CREATE TABLE trading_experiment_trades (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    total_score INTEGER,
+                    entry_price TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+            """)
+            conn.executemany(
+                "INSERT INTO klines_15m (symbol, open_time, open, high, close) VALUES (?, ?, ?, ?, ?)",
+                [("BANK", 3000, 8, 8.1, 8), ("BANK", 2000, 8, 8.8, 8.7), ("BANK", 1000, 8, 8.1, 8)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
+                [("BANK", 3000, 7), ("BANK", 2000, 7)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
+                [("BANK", 4000, 30), ("BANK", 3000, 25)],
+            )
+            conn.execute(
+                "INSERT INTO trading_experiment_trades (symbol, status, total_score, entry_price, created_at) VALUES (?, ?, ?, ?, ?)",
+                ("BANK", "opened", 35, "8.5", 1000),
+            )
+
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        result = scoring.run_round(decision_round_ts=4000)
+        round_ts, checks = scoring.get_latest_reduction_checks()
+
+    assert result["reduction_checked"] == 1
+    assert result["reduction_triggered"] == 0
+    assert round_ts == 4000
+    assert checks[0]["symbol"] == "BANK"
+    assert checks[0]["triggered"] == 0
+    assert checks[0]["tag"] == ""
+    assert checks[0]["rule_name"] == ""
+    assert checks[0]["reason"].endswith("rule5_condition2_recent_two_15m_closes_not_all_lte_open_entry_price")
+
+
+def test_position_reduction_rule5_only_triggers_once_per_open_lifecycle():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, open REAL, high REAL, close REAL)")
+            conn.execute("CREATE TABLE symbol_structural_stop_losses (symbol TEXT, decision_round_ts INTEGER, structural_stop_loss REAL)")
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.execute("""
+                CREATE TABLE trading_experiment_trades (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    total_score INTEGER,
+                    entry_price TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+            """)
+            conn.executemany(
+                "INSERT INTO klines_15m (symbol, open_time, open, high, close) VALUES (?, ?, ?, ?, ?)",
+                [("BANK", 3000, 8, 8.1, 8), ("BANK", 2000, 8, 8.1, 8), ("BANK", 1000, 8, 8.1, 8)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
+                [("BANK", 3000, 7), ("BANK", 2000, 7)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
+                [("BANK", 4000, 18), ("BANK", 3000, 35)],
+            )
+            conn.execute(
+                "INSERT INTO trading_experiment_trades (symbol, status, total_score, entry_price, created_at) VALUES (?, ?, ?, ?, ?)",
+                ("BANK", "opened", 35, "8.5", 1000),
+            )
+
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                f"INSERT INTO {scoring.REDUCTION_RECORDS_TABLE} (symbol, decision_round_ts, side, matched_rule, reduction_percent, original_quantity, reduced_quantity, remaining_quantity, status, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("BANK", 3500, "SELL", "规则五", "1", "2", "2", "0", "success", "first rule5", 2000),
+            )
+
+        result = scoring.run_round(decision_round_ts=4000)
+        round_ts, checks = scoring.get_latest_reduction_checks()
+
+    assert result["reduction_checked"] == 1
+    assert result["reduction_triggered"] == 0
+    assert round_ts == 4000
+    assert checks[0]["symbol"] == "BANK"
+    assert checks[0]["triggered"] == 0
+    assert checks[0]["tag"] == ""
+    assert checks[0]["rule_name"] == ""
+    assert checks[0]["reason"].endswith("rule5_already_triggered_in_current_open_lifecycle")
 
 
 def test_reduction_action_uses_highest_rule_replaces_limit_and_market_reduces():
@@ -751,7 +856,7 @@ def test_reduction_action_uses_highest_rule_replaces_limit_and_market_reduces():
             )
             conn.executemany(
                 "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
-                [("BANK", 4000, 20), ("BANK", 3000, 50)],
+                [("BANK", 4000, 18), ("BANK", 3000, 25)],
             )
             conn.execute(
                 "INSERT INTO trading_experiment_trades (symbol, status, total_score, entry_price, stop_loss_price, stop_loss_order_id, created_at, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",

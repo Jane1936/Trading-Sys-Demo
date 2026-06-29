@@ -452,6 +452,7 @@ class HoldingPositionScoringSystem:
         previous_previous_score = recent_scores[2] if len(recent_scores) > 2 else ""
         open_score = self._latest_open_trade_total_score(symbol)
         open_entry_price = self._latest_open_trade_entry_price(symbol)
+        open_trade_created_at = self._latest_open_trade_created_at(symbol)
         score_drawdown = Decimal("0")
         recent_score_drawdown = (
             self._decimal_from(previous_score, Decimal("0")) - self._decimal_from(latest_score, Decimal("0"))
@@ -534,21 +535,51 @@ class HoldingPositionScoringSystem:
             else:
                 reasons.append("rule3_score_drawdown_lt_18")
 
+        latest_score_decimal = self._decimal_from(latest_score, Decimal("0")) if latest_score != "" else Decimal("0")
+        previous_score_decimal = self._decimal_from(previous_score, Decimal("0")) if previous_score != "" else Decimal("0")
+        open_entry_price_decimal = self._decimal_from(open_entry_price, Decimal("0")) if open_entry_price != "" else Decimal("0")
+        rule5_first_condition = latest_score != "" and latest_score_decimal < Decimal("19") and current_price <= open_entry_price_decimal
+        rule5_recent_two_closes_confirmed = (
+            len(recent_15m_open_closes) >= 2
+            and all(close > 0 and close <= open_entry_price_decimal for _, close in recent_15m_open_closes[:2])
+        )
+        rule5_second_condition = (
+            latest_score != ""
+            and previous_score != ""
+            and Decimal("19") <= latest_score_decimal <= Decimal("30")
+            and Decimal("19") <= previous_score_decimal <= Decimal("30")
+            and rule5_recent_two_closes_confirmed
+        )
         if latest_score == "":
             reasons.append("rule5_missing_latest_total_score")
-        elif current_price <= 0:
-            reasons.append("rule5_missing_current_price")
         elif open_entry_price == "":
             reasons.append("rule5_missing_open_entry_price")
-        elif self._decimal_from(latest_score, Decimal("0")) <= Decimal("30") and current_price <= self._decimal_from(open_entry_price, Decimal("0")):
+        elif open_trade_created_at == "":
+            reasons.append("rule5_missing_open_trade_lifecycle")
+        elif self._has_rule5_reduction_record_since(symbol, int(open_trade_created_at)):
+            reasons.append("rule5_already_triggered_in_current_open_lifecycle")
+        elif latest_score_decimal < Decimal("19") and current_price <= 0:
+            reasons.append("rule5_condition1_missing_current_price")
+        elif Decimal("19") <= latest_score_decimal <= Decimal("30") and len(recent_15m_open_closes) < 2:
+            reasons.append("rule5_condition2_missing_recent_two_15m_closes")
+        elif rule5_first_condition or rule5_second_condition:
             triggered = True
             tags.append(self.REDUCTION_TAG_MEDIUM_DANGER_PRICE_CONFIRMATION)
             matched_rules.append("规则五")
-            reasons.append("rule5_medium_danger_zone_price_confirmation")
-        elif self._decimal_from(latest_score, Decimal("0")) > Decimal("30"):
+            if rule5_first_condition:
+                reasons.append("rule5_medium_danger_zone_price_confirmation_condition1")
+            else:
+                reasons.append("rule5_medium_danger_zone_price_confirmation_condition2")
+        elif latest_score_decimal < Decimal("19"):
+            reasons.append("rule5_condition1_current_price_gt_open_entry_price")
+        elif latest_score_decimal > Decimal("30"):
             reasons.append("rule5_latest_total_score_gt_30")
+        elif previous_score == "":
+            reasons.append("rule5_condition2_missing_previous_total_score")
+        elif not (Decimal("19") <= previous_score_decimal <= Decimal("30")):
+            reasons.append("rule5_condition2_previous_total_score_not_between_19_and_30")
         else:
-            reasons.append("rule5_current_price_gt_open_entry_price")
+            reasons.append("rule5_condition2_recent_two_15m_closes_not_all_lte_open_entry_price")
 
         reason = "; ".join(reasons)
         matched_reason_map = {
@@ -716,6 +747,25 @@ class HoldingPositionScoringSystem:
         except sqlite3.Error:
             return ""
         return str(row["entry_price"]) if row and row["entry_price"] is not None else ""
+
+    def _latest_open_trade_created_at(self, symbol: str) -> str:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT created_at FROM trading_experiment_trades WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1",
+                    (symbol,),
+                ).fetchone()
+        except sqlite3.Error:
+            return ""
+        return str(row["created_at"]) if row and row["created_at"] is not None else ""
+
+    def _has_rule5_reduction_record_since(self, symbol: str, lifecycle_started_at: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT 1 FROM {self.REDUCTION_RECORDS_TABLE} WHERE symbol = ? AND matched_rule LIKE ? AND created_at >= ? LIMIT 1",
+                (symbol, "%规则五%", lifecycle_started_at),
+            ).fetchone()
+        return row is not None
 
     def calculate_portfolio_risk(
         self,
