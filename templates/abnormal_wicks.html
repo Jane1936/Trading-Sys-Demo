@@ -1171,6 +1171,48 @@
           </table>
         </div>
         </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>组合风险动作记录</strong></div>
+              <div class="muted">记录组合总风险 &gt; 18 后的强平成功、失败与跳过原因，用于排查风险表超阈值但强平记录为空的情况。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整动作记录。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>created_at</th>
+                <th>symbol</th>
+                <th>轮次</th>
+                <th>total_risk</th>
+                <th>total_score</th>
+                <th>action</th>
+                <th>status</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in holding_portfolio_risk_actions %}
+              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                <td>{{ row.created_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol or '-' }}</td>
+                <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                <td>{{ row.total_risk }}</td>
+                <td>{{ row.total_score if row.total_score else '-' }}</td>
+                <td>{{ row.action }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="8">暂无组合风险动作记录</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
         <div class="critical-section sky-theme-section" aria-label="关键保本止盈5分钟扫描结果">
         <div class="symbol-strip">
           <div><strong>保本止盈策略：5分钟扫描结果</strong></div>

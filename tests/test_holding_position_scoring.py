@@ -61,6 +61,12 @@ class HighPortfolioRiskAccountManager(FakeAccountManager):
         return super()._signed_get(endpoint, params)
 
 
+class FailingPortfolioRiskAccountManager(HighPortfolioRiskAccountManager):
+    def _signed_post(self, endpoint, params=None):
+        self.signed_posts.append((endpoint, dict(params or {})))
+        raise RuntimeError("market close rejected")
+
+
 class TiedLowestScorePortfolioRiskAccountManager(FakeAccountManager):
     def _signed_get(self, endpoint, params=None):
         if endpoint == "/fapi/v3/positionRisk":
@@ -331,6 +337,7 @@ def test_portfolio_risk_displays_scores_and_market_closes_lowest_score_when_tota
         result = scoring.run_round(decision_round_ts=3000)
         risk = scoring.get_latest_portfolio_risk()
         risk_liquidation_records = scoring.recent_portfolio_liquidation_records()
+        risk_actions = scoring.recent_portfolio_risk_actions()
         stop_loss_records = scoring.recent_stop_loss_records()
 
     assert result["total_risk"] == "20"
@@ -344,6 +351,13 @@ def test_portfolio_risk_displays_scores_and_market_closes_lowest_score_when_tota
     assert len(risk_liquidation_records) == 1
     assert risk_liquidation_records[0]["symbol"] == "COIN"
     assert risk_liquidation_records[0]["reason"].startswith("portfolio_total_risk_gt_18")
+    assert len(risk_actions) == 1
+    assert risk_actions[0]["symbol"] == "COIN"
+    assert risk_actions[0]["total_risk"] == "20"
+    assert risk_actions[0]["total_score"] == "60"
+    assert risk_actions[0]["action"] == "market_close"
+    assert risk_actions[0]["status"] == "submitted"
+    assert risk_actions[0]["reason"].startswith("submitted_market_close_symbol=COIN")
     assert stop_loss_records == []
 
 
@@ -371,6 +385,7 @@ def test_portfolio_risk_closes_all_negative_pnl_positions_when_lowest_score_ties
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account, realized_pnl_retry_delays=())
         result = scoring.run_round(decision_round_ts=3000)
         risk_liquidation_records = scoring.recent_portfolio_liquidation_records()
+        risk_actions = scoring.recent_portfolio_risk_actions()
 
     close_orders = [params for endpoint, params in fake_account.signed_posts if endpoint == "/fapi/v1/order"]
     assert result["total_risk"] == "30"
@@ -383,6 +398,46 @@ def test_portfolio_risk_closes_all_negative_pnl_positions_when_lowest_score_ties
     ]
     assert {row["symbol"] for row in risk_liquidation_records} == {"COIN", "FUND"}
     assert all("unrealized_pnl=-" in row["reason"] for row in risk_liquidation_records)
+    assert {row["symbol"]: row["status"] for row in risk_actions} == {"BANK": "skipped", "COIN": "submitted", "FUND": "submitted"}
+    assert any(row["reason"].startswith("skipped_non_negative_unrealized_pnl_symbol=BANK") for row in risk_actions)
+
+
+def test_portfolio_risk_action_records_market_close_failure():
+    fake_account = FailingPortfolioRiskAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, close REAL)")
+            conn.execute("CREATE TABLE symbol_structural_stop_losses (symbol TEXT, decision_round_ts INTEGER, structural_stop_loss REAL)")
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.executemany(
+                "INSERT INTO klines_15m (symbol, open_time, close) VALUES (?, ?, ?)",
+                [("BANK", 2000, 5), ("COIN", 2000, 5)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
+                [("BANK", 2000, 1), ("COIN", 2000, 1)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
+                [("BANK", 2000, 80), ("COIN", 2000, 60)],
+            )
+
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account, realized_pnl_retry_delays=())
+        result = scoring.run_round(decision_round_ts=3000)
+        risk_liquidation_records = scoring.recent_portfolio_liquidation_records()
+        risk_actions = scoring.recent_portfolio_risk_actions()
+
+    assert result["total_risk"] == "20"
+    assert result["portfolio_risk_action"].startswith("portfolio_risk_market_close_failed_symbol=COIN")
+    assert risk_liquidation_records == []
+    assert len(risk_actions) == 1
+    assert risk_actions[0]["symbol"] == "COIN"
+    assert risk_actions[0]["total_risk"] == "20"
+    assert risk_actions[0]["total_score"] == "60"
+    assert risk_actions[0]["action"] == "market_close"
+    assert risk_actions[0]["status"] == "failed"
+    assert "RuntimeError: market close rejected" in risk_actions[0]["reason"]
 
 
 def _seed_triggered_stop_loss_db(db_path: str) -> None:
