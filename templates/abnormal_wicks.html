@@ -82,6 +82,12 @@
     .score-delta-negative { color:#dc2626; background:#fee2e2; border-color:#fca5a5; }
     .score-delta-positive { color:#16a34a; background:#dcfce7; border-color:#86efac; }
     .score-delta-zero { color:#64748b; background:#f1f5f9; border-color:#cbd5e1; }
+    .reduction-metric { display:inline-flex; align-items:center; justify-content:center; min-width:64px; padding:3px 8px; border-radius:999px; font-weight:900; border:1px solid transparent; }
+    .reduction-metric-neutral { color:#64748b; background:#f1f5f9; border-color:#cbd5e1; }
+    .reduction-drawdown-warning { color:#c2410c; background:#ffedd5; border-color:#fdba74; }
+    .reduction-drawdown-danger { color:#991b1b; background:#fee2e2; border-color:#fca5a5; }
+    .reduction-pnl-profit { color:#166534; background:#dcfce7; border-color:#86efac; }
+    .reduction-pnl-strong-profit { color:#6d28d9; background:#ede9fe; border-color:#c4b5fd; }
     .muted { color: #6b7280; font-size: 12px; }
     .top-score-row { background: #fff7cc; font-weight: 700; }
     .top-score-badge { display:inline-block; margin-left:6px; padding:2px 8px; border-radius:999px; background:#f59e0b; color:white; font-size:11px; }
@@ -1008,8 +1014,15 @@
                   <td>{{ row.latest_15m_open if row.latest_15m_open else '-' }} / {{ row.latest_15m_close if row.latest_15m_close else '-' }}</td>
                   <td>{{ row.highest_15m_high }}</td>
                   <td>{{ row.current_price }}</td>
-                  <td>{{ '%.2f%%'|format((row.price_drawdown_ratio|float) * 100) }}</td>
-                  <td>{{ row.unrealized_pnl }} / {{ row.one_r_usdt if row.one_r_usdt else '-' }} / {{ row.two_r_usdt }}</td>
+                  <td>
+                    {% set price_drawdown_percent = (row.price_drawdown_ratio|float) * 100 %}
+                    <span class="reduction-metric {{ 'reduction-drawdown-danger' if price_drawdown_percent >= 3.5 else 'reduction-drawdown-warning' if price_drawdown_percent >= 3 else 'reduction-metric-neutral' }}">{{ '%.2f%%'|format(price_drawdown_percent) }}</span>
+                  </td>
+                  <td>
+                    {% set one_r = row.one_r_usdt|float %}
+                    {% set pnl_r_multiple = (row.unrealized_pnl|float) / one_r if one_r > 0 else 0 %}
+                    <span class="reduction-metric {{ 'reduction-pnl-strong-profit' if pnl_r_multiple >= 2 else 'reduction-pnl-profit' if pnl_r_multiple >= 1 else 'reduction-metric-neutral' }}">{{ row.unrealized_pnl }}</span> / {{ row.one_r_usdt if row.one_r_usdt else '-' }} / {{ row.two_r_usdt }}
+                  </td>
                   <td>{{ row.open_total_score if row.open_total_score else '-' }}</td>
                   <td>{{ row.open_entry_price if row.open_entry_price else '-' }}</td>
                   <td>{{ row.latest_total_score if row.latest_total_score else '-' }}</td>
