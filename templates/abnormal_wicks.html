@@ -78,6 +78,10 @@
     .reduction-tag-rule4 { background:#ede9fe; color:#5b21b6; border-color:#c4b5fd; }
     .reduction-tag-rule5 { background:#dcfce7; color:#166534; border-color:#86efac; }
     .reduction-tag-default { background:#e0f2fe; color:#075985; border-color:#7dd3fc; }
+    .score-delta { display:inline-flex; align-items:center; justify-content:center; min-width:58px; padding:3px 8px; border-radius:999px; font-weight:900; border:1px solid transparent; }
+    .score-delta-negative { color:#dc2626; background:#fee2e2; border-color:#fca5a5; }
+    .score-delta-positive { color:#16a34a; background:#dcfce7; border-color:#86efac; }
+    .score-delta-zero { color:#64748b; background:#f1f5f9; border-color:#cbd5e1; }
     .muted { color: #6b7280; font-size: 12px; }
     .top-score-row { background: #fff7cc; font-weight: 700; }
     .top-score-badge { display:inline-block; margin-left:6px; padding:2px 8px; border-radius:999px; background:#f59e0b; color:white; font-size:11px; }
@@ -977,7 +981,7 @@
                   <th>开仓价</th>
                   <th>最新总分</th>
                   <th>上次总分</th>
-                  <th>分数回撤</th>
+                  <th>开仓分数回撤</th>
                   <th>最近一次分数回撤</th>
                   <th>reason</th>
                   <th>checked_at</th>
@@ -1010,8 +1014,16 @@
                   <td>{{ row.open_entry_price if row.open_entry_price else '-' }}</td>
                   <td>{{ row.latest_total_score if row.latest_total_score else '-' }}</td>
                   <td>{{ row.previous_total_score if row.previous_total_score else '-' }}</td>
-                  <td>{{ row.score_drawdown }}</td>
-                  <td>{{ row.recent_score_drawdown if row.recent_score_drawdown else '-' }}</td>
+                  <td>
+                    {% set open_score_delta = -(row.score_drawdown|float) %}
+                    <span class="score-delta {{ 'score-delta-positive' if open_score_delta > 0 else 'score-delta-negative' if open_score_delta < 0 else 'score-delta-zero' }}">{{ '%+.2f分'|format(open_score_delta) if open_score_delta != 0 else '0.00分' }}</span>
+                  </td>
+                  <td>
+                    {% if row.recent_score_drawdown %}
+                      {% set recent_score_delta = -(row.recent_score_drawdown|float) %}
+                      <span class="score-delta {{ 'score-delta-positive' if recent_score_delta > 0 else 'score-delta-negative' if recent_score_delta < 0 else 'score-delta-zero' }}">{{ '%+.2f分'|format(recent_score_delta) if recent_score_delta != 0 else '0.00分' }}</span>
+                    {% else %}-{% endif %}
+                  </td>
                   <td>{{ row.reason }}</td>
                   <td>{{ row.checked_at|fmt_ms_datetime }}</td>
                 </tr>
