@@ -708,7 +708,7 @@ class HoldingPositionScoringSystem:
 
     @staticmethod
     def _reduction_action_for_rules(rule_name: str) -> tuple[str, Decimal]:
-        mapping = {"规则五": Decimal("1"), "规则三": Decimal("0.3"), "规则二": Decimal("0.25"), "规则一": Decimal("0.25")}
+        mapping = {"规则五": Decimal("0.5"), "规则三": Decimal("0.3"), "规则二": Decimal("0.25"), "规则一": Decimal("0.25")}
         for rule in ("规则五", "规则三", "规则二", "规则一"):
             if rule in rule_name:
                 return rule, mapping[rule]
