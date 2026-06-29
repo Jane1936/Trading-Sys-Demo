@@ -144,3 +144,14 @@ def test_abnormal_wicks_template_uses_business_friendly_wick_labels():
     assert "candle_index_close" in template
     assert "同方向长影/实体 ratio" in template
     assert "是否≥2.5倍" in template
+
+
+def test_trading_trade_records_highlight_current_round_new_open_symbols():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    trade_records_index = template.index("<strong>交易实验交易记录</strong>")
+    highlight_index = template.index('class="new-open-symbol-badge" title="本轮新开仓"')
+
+    assert trade_records_index < highlight_index
+    assert "trading_new_open_symbols" in template
+    assert "本轮新开仓 symbol 会用红色徽标高亮" in template
