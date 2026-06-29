@@ -153,9 +153,7 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
         ).fetchall()
         for row in rows:
             if _decimal_text_equal(row["quantity"], quantity):
-                reason = str(row["reason"] or "")
-                match_type = "组合风险强平" if reason.startswith("portfolio_total_risk_gt_18") else "结构止损"
-                matches.append({"type": match_type, "matched_at": str(row["matched_at"] or "")})
+                matches.append({"type": "结构止损", "matched_at": str(row["matched_at"] or "")})
                 break
 
     if _table_exists(conn, HoldingPositionScoringSystem.REDUCTION_RECORDS_TABLE):
@@ -218,8 +216,6 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
         return ""
 
     match_types = {match.get("type", "") for match in matches}
-    if "组合风险强平" in match_types:
-        return "组合风险强平"
     if "结构止损" in match_types:
         return "结构止损"
     if "减仓" in match_types:
@@ -491,8 +487,6 @@ def abnormal_wicks():
     holding_reduction_round_ts, holding_reduction_checks = holding_scoring.get_latest_reduction_checks()
     holding_stop_loss_records = holding_scoring.recent_stop_loss_records(limit=100)
     holding_reduction_records = holding_scoring.recent_reduction_records(limit=100)
-    holding_portfolio_liquidation_records = holding_scoring.recent_portfolio_liquidation_records(limit=100)
-    holding_portfolio_risk_actions = holding_scoring.recent_portfolio_risk_actions(limit=100)
     break_even_strategy = BreakEvenTakeProfitStrategy(db_path=DB_PATH)
     break_even_round_ts, break_even_checks = break_even_strategy.get_latest_round_checks()
     break_even_records = break_even_strategy.recent_records(limit=100)
@@ -579,8 +573,6 @@ def abnormal_wicks():
         holding_reduction_checks=holding_reduction_checks,
         holding_stop_loss_records=holding_stop_loss_records,
         holding_reduction_records=holding_reduction_records,
-        holding_portfolio_liquidation_records=holding_portfolio_liquidation_records,
-        holding_portfolio_risk_actions=holding_portfolio_risk_actions,
         break_even_round_ts=break_even_round_ts,
         break_even_checks=break_even_checks,
         break_even_records=break_even_records,
