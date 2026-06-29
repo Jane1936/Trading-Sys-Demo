@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pre_safety_module import Candle5m, PreSafetyModule
 
 
-def test_abnormal_wick_requires_70_percent_wick_1_percent_span_and_2_5x_body():
+def test_abnormal_wick_requires_70_percent_wick_1_5_percent_span_and_2_5x_body():
     hit, cond1_ratio, cond2_ratio, cond3_ratio = PreSafetyModule._is_abnormal(
         Candle5m("BANK", 1, 2, 100.0, 110.0, 100.0, 102.0)
     )
@@ -18,6 +18,17 @@ def test_abnormal_wick_requires_70_percent_wick_1_percent_span_and_2_5x_body():
     assert cond3_ratio == 4.0
 
 
+def test_abnormal_wick_rejects_span_below_1_5_percent():
+    hit, cond1_ratio, cond2_ratio, cond3_ratio = PreSafetyModule._is_abnormal(
+        Candle5m("BANK", 1, 2, 100.0, 101.4, 100.0, 100.2)
+    )
+
+    assert hit is False
+    assert cond1_ratio >= 0.7
+    assert cond2_ratio < 0.015
+    assert cond3_ratio >= 2.5
+
+
 def test_abnormal_wick_rejects_previous_60_percent_and_6_percent_only_rule():
     hit, cond1_ratio, cond2_ratio, cond3_ratio = PreSafetyModule._is_abnormal(
         Candle5m("BANK", 1, 2, 100.0, 106.0, 100.0, 102.0)
@@ -25,7 +36,7 @@ def test_abnormal_wick_rejects_previous_60_percent_and_6_percent_only_rule():
 
     assert hit is False
     assert cond1_ratio < 0.7
-    assert cond2_ratio >= 0.01
+    assert cond2_ratio >= 0.015
 
 
 def test_detect_for_symbol_records_symbol_when_any_recent_three_closed_5m_candle_matches(tmp_path):

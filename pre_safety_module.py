@@ -5,7 +5,7 @@ Scan rule (per 15-minute decision round):
 - For each candle among the first/second/third 5m candle (oldest -> newest),
   if any candle satisfies all of the following:
   1) upper or lower wick length / (high - low) >= 0.7
-  2) (high - low) / open >= 0.01
+  2) (high - low) / open >= 0.015
   3) the same upper or lower wick length >= abs(close - open) * 2.5
   then record the symbol as an abnormal wick symbol for this round.
 """
@@ -198,7 +198,7 @@ class PreSafetyModule:
         cond3_ratio = math.inf if body == 0 and same_direction_wick > 0 else (same_direction_wick / body if body > 0 else 0.0)
         upper_hit = upper_wick_ratio >= 0.7 and upper_wick >= body * 2.5
         lower_hit = lower_wick_ratio >= 0.7 and lower_wick >= body * 2.5
-        is_hit = (upper_hit or lower_hit) and cond2_ratio >= 0.01
+        is_hit = (upper_hit or lower_hit) and cond2_ratio >= 0.015
         return is_hit, cond1_ratio, cond2_ratio, cond3_ratio
 
     def detect_for_symbol(self, symbol: str, now_ms: Optional[int] = None) -> List[AbnormalWickEvent]:
