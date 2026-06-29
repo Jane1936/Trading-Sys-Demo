@@ -1,13 +1,13 @@
 """Pre-trade safety module for abnormal wick (pin) detection.
 
 Scan rule (per 15-minute decision round):
-- Read the latest 3 closed 5m candles in the latest 15-minute window.
+- Read the latest 3 closed 5m candles for each symbol in the current 15-minute round.
 - For each candle among the first/second/third 5m candle (oldest -> newest),
-  if it satisfies both:
-  1) (high - max(open, close)) / (high - low) >= 0.6 OR
-     (min(open, close) - low) / (high - low) >= 0.6
-  2) (high - low) / open >= 0.06
-  then record an abnormal wick event.
+  if any candle satisfies all of the following:
+  1) upper or lower wick length / (high - low) >= 0.7
+  2) (high - low) / open >= 0.01
+  3) the same upper or lower wick length >= abs(close - open) * 2.5
+  then record the symbol as an abnormal wick symbol for this round.
 """
 
 from __future__ import annotations
@@ -173,12 +173,17 @@ class PreSafetyModule:
         if span <= 0 or candle.open <= 0:
             return False, math.inf, math.inf
 
-        upper_wick_ratio = (candle.high - max(candle.open, candle.close)) / span
-        lower_wick_ratio = (min(candle.open, candle.close) - candle.low) / span
+        upper_wick = candle.high - max(candle.open, candle.close)
+        lower_wick = min(candle.open, candle.close) - candle.low
+        upper_wick_ratio = upper_wick / span
+        lower_wick_ratio = lower_wick / span
         cond1_ratio = max(upper_wick_ratio, lower_wick_ratio)
 
         cond2_ratio = span / candle.open
-        is_hit = (upper_wick_ratio >= 0.6 or lower_wick_ratio >= 0.6) and cond2_ratio >= 0.06
+        body = abs(candle.close - candle.open)
+        upper_hit = upper_wick_ratio >= 0.7 and upper_wick >= body * 2.5
+        lower_hit = lower_wick_ratio >= 0.7 and lower_wick >= body * 2.5
+        is_hit = (upper_hit or lower_hit) and cond2_ratio >= 0.01
         return is_hit, cond1_ratio, cond2_ratio
 
     def detect_for_symbol(self, symbol: str, now_ms: Optional[int] = None) -> List[AbnormalWickEvent]:
