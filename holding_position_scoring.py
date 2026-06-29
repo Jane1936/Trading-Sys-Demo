@@ -452,7 +452,11 @@ class HoldingPositionScoringSystem:
         open_score = self._latest_open_trade_total_score(symbol)
         open_entry_price = self._latest_open_trade_entry_price(symbol)
         open_trade_created_at = self._latest_open_trade_created_at(symbol)
-        score_drawdown = Decimal("0")
+        score_drawdown = (
+            self._decimal_from(open_score, Decimal("0")) - self._decimal_from(latest_score, Decimal("0"))
+            if open_score != "" and latest_score != ""
+            else Decimal("0")
+        )
         recent_score_drawdown = (
             self._decimal_from(previous_score, Decimal("0")) - self._decimal_from(latest_score, Decimal("0"))
             if latest_score != "" and previous_score != ""
@@ -637,22 +641,36 @@ class HoldingPositionScoringSystem:
                     raise RuntimeError("reduction_market_quantity_rounded_to_zero")
                 if not limit_price or self._decimal_from(limit_price, Decimal("0")) <= 0:
                     raise RuntimeError("reduction_limit_price_missing")
-                endpoint, params = TradingExperiment._exit_order_request({
-                    "symbol": exchange_symbol,
-                    "side": side,
-                    "type": "STOP",
-                    "quantity": self._fmt_decimal(remaining_quantity),
-                    "price": limit_price,
-                    "stopPrice": limit_price,
-                    "timeInForce": "GTC",
-                    "reduceOnly": "true",
-                    "workingType": "MARK_PRICE",
-                })
-                new_limit_response = self.account_manager._signed_post(endpoint, params)
-                raw_parts.append(str({"new_limit_order": new_limit_response}))
-                new_limit_order_id = TradingExperiment._exit_order_id(new_limit_response if isinstance(new_limit_response, dict) else None)
-                if not new_limit_order_id:
-                    raise RuntimeError(f"reduction_new_limit_order_id_missing: response={new_limit_response}")
+                stop_trigger = self._decimal_from(limit_price, Decimal("0"))
+                current_mark_price = self._decimal_from(check.current_price, Decimal("0"))
+                if current_mark_price <= 0:
+                    current_mark_price = self._current_symbol_price(exchange_symbol, position)
+                skip_reason = self._replacement_stop_immediate_trigger_reason(side, stop_trigger, current_mark_price)
+                if skip_reason:
+                    reason_parts.append(skip_reason)
+                else:
+                    endpoint, params = TradingExperiment._exit_order_request({
+                        "symbol": exchange_symbol,
+                        "side": side,
+                        "type": "STOP",
+                        "quantity": self._fmt_decimal(remaining_quantity),
+                        "price": limit_price,
+                        "stopPrice": limit_price,
+                        "timeInForce": "GTC",
+                        "reduceOnly": "true",
+                        "workingType": "MARK_PRICE",
+                    })
+                    try:
+                        new_limit_response = self.account_manager._signed_post(endpoint, params)
+                    except Exception as exc:
+                        if not self._is_order_would_immediately_trigger(exc):
+                            raise
+                        reason_parts.append(f"reduction_replacement_stop_skipped_immediate_trigger: side={side}; stop_price={self._fmt_decimal(stop_trigger)}; current_mark_price={self._fmt_decimal(current_mark_price)}")
+                    else:
+                        raw_parts.append(str({"new_limit_order": new_limit_response}))
+                        new_limit_order_id = TradingExperiment._exit_order_id(new_limit_response if isinstance(new_limit_response, dict) else None)
+                        if not new_limit_order_id:
+                            raise RuntimeError(f"reduction_new_limit_order_id_missing: response={new_limit_response}")
             market_response = self.account_manager._signed_post("/fapi/v1/order", self._market_close_order_params(exchange_symbol, side, reduced_quantity))
             raw_parts.append(str({"market_order": market_response}))
             market_order_id = str(market_response.get("orderId", "")) if isinstance(market_response, dict) else ""
@@ -667,6 +685,26 @@ class HoldingPositionScoringSystem:
             if self._is_reduce_only_rejected(exc):
                 reason_parts.append(f"reduce_only_diagnostics: {self._reduce_only_diagnostics(exchange_symbol)}")
         return PositionReductionRecord(0, check.symbol, check.decision_round_ts, side, matched_rule, self._fmt_decimal(percent), self._fmt_decimal(original_quantity), self._fmt_decimal(reduced_quantity), self._fmt_decimal(remaining_quantity), old_limit_order_id, new_limit_order_id, market_order_id, limit_price, status, "; ".join(reason_parts), " | ".join(raw_parts), now_ms)
+
+
+    @staticmethod
+    def _replacement_stop_immediate_trigger_reason(side: str, stop_price: Decimal, current_mark_price: Decimal) -> str:
+        if stop_price <= 0 or current_mark_price <= 0:
+            return ""
+        normalized_side = side.upper()
+        would_trigger = (normalized_side == "SELL" and stop_price >= current_mark_price) or (normalized_side == "BUY" and stop_price <= current_mark_price)
+        if not would_trigger:
+            return ""
+        return (
+            "reduction_replacement_stop_skipped_immediate_trigger: "
+            f"side={normalized_side}; stop_price={HoldingPositionScoringSystem._fmt_decimal(stop_price)}; "
+            f"current_mark_price={HoldingPositionScoringSystem._fmt_decimal(current_mark_price)}"
+        )
+
+    @staticmethod
+    def _is_order_would_immediately_trigger(exc: Exception) -> bool:
+        message = str(exc)
+        return "-2021" in message or "Order would immediately trigger" in message
 
     @staticmethod
     def _reduction_action_for_rules(rule_name: str) -> tuple[str, Decimal]:
