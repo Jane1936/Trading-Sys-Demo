@@ -132,7 +132,6 @@ class HoldingPositionScoringSystem:
     RECORDS_TABLE = "holding_stop_loss_records"
     PORTFOLIO_RISK_TABLE = "holding_portfolio_risk_checks"
     PORTFOLIO_RISK_SUMMARY_TABLE = "holding_portfolio_risk_summaries"
-    PORTFOLIO_RISK_ACTIONS_TABLE = "holding_portfolio_risk_actions"
     REDUCTION_CHECKS_TABLE = "holding_position_reduction_checks"
     REDUCTION_RECORDS_TABLE = "holding_position_reduction_records"
     REDUCTION_TAG_ABSOLUTE_SCORE_DRAWDOWN = "绝对分数大幅回撤"
@@ -259,22 +258,6 @@ class HoldingPositionScoringSystem:
             )
             conn.execute(
                 f"""
-                CREATE TABLE IF NOT EXISTS {self.PORTFOLIO_RISK_ACTIONS_TABLE} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    symbol TEXT NOT NULL DEFAULT '',
-                    decision_round_ts INTEGER NOT NULL,
-                    total_risk TEXT NOT NULL,
-                    total_score TEXT NOT NULL DEFAULT '',
-                    action TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    reason TEXT NOT NULL,
-                    raw_response TEXT NOT NULL DEFAULT '',
-                    created_at INTEGER NOT NULL
-                )
-                """
-            )
-            conn.execute(
-                f"""
                 CREATE TABLE IF NOT EXISTS {self.REDUCTION_RECORDS_TABLE} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     symbol TEXT NOT NULL,
@@ -330,10 +313,6 @@ class HoldingPositionScoringSystem:
                 f"CREATE INDEX IF NOT EXISTS idx_{self.REDUCTION_RECORDS_TABLE}_created "
                 f"ON {self.REDUCTION_RECORDS_TABLE}(created_at DESC, symbol ASC)"
             )
-            conn.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_{self.PORTFOLIO_RISK_ACTIONS_TABLE}_created "
-                f"ON {self.PORTFOLIO_RISK_ACTIONS_TABLE}(created_at DESC, status ASC, symbol ASC)"
-            )
 
     def run_round(self, decision_round_ts: int | None = None) -> dict[str, Any]:
         """Run one 15m holding-position round.
@@ -355,7 +334,6 @@ class HoldingPositionScoringSystem:
         reduction_checks = self.evaluate_reduction_conditions(positions=reduction_positions, decision_round_ts=round_ts, checked_at=now_ms)
         reduction_records = self._execute_reduction_actions(reduction_checks, reduction_positions, now_ms)
         portfolio_risk = self.calculate_portfolio_risk(positions=reduction_positions, decision_round_ts=round_ts, calculated_at=now_ms)
-        risk_action = self._enforce_portfolio_risk_limit(portfolio_risk, reduction_positions, now_ms)
         return {
             "decision_round_ts": round_ts,
             "checked": stop_loss_result["checked"],
@@ -366,7 +344,7 @@ class HoldingPositionScoringSystem:
             "reduction_records": reduction_records,
             "total_risk": portfolio_risk.total_risk,
             "risk_position_count": portfolio_risk.position_count,
-            "portfolio_risk_action": risk_action,
+            "portfolio_risk_action": "",
         }
 
     def _run_stop_loss_rule_round(
@@ -856,73 +834,6 @@ class HoldingPositionScoringSystem:
             return []
         return [str(row["total_score"]) for row in rows if row["total_score"] is not None]
 
-    def _enforce_portfolio_risk_limit(self, summary: PortfolioRiskSummary, positions: list[dict[str, Any]], now_ms: int) -> str:
-        if self._decimal_from(summary.total_risk, Decimal("0")) <= Decimal("18") or not summary.positions:
-            return ""
-
-        lowest_score = min(self._decimal_from(row.total_score, Decimal("999999999")) for row in summary.positions)
-        lowest_rows = [
-            row
-            for row in sorted(summary.positions, key=lambda item: item.symbol)
-            if self._decimal_from(row.total_score, Decimal("999999999")) == lowest_score
-        ]
-
-        if len(lowest_rows) == 1:
-            return self._execute_portfolio_risk_liquidation(lowest_rows[0], positions, summary, now_ms)
-
-        actions: list[str] = []
-        for row in lowest_rows:
-            position = next((p for p in positions if self._base_symbol(str(p.get("symbol", ""))) == row.symbol), None)
-            if not position:
-                action = f"portfolio_risk_gt_18_no_position_found_for_lowest_score_symbol={row.symbol}"
-                self._save_portfolio_risk_action(row.symbol, summary, row.total_score, "market_close", "skipped", action, "", now_ms)
-                actions.append(action)
-                continue
-            unrealized_pnl = self._position_unrealized_pnl(position)
-            if unrealized_pnl < 0:
-                actions.append(self._execute_portfolio_risk_liquidation(row, positions, summary, now_ms, unrealized_pnl=unrealized_pnl))
-            else:
-                action = f"skipped_non_negative_unrealized_pnl_symbol={row.symbol}; unrealized_pnl={self._fmt_decimal(unrealized_pnl)}"
-                self._save_portfolio_risk_action(row.symbol, summary, row.total_score, "market_close", "skipped", action, "", now_ms)
-                actions.append(action)
-        return " | ".join(actions)
-
-    def _execute_portfolio_risk_liquidation(
-        self,
-        risk_row: PortfolioRiskPosition,
-        positions: list[dict[str, Any]],
-        summary: PortfolioRiskSummary,
-        now_ms: int,
-        unrealized_pnl: Decimal | None = None,
-    ) -> str:
-        position = next((p for p in positions if self._base_symbol(str(p.get("symbol", ""))) == risk_row.symbol), None)
-        if not position:
-            action = f"portfolio_risk_gt_18_no_position_found_for_lowest_score_symbol={risk_row.symbol}"
-            self._save_portfolio_risk_action(risk_row.symbol, summary, risk_row.total_score, "market_close", "skipped", action, "", now_ms)
-            return action
-        amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
-        if amount == 0:
-            action = f"portfolio_risk_gt_18_lowest_score_symbol_zero_position={risk_row.symbol}"
-            self._save_portfolio_risk_action(risk_row.symbol, summary, risk_row.total_score, "market_close", "skipped", action, "", now_ms)
-            return action
-        exchange_symbol = self._exchange_symbol(position, risk_row.symbol)
-        side = "SELL" if amount > 0 else "BUY"
-        quantity = abs(amount)
-        cancel_reason = self._cancel_existing_exit_orders(exchange_symbol)
-        try:
-            response = self.account_manager._signed_post("/fapi/v1/order", self._market_close_order_params(exchange_symbol, side, quantity))
-            order_id = str(response.get("orderId", "")) if isinstance(response, dict) else ""
-            pnl_reason = f"; unrealized_pnl={self._fmt_decimal(unrealized_pnl)}" if unrealized_pnl is not None else ""
-            record = HoldingStopLossRecord(0, risk_row.symbol, summary.decision_round_ts, side, self._fmt_decimal(quantity), 0, 0, 0, 0, "submitted", order_id, "", f"portfolio_total_risk_gt_18; total_risk={summary.total_risk}; total_score={risk_row.total_score}{pnl_reason}; {cancel_reason}", str(response), now_ms)
-            self._save_record(record)
-            action = f"submitted_market_close_symbol={risk_row.symbol}; order_id={order_id}"
-            self._save_portfolio_risk_action(risk_row.symbol, summary, risk_row.total_score, "market_close", "submitted", f"{action}{pnl_reason}; {cancel_reason}", str(response), now_ms)
-            return action
-        except Exception as exc:
-            action = f"portfolio_risk_market_close_failed_symbol={risk_row.symbol}: {type(exc).__name__}: {exc}; {cancel_reason}"
-            self._save_portfolio_risk_action(risk_row.symbol, summary, risk_row.total_score, "market_close", "failed", action, "", now_ms)
-            return action
-
     def _position_unrealized_pnl(self, position: dict[str, Any]) -> Decimal:
         return self._decimal_from(position.get("unRealizedProfit", position.get("unrealizedProfit")), Decimal("0"))
 
@@ -1008,27 +919,6 @@ class HoldingPositionScoringSystem:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [(row.symbol, row.decision_round_ts, row.position_amt, row.latest_15m_close, row.account_equity_usdt, row.leverage, row.risk, row.total_score, row.reason, row.calculated_at) for row in rows],
-            )
-
-    def _save_portfolio_risk_action(
-        self,
-        symbol: str,
-        summary: PortfolioRiskSummary,
-        total_score: str,
-        action: str,
-        status: str,
-        reason: str,
-        raw_response: str,
-        created_at: int,
-    ) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                f"""
-                INSERT INTO {self.PORTFOLIO_RISK_ACTIONS_TABLE}
-                (symbol, decision_round_ts, total_risk, total_score, action, status, reason, raw_response, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (symbol, summary.decision_round_ts, summary.total_risk, total_score, action, status, reason, raw_response, created_at),
             )
 
     def get_latest_portfolio_risk(self) -> PortfolioRiskSummary | None:
@@ -1386,37 +1276,12 @@ class HoldingPositionScoringSystem:
             return conn.execute(
                 f"""
                 SELECT * FROM {self.RECORDS_TABLE}
-                WHERE reason NOT LIKE 'portfolio_total_risk_gt_18%'
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?
                 """,
                 (limit,),
             ).fetchall()
 
-    def recent_portfolio_liquidation_records(self, limit: int = 100) -> list[sqlite3.Row]:
-        self.init_tables()
-        with self._connect() as conn:
-            return conn.execute(
-                f"""
-                SELECT * FROM {self.RECORDS_TABLE}
-                WHERE reason LIKE 'portfolio_total_risk_gt_18%'
-                ORDER BY created_at DESC, id DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
-
-    def recent_portfolio_risk_actions(self, limit: int = 100) -> list[sqlite3.Row]:
-        self.init_tables()
-        with self._connect() as conn:
-            return conn.execute(
-                f"""
-                SELECT * FROM {self.PORTFOLIO_RISK_ACTIONS_TABLE}
-                ORDER BY created_at DESC, id DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
 
     @staticmethod
     def _base_symbol(symbol: str) -> str:

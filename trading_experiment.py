@@ -32,7 +32,8 @@ class ExperimentConfig:
     exit_order_missing_position_retries: int = 3
     exit_order_missing_position_retry_delay_seconds: Decimal = Decimal("0.5")
     percent_price_ioc_slippage: Decimal = Decimal("0.01")
-    max_total_risk: Decimal = Decimal("12")
+    high_total_risk_threshold: Decimal = Decimal("18")
+    high_total_risk_min_total_score: int = 81
 
 
 @dataclass(frozen=True)
@@ -105,8 +106,8 @@ class TradingExperiment:
     * experiment equity matches the web page "experiment USDT equity" metric;
     * before opening, query current positions and skip if there are already 10;
     * the experiment's total margin budget is capped at 1,000 USDT;
-    * before each new entry, query current total portfolio risk and skip the
-      rest of the round if it is already greater than 12;
+    * before each new entry, query current total portfolio risk; when it is
+      greater than 18, only candidates with total_score >= 81 may open;
     * before each new entry, query the latest experiment USDT equity from Binance;
     * each candidate's base margin is sized from 1% equity risk, stop-loss distance,
       and leverage: base margin = (equity * 1%) / (distance_ratio * leverage);
@@ -282,10 +283,13 @@ class TradingExperiment:
                 positions=positions,
                 decision_round_ts=candidate.decision_round_ts,
             )
-            if current_total_risk > self.config.max_total_risk:
-                self._record_skip(candidate, account_equity, max_loss, "current_total_risk_gt_12")
+            if (
+                current_total_risk > self.config.high_total_risk_threshold
+                and candidate.total_score < self.config.high_total_risk_min_total_score
+            ):
+                self._record_skip(candidate, account_equity, max_loss, "current_total_risk_gt_18_and_total_score_lt_81")
                 skipped += 1
-                break
+                continue
             account = self._fetch_account()
             available_balance = self._decimal_from(account.get("availableBalance"), Decimal("0"))
             account_equity = self._fetch_experiment_usdt_equity()

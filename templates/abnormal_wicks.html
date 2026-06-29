@@ -1126,93 +1126,6 @@
           </div>
         </div>
 
-
-        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
-          <div class="symbol-strip collapsible-header">
-            <div>
-              <div><strong>风险强平记录</strong></div>
-              <div class="muted">当组合总风险 &gt; 18 时，记录按最低 total_score 触发的 reduceOnly MARKET 市价全平操作。</div>
-            </div>
-            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
-          </div>
-          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>created_at</th>
-                <th>symbol</th>
-                <th>轮次</th>
-                <th>side</th>
-                <th>quantity</th>
-                <th>status</th>
-                <th>order_id</th>
-                <th>已实现盈亏</th>
-                <th>reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in holding_portfolio_liquidation_records %}
-              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
-                <td>{{ row.created_at|fmt_ms_datetime }}</td>
-                <td>{{ row.symbol }}</td>
-                <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
-                <td>{{ row.side }}</td>
-                <td>{{ row.quantity }}</td>
-                <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
-                <td>{{ row.order_id or '-' }}</td>
-                <td>{{ row.realized_pnl if row.realized_pnl else '-' }}</td>
-                <td>{{ row.reason }}</td>
-              </tr>
-              {% else %}
-              <tr><td class="empty" colspan="9">暂无风险强平记录</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        </div>
-        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
-          <div class="symbol-strip collapsible-header">
-            <div>
-              <div><strong>组合风险动作记录</strong></div>
-              <div class="muted">记录组合总风险 &gt; 18 后的强平成功、失败与跳过原因，用于排查风险表超阈值但强平记录为空的情况。</div>
-            </div>
-            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
-          </div>
-          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整动作记录。</div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>created_at</th>
-                <th>symbol</th>
-                <th>轮次</th>
-                <th>total_risk</th>
-                <th>total_score</th>
-                <th>action</th>
-                <th>status</th>
-                <th>reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in holding_portfolio_risk_actions %}
-              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
-                <td>{{ row.created_at|fmt_ms_datetime }}</td>
-                <td>{{ row.symbol or '-' }}</td>
-                <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
-                <td>{{ row.total_risk }}</td>
-                <td>{{ row.total_score if row.total_score else '-' }}</td>
-                <td>{{ row.action }}</td>
-                <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
-                <td>{{ row.reason }}</td>
-              </tr>
-              {% else %}
-              <tr><td class="empty" colspan="8">暂无组合风险动作记录</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        </div>
         <div class="critical-section sky-theme-section" aria-label="关键保本止盈5分钟扫描结果">
         <div class="symbol-strip">
           <div><strong>保本止盈策略：5分钟扫描结果</strong></div>
@@ -1593,7 +1506,7 @@
         </div>
         <div id="filled-sell-orders-error" class="account-error"></div>
         <div class="tip">数据来自 Binance USDⓈ-M Futures <code>userTrades</code> 成交明细；同一 symbol、同一 order_id、同一方向的多笔成交会合并为一行；成交价格为按成交额/成交数量计算的均价。</div>
-        <div class="tip"><strong>止盈/止损原因显示规则：</strong>仅对 SELL 成交标注原因；优先按 symbol、成交时间（±5分钟）和成交数量匹配本地策略记录，命中优先级依次为：组合风险强平（止损记录 reason 以 <code>portfolio_total_risk_gt_18</code> 开头）、结构止损（止损记录）、减仓（减仓操作记录）、移动追踪止盈、分批止盈。若没有匹配到策略记录，则按已实现盈亏判断：realized_pnl &gt; 0 显示“硬止盈”，否则显示“硬止损”；BUY 成交不显示原因。</div>
+        <div class="tip"><strong>止盈/止损原因显示规则：</strong>仅对 SELL 成交标注原因；优先按 symbol、成交时间（±5分钟）和成交数量匹配本地策略记录，命中优先级依次为：结构止损（止损记录）、减仓（减仓操作记录）、移动追踪止盈、分批止盈。若没有匹配到策略记录，则按已实现盈亏判断：realized_pnl &gt; 0 显示“硬止盈”，否则显示“硬止损”；BUY 成交不显示原因。</div>
         <div id="filled-orders-summary" class="filled-orders-summary" aria-label="已完成订单统计">
           <div class="account-metric">
             <div class="account-metric-label">已完成订单数量</div>
