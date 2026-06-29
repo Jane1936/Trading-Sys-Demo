@@ -339,6 +339,62 @@ def test_break_even_strategy_recognizes_open_algo_order_order_type_field():
     assert fake_account.signed_deletes == [("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "123"})]
 
 
+def test_break_even_strategy_cancels_stale_stop_limit_algo_order():
+    fake_account = FakeAccountManager()
+
+    def signed_get(endpoint, params=None):
+        if endpoint == "/fapi/v3/balance":
+            return [{"asset": "USDT", "balance": "5100"}]
+        if endpoint == "/fapi/v3/positionRisk":
+            return [
+                {
+                    "symbol": "BANKUSDT",
+                    "positionAmt": "2",
+                    "entryPrice": "10",
+                    "unRealizedProfit": "20",
+                }
+            ]
+        if endpoint == "/fapi/v1/openAlgoOrders":
+            return [
+                {
+                    "symbol": "BANKUSDT",
+                    "side": "SELL",
+                    "orderType": "STOP",
+                    "status": "NEW",
+                    "algoId": "321",
+                    "triggerPrice": "9",
+                    "price": "9",
+                }
+            ]
+        if endpoint == "/fapi/v1/openOrders":
+            return []
+        raise AssertionError(f"unexpected signed endpoint {endpoint}")
+
+    fake_account._signed_get = signed_get
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        result = strategy.run_round()
+
+    assert result["triggered"] == 1
+    assert fake_account.signed_deletes == [("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "321"})]
+    assert fake_account.signed_posts == [
+        (
+            "/fapi/v1/algoOrder",
+            {
+                "symbol": "BANKUSDT",
+                "side": "SELL",
+                "type": "STOP_MARKET",
+                "quantity": "2",
+                "triggerPrice": "10",
+                "reduceOnly": "true",
+                "algoType": "CONDITIONAL",
+            },
+        )
+    ]
+
+
 def test_break_even_strategy_records_failure_when_new_stop_loss_response_has_no_order_id():
     fake_account = FakeAccountManager()
 

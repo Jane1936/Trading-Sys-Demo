@@ -276,7 +276,7 @@ class BreakEvenTakeProfitStrategy:
     @staticmethod
     def _is_stop_loss_order(order: dict[str, Any]) -> bool:
         order_type = str(order.get("type") or order.get("orderType") or "").upper()
-        return order_type in {"STOP_MARKET", "LIMIT"}
+        return order_type in {"STOP", "STOP_MARKET", "LIMIT"}
 
     @staticmethod
     def _is_limit_order(order: dict[str, Any]) -> bool:
