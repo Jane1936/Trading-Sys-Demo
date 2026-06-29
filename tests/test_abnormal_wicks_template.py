@@ -58,6 +58,20 @@ def test_filled_orders_query_supports_configurable_days_dropdown():
     assert 'Math.max(1, Math.min(Math.trunc(days), 30))' in template
     assert 'days=${encodeURIComponent(days)}' in template
 
+
+def test_holding_reduction_metrics_have_threshold_highlight_classes():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    assert "reduction-drawdown-warning" in template
+    assert "reduction-drawdown-danger" in template
+    assert "price_drawdown_percent >= 3.5" in template
+    assert "price_drawdown_percent >= 3" in template
+    assert "reduction-pnl-profit" in template
+    assert "reduction-pnl-strong-profit" in template
+    assert "pnl_r_multiple >= 2" in template
+    assert "pnl_r_multiple >= 1" in template
+
+
 def _insert_abnormal_wick_event(conn, symbol, detected_at):
     conn.execute(
         """
