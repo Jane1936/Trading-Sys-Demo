@@ -35,15 +35,24 @@ class AbnormalWickEvent:
     symbol: str
     decision_round_ts: int
     candle_index: int
-    first_candle_open_time: int
-    first_candle_close_time: int
+    candle_index_open_time: int
+    candle_index_close_time: int
     open: float
     high: float
     low: float
     close: float
     cond1_ratio: float
     cond2_ratio: float
+    cond3_ratio: float
     detected_at: int
+
+    @property
+    def first_candle_open_time(self) -> int:
+        return self.candle_index_open_time
+
+    @property
+    def first_candle_close_time(self) -> int:
+        return self.candle_index_close_time
 
 
 class PreSafetyModule:
@@ -73,6 +82,7 @@ class PreSafetyModule:
                     close REAL NOT NULL,
                     cond1_ratio REAL NOT NULL,
                     cond2_ratio REAL NOT NULL,
+                    cond3_ratio REAL NOT NULL DEFAULT 0,
                     detected_at INTEGER NOT NULL,
                     PRIMARY KEY (symbol, decision_round_ts, candle_index)
                 )
@@ -91,6 +101,8 @@ class PreSafetyModule:
             for row in conn.execute("PRAGMA table_info(abnormal_wick_events)").fetchall()
         }
         if "candle_index" in cols:
+            if "cond3_ratio" not in cols:
+                conn.execute("ALTER TABLE abnormal_wick_events ADD COLUMN cond3_ratio REAL NOT NULL DEFAULT 0")
             return
 
         conn.execute("ALTER TABLE abnormal_wick_events RENAME TO abnormal_wick_events_old")
@@ -108,6 +120,7 @@ class PreSafetyModule:
                 close REAL NOT NULL,
                 cond1_ratio REAL NOT NULL,
                 cond2_ratio REAL NOT NULL,
+                cond3_ratio REAL NOT NULL DEFAULT 0,
                 detected_at INTEGER NOT NULL,
                 PRIMARY KEY (symbol, decision_round_ts, candle_index)
             )
@@ -119,14 +132,14 @@ class PreSafetyModule:
                 symbol, decision_round_ts, candle_index,
                 first_candle_open_time, first_candle_close_time,
                 open, high, low, close,
-                cond1_ratio, cond2_ratio,
+                cond1_ratio, cond2_ratio, cond3_ratio,
                 detected_at
             )
             SELECT
                 symbol, decision_round_ts, 1,
                 first_candle_open_time, first_candle_close_time,
                 open, high, low, close,
-                cond1_ratio, cond2_ratio,
+                cond1_ratio, cond2_ratio, 0,
                 detected_at
             FROM abnormal_wick_events_old
             """
@@ -168,10 +181,10 @@ class PreSafetyModule:
         return (now_ms // round_ms) * round_ms
 
     @staticmethod
-    def _is_abnormal(candle: Candle5m) -> tuple[bool, float, float]:
+    def _is_abnormal(candle: Candle5m) -> tuple[bool, float, float, float]:
         span = candle.high - candle.low
         if span <= 0 or candle.open <= 0:
-            return False, math.inf, math.inf
+            return False, math.inf, math.inf, math.inf
 
         upper_wick = candle.high - max(candle.open, candle.close)
         lower_wick = min(candle.open, candle.close) - candle.low
@@ -181,10 +194,12 @@ class PreSafetyModule:
 
         cond2_ratio = span / candle.open
         body = abs(candle.close - candle.open)
+        same_direction_wick = upper_wick if upper_wick_ratio >= lower_wick_ratio else lower_wick
+        cond3_ratio = math.inf if body == 0 and same_direction_wick > 0 else (same_direction_wick / body if body > 0 else 0.0)
         upper_hit = upper_wick_ratio >= 0.7 and upper_wick >= body * 2.5
         lower_hit = lower_wick_ratio >= 0.7 and lower_wick >= body * 2.5
         is_hit = (upper_hit or lower_hit) and cond2_ratio >= 0.01
-        return is_hit, cond1_ratio, cond2_ratio
+        return is_hit, cond1_ratio, cond2_ratio, cond3_ratio
 
     def detect_for_symbol(self, symbol: str, now_ms: Optional[int] = None) -> List[AbnormalWickEvent]:
         candles = self._get_latest_3_closed_5m(symbol)
@@ -196,7 +211,7 @@ class PreSafetyModule:
         detected_at = int(time.time() * 1000)
 
         for idx, candle in enumerate(candles, start=1):
-            hit, cond1_ratio, cond2_ratio = self._is_abnormal(candle)
+            hit, cond1_ratio, cond2_ratio, cond3_ratio = self._is_abnormal(candle)
             if not hit:
                 continue
 
@@ -204,14 +219,15 @@ class PreSafetyModule:
                 symbol=symbol,
                 decision_round_ts=decision_round_ts,
                 candle_index=idx,
-                first_candle_open_time=candle.open_time,
-                first_candle_close_time=candle.close_time,
+                candle_index_open_time=candle.open_time,
+                candle_index_close_time=candle.close_time,
                 open=candle.open,
                 high=candle.high,
                 low=candle.low,
                 close=candle.close,
                 cond1_ratio=cond1_ratio,
                 cond2_ratio=cond2_ratio,
+                cond3_ratio=cond3_ratio,
                 detected_at=detected_at,
             )
             self._save_event(event)
@@ -228,10 +244,10 @@ class PreSafetyModule:
                     candle_index,
                     first_candle_open_time, first_candle_close_time,
                     open, high, low, close,
-                    cond1_ratio, cond2_ratio,
+                    cond1_ratio, cond2_ratio, cond3_ratio,
                     detected_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, decision_round_ts, candle_index) DO UPDATE SET
                     first_candle_open_time=excluded.first_candle_open_time,
                     first_candle_close_time=excluded.first_candle_close_time,
@@ -241,20 +257,22 @@ class PreSafetyModule:
                     close=excluded.close,
                     cond1_ratio=excluded.cond1_ratio,
                     cond2_ratio=excluded.cond2_ratio,
+                    cond3_ratio=excluded.cond3_ratio,
                     detected_at=excluded.detected_at
                 """,
                 (
                     event.symbol,
                     event.decision_round_ts,
                     event.candle_index,
-                    event.first_candle_open_time,
-                    event.first_candle_close_time,
+                    event.candle_index_open_time,
+                    event.candle_index_close_time,
                     event.open,
                     event.high,
                     event.low,
                     event.close,
                     event.cond1_ratio,
                     event.cond2_ratio,
+                    event.cond3_ratio,
                     event.detected_at,
                 ),
             )
@@ -269,7 +287,7 @@ class PreSafetyModule:
                        candle_index,
                        first_candle_open_time, first_candle_close_time,
                        open, high, low, close,
-                       cond1_ratio, cond2_ratio,
+                       cond1_ratio, cond2_ratio, cond3_ratio,
                        detected_at
                 FROM abnormal_wick_events
                 {where_clause}
@@ -284,14 +302,15 @@ class PreSafetyModule:
                 symbol=row["symbol"],
                 decision_round_ts=int(row["decision_round_ts"]),
                 candle_index=int(row["candle_index"]),
-                first_candle_open_time=int(row["first_candle_open_time"]),
-                first_candle_close_time=int(row["first_candle_close_time"]),
+                candle_index_open_time=int(row["first_candle_open_time"]),
+                candle_index_close_time=int(row["first_candle_close_time"]),
                 open=float(row["open"]),
                 high=float(row["high"]),
                 low=float(row["low"]),
                 close=float(row["close"]),
                 cond1_ratio=float(row["cond1_ratio"]),
                 cond2_ratio=float(row["cond2_ratio"]),
+                cond3_ratio=float(row["cond3_ratio"]),
                 detected_at=int(row["detected_at"]),
             )
             for row in rows
@@ -309,7 +328,7 @@ class PreSafetyModule:
                        candle_index,
                        first_candle_open_time, first_candle_close_time,
                        open, high, low, close,
-                       cond1_ratio, cond2_ratio,
+                       cond1_ratio, cond2_ratio, cond3_ratio,
                        detected_at
                 FROM abnormal_wick_events
                 WHERE symbol = ?
@@ -325,14 +344,15 @@ class PreSafetyModule:
                 symbol=row["symbol"],
                 decision_round_ts=int(row["decision_round_ts"]),
                 candle_index=int(row["candle_index"]),
-                first_candle_open_time=int(row["first_candle_open_time"]),
-                first_candle_close_time=int(row["first_candle_close_time"]),
+                candle_index_open_time=int(row["first_candle_open_time"]),
+                candle_index_close_time=int(row["first_candle_close_time"]),
                 open=float(row["open"]),
                 high=float(row["high"]),
                 low=float(row["low"]),
                 close=float(row["close"]),
                 cond1_ratio=float(row["cond1_ratio"]),
                 cond2_ratio=float(row["cond2_ratio"]),
+                cond3_ratio=float(row["cond3_ratio"]),
                 detected_at=int(row["detected_at"]),
             )
             for row in rows
@@ -388,9 +408,9 @@ def render_events_html(events: List[AbnormalWickEvent]) -> str:
     header = (
         "<table border='1' cellpadding='6' cellspacing='0'>"
         "<thead><tr>"
-        "<th>symbol</th><th>decision_round_ts</th><th>candle_index</th><th>first_open_time</th>"
-        "<th>open</th><th>high</th><th>low</th><th>close</th>"
-        "<th>cond1</th><th>cond2</th><th>detected_at</th>"
+        "<th>symbol</th><th>decision_round_ts</th><th>candle_index</th><th>candle_index_open_time</th>"
+        "<th>candle_index_open</th><th>candle_index_high</th><th>candle_index_low</th><th>candle_index_close</th>"
+        "<th>长上/下影占比</th><th>振幅度大小</th><th>同方向长影/实体 ratio</th><th>是否≥2.5倍</th><th>detected_at</th>"
         "</tr></thead><tbody>"
     )
     rows = "".join(
@@ -405,6 +425,8 @@ def render_events_html(events: List[AbnormalWickEvent]) -> str:
         f"<td>{e.close:.6f}</td>"
         f"<td>{e.cond1_ratio:.6f}</td>"
         f"<td>{e.cond2_ratio:.6f}</td>"
+        f"<td>{e.cond3_ratio:.6f}</td>"
+        f"<td>{'是' if e.cond3_ratio >= 2.5 else '否'}</td>"
         f"<td>{e.detected_at}</td>"
         "</tr>"
         for e in events
