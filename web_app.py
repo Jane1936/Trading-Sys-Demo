@@ -478,6 +478,11 @@ def abnormal_wicks():
     trading_experiment = TradingExperiment(db_path=DB_PATH)
     trading_records_since_ms = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp() * 1000)
     trading_trade_records = trading_experiment.recent_trade_records(limit=100, since_ms=trading_records_since_ms)
+    trading_new_open_symbols = sorted({
+        row.symbol
+        for row in trading_trade_records
+        if row.status == "opened" and row.decision_round_ts == openable_round_ts
+    })
     trading_position_snapshots = trading_experiment.latest_position_snapshots(limit=100)
     trading_error_records = trading_experiment.recent_error_records(limit=100, since_ms=trading_records_since_ms)
     trading_equity_trend_rows = _experiment_equity_trend_rows(trading_records_since_ms)
@@ -563,6 +568,7 @@ def abnormal_wicks():
         score_leverage_mapping_text=score_leverage_mapping_text,
         openable_min_total_score=openable_min_total_score,
         trading_trade_records=trading_trade_records,
+        trading_new_open_symbols=trading_new_open_symbols,
         trading_position_snapshots=trading_position_snapshots,
         trading_error_records=trading_error_records,
         trading_equity_trend_rows=trading_equity_trend_rows,
