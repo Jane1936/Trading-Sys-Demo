@@ -2,10 +2,32 @@ import sqlite3
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pre_safety_module import PreSafetyModule
+from web_app import _trading_used_margin_text
+
+
+def test_trading_position_snapshots_show_used_margin_summary():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    snapshot_index = template.index("<strong>交易实验持仓快照</strong>")
+    used_margin_index = template.index("已用资金：{{ trading_used_margin_usdt }} USDT")
+    table_index = template.index("<th>position_amt</th>", snapshot_index)
+
+    assert snapshot_index < used_margin_index < table_index
+
+
+def test_trading_used_margin_sums_abs_position_amt_times_mark_price():
+    snapshots = [
+        SimpleNamespace(position_amt="2", mark_price="10.5"),
+        SimpleNamespace(position_amt="-3", mark_price="20"),
+        SimpleNamespace(position_amt="bad", mark_price="100"),
+    ]
+
+    assert _trading_used_margin_text(snapshots) == "81"
 
 
 def test_trading_position_snapshots_render_after_trade_records():
