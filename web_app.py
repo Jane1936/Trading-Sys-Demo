@@ -136,11 +136,17 @@ def _trading_used_margin_text(position_snapshots: list[object]) -> str:
         try:
             position_amt = Decimal(str(getattr(row, "position_amt")))
             mark_price = Decimal(str(getattr(row, "mark_price")))
+            leverage = Decimal(str(getattr(row, "leverage")))
         except Exception:
             continue
-        if not position_amt.is_finite() or not mark_price.is_finite():
+        if (
+            not position_amt.is_finite()
+            or not mark_price.is_finite()
+            or not leverage.is_finite()
+            or leverage <= 0
+        ):
             continue
-        total += abs(position_amt) * mark_price
+        total += abs(position_amt) * mark_price / leverage
     return _format_decimal_display(total)
 
 
