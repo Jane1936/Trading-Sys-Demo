@@ -7,7 +7,6 @@ from pathlib import Path
 from openable_symbol_module import OpenableSymbol, OpenableSymbolModule
 from trading_experiment import ExperimentConfig, TradingExperiment
 
-
 class FakeAccountManager:
     def __init__(self):
         self.signed_posts = []
@@ -53,6 +52,35 @@ class FakeAccountManager:
             return []
         raise AssertionError(f"unexpected signed endpoint {endpoint}")
 
+class TenExistingPositionsAccountManager(FakeAccountManager):
+    def _public_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v1/exchangeInfo":
+            symbols = [
+                {
+                    "symbol": f"COIN{i}USDT",
+                    "filters": [
+                        {"filterType": "LOT_SIZE", "stepSize": "1"},
+                        {"filterType": "PRICE_FILTER", "tickSize": "0.000001"},
+                    ],
+                }
+                for i in range(10)
+            ]
+            symbols.append(
+                {
+                    "symbol": "BANKUSDT",
+                    "filters": [
+                        {"filterType": "LOT_SIZE", "stepSize": "1"},
+                        {"filterType": "PRICE_FILTER", "tickSize": "0.000001"},
+                    ],
+                }
+            )
+            return {"symbols": symbols}
+        return super()._public_get(endpoint, params)
+
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/positionRisk" and not params:
+            return [{"symbol": f"COIN{i}USDT", "positionAmt": "1", "leverage": "1"} for i in range(10)]
+        return super()._signed_get(endpoint, params)
 
 class CoarseLotAccountManager(FakeAccountManager):
     def _public_get(self, endpoint, params=None):
@@ -70,7 +98,6 @@ class CoarseLotAccountManager(FakeAccountManager):
             }
         return super()._public_get(endpoint, params)
 
-
 class FailingTakeProfitAccountManager(FakeAccountManager):
     def _signed_post(self, endpoint, params=None):
         if params and params.get("type") == "TAKE_PROFIT_MARKET":
@@ -87,7 +114,6 @@ class EmptyTickerAccountManager(FakeAccountManager):
             return {"markPrice": "2"}
         return super()._public_get(endpoint, params)
 
-
 class InvalidPriceAccountManager(FakeAccountManager):
     def _public_get(self, endpoint, params=None):
         if endpoint == "/fapi/v1/ticker/price":
@@ -95,7 +121,6 @@ class InvalidPriceAccountManager(FakeAccountManager):
         if endpoint == "/fapi/v1/premiumIndex":
             return {}
         return super()._public_get(endpoint, params)
-
 
 class InvalidSymbolOrderAccountManager(FakeAccountManager):
     def _signed_post(self, endpoint, params=None):
@@ -106,7 +131,6 @@ class InvalidSymbolOrderAccountManager(FakeAccountManager):
                 '{"code":-1121,"msg":"Invalid symbol."}'
             )
         return {"orderId": len(self.signed_posts)}
-
 
 class InvalidLeverageAccountManager(FakeAccountManager):
     def _public_get(self, endpoint, params=None):
@@ -142,7 +166,6 @@ class InvalidLeverageAccountManager(FakeAccountManager):
             return {"algoId": len(self.signed_posts)}
         return {"orderId": len(self.signed_posts)}
 
-
 class DelayedPositionAccountManager(FakeAccountManager):
     def __init__(self):
         super().__init__()
@@ -155,7 +178,6 @@ class DelayedPositionAccountManager(FakeAccountManager):
                 return [{"symbol": params["symbol"], "positionAmt": "0"}]
             return [{"symbol": params["symbol"], "positionAmt": "50"}]
         return super()._signed_get(endpoint, params)
-
 
 class MissingPositionOnceAccountManager(FakeAccountManager):
     def __init__(self):
@@ -183,7 +205,6 @@ class MissingPositionOnceAccountManager(FakeAccountManager):
         self.position_risk_requests.append((endpoint, dict(params or {})))
         return super()._signed_get(endpoint, params)
 
-
 class HighRiskAccountManager(FakeAccountManager):
     def _signed_get(self, endpoint, params=None):
         if endpoint == "/fapi/v3/positionRisk" and not params:
@@ -200,7 +221,6 @@ class HighRiskAccountManager(FakeAccountManager):
                 }
             ]
         return super()._signed_get(endpoint, params)
-
 
 class TradingExperimentSymbolTests(unittest.TestCase):
     def test_base_symbol_is_expanded_to_binance_usdt_pair_for_order_api_calls(self):
@@ -752,6 +772,36 @@ class TradingExperimentSymbolTests(unittest.TestCase):
                 {"symbol": "BANKUSDT", "leverage": 4},
             ],
         )
+
+    def test_opening_is_not_blocked_by_existing_position_count_when_balance_is_enough(self):
+        fake_account = TenExistingPositionsAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "klines.db")
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, close REAL)")
+                for i in range(10):
+                    conn.execute("INSERT INTO klines_15m (symbol, open_time, close) VALUES (?, ?, ?)", (f"COIN{i}", 1, 1))
+            experiment = TradingExperiment(db_path=db_path, account_manager=fake_account)
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=90,
+                score_band="确定性强趋势单",
+                stop_loss_distance_ratio=0.10,
+                distance_threshold=0.08,
+                stop_loss_distance_tier="A档",
+                opening_leverage="10x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            result = experiment.run_round([candidate])
+            rows = experiment.recent_trade_records()
+
+        self.assertEqual(result, {"opened": 1, "skipped": 0, "reason": "completed"})
+        self.assertEqual(rows[0].symbol, "BANK")
 
     def test_usdt_pair_symbol_is_not_double_suffixed(self):
         self.assertEqual(TradingExperiment._binance_symbol("BANKUSDT"), "BANKUSDT")

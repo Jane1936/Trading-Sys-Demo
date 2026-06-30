@@ -4,7 +4,6 @@ from pathlib import Path
 
 from holding_position_scoring import HoldingPositionScoringSystem
 
-
 class FakeAccountManager:
     def __init__(self):
         self.signed_posts = []
@@ -48,6 +47,11 @@ class FakeAccountManager:
         self.signed_deletes.append((endpoint, dict(params or {})))
         return {"code": 200, "msg": "success"}
 
+class ElevenPositionsAccountManager(FakeAccountManager):
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/positionRisk":
+            return [{"symbol": f"COIN{i}USDT", "positionAmt": "1", "leverage": "1"} for i in range(11)]
+        return super()._signed_get(endpoint, params)
 
 class HighPortfolioRiskAccountManager(FakeAccountManager):
     def _signed_get(self, endpoint, params=None):
@@ -60,12 +64,10 @@ class HighPortfolioRiskAccountManager(FakeAccountManager):
             return []
         return super()._signed_get(endpoint, params)
 
-
 class FailingPortfolioRiskAccountManager(HighPortfolioRiskAccountManager):
     def _signed_post(self, endpoint, params=None):
         self.signed_posts.append((endpoint, dict(params or {})))
         raise RuntimeError("market close rejected")
-
 
 class TiedLowestScorePortfolioRiskAccountManager(FakeAccountManager):
     def _signed_get(self, endpoint, params=None):
@@ -78,7 +80,6 @@ class TiedLowestScorePortfolioRiskAccountManager(FakeAccountManager):
         if endpoint == "/fapi/v1/userTrades":
             return []
         return super()._signed_get(endpoint, params)
-
 
 class RetryThenSuccessAccountManager(FakeAccountManager):
     def __init__(self):
@@ -95,7 +96,6 @@ class RetryThenSuccessAccountManager(FakeAccountManager):
             return [{"realizedPnl": "2.5"}]
         return super()._signed_get(endpoint, params)
 
-
 class AlwaysMissingTradesAccountManager(FakeAccountManager):
     def __init__(self):
         super().__init__()
@@ -107,7 +107,6 @@ class AlwaysMissingTradesAccountManager(FakeAccountManager):
             return []
         return super()._signed_get(endpoint, params)
 
-
 class ExpiredNoFillAccountManager(FakeAccountManager):
     def _signed_post(self, endpoint, params=None):
         self.signed_posts.append((endpoint, dict(params or {})))
@@ -117,7 +116,6 @@ class ExpiredNoFillAccountManager(FakeAccountManager):
         if endpoint == "/fapi/v1/userTrades":
             raise AssertionError("should not query realized PnL for an unfilled stop-loss order")
         return super()._signed_get(endpoint, params)
-
 
 class ReduceOnlyRejectedAccountManager(FakeAccountManager):
     def __init__(self):
@@ -138,7 +136,6 @@ class ReduceOnlyRejectedAccountManager(FakeAccountManager):
             return [{"symbol": "BANKUSDT", "side": "SELL", "type": "TAKE_PROFIT_MARKET", "closePosition": True, "status": "NEW", "algoId": 789}]
         return super()._signed_get(endpoint, params)
 
-
 class StopLossBeforeReductionScoring(HoldingPositionScoringSystem):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -153,7 +150,6 @@ class StopLossBeforeReductionScoring(HoldingPositionScoringSystem):
         self.reduction_started_after_stop_loss_check = bool(row and row[0] == 1)
         return []
 
-
 class StopLossRecordBeforeReductionScoring(HoldingPositionScoringSystem):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -167,7 +163,6 @@ class StopLossRecordBeforeReductionScoring(HoldingPositionScoringSystem):
             ).fetchone()
         self.reduction_started_after_stop_loss_record = bool(row and row[0] == 1)
         return []
-
 
 def test_holding_position_scoring_strips_usdt_for_database_lookups_and_records():
     fake_account = FakeAccountManager()
@@ -203,7 +198,6 @@ def test_holding_position_scoring_strips_usdt_for_database_lookups_and_records()
     ]
     assert fake_account.signed_posts[0][1]["symbol"] == "BANKUSDT"
 
-
 def test_position_reduction_runs_after_stop_loss_judgement_is_persisted():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -226,7 +220,6 @@ def test_position_reduction_runs_after_stop_loss_judgement_is_persisted():
     assert result["checked"] == 1
     assert result["reduction_checked"] == 0
     assert scoring.reduction_started_after_stop_loss_check is True
-
 
 def test_position_reduction_runs_after_triggered_stop_loss_record_is_persisted():
     fake_account = FakeAccountManager()
@@ -253,7 +246,6 @@ def test_position_reduction_runs_after_triggered_stop_loss_record_is_persisted()
     assert result["reduction_checked"] == 0
     assert scoring.reduction_started_after_stop_loss_record is True
 
-
 def test_position_reduction_waits_for_current_round_total_scores():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -277,7 +269,6 @@ def test_position_reduction_waits_for_current_round_total_scores():
 
     assert result["reduction_checked"] == 0
     assert result["reduction_triggered"] == 0
-
 
 def test_portfolio_risk_runs_after_holding_stop_loss_round():
     fake_account = FakeAccountManager()
@@ -310,7 +301,20 @@ def test_portfolio_risk_runs_after_holding_stop_loss_round():
     assert risk.positions[0].leverage == "5"
     assert risk.positions[0].risk == "0.08"
 
+def test_portfolio_risk_includes_all_positions_without_ten_position_cap():
+    fake_account = ElevenPositionsAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, close REAL)")
+            for i in range(11):
+                conn.execute("INSERT INTO klines_15m (symbol, open_time, close) VALUES (?, ?, ?)", (f"COIN{i}", 1, 1))
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
 
+        risk = scoring.calculate_portfolio_risk(decision_round_ts=1)
+
+    assert risk.position_count == 11
+    assert len(risk.positions) == 11
 
 def test_portfolio_risk_displays_scores_without_forced_liquidation_when_total_risk_gt_18():
     fake_account = HighPortfolioRiskAccountManager()
@@ -345,7 +349,6 @@ def test_portfolio_risk_displays_scores_without_forced_liquidation_when_total_ri
     assert fake_account.signed_posts == []
     assert stop_loss_records == []
 
-
 def _seed_triggered_stop_loss_db(db_path: str) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, close REAL)")
@@ -358,7 +361,6 @@ def _seed_triggered_stop_loss_db(db_path: str) -> None:
             "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
             [("BANK", 2000, 10), ("BANK", 1000, 10)],
         )
-
 
 def test_realized_pnl_query_retries_until_trades_are_available():
     fake_account = RetryThenSuccessAccountManager()
@@ -378,7 +380,6 @@ def test_realized_pnl_query_retries_until_trades_are_available():
     assert records[0]["realized_pnl"] == "2.5"
     assert "realized_pnl_query_failed" not in records[0]["reason"]
 
-
 def test_realized_pnl_query_failure_is_written_to_reason():
     fake_account = AlwaysMissingTradesAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -397,7 +398,6 @@ def test_realized_pnl_query_failure_is_written_to_reason():
     assert records[0]["realized_pnl"] == ""
     assert "realized_pnl_query_failed_after_4_attempts: user_trades_empty" in records[0]["reason"]
 
-
 def test_unfilled_stop_loss_order_response_is_recorded_as_failed_without_pnl_lookup():
     fake_account = ExpiredNoFillAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -413,7 +413,6 @@ def test_unfilled_stop_loss_order_response_is_recorded_as_failed_without_pnl_loo
     assert records[0]["realized_pnl"] == ""
     assert "stop_loss_order_not_filled: status=EXPIRED; executedQty=0" in records[0]["reason"]
     assert "realized_pnl_query_failed" not in records[0]["reason"]
-
 
 def test_reduce_only_rejection_records_positions_and_open_order_diagnostics():
     fake_account = ReduceOnlyRejectedAccountManager()
@@ -438,7 +437,6 @@ def test_reduce_only_rejection_records_positions_and_open_order_diagnostics():
     assert "positions=[{symbol=BANKUSDT, positionAmt=2, positionSide=BOTH}] total=1" in records[0]["reason"]
     assert "open_orders=[{symbol=BANKUSDT, side=SELL, type=STOP_MARKET" in records[0]["reason"]
     assert "open_algo_orders=[{symbol=BANKUSDT, side=SELL, type=TAKE_PROFIT_MARKET" in records[0]["reason"]
-
 
 def test_position_reduction_rule_tags_absolute_score_large_drawdown():
     fake_account = FakeAccountManager()
@@ -488,7 +486,6 @@ def test_position_reduction_rule_tags_absolute_score_large_drawdown():
     assert checks[0]["latest_total_score"] == "54"
     assert checks[0]["score_drawdown"] == "26"
     assert checks[0]["recent_score_drawdown"] == "16"
-
 
 def test_position_reduction_rule_tags_medium_drawdown_and_continuous_weakening():
     fake_account = FakeAccountManager()
@@ -544,7 +541,6 @@ def test_position_reduction_rule_tags_medium_drawdown_and_continuous_weakening()
     assert checks[0]["recent_score_drawdown"] == "15"
     assert checks[0]["rule_name"] == "规则二"
 
-
 def test_position_reduction_rule_tags_price_leading_deterioration():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -597,7 +593,6 @@ def test_position_reduction_rule_tags_price_leading_deterioration():
     assert checks[0]["previous_total_score"] == "80"
     assert checks[0]["score_drawdown"] == "1"
 
-
 def test_position_reduction_no_longer_triggers_on_removed_rule_four_score_danger_zone():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -641,7 +636,6 @@ def test_position_reduction_no_longer_triggers_on_removed_rule_four_score_danger
     assert checks[0]["tag"] == ""
     assert checks[0]["rule_name"] == ""
     assert checks[0]["latest_total_score"] == "39"
-
 
 def test_position_reduction_rule_tags_medium_danger_zone_price_confirmation():
     fake_account = FakeAccountManager()
@@ -691,7 +685,6 @@ def test_position_reduction_rule_tags_medium_danger_zone_price_confirmation():
     assert checks[0]["current_price"] == "8"
     assert checks[0]["open_entry_price"] == "8.5"
 
-
 def test_position_reduction_rule5_condition2_requires_recent_two_closes_below_entry():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -739,7 +732,6 @@ def test_position_reduction_rule5_condition2_requires_recent_two_closes_below_en
     assert checks[0]["tag"] == ""
     assert checks[0]["rule_name"] == ""
     assert checks[0]["reason"].endswith("rule5_condition2_recent_two_15m_closes_not_all_lte_open_entry_price")
-
 
 def test_position_reduction_rule5_only_triggers_once_per_open_lifecycle():
     fake_account = FakeAccountManager()
@@ -796,7 +788,6 @@ def test_position_reduction_rule5_only_triggers_once_per_open_lifecycle():
     assert checks[0]["rule_name"] == ""
     assert checks[0]["reason"].endswith("rule5_already_triggered_in_current_open_lifecycle")
 
-
 def test_reduction_action_uses_highest_rule_replaces_limit_and_market_reduces():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -842,7 +833,6 @@ def test_reduction_action_uses_highest_rule_replaces_limit_and_market_reduces():
         "/fapi/v1/order",
         {"symbol": "BANKUSDT", "side": "SELL", "type": "MARKET", "quantity": "1", "reduceOnly": "true", "newOrderRespType": "RESULT"},
     )
-
 
 def test_reduction_action_skips_replacement_stop_that_would_immediately_trigger_and_still_reduces():
     fake_account = FakeAccountManager()
