@@ -20,14 +20,16 @@ def test_trading_position_snapshots_show_used_margin_summary():
     assert snapshot_index < used_margin_index < table_index
 
 
-def test_trading_used_margin_sums_abs_position_amt_times_mark_price():
+def test_trading_used_margin_sums_abs_position_amt_times_mark_price_divided_by_leverage():
     snapshots = [
-        SimpleNamespace(position_amt="2", mark_price="10.5"),
-        SimpleNamespace(position_amt="-3", mark_price="20"),
-        SimpleNamespace(position_amt="bad", mark_price="100"),
+        SimpleNamespace(position_amt="2", mark_price="10.5", leverage="3"),
+        SimpleNamespace(position_amt="-3", mark_price="20", leverage="4"),
+        SimpleNamespace(position_amt="1", mark_price="100", leverage="0"),
+        SimpleNamespace(position_amt="1", mark_price="100", leverage="bad"),
+        SimpleNamespace(position_amt="bad", mark_price="100", leverage="5"),
     ]
 
-    assert _trading_used_margin_text(snapshots) == "81"
+    assert _trading_used_margin_text(snapshots) == "22"
 
 
 def test_trading_position_snapshots_render_after_trade_records():
