@@ -818,7 +818,7 @@ class HoldingPositionScoringSystem:
         equity = TradingExperiment(self.db_path, account_manager=self.account_manager)._fetch_experiment_usdt_equity()
         total_risk = Decimal("0")
         rows: list[PortfolioRiskPosition] = []
-        for position in active_positions[:10]:
+        for position in active_positions:
             symbol = self._base_symbol(str(position.get("symbol", "")))
             amount = abs(self._decimal_from(position.get("positionAmt"), Decimal("0")))
             latest_close = self._latest_15m_close(symbol) if symbol else Decimal("0")

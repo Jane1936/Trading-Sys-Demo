@@ -26,7 +26,6 @@ class ExperimentConfig:
     initial_equity_usdt: Decimal = Decimal("1000")
     experiment_uninvested_usdt: Decimal = Decimal("4000")
     total_margin_budget_usdt: Decimal = Decimal("1000")
-    max_open_positions: int = 10
     risk_fraction: Decimal = Decimal("0.01")
     max_stop_loss_pct: Decimal = Decimal("0.10")
     exit_order_missing_position_retries: int = 3
@@ -104,7 +103,8 @@ class TradingExperiment:
 
     Rules implemented:
     * experiment equity matches the web page "experiment USDT equity" metric;
-    * before opening, query current positions and skip if there are already 10;
+    * open-position count is not capped; new entries are allowed as long as
+      available balance and the experiment margin budget can cover the order;
     * the experiment's total margin budget is capped at 1,000 USDT;
     * before each new entry, query current total portfolio risk; when it is
       greater than 18, only candidates with total_score >= 81 may open;
@@ -270,10 +270,6 @@ class TradingExperiment:
             if self._candidate_allows_open(candidate)
         ]
         for candidate in sorted(eligible_candidates, key=lambda row: (-row.total_score, row.symbol)):
-            if len(open_positions) >= self.config.max_open_positions:
-                self._record_skip(candidate, account_equity, max_loss, "max_open_positions_reached")
-                skipped += 1
-                continue
             trading_symbol = self._binance_symbol(candidate.symbol)
             if trading_symbol in open_positions:
                 self._record_skip(candidate, account_equity, max_loss, "symbol_position_already_open")
