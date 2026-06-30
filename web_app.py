@@ -123,6 +123,27 @@ def _decimal_text_equal(left: object, right: object) -> bool:
         return str(left or "").strip() == str(right or "").strip()
 
 
+def _format_decimal_display(value: Decimal) -> str:
+    normalized = format(value.normalize(), "f")
+    if "." in normalized:
+        normalized = normalized.rstrip("0").rstrip(".")
+    return normalized or "0"
+
+
+def _trading_used_margin_text(position_snapshots: list[object]) -> str:
+    total = Decimal("0")
+    for row in position_snapshots:
+        try:
+            position_amt = Decimal(str(getattr(row, "position_amt")))
+            mark_price = Decimal(str(getattr(row, "mark_price")))
+        except Exception:
+            continue
+        if not position_amt.is_finite() or not mark_price.is_finite():
+            continue
+        total += abs(position_amt) * mark_price
+    return _format_decimal_display(total)
+
+
 def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, time_tolerance_ms: int = 5 * 60 * 1000) -> list[dict[str, str]]:
     """Match a filled SELL order to local stop-loss / partial take-profit records.
 
@@ -484,6 +505,7 @@ def abnormal_wicks():
         if row.status == "opened" and row.decision_round_ts == openable_round_ts
     })
     trading_position_snapshots = trading_experiment.latest_position_snapshots(limit=100)
+    trading_used_margin_usdt = _trading_used_margin_text(trading_position_snapshots)
     trading_error_records = trading_experiment.recent_error_records(limit=100, since_ms=trading_records_since_ms)
     trading_equity_trend_rows = _experiment_equity_trend_rows(trading_records_since_ms)
     holding_scoring = HoldingPositionScoringSystem(db_path=DB_PATH)
@@ -570,6 +592,7 @@ def abnormal_wicks():
         trading_trade_records=trading_trade_records,
         trading_new_open_symbols=trading_new_open_symbols,
         trading_position_snapshots=trading_position_snapshots,
+        trading_used_margin_usdt=trading_used_margin_usdt,
         trading_error_records=trading_error_records,
         trading_equity_trend_rows=trading_equity_trend_rows,
         holding_stop_loss_round_ts=holding_stop_loss_round_ts,
