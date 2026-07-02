@@ -1100,6 +1100,118 @@
         </div>
 
 
+        <div class="critical-section sky-theme-section" aria-label="加仓条件模块">
+          <div class="symbol-strip">
+            <div><strong>加仓条件模块：本轮判断结果</strong></div>
+            {% if holding_increase_round_ts %}
+              <div class="muted">最近判断轮次：{{ holding_increase_round_ts|fmt_ms_datetime }}。该15分钟模块在“减仓条件模块”之后执行；若当前未变现盈利 ≥ 1.3R、最新总分 ≥ 上一轮总分 - 5、最近一次本生命周期内减仓价为空或当前标记价格 ≥ 该减仓价、且最新总分 ≥ 69，则触发“第一次加仓”。每个 symbol 的单次开仓生命周期内最多触发一次。</div>
+            {% else %}
+              <div class="muted">暂无加仓条件模块执行结果。</div>
+            {% endif %}
+            {% set triggered_increase_checks = holding_increase_checks|selectattr('triggered')|list %}
+            {% if triggered_increase_checks %}
+              <div class="chips">
+                {% for row in triggered_increase_checks %}
+                  <span class="reduction-tags" title="{{ row.reason }}"><span class="chip">{{ row.symbol }}</span><span class="reduction-tag reduction-tag-default">第一次加仓</span></span>
+                {% endfor %}
+              </div>
+            {% else %}
+              <div class="chips"><span class="chip">本轮无触发第一次加仓symbol</span></div>
+            {% endif %}
+          </div>
+          <div class="tip">条件1：当前未变现盈利 ≥ 1.3 × R（R = 实验组USDT净值 × 1%）；条件2：最新总分 ≥ 上一轮总分 - 5；条件3：读取本生命周期内最近一次减仓记录对应价格，若存在则当前标记价格需 ≥ 该价格，若不存在减仓记录则跳过；条件4：最新总分 ≥ 69。全部满足后写入“加仓操作记录”，并给该 symbol 打上“第一次加仓”tag。</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>symbol</th>
+                  <th>decision_round_ts</th>
+                  <th>tag</th>
+                  <th>current_price</th>
+                  <th>未变现盈亏 / 1R</th>
+                  <th>最新总分</th>
+                  <th>上次总分</th>
+                  <th>最近减仓价</th>
+                  <th>开仓时间</th>
+                  <th>reason</th>
+                  <th>checked_at</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in holding_increase_checks %}
+                <tr>
+                  <td>{{ row.symbol }}</td>
+                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                  <td>{% if row.tag %}<span class="reduction-tag reduction-tag-default">{{ row.tag }}</span>{% else %}-{% endif %}</td>
+                  <td>{{ row.current_price }}</td>
+                  <td>
+                    {% set inc_one_r = row.one_r_usdt|float %}
+                    {% set inc_pnl_r_multiple = (row.unrealized_pnl|float) / inc_one_r if inc_one_r > 0 else 0 %}
+                    <span class="reduction-metric {{ 'reduction-pnl-strong-profit' if inc_pnl_r_multiple >= 1.3 else 'reduction-pnl-profit' if inc_pnl_r_multiple >= 1 else 'reduction-metric-neutral' }}">{{ row.unrealized_pnl }}</span> / {{ row.one_r_usdt }}
+                  </td>
+                  <td>{{ row.latest_total_score if row.latest_total_score else '-' }}</td>
+                  <td>{{ row.previous_total_score if row.previous_total_score else '-' }}</td>
+                  <td>{{ row.latest_reduction_price if row.latest_reduction_price else '无，已跳过条件3' }}</td>
+                  <td>{{ row.open_trade_created_at|fmt_ms_datetime if row.open_trade_created_at else '-' }}</td>
+                  <td>{{ row.reason }}</td>
+                  <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                </tr>
+                {% else %}
+                <tr><td class="empty" colspan="11">暂无加仓条件模块执行结果</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>加仓操作记录（最近7天）</strong></div>
+              <div class="muted">记录每个 symbol 在当前开仓生命周期内首次满足加仓条件的时间、价格、分数与触发原因。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看最近 7 天完整记录。</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>created_at</th>
+                  <th>symbol</th>
+                  <th>轮次</th>
+                  <th>action</th>
+                  <th>current_price</th>
+                  <th>未变现盈亏 / 1R</th>
+                  <th>最新总分 / 上次总分</th>
+                  <th>最近减仓价</th>
+                  <th>status</th>
+                  <th>reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in holding_increase_records %}
+                <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                  <td>{{ row.created_at|fmt_ms_datetime }}</td>
+                  <td>{{ row.symbol }}</td>
+                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                  <td><span class="reduction-tag reduction-tag-default">{{ row.action_name }}</span></td>
+                  <td>{{ row.current_price }}</td>
+                  <td>{{ row.unrealized_pnl }} / {{ row.one_r_usdt }}</td>
+                  <td>{{ row.latest_total_score }} / {{ row.previous_total_score }}</td>
+                  <td>{{ row.latest_reduction_price if row.latest_reduction_price else '-' }}</td>
+                  <td><span class="status-badge {{ 'status-pass' if row.status == 'triggered' else 'status-fail' }}">{{ row.status }}</span></td>
+                  <td>{{ row.reason }}</td>
+                </tr>
+                {% else %}
+                <tr><td class="empty" colspan="10">最近7天暂无加仓操作记录</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+
         <div class="critical-section portfolio-risk-section" aria-label="组合风险约束">
           <div class="symbol-strip">
             <div><strong>组合风险约束</strong></div>
