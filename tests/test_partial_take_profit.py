@@ -116,6 +116,21 @@ def test_partial_take_profit_sells_30_percent_when_unrealized_pnl_reaches_2r():
             },
         ),
         (
+            "/fapi/v1/algoOrder",
+            {
+                "symbol": "BANKUSDT",
+                "side": "SELL",
+                "type": "TAKE_PROFIT",
+                "quantity": "7",
+                "price": "17.86",
+                "timeInForce": "GTC",
+                "reduceOnly": "true",
+                "workingType": "MARK_PRICE",
+                "triggerPrice": "17.86",
+                "algoType": "CONDITIONAL",
+            },
+        ),
+        (
             "/fapi/v1/order",
             {"symbol": "BANKUSDT", "side": "SELL", "quantity": "3", "reduceOnly": "true", "type": "MARKET", "newOrderRespType": "RESULT"},
         )
