@@ -491,16 +491,18 @@ class TradingExperiment:
             tick_size=exchange_info["tick_size"],
         )
 
-        entry_price = self._filled_entry_price(market_order, pre_order_price)
-        position_amt = self._wait_for_open_position(candidate, trading_symbol)
+        order_entry_price = self._filled_entry_price(market_order, pre_order_price)
+        position_amt, position_entry_price = self._wait_for_open_position(candidate, trading_symbol)
         position_visible = position_amt > 0
+        entry_price = position_entry_price if position_entry_price > 0 else order_entry_price
+        risk_quantity = abs(position_amt) if position_visible and position_entry_price > 0 else quantity
         trigger_reference_price = self._latest_mark_price(trading_symbol, entry_price)
-        notional = quantity * entry_price
+        notional = risk_quantity * entry_price
         required_margin = notional / Decimal(leverage)
         take_profit_price = Decimal("0")
         stop_loss_price, stop_loss_calculation = self._risk_capped_stop_loss_price_with_detail(
             entry_price=entry_price,
-            quantity=quantity,
+            quantity=risk_quantity,
             max_loss=max_loss,
             trigger_reference_price=trigger_reference_price,
             tick_size=exchange_info["tick_size"],
@@ -647,14 +649,24 @@ class TradingExperiment:
             and ("-4131" in message or "PERCENT_PRICE" in message)
         )
 
-    def _wait_for_open_position(self, candidate: OpenableSymbol, trading_symbol: str) -> Decimal:
+    def _wait_for_open_position(self, candidate: OpenableSymbol, trading_symbol: str) -> tuple[Decimal, Decimal]:
         max_attempts = max(1, int(self.config.exit_order_missing_position_retries) + 1)
         last_exc: Exception | None = None
         for attempt in range(1, max_attempts + 1):
             try:
-                position_amt = self._position_amount(trading_symbol)
+                position_row = self._position_risk_row(trading_symbol)
+                position_amt = (
+                    self._decimal_from(position_row.get("positionAmt"), Decimal("0"))
+                    if position_row
+                    else Decimal("0")
+                )
                 if position_amt > 0:
-                    return position_amt
+                    entry_price = (
+                        self._decimal_from(position_row.get("entryPrice"), Decimal("0"))
+                        if position_row
+                        else Decimal("0")
+                    )
+                    return position_amt, entry_price
             except Exception as exc:
                 last_exc = exc
 
@@ -671,7 +683,7 @@ class TradingExperiment:
                 f"wait_open_position:{trading_symbol}",
                 RuntimeError(f"positionAmt for {trading_symbol} was not positive after market order"),
             )
-        return Decimal("0")
+        return Decimal("0"), Decimal("0")
 
     def _place_exit_order(
         self,
@@ -706,15 +718,19 @@ class TradingExperiment:
             return
 
     def _position_amount(self, trading_symbol: str) -> Decimal:
+        row = self._position_risk_row(trading_symbol)
+        return self._decimal_from(row.get("positionAmt"), Decimal("0")) if row else Decimal("0")
+
+    def _position_risk_row(self, trading_symbol: str) -> dict[str, Any] | None:
         rows = self.account_manager._signed_get("/fapi/v3/positionRisk", {"symbol": trading_symbol})
         if not isinstance(rows, list):
-            return Decimal("0")
+            return None
         for row in rows:
             if not isinstance(row, dict):
                 continue
             if str(row.get("symbol", "")).upper() == trading_symbol.upper():
-                return self._decimal_from(row.get("positionAmt"), Decimal("0"))
-        return Decimal("0")
+                return row
+        return None
 
     @staticmethod
     def _is_missing_position_for_close_position_error(exc: Exception) -> bool:

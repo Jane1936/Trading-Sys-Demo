@@ -166,6 +166,33 @@ class InvalidLeverageAccountManager(FakeAccountManager):
             return {"algoId": len(self.signed_posts)}
         return {"orderId": len(self.signed_posts)}
 
+class PositionEntryPriceAccountManager(FakeAccountManager):
+    def _public_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v1/exchangeInfo":
+            return {
+                "symbols": [
+                    {
+                        "symbol": "BANKUSDT",
+                        "filters": [
+                            {"filterType": "LOT_SIZE", "stepSize": "1"},
+                            {"filterType": "PRICE_FILTER", "tickSize": "0.00001"},
+                        ],
+                    }
+                ]
+            }
+        if endpoint == "/fapi/v1/ticker/price":
+            self.latest_price_params = params
+            return {"price": "0.00856"}
+        if endpoint == "/fapi/v1/premiumIndex":
+            self.latest_mark_price_params = params
+            return {"markPrice": "0.00857934"}
+        return super()._public_get(endpoint, params)
+
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/positionRisk" and params and "symbol" in params:
+            return [{"symbol": params["symbol"], "positionAmt": "70867", "entryPrice": "0.00864"}]
+        return super()._signed_get(endpoint, params)
+
 class DelayedPositionAccountManager(FakeAccountManager):
     def __init__(self):
         super().__init__()
@@ -535,6 +562,45 @@ class TradingExperimentSymbolTests(unittest.TestCase):
                     "price": "0.99",
                 },
             ),
+        )
+
+    def test_stop_loss_uses_position_entry_price_after_market_fill(self):
+        fake_account = PositionEntryPriceAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+            )
+            experiment.init_tables()
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=80,
+                score_band="标准试错单",
+                stop_loss_distance_ratio=0.01,
+                distance_threshold=0.02,
+                stop_loss_distance_tier="A档",
+                opening_leverage="4x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            experiment._open_long(candidate, Decimal("1000"), Decimal("7.4220549961"))
+            rows = experiment.recent_trade_records()
+
+        stop_loss_params = fake_account.signed_posts[2][1]
+        self.assertEqual(stop_loss_params["price"], "0.00853")
+        self.assertEqual(stop_loss_params["triggerPrice"], "0.00853")
+        self.assertIn("entry_price=0.00864", rows[0].stop_loss_calculation)
+        self.assertIn(
+            "desired_price=entry_price-selected_distance=0.008535267825700255408017836228",
+            rows[0].stop_loss_calculation,
+        )
+        self.assertIn(
+            "final_stop_loss_price=floor_to_tick(raw_stop_price)=0.00853",
+            rows[0].stop_loss_calculation,
         )
 
     def test_recent_trade_records_only_returns_opened_rows(self):
