@@ -828,3 +828,66 @@ def test_reduction_action_skips_replacement_stop_that_would_immediately_trigger_
             {"symbol": "BANKUSDT", "side": "SELL", "type": "MARKET", "quantity": "0.6", "reduceOnly": "true", "newOrderRespType": "RESULT"},
         )
     ]
+
+def test_position_increase_triggers_first_add_once_per_open_lifecycle():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.execute("CREATE TABLE trading_experiment_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, status TEXT, created_at INTEGER, total_score TEXT, entry_price TEXT, stop_loss_order_id TEXT, stop_loss_price TEXT)")
+            conn.executemany(
+                "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
+                [("BANK", 3000, 70), ("BANK", 2000, 73)],
+            )
+            conn.execute(
+                "INSERT INTO trading_experiment_trades (symbol, status, created_at, total_score, entry_price, stop_loss_order_id, stop_loss_price) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("BANK", "opened", 1000, "72", "7", "", ""),
+            )
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        positions = [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "8", "unRealizedProfit": "70"}]
+
+        checks = scoring.evaluate_increase_conditions(positions=positions, decision_round_ts=3000, checked_at=4000)
+        records = scoring._record_increase_actions(checks, now_ms=4000)
+        second_checks = scoring.evaluate_increase_conditions(positions=positions, decision_round_ts=3000, checked_at=5000)
+
+    assert checks[0].triggered is True
+    assert checks[0].tag == "第一次加仓"
+    assert records == 1
+    assert second_checks[0].triggered is False
+    assert second_checks[0].reason == "first_increase_already_triggered_in_current_lifecycle"
+
+
+def test_position_increase_requires_current_price_not_below_lifecycle_reduction_price():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.execute("CREATE TABLE trading_experiment_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, status TEXT, created_at INTEGER, total_score TEXT, entry_price TEXT, stop_loss_order_id TEXT, stop_loss_price TEXT)")
+            conn.executemany(
+                "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
+                [("BANK", 3000, 75), ("BANK", 2000, 76)],
+            )
+            conn.execute(
+                "INSERT INTO trading_experiment_trades (symbol, status, created_at, total_score, entry_price, stop_loss_order_id, stop_loss_price) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("BANK", "opened", 1000, "72", "7", "", ""),
+            )
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                f"INSERT INTO {scoring.REDUCTION_RECORDS_TABLE} (symbol, decision_round_ts, side, matched_rule, reduction_percent, original_quantity, reduced_quantity, remaining_quantity, status, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("BANK", 2500, "SELL", "规则三", "0.3", "2", "0.6", "1.4", "submitted", "test", 2000),
+            )
+            conn.execute(
+                f"INSERT INTO {scoring.REDUCTION_CHECKS_TABLE} (symbol, decision_round_ts, highest_15m_high, current_price, price_drawdown_ratio, account_equity_usdt, two_r_usdt, one_r_usdt, unrealized_pnl, open_total_score, latest_total_score, score_drawdown, triggered, tag, reason, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("BANK", 2500, "10", "9", "0.1", "5000", "100", "50", "20", "72", "70", "2", 1, "tag", "test", 2000),
+            )
+        positions = [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "8", "unRealizedProfit": "70"}]
+
+        checks = scoring.evaluate_increase_conditions(positions=positions, decision_round_ts=3000, checked_at=4000)
+
+    assert checks[0].triggered is False
+    assert checks[0].latest_reduction_price == "9"
+    assert checks[0].reason == "condition3_current_price_lt_latest_reduction_price"

@@ -518,8 +518,10 @@ def abnormal_wicks():
     holding_stop_loss_round_ts, holding_stop_loss_checks = holding_scoring.get_latest_round_checks()
     holding_portfolio_risk = holding_scoring.get_latest_portfolio_risk()
     holding_reduction_round_ts, holding_reduction_checks = holding_scoring.get_latest_reduction_checks()
+    holding_increase_round_ts, holding_increase_checks = holding_scoring.get_latest_increase_checks()
     holding_stop_loss_records = holding_scoring.recent_stop_loss_records(limit=100)
     holding_reduction_records = holding_scoring.recent_reduction_records(limit=100)
+    holding_increase_records = holding_scoring.recent_increase_records(limit=100, since_ms=trading_records_since_ms)
     break_even_strategy = BreakEvenTakeProfitStrategy(db_path=DB_PATH)
     break_even_round_ts, break_even_checks = break_even_strategy.get_latest_round_checks()
     break_even_records = break_even_strategy.recent_records(limit=100)
@@ -606,8 +608,11 @@ def abnormal_wicks():
         holding_portfolio_risk=holding_portfolio_risk,
         holding_reduction_round_ts=holding_reduction_round_ts,
         holding_reduction_checks=holding_reduction_checks,
+        holding_increase_round_ts=holding_increase_round_ts,
+        holding_increase_checks=holding_increase_checks,
         holding_stop_loss_records=holding_stop_loss_records,
         holding_reduction_records=holding_reduction_records,
+        holding_increase_records=holding_increase_records,
         break_even_round_ts=break_even_round_ts,
         break_even_checks=break_even_checks,
         break_even_records=break_even_records,

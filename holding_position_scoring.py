@@ -86,6 +86,41 @@ class PositionReductionCheck:
 
 
 @dataclass(frozen=True)
+class PositionIncreaseCheck:
+    symbol: str
+    decision_round_ts: int
+    current_price: str
+    account_equity_usdt: str
+    one_r_usdt: str
+    unrealized_pnl: str
+    latest_total_score: str
+    previous_total_score: str
+    latest_reduction_price: str
+    open_trade_created_at: str
+    triggered: bool
+    tag: str
+    reason: str
+    checked_at: int
+
+
+@dataclass(frozen=True)
+class PositionIncreaseRecord:
+    id: int
+    symbol: str
+    decision_round_ts: int
+    action_name: str
+    current_price: str
+    unrealized_pnl: str
+    one_r_usdt: str
+    latest_total_score: str
+    previous_total_score: str
+    latest_reduction_price: str
+    status: str
+    reason: str
+    created_at: int
+
+
+@dataclass(frozen=True)
 class HoldingStopLossRecord:
     id: int
     symbol: str
@@ -134,6 +169,9 @@ class HoldingPositionScoringSystem:
     PORTFOLIO_RISK_SUMMARY_TABLE = "holding_portfolio_risk_summaries"
     REDUCTION_CHECKS_TABLE = "holding_position_reduction_checks"
     REDUCTION_RECORDS_TABLE = "holding_position_reduction_records"
+    INCREASE_CHECKS_TABLE = "holding_position_increase_checks"
+    INCREASE_RECORDS_TABLE = "holding_position_increase_records"
+    INCREASE_TAG_FIRST = "第一次加仓"
     REDUCTION_TAG_ABSOLUTE_SCORE_DRAWDOWN = "绝对分数大幅回撤"
     REDUCTION_TAG_MEDIUM_DRAWDOWN_WEAKENING = "中等回撤且趋势连续弱化"
     REDUCTION_TAG_SCORE_DANGER_ZONE = "评分进入危险区"
@@ -279,6 +317,46 @@ class HoldingPositionScoringSystem:
                 """
             )
             conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.INCREASE_CHECKS_TABLE} (
+                    symbol TEXT NOT NULL,
+                    decision_round_ts INTEGER NOT NULL,
+                    current_price TEXT NOT NULL,
+                    account_equity_usdt TEXT NOT NULL,
+                    one_r_usdt TEXT NOT NULL,
+                    unrealized_pnl TEXT NOT NULL,
+                    latest_total_score TEXT NOT NULL,
+                    previous_total_score TEXT NOT NULL,
+                    latest_reduction_price TEXT NOT NULL DEFAULT '',
+                    open_trade_created_at TEXT NOT NULL DEFAULT '',
+                    triggered INTEGER NOT NULL,
+                    tag TEXT NOT NULL DEFAULT '',
+                    reason TEXT NOT NULL,
+                    checked_at INTEGER NOT NULL,
+                    PRIMARY KEY(symbol, decision_round_ts)
+                )
+                """
+            )
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.INCREASE_RECORDS_TABLE} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    decision_round_ts INTEGER NOT NULL,
+                    action_name TEXT NOT NULL,
+                    current_price TEXT NOT NULL,
+                    unrealized_pnl TEXT NOT NULL,
+                    one_r_usdt TEXT NOT NULL,
+                    latest_total_score TEXT NOT NULL,
+                    previous_total_score TEXT NOT NULL,
+                    latest_reduction_price TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.REDUCTION_CHECKS_TABLE}_round "
                 f"ON {self.REDUCTION_CHECKS_TABLE}(decision_round_ts DESC, triggered DESC, symbol ASC)"
             )
@@ -312,6 +390,14 @@ class HoldingPositionScoringSystem:
                 f"CREATE INDEX IF NOT EXISTS idx_{self.REDUCTION_RECORDS_TABLE}_created "
                 f"ON {self.REDUCTION_RECORDS_TABLE}(created_at DESC, symbol ASC)"
             )
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{self.INCREASE_CHECKS_TABLE}_round "
+                f"ON {self.INCREASE_CHECKS_TABLE}(decision_round_ts DESC, triggered DESC, symbol ASC)"
+            )
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{self.INCREASE_RECORDS_TABLE}_created "
+                f"ON {self.INCREASE_RECORDS_TABLE}(created_at DESC, symbol ASC)"
+            )
 
     def run_round(self, decision_round_ts: int | None = None) -> dict[str, Any]:
         """Run one 15m holding-position round.
@@ -332,6 +418,8 @@ class HoldingPositionScoringSystem:
         )
         reduction_checks = self.evaluate_reduction_conditions(positions=reduction_positions, decision_round_ts=round_ts, checked_at=now_ms)
         reduction_records = self._execute_reduction_actions(reduction_checks, reduction_positions, now_ms)
+        increase_checks = self.evaluate_increase_conditions(positions=reduction_positions, decision_round_ts=round_ts, checked_at=now_ms)
+        increase_records = self._record_increase_actions(increase_checks, now_ms)
         portfolio_risk = self.calculate_portfolio_risk(positions=reduction_positions, decision_round_ts=round_ts, calculated_at=now_ms)
         return {
             "decision_round_ts": round_ts,
@@ -341,6 +429,9 @@ class HoldingPositionScoringSystem:
             "reduction_checked": len(reduction_checks),
             "reduction_triggered": sum(1 for row in reduction_checks if row.triggered),
             "reduction_records": reduction_records,
+            "increase_checked": len(increase_checks),
+            "increase_triggered": sum(1 for row in increase_checks if row.triggered),
+            "increase_records": increase_records,
             "total_risk": portfolio_risk.total_risk,
             "risk_position_count": portfolio_risk.position_count,
             "portfolio_risk_action": "",
@@ -780,6 +871,151 @@ class HoldingPositionScoringSystem:
                 (symbol, "%规则五%", lifecycle_started_at),
             ).fetchone()
         return row is not None
+
+    def evaluate_increase_conditions(
+        self,
+        positions: list[dict[str, Any]] | None = None,
+        decision_round_ts: int | None = None,
+        checked_at: int | None = None,
+    ) -> list[PositionIncreaseCheck]:
+        """Evaluate the first-add-position module after reduction checks finish."""
+        self.init_tables()
+        round_ts = decision_round_ts if decision_round_ts is not None else self._current_decision_round_ts()
+        if not self._has_total_scores_for_round(round_ts):
+            return []
+        now_ms = checked_at if checked_at is not None else int(time.time() * 1000)
+        active_positions = positions if positions is not None else self._active_positions()
+        equity = TradingExperiment(self.db_path, account_manager=self.account_manager)._fetch_experiment_usdt_equity()
+        one_r = equity * Decimal("0.01")
+        checks: list[PositionIncreaseCheck] = []
+        for position in active_positions:
+            symbol = self._base_symbol(str(position.get("symbol", "")))
+            amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
+            if not symbol or amount == 0:
+                continue
+            check = self._evaluate_increase_rules(position, symbol, round_ts, equity, one_r, now_ms)
+            self._save_increase_check(check)
+            checks.append(check)
+        return checks
+
+    def _evaluate_increase_rules(self, position: dict[str, Any], symbol: str, round_ts: int, equity: Decimal, one_r: Decimal, now_ms: int) -> PositionIncreaseCheck:
+        exchange_symbol = self._exchange_symbol(position, symbol)
+        current_price = self._current_symbol_price(exchange_symbol, position)
+        unrealized_pnl = self._position_unrealized_pnl(position)
+        recent_scores = self._recent_total_scores(symbol, limit=2)
+        latest_score = recent_scores[0] if recent_scores else ""
+        previous_score = recent_scores[1] if len(recent_scores) > 1 else ""
+        open_trade_created_at = self._latest_open_trade_created_at(symbol)
+        lifecycle_started_at = int(open_trade_created_at) if open_trade_created_at else 0
+        latest_reduction_price = self._latest_reduction_price_since(symbol, lifecycle_started_at) if lifecycle_started_at else ""
+        reasons: list[str] = []
+        triggered = False
+        if open_trade_created_at == "":
+            reasons.append("missing_open_trade_lifecycle")
+        elif self._has_first_increase_record_since(symbol, lifecycle_started_at):
+            reasons.append("first_increase_already_triggered_in_current_lifecycle")
+        elif one_r <= 0:
+            reasons.append("non_positive_one_r")
+        elif unrealized_pnl < one_r * Decimal("1.3"):
+            reasons.append("condition1_unrealized_pnl_lt_1_3r")
+        elif latest_score == "" or previous_score == "":
+            reasons.append("condition2_missing_latest_or_previous_total_score")
+        elif self._decimal_from(latest_score, Decimal("0")) < self._decimal_from(previous_score, Decimal("0")) - Decimal("5"):
+            reasons.append("condition2_latest_score_lt_previous_minus_5")
+        elif latest_reduction_price and current_price < self._decimal_from(latest_reduction_price, Decimal("0")):
+            reasons.append("condition3_current_price_lt_latest_reduction_price")
+        elif latest_score == "" or self._decimal_from(latest_score, Decimal("0")) < Decimal("69"):
+            reasons.append("condition4_latest_total_score_lt_69")
+        else:
+            triggered = True
+            reasons.append("first_increase_conditions_met")
+        return PositionIncreaseCheck(symbol, round_ts, self._fmt_decimal(current_price), self._fmt_decimal(equity), self._fmt_decimal(one_r), self._fmt_decimal(unrealized_pnl), latest_score, previous_score, latest_reduction_price, open_trade_created_at, triggered, self.INCREASE_TAG_FIRST if triggered else "", "; ".join(reasons), now_ms)
+
+    def _latest_reduction_price_since(self, symbol: str, lifecycle_started_at: int) -> str:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    f"""
+                    SELECT COALESCE(NULLIF(c.current_price, ''), NULLIF(r.limit_price, '')) AS price
+                    FROM {self.REDUCTION_RECORDS_TABLE} AS r
+                    LEFT JOIN {self.REDUCTION_CHECKS_TABLE} AS c
+                      ON c.symbol = r.symbol AND c.decision_round_ts = r.decision_round_ts
+                    WHERE r.symbol = ? AND r.created_at >= ?
+                    ORDER BY r.created_at DESC, r.id DESC
+                    LIMIT 1
+                    """,
+                    (symbol, lifecycle_started_at),
+                ).fetchone()
+        except sqlite3.Error:
+            return ""
+        return str(row["price"]) if row and row["price"] is not None else ""
+
+    def _has_first_increase_record_since(self, symbol: str, lifecycle_started_at: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT 1 FROM {self.INCREASE_RECORDS_TABLE} WHERE symbol = ? AND action_name = ? AND created_at >= ? LIMIT 1",
+                (symbol, self.INCREASE_TAG_FIRST, lifecycle_started_at),
+            ).fetchone()
+        return row is not None
+
+    def _record_increase_actions(self, checks: list[PositionIncreaseCheck], now_ms: int) -> int:
+        records = 0
+        for check in checks:
+            if not check.triggered or self._has_increase_record(check.symbol, check.decision_round_ts):
+                continue
+            self._save_increase_record(PositionIncreaseRecord(0, check.symbol, check.decision_round_ts, self.INCREASE_TAG_FIRST, check.current_price, check.unrealized_pnl, check.one_r_usdt, check.latest_total_score, check.previous_total_score, check.latest_reduction_price, "triggered", check.reason, now_ms))
+            records += 1
+        return records
+
+    def _save_increase_check(self, check: PositionIncreaseCheck) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {self.INCREASE_CHECKS_TABLE}
+                (symbol, decision_round_ts, current_price, account_equity_usdt, one_r_usdt, unrealized_pnl, latest_total_score, previous_total_score, latest_reduction_price, open_trade_created_at, triggered, tag, reason, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
+                    current_price=excluded.current_price, account_equity_usdt=excluded.account_equity_usdt,
+                    one_r_usdt=excluded.one_r_usdt, unrealized_pnl=excluded.unrealized_pnl,
+                    latest_total_score=excluded.latest_total_score, previous_total_score=excluded.previous_total_score,
+                    latest_reduction_price=excluded.latest_reduction_price, open_trade_created_at=excluded.open_trade_created_at,
+                    triggered=excluded.triggered, tag=excluded.tag, reason=excluded.reason, checked_at=excluded.checked_at
+                """,
+                (check.symbol, check.decision_round_ts, check.current_price, check.account_equity_usdt, check.one_r_usdt, check.unrealized_pnl, check.latest_total_score, check.previous_total_score, check.latest_reduction_price, check.open_trade_created_at, int(check.triggered), check.tag, check.reason, check.checked_at),
+            )
+
+    def _save_increase_record(self, record: PositionIncreaseRecord) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {self.INCREASE_RECORDS_TABLE}
+                (symbol, decision_round_ts, action_name, current_price, unrealized_pnl, one_r_usdt, latest_total_score, previous_total_score, latest_reduction_price, status, reason, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (record.symbol, record.decision_round_ts, record.action_name, record.current_price, record.unrealized_pnl, record.one_r_usdt, record.latest_total_score, record.previous_total_score, record.latest_reduction_price, record.status, record.reason, record.created_at),
+            )
+
+    def _has_increase_record(self, symbol: str, decision_round_ts: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(f"SELECT 1 FROM {self.INCREASE_RECORDS_TABLE} WHERE symbol = ? AND decision_round_ts = ? LIMIT 1", (symbol, decision_round_ts)).fetchone()
+        return row is not None
+
+    def get_latest_increase_checks(self) -> tuple[int | None, list[sqlite3.Row]]:
+        self.init_tables()
+        with self._connect() as conn:
+            row = conn.execute(f"SELECT MAX(decision_round_ts) AS ts FROM {self.INCREASE_CHECKS_TABLE}").fetchone()
+            round_ts = int(row["ts"]) if row and row["ts"] is not None else None
+            if round_ts is None:
+                return None, []
+            rows = conn.execute(f"SELECT * FROM {self.INCREASE_CHECKS_TABLE} WHERE decision_round_ts = ? ORDER BY triggered DESC, symbol ASC", (round_ts,)).fetchall()
+        return round_ts, rows
+
+    def recent_increase_records(self, limit: int = 100, since_ms: int | None = None) -> list[sqlite3.Row]:
+        self.init_tables()
+        where = "WHERE created_at >= ?" if since_ms is not None else ""
+        params: tuple[Any, ...] = (int(since_ms), limit) if since_ms is not None else (limit,)
+        with self._connect() as conn:
+            return conn.execute(f"SELECT * FROM {self.INCREASE_RECORDS_TABLE} {where} ORDER BY created_at DESC, id DESC LIMIT ?", params).fetchall()
 
     def calculate_portfolio_risk(
         self,
