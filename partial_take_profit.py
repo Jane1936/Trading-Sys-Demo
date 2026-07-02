@@ -182,12 +182,22 @@ class PartialTakeProfitStrategy:
                 raise RuntimeError("remaining_position_quantity_rounded_to_zero")
             raw_parts: list[str] = []
             cancel_reason = self._cancel_existing_exit_orders(exchange_symbol, raw_parts)
-            replacement_reason = self._replace_remaining_stop_loss(
+            stop_loss_order_id, stop_loss_reason = self._replace_remaining_stop_loss(
                 helper,
                 exchange_symbol,
                 symbol,
                 side,
                 remaining_quantity,
+                raw_parts,
+            )
+            take_profit_order_id, take_profit_reason = self._replace_remaining_hard_take_profit(
+                helper,
+                exchange_symbol,
+                symbol,
+                side,
+                entry_price,
+                remaining_quantity,
+                exchange_info["tick_size"],
                 raw_parts,
             )
             response = self.account_manager._signed_post(
@@ -204,7 +214,8 @@ class PartialTakeProfitStrategy:
             raw_parts.append(str({"partial_take_profit": response}))
             raw_response = " | ".join(raw_parts)
             order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
-            reason = f"{reason}; {cancel_reason}; {replacement_reason}"
+            self._update_latest_open_trade_exit_orders(symbol, take_profit_order_id, stop_loss_order_id)
+            reason = f"{reason}; {cancel_reason}; {stop_loss_reason}; {take_profit_reason}"
         except Exception as exc:
             status = "failed"
             quantity = Decimal("0")
@@ -228,7 +239,7 @@ class PartialTakeProfitStrategy:
         side: str,
         quantity: Decimal,
         raw_parts: list[str],
-    ) -> str:
+    ) -> tuple[str, str]:
         stop_loss_price = self._latest_open_stop_loss_price(symbol)
         if stop_loss_price <= 0:
             raise RuntimeError("remaining_stop_loss_not_recreated_missing_price")
@@ -248,7 +259,72 @@ class PartialTakeProfitStrategy:
         response = helper._signed_post_order_with_ioc_retry(endpoint, params, trading_symbol=exchange_symbol)
         raw_parts.append(str({"remaining_stop_loss": response}))
         order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
-        return f"remaining_stop_loss_recreated; quantity={self._fmt_decimal(quantity)}; order_id={order_id}"
+        return order_id, f"remaining_stop_loss_recreated; quantity={self._fmt_decimal(quantity)}; order_id={order_id}"
+
+    def _replace_remaining_hard_take_profit(
+        self,
+        helper: TradingExperiment,
+        exchange_symbol: str,
+        symbol: str,
+        side: str,
+        entry_price: Decimal,
+        quantity: Decimal,
+        tick_size: Decimal,
+        raw_parts: list[str],
+    ) -> tuple[str, str]:
+        take_profit_price = helper._hard_take_profit_price(
+            entry_price=entry_price,
+            quantity=quantity,
+            profit_usdt=self.config.hard_take_profit_usdt,
+            tick_size=tick_size,
+        )
+        if take_profit_price <= 0:
+            raise RuntimeError("remaining_take_profit_not_recreated_invalid_price")
+        endpoint, params = TradingExperiment._exit_order_request(
+            {
+                "symbol": exchange_symbol,
+                "side": side,
+                "type": "TAKE_PROFIT",
+                "quantity": self._fmt_decimal(quantity),
+                "price": self._fmt_decimal(take_profit_price),
+                "stopPrice": self._fmt_decimal(take_profit_price),
+                "timeInForce": "GTC",
+                "reduceOnly": "true",
+                "workingType": "MARK_PRICE",
+            }
+        )
+        response = helper._signed_post_order_with_ioc_retry(endpoint, params, trading_symbol=exchange_symbol)
+        raw_parts.append(str({"remaining_take_profit": response}))
+        order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                UPDATE {TradingExperiment.TRADES_TABLE}
+                SET take_profit_price = ?, updated_at = ?
+                WHERE id = (
+                    SELECT id FROM {TradingExperiment.TRADES_TABLE}
+                    WHERE symbol = ? AND status = 'opened'
+                    ORDER BY created_at DESC, id DESC LIMIT 1
+                )
+                """,
+                (self._fmt_decimal(take_profit_price), int(time.time() * 1000), symbol),
+            )
+        return order_id, f"remaining_hard_take_profit_recreated; target_profit_usdt={self._fmt_decimal(self.config.hard_take_profit_usdt)}; quantity={self._fmt_decimal(quantity)}; price={self._fmt_decimal(take_profit_price)}; order_id={order_id}"
+
+    def _update_latest_open_trade_exit_orders(self, symbol: str, take_profit_order_id: str, stop_loss_order_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                UPDATE {TradingExperiment.TRADES_TABLE}
+                SET take_profit_order_id = ?, stop_loss_order_id = ?, updated_at = ?
+                WHERE id = (
+                    SELECT id FROM {TradingExperiment.TRADES_TABLE}
+                    WHERE symbol = ? AND status = 'opened'
+                    ORDER BY created_at DESC, id DESC LIMIT 1
+                )
+                """,
+                (take_profit_order_id, stop_loss_order_id, int(time.time() * 1000), symbol),
+            )
 
     def _latest_open_stop_loss_price(self, symbol: str) -> Decimal:
         try:

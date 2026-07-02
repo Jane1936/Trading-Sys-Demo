@@ -3,6 +3,7 @@ import tempfile
 from pathlib import Path
 
 from holding_position_scoring import HoldingPositionScoringSystem
+from trading_experiment import TradingExperiment
 
 class FakeAccountManager:
     def __init__(self):
@@ -718,6 +719,7 @@ def test_position_reduction_rule5_only_triggers_once_per_open_lifecycle():
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
         scoring.init_tables()
+        TradingExperiment(db_path=db_path, account_manager=fake_account).init_tables()
         with sqlite3.connect(db_path) as conn:
             conn.execute(
                 f"INSERT INTO {scoring.REDUCTION_RECORDS_TABLE} (symbol, decision_round_ts, side, matched_rule, reduction_percent, original_quantity, reduced_quantity, remaining_quantity, status, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -875,6 +877,7 @@ def test_position_increase_requires_current_price_not_below_lifecycle_reduction_
             )
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
         scoring.init_tables()
+        TradingExperiment(db_path=db_path, account_manager=fake_account).init_tables()
         with sqlite3.connect(db_path) as conn:
             conn.execute(
                 f"INSERT INTO {scoring.REDUCTION_RECORDS_TABLE} (symbol, decision_round_ts, side, matched_rule, reduction_percent, original_quantity, reduced_quantity, remaining_quantity, status, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -891,3 +894,71 @@ def test_position_increase_requires_current_price_not_below_lifecycle_reduction_
     assert checks[0].triggered is False
     assert checks[0].latest_reduction_price == "9"
     assert checks[0].reason == "condition3_current_price_lt_latest_reduction_price"
+
+class PositionChangeHardTakeProfitAccountManager(FakeAccountManager):
+    def __init__(self, refreshed_amount="1.5", refreshed_entry="10"):
+        super().__init__()
+        self.refreshed_amount = refreshed_amount
+        self.refreshed_entry = refreshed_entry
+
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/positionRisk" and params and params.get("symbol") == "BANKUSDT":
+            return [{"symbol": "BANKUSDT", "positionAmt": self.refreshed_amount, "entryPrice": self.refreshed_entry, "leverage": "5"}]
+        if endpoint == "/fapi/v3/account":
+            return {"availableBalance": "5000"}
+        return super()._signed_get(endpoint, params)
+
+    def _signed_post(self, endpoint, params=None):
+        self.signed_posts.append((endpoint, dict(params or {})))
+        if endpoint == "/fapi/v1/algoOrder":
+            return {"algoId": 900 + len(self.signed_posts)}
+        return {"orderId": 100 + len(self.signed_posts)}
+
+
+def test_reduction_recreates_hard_take_profit_from_actual_remaining_position():
+    fake_account = PositionChangeHardTakeProfitAccountManager(refreshed_amount="1.5", refreshed_entry="10")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account, realized_pnl_retry_delays=())
+        scoring.init_tables()
+        TradingExperiment(db_path=db_path, account_manager=fake_account).init_tables()
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, open REAL, high REAL, close REAL)")
+            conn.execute("CREATE TABLE symbol_structural_stop_losses (symbol TEXT, decision_round_ts INTEGER, structural_stop_loss REAL)")
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.executemany("INSERT INTO klines_15m (symbol, open_time, open, high, close) VALUES (?, ?, ?, ?, ?)", [("BANK", 3000, 10, 10, 8), ("BANK", 2000, 10, 11, 10), ("BANK", 1000, 10, 10, 10)])
+            conn.executemany("INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)", [("BANK", 3000, 1), ("BANK", 2000, 1)])
+            conn.executemany("INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)", [("BANK", 4000, 18), ("BANK", 3000, 25)])
+            conn.execute(f"INSERT INTO {TradingExperiment.TRADES_TABLE} (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt, required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity, notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation, take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at) VALUES ('BANK', 1, 'LONG', 'opened', 80, 5, '100', '20', '1000', '10', '10', '2', '20', '37.5', '7', '', 'old-tp-1', 'old-sl-1', '', '', 1, 1)")
+        result = scoring.run_round(decision_round_ts=4000)
+        records = scoring.recent_reduction_records()
+        trade = scoring._connect().execute(f"SELECT take_profit_price, take_profit_order_id FROM {TradingExperiment.TRADES_TABLE} WHERE symbol = 'BANK'").fetchone()
+
+    assert result["reduction_records"] == 1
+    assert records[0]["status"] == "submitted"
+    assert any(params.get("type") == "TAKE_PROFIT" and params.get("quantity") == "1.5" and params.get("price") == "46.67" for _, params in fake_account.signed_posts)
+    assert trade["take_profit_price"] == "46.67"
+    assert trade["take_profit_order_id"] != "old-tp-1"
+
+
+def test_increase_cancels_and_recreates_hard_take_profit_from_actual_position():
+    fake_account = PositionChangeHardTakeProfitAccountManager(refreshed_amount="3", refreshed_entry="9")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
+        TradingExperiment(db_path=db_path, account_manager=fake_account).init_tables()
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.executemany("INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)", [("BANK", 3000, 70), ("BANK", 2000, 73)])
+            conn.execute(f"INSERT INTO {TradingExperiment.TRADES_TABLE} (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt, required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity, notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation, take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at) VALUES ('BANK', 1, 'LONG', 'opened', 72, 5, '100', '20', '1000', '10', '7', '2', '20', '34.5', '6', '', 'old-tp-1', 'old-sl-1', '', '', 1000, 1000)")
+        positions = [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "8", "entryPrice": "7", "unRealizedProfit": "70", "leverage": "5"}]
+        checks = scoring.evaluate_increase_conditions(positions=positions, decision_round_ts=3000, checked_at=4000)
+        records = scoring._record_increase_actions(checks, positions=positions, now_ms=4000)
+        trade = scoring._connect().execute(f"SELECT take_profit_price, take_profit_order_id FROM {TradingExperiment.TRADES_TABLE} WHERE symbol = 'BANK'").fetchone()
+
+    assert records == 1
+    assert ("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "old-tp-1"}) in fake_account.signed_deletes
+    assert any(params.get("type") == "TAKE_PROFIT" and params.get("quantity") == "3" and params.get("price") == "27.34" for _, params in fake_account.signed_posts)
+    assert trade["take_profit_price"] == "27.34"
+    assert trade["take_profit_order_id"] != "old-tp-1"

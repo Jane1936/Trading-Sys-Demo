@@ -33,6 +33,7 @@ class ExperimentConfig:
     percent_price_ioc_slippage: Decimal = Decimal("0.01")
     high_total_risk_threshold: Decimal = Decimal("18")
     high_total_risk_min_total_score: int = 81
+    hard_take_profit_usdt: Decimal = Decimal("55")
 
 
 @dataclass(frozen=True)
@@ -113,7 +114,8 @@ class TradingExperiment:
       and leverage: base margin = (equity * 1%) / (distance_ratio * leverage);
     * required margin uses the full formula result, and planned notional is margin * leverage;
     * stop-loss price distance remains capped by min(entry * 10%, equity * 1% / quantity);
-    * new entries do not place a hard take-profit order; only stop-loss is placed;
+    * new entries place a hard take-profit order that closes when position PnL reaches 55 USDT;
+    * stop-loss is also placed for the full visible position;
     * candidates come from the latest qualified openable-symbol round and are
       processed by total_score descending, then symbol ascending.
     """
@@ -499,7 +501,12 @@ class TradingExperiment:
         trigger_reference_price = self._latest_mark_price(trading_symbol, entry_price)
         notional = risk_quantity * entry_price
         required_margin = notional / Decimal(leverage)
-        take_profit_price = Decimal("0")
+        take_profit_price = self._hard_take_profit_price(
+            entry_price=entry_price,
+            quantity=risk_quantity,
+            profit_usdt=self.config.hard_take_profit_usdt,
+            tick_size=exchange_info["tick_size"],
+        )
         stop_loss_price, stop_loss_calculation = self._risk_capped_stop_loss_price_with_detail(
             entry_price=entry_price,
             quantity=risk_quantity,
@@ -508,6 +515,7 @@ class TradingExperiment:
             tick_size=exchange_info["tick_size"],
         )
 
+        tp_order = None
         sl_order = None
         if position_visible:
             stop_loss_quantity = self._floor_to_step(abs(position_amt), exchange_info["step_size"])
@@ -529,10 +537,29 @@ class TradingExperiment:
                 },
                 "place_stop_loss",
             )
-        tp_order_id = ""
+            take_profit_quantity = self._floor_to_step(abs(position_amt), exchange_info["step_size"])
+            if take_profit_quantity <= 0:
+                take_profit_quantity = quantity
+            tp_order = self._place_exit_order(
+                candidate,
+                trading_symbol,
+                {
+                    "symbol": trading_symbol,
+                    "side": "SELL",
+                    "type": "TAKE_PROFIT",
+                    "quantity": self._fmt_decimal(take_profit_quantity),
+                    "price": self._fmt_decimal(take_profit_price),
+                    "stopPrice": self._fmt_decimal(take_profit_price),
+                    "timeInForce": "GTC",
+                    "reduceOnly": "true",
+                    "workingType": "MARK_PRICE",
+                },
+                "place_hard_take_profit",
+            )
+        tp_order_id = self._exit_order_id(tp_order)
         sl_order_id = self._exit_order_id(sl_order)
         exit_order_status = []
-        exit_order_status.append("tp_order_id=not_placed")
+        exit_order_status.append("tp_order_id=" + (tp_order_id or "failed"))
         exit_order_status.append("sl_order_id=" + (sl_order_id or "failed"))
 
         self._insert_trade(
@@ -553,7 +580,7 @@ class TradingExperiment:
             take_profit_order_id=tp_order_id,
             stop_loss_order_id=sl_order_id,
             reason=f"market_order_id={market_order.get('orderId', '')}; " + "; ".join(exit_order_status),
-            raw_response=str({"market": market_order, "tp": None, "sl": sl_order}),
+            raw_response=str({"market": market_order, "tp": tp_order, "sl": sl_order}),
             now=now,
         )
         return {"status": "opened", "required_margin": self._fmt_decimal(required_margin)}
@@ -1148,6 +1175,18 @@ class TradingExperiment:
             return fallback
         price = self._decimal_from(payload.get("markPrice"), Decimal("0"))
         return price if price > 0 else fallback
+
+
+    def _hard_take_profit_price(
+        self,
+        entry_price: Decimal,
+        quantity: Decimal,
+        profit_usdt: Decimal,
+        tick_size: Decimal,
+    ) -> Decimal:
+        if entry_price <= 0 or quantity <= 0 or profit_usdt <= 0:
+            return Decimal("0")
+        return self._ceil_to_tick(entry_price + (profit_usdt / quantity), tick_size)
 
     def _risk_capped_stop_loss_price(
         self,

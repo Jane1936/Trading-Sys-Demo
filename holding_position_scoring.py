@@ -770,6 +770,23 @@ class HoldingPositionScoringSystem:
                 status = "failed"
                 reason_parts.append(no_fill_reason.replace("stop_loss", "reduction"))
                 market_order_id = ""
+            elif remaining_quantity > 0:
+                try:
+                    actual_quantity, actual_entry_price = self._current_position_quantity_and_entry(exchange_symbol, remaining_quantity, position)
+                    take_profit_order_id, take_profit_price, take_profit_reason = self._replace_hard_take_profit_for_position(
+                        helper,
+                        exchange_symbol,
+                        check.symbol,
+                        side,
+                        actual_entry_price,
+                        actual_quantity,
+                        exchange_info["tick_size"],
+                    )
+                    if take_profit_order_id:
+                        self._update_latest_open_trade_take_profit(check.symbol, take_profit_order_id, take_profit_price)
+                    reason_parts.append(take_profit_reason)
+                except Exception as exc:
+                    reason_parts.append(f"hard_take_profit_recreate_failed: {type(exc).__name__}: {exc}")
         except Exception as exc:
             status = "failed"
             reason_parts.append(f"reduction_action_failed: {type(exc).__name__}: {exc}")
@@ -777,6 +794,111 @@ class HoldingPositionScoringSystem:
                 reason_parts.append(f"reduce_only_diagnostics: {self._reduce_only_diagnostics(exchange_symbol)}")
         return PositionReductionRecord(0, check.symbol, check.decision_round_ts, side, matched_rule, self._fmt_decimal(percent), self._fmt_decimal(original_quantity), self._fmt_decimal(reduced_quantity), self._fmt_decimal(remaining_quantity), old_limit_order_id, new_limit_order_id, market_order_id, limit_price, status, "; ".join(reason_parts), " | ".join(raw_parts), now_ms)
 
+
+    def _cancel_latest_hard_take_profit_order(self, exchange_symbol: str, symbol: str) -> str:
+        order_id = self._latest_open_trade_take_profit_order_id(symbol)
+        if not order_id:
+            return "hard_take_profit_cancel_skipped_missing_order_id"
+        try:
+            response = self.account_manager._signed_delete("/fapi/v1/algoOrder", {"symbol": exchange_symbol, "algoId": order_id})
+        except AttributeError as exc:
+            return f"hard_take_profit_cancel_unsupported: {type(exc).__name__}: {exc}"
+        except Exception as exc:
+            return f"hard_take_profit_cancel_failed: {type(exc).__name__}: {exc}"
+        return f"hard_take_profit_cancelled; order_id={order_id}; response={response}"
+
+    def _replace_hard_take_profit_for_position(
+        self,
+        helper: TradingExperiment,
+        exchange_symbol: str,
+        symbol: str,
+        side: str,
+        entry_price: Decimal,
+        quantity: Decimal,
+        tick_size: Decimal,
+    ) -> tuple[str, Decimal, str]:
+        take_profit_price = self._hard_take_profit_price_for_side(
+            side=side,
+            entry_price=entry_price,
+            quantity=quantity,
+            profit_usdt=helper.config.hard_take_profit_usdt,
+            tick_size=tick_size,
+        )
+        if take_profit_price <= 0 or quantity <= 0:
+            raise RuntimeError("hard_take_profit_recreate_invalid_price_or_quantity")
+        endpoint, params = TradingExperiment._exit_order_request({
+            "symbol": exchange_symbol,
+            "side": side,
+            "type": "TAKE_PROFIT",
+            "quantity": self._fmt_decimal(quantity),
+            "price": self._fmt_decimal(take_profit_price),
+            "stopPrice": self._fmt_decimal(take_profit_price),
+            "timeInForce": "GTC",
+            "reduceOnly": "true",
+            "workingType": "MARK_PRICE",
+        })
+        response = helper._signed_post_order_with_ioc_retry(endpoint, params, trading_symbol=exchange_symbol)
+        order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
+        return order_id, take_profit_price, (
+            f"hard_take_profit_recreated; target_profit_usdt={self._fmt_decimal(helper.config.hard_take_profit_usdt)}; "
+            f"quantity={self._fmt_decimal(quantity)}; price={self._fmt_decimal(take_profit_price)}; order_id={order_id}"
+        )
+
+    def _current_position_quantity_and_entry(
+        self,
+        exchange_symbol: str,
+        fallback_quantity: Decimal,
+        fallback_position: dict[str, Any],
+    ) -> tuple[Decimal, Decimal]:
+        try:
+            rows = self.account_manager._signed_get("/fapi/v3/positionRisk", {"symbol": exchange_symbol})
+        except Exception:
+            rows = []
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict) or str(row.get("symbol", "")).upper() != exchange_symbol.upper():
+                    continue
+                amount = abs(self._decimal_from(row.get("positionAmt"), Decimal("0")))
+                entry = self._decimal_from(row.get("entryPrice"), Decimal("0"))
+                if amount > 0 and entry > 0:
+                    return amount, entry
+        fallback_entry = self._decimal_from(fallback_position.get("entryPrice"), Decimal("0"))
+        return fallback_quantity, fallback_entry
+
+    @staticmethod
+    def _hard_take_profit_price_for_side(side: str, entry_price: Decimal, quantity: Decimal, profit_usdt: Decimal, tick_size: Decimal) -> Decimal:
+        if entry_price <= 0 or quantity <= 0 or profit_usdt <= 0:
+            return Decimal("0")
+        distance = profit_usdt / quantity
+        if side.upper() == "BUY":
+            return TradingExperiment._floor_to_tick(entry_price - distance, tick_size)
+        return TradingExperiment._ceil_to_tick(entry_price + distance, tick_size)
+
+    def _latest_open_trade_take_profit_order_id(self, symbol: str) -> str:
+        try:
+            with self._connect() as conn:
+                row = conn.execute("SELECT take_profit_order_id FROM trading_experiment_trades WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1", (symbol,)).fetchone()
+        except sqlite3.Error:
+            return ""
+        return str(row["take_profit_order_id"]) if row and row["take_profit_order_id"] is not None else ""
+
+    def _update_latest_open_trade_take_profit(self, symbol: str, order_id: str, price: Decimal) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE trading_experiment_trades
+                    SET take_profit_order_id = ?, take_profit_price = ?, updated_at = ?
+                    WHERE id = (
+                        SELECT id FROM trading_experiment_trades
+                        WHERE symbol = ? AND status = 'opened'
+                        ORDER BY created_at DESC, id DESC LIMIT 1
+                    )
+                    """,
+                    (order_id, self._fmt_decimal(price), int(time.time() * 1000), symbol),
+                )
+        except sqlite3.Error:
+            return
 
     @staticmethod
     def _replacement_stop_immediate_trigger_reason(side: str, stop_price: Decimal, current_mark_price: Decimal) -> str:
@@ -1032,6 +1154,9 @@ class HoldingPositionScoringSystem:
                 status = "skipped"
                 reason_parts.append("可用金额不足")
             else:
+                cancel_take_profit_reason = self._cancel_latest_hard_take_profit_order(exchange_symbol, check.symbol)
+                if cancel_take_profit_reason:
+                    reason_parts.append(cancel_take_profit_reason)
                 response = self.account_manager._signed_post(
                     "/fapi/v1/order",
                     {
@@ -1049,6 +1174,28 @@ class HoldingPositionScoringSystem:
                     status = "failed"
                     reason_parts.append(no_fill_reason.replace("stop_loss", "increase"))
                     market_order_id = ""
+                else:
+                    try:
+                        actual_quantity, actual_entry_price = self._current_position_quantity_and_entry(
+                            exchange_symbol,
+                            self._floor_to_step(original_quantity + increased_quantity, exchange_info["step_size"]),
+                            position,
+                        )
+                        close_side = "SELL" if amount > 0 else "BUY"
+                        take_profit_order_id, take_profit_price, take_profit_reason = self._replace_hard_take_profit_for_position(
+                            helper,
+                            exchange_symbol,
+                            check.symbol,
+                            close_side,
+                            actual_entry_price,
+                            actual_quantity,
+                            exchange_info["tick_size"],
+                        )
+                        if take_profit_order_id:
+                            self._update_latest_open_trade_take_profit(check.symbol, take_profit_order_id, take_profit_price)
+                        reason_parts.append(take_profit_reason)
+                    except Exception as exc:
+                        reason_parts.append(f"hard_take_profit_recreate_failed: {type(exc).__name__}: {exc}")
         except Exception as exc:
             status = "failed"
             reason_parts.append(f"increase_action_failed: {type(exc).__name__}: {exc}")
