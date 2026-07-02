@@ -136,7 +136,6 @@ class HoldingPositionScoringSystem:
     REDUCTION_RECORDS_TABLE = "holding_position_reduction_records"
     REDUCTION_TAG_ABSOLUTE_SCORE_DRAWDOWN = "绝对分数大幅回撤"
     REDUCTION_TAG_MEDIUM_DRAWDOWN_WEAKENING = "中等回撤且趋势连续弱化"
-    REDUCTION_TAG_PRICE_LEADING_DETERIORATION = "价格领先恶化"
     REDUCTION_TAG_SCORE_DANGER_ZONE = "评分进入危险区"
     REDUCTION_TAG_MEDIUM_DANGER_PRICE_CONFIRMATION = "中危险区+价格确认"
 
@@ -430,12 +429,12 @@ class HoldingPositionScoringSystem:
             amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
             if not symbol or amount == 0:
                 continue
-            check = self._evaluate_reduction_rule_one(position, symbol, round_ts, equity, one_r, two_r, now_ms)
+            check = self._evaluate_reduction_rules(position, symbol, round_ts, equity, one_r, two_r, now_ms)
             self._save_reduction_check(check)
             checks.append(check)
         return checks
 
-    def _evaluate_reduction_rule_one(
+    def _evaluate_reduction_rules(
         self, position: dict[str, Any], symbol: str, round_ts: int, equity: Decimal, one_r: Decimal, two_r: Decimal, now_ms: int
     ) -> PositionReductionCheck:
         highest = self._highest_recent_15m_high(symbol, limit=3)
@@ -467,26 +466,6 @@ class HoldingPositionScoringSystem:
         matched_rules: list[str] = []
         reasons: list[str] = []
 
-        if highest <= 0:
-            reasons.append("rule1_missing_recent_three_15m_highs")
-        elif current_price <= 0:
-            reasons.append("rule1_missing_current_price")
-        elif drawdown < Decimal("0.035"):
-            reasons.append("rule1_price_drawdown_lt_3_5_percent")
-        elif unrealized_pnl >= one_r:
-            reasons.append("rule1_unrealized_pnl_ge_1r")
-        elif latest_score == "" or previous_score == "" or previous_previous_score == "":
-            reasons.append("rule1_missing_recent_three_total_scores")
-        elif self._decimal_from(latest_score, Decimal("0")) >= self._decimal_from(previous_score, Decimal("0")):
-            reasons.append("rule1_latest_score_not_below_previous_score")
-        elif self._decimal_from(previous_score, Decimal("0")) >= self._decimal_from(previous_previous_score, Decimal("0")):
-            reasons.append("rule1_previous_score_not_below_previous_previous_score")
-        else:
-            triggered = True
-            tags.append(self.REDUCTION_TAG_PRICE_LEADING_DETERIORATION)
-            matched_rules.append("规则一")
-            reasons.append("rule1_price_leading_deterioration")
-
         latest_open = latest_kline[0] if latest_kline else Decimal("0")
         latest_close = latest_kline[1] if latest_kline else Decimal("0")
         if len(recent_15m_open_closes) < 2:
@@ -515,12 +494,12 @@ class HoldingPositionScoringSystem:
             reasons.append("rule3_missing_recent_three_15m_highs")
         elif current_price <= 0:
             reasons.append("rule3_missing_current_price")
-        elif drawdown < Decimal("0.03"):
-            reasons.append("rule3_price_drawdown_lt_3_percent")
+        elif drawdown < Decimal("0.035"):
+            reasons.append("rule3_price_drawdown_lt_3_5_percent")
         elif unrealized_pnl >= two_r:
             reasons.append("rule3_unrealized_pnl_ge_2r")
-        elif open_score == "" or latest_score == "":
-            reasons.append("rule3_missing_open_or_latest_total_score")
+        elif latest_score == "":
+            reasons.append("rule3_missing_latest_total_score")
         elif previous_score == "" or previous_previous_score == "":
             reasons.append("rule3_missing_recent_three_total_scores")
         elif self._decimal_from(latest_score, Decimal("0")) >= self._decimal_from(previous_score, Decimal("0")):
@@ -528,8 +507,7 @@ class HoldingPositionScoringSystem:
         elif self._decimal_from(previous_score, Decimal("0")) >= self._decimal_from(previous_previous_score, Decimal("0")):
             reasons.append("rule3_previous_score_not_below_previous_previous_score")
         else:
-            rule3_score_drawdown = self._decimal_from(open_score, Decimal("0")) - self._decimal_from(latest_score, Decimal("0"))
-            score_drawdown = max(score_drawdown, rule3_score_drawdown)
+            rule3_score_drawdown = recent_score_drawdown
             if rule3_score_drawdown >= Decimal("18"):
                 triggered = True
                 tags.append(self.REDUCTION_TAG_ABSOLUTE_SCORE_DRAWDOWN)
@@ -586,7 +564,6 @@ class HoldingPositionScoringSystem:
 
         reason = "; ".join(reasons)
         matched_reason_map = {
-            "规则一": "price_leading_deterioration",
             "规则二": "medium_drawdown_and_continuous_weakening",
             "规则三": "absolute_score_large_drawdown",
             "规则五": "medium_danger_zone_price_confirmation",
@@ -708,8 +685,8 @@ class HoldingPositionScoringSystem:
 
     @staticmethod
     def _reduction_action_for_rules(rule_name: str) -> tuple[str, Decimal]:
-        mapping = {"规则五": Decimal("0.5"), "规则三": Decimal("0.3"), "规则二": Decimal("0.25"), "规则一": Decimal("0.25")}
-        for rule in ("规则五", "规则三", "规则二", "规则一"):
+        mapping = {"规则五": Decimal("0.5"), "规则三": Decimal("0.3"), "规则二": Decimal("0.25")}
+        for rule in ("规则五", "规则三", "规则二"):
             if rule in rule_name:
                 return rule, mapping[rule]
         return "", Decimal("0")

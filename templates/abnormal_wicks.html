@@ -72,7 +72,6 @@
     .chip { padding: 4px 10px; border-radius: 999px; background: #dbeafe; color: #1e3a8a; font-size: 12px; font-weight: 600; }
     .reduction-tags { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
     .reduction-tag { display:inline-flex; align-items:center; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:800; border:1px solid transparent; white-space:nowrap; }
-    .reduction-tag-rule1 { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
     .reduction-tag-rule2 { background:#ffedd5; color:#c2410c; border-color:#fdba74; }
     .reduction-tag-rule3 { background:#fef3c7; color:#92400e; border-color:#fbbf24; }
     .reduction-tag-rule4 { background:#ede9fe; color:#5b21b6; border-color:#c4b5fd; }
@@ -954,7 +953,7 @@
           <div class="symbol-strip">
             <div><strong>减仓条件模块：本轮执行结果</strong></div>
             {% if holding_reduction_round_ts %}
-              <div class="muted">最近判断轮次：{{ holding_reduction_round_ts|fmt_ms_datetime }}。该15分钟定时任务在“持仓评分系统：止损规则判断结果”完成并落库后执行；规则一检查价格从3根15m high最高价回撤、未变现盈亏小于1R以及最近3次总分连续弱化，规则二检查最近2条15m全部收阴、未变现盈亏小于2R以及最近3次总分连续弱化且最近一次回撤达到阈值，规则三检查价格、开仓以来总分大幅回撤以及最近3次总分连续弱化，规则五检查：条件1（本轮评分&lt;19且当前价格≤开仓价）或条件2（本轮与上一轮评分均在19-30分，且最近两条15分钟K线close均≤开仓价），且每个新开仓生命周期内仅触发一次；原规则四（最新总分&lt;40即触发“评分进入危险区”）已删除，不再作为减仓触发条件。</div>
+              <div class="muted">最近判断轮次：{{ holding_reduction_round_ts|fmt_ms_datetime }}。该15分钟定时任务在“持仓评分系统：止损规则判断结果”完成并落库后执行；规则二检查最近2条15m全部收阴、未变现盈亏小于2R以及最近3次总分连续弱化且最近一次回撤达到阈值，规则三检查价格、最近一次总分大幅回撤以及最近3次总分连续弱化，规则五检查：条件1（本轮评分&lt;19且当前价格≤开仓价）或条件2（本轮与上一轮评分均在19-30分，且最近两条15分钟K线close均≤开仓价），且每个新开仓生命周期内仅触发一次；原规则四（最新总分&lt;40即触发“评分进入危险区”）已删除，不再作为减仓触发条件。</div>
             {% else %}
               <div class="muted">暂无减仓条件模块执行结果。</div>
             {% endif %}
@@ -962,14 +961,14 @@
             {% if triggered_reduction_checks %}
               <div class="chips">
                 {% for row in triggered_reduction_checks %}
-                  <span class="reduction-tags" title="{{ row.reason }}"><span class="chip">{{ row.symbol }}</span>{% for tag in row.tag.split('、') %}{% if tag == '价格领先恶化' %}<span class="reduction-tag reduction-tag-rule1">{{ tag }}</span>{% elif tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>{% elif tag == '绝对分数大幅回撤' %}<span class="reduction-tag reduction-tag-rule3">{{ tag }}</span>{% elif tag == '评分进入危险区' %}<span class="reduction-tag reduction-tag-rule4">{{ tag }}</span>{% elif tag == '中危险区+价格确认' %}<span class="reduction-tag reduction-tag-rule5">{{ tag }}</span>{% else %}<span class="reduction-tag reduction-tag-default">{{ tag }}</span>{% endif %}{% endfor %}</span>
+                  <span class="reduction-tags" title="{{ row.reason }}"><span class="chip">{{ row.symbol }}</span>{% for tag in row.tag.split('、') %}{% if tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>{% elif tag == '绝对分数大幅回撤' %}<span class="reduction-tag reduction-tag-rule3">{{ tag }}</span>{% elif tag == '评分进入危险区' %}<span class="reduction-tag reduction-tag-rule4">{{ tag }}</span>{% elif tag == '中危险区+价格确认' %}<span class="reduction-tag reduction-tag-rule5">{{ tag }}</span>{% else %}<span class="reduction-tag reduction-tag-default">{{ tag }}</span>{% endif %}{% endfor %}</span>
                 {% endfor %}
               </div>
             {% else %}
               <div class="chips"><span class="chip">本轮无触发减仓条件symbol</span></div>
             {% endif %}
           </div>
-          <div class="tip">规则一：对当前已持仓 symbol 查询最近3条15分钟K线 high 并取最高价 highest；若当前价从 highest 回撤 ≥ 3.5%（包含3.5%），则检查当前未变现盈亏是否 &lt; 1R（1R = 实验组USDT净值 × 1%）；若满足，再查询最近3条总分数据，若最新总分低于上一次总分，且上一次总分低于上上次总分，则说明触发“价格领先恶化”，tag 标记为“价格领先恶化”。<br>规则二：查询最近2条15分钟K线，若全部收阴（close &lt; open），且当前未变现盈亏 &lt; 2R；再查询最近3条总分数据，若最新总分低于上一次总分，且上一次总分低于上上次总分，并且最新总分从上一次总分回撤 ≥ 15分（包含15分），则 tag 标记为“中等回撤且趋势连续弱化”。<br>规则三：对当前已持仓 symbol 查询最近3条15分钟K线 high 并取最高价 highest；若当前价从 highest 回撤 ≥ 3%，则检查当前未变现盈亏是否 &lt; 2R（2R = 实验组USDT净值 × 2%）；若满足，再查询“交易实验交易记录”中该 symbol 开仓时 total_score，并与最新 total_score 比较。最新总分较开仓总分回撤 ≥ 18分，并且最近3条总分数据满足最新总分低于上一次总分、上一次总分低于上上次总分时，tag 标记为“绝对分数大幅回撤”。<br>规则五：对于当前已持仓的 symbol，查询最新 total_score、上一轮 total_score、最近两条15分钟K线 close 以及“交易实验交易记录”中匹配到的开仓价。条件1：若本轮评分 &lt; 19分，且当前价格 ≤ 开仓价；条件2：若 19分 ≤ 本轮评分 ≤ 30分，且最近两条15分钟K线 close 均 ≤ 开仓价，并且 19分 ≤ 上一轮评分 ≤ 30分。两个条件任意触发1个，则说明该 symbol 已触发“中危险区+价格确认”，tag 标记为“中危险区+价格确认”，并将此条减仓记录数据库落表；每个新开仓的 symbol 在它的生命周期内只能触发一次规则五。<br>原规则四（最新总分 &lt; 40分即触发“评分进入危险区”）已删除，不再作为减仓触发条件。<br>减仓操作：若同时满足多个规则，按当前最高优先级规则执行；规则五减仓50%，规则三减仓30%，规则一/二减仓25%。触发减仓时会先取消原限价单，按剩余仓位数量重挂新的限价单，再调用市价单接口卖出对应减仓数量。</div>
+          <div class="tip">规则二：查询最近2条15分钟K线，若全部收阴（close &lt; open），且当前未变现盈亏 &lt; 2R；再查询最近3条总分数据，若最新总分低于上一次总分，且上一次总分低于上上次总分，并且最新总分从上一次总分回撤 ≥ 15分（包含15分），则 tag 标记为“中等回撤且趋势连续弱化”。<br>规则三：对当前已持仓 symbol 查询最近3条15分钟K线 high 并取最高价 highest；若当前价从 highest 回撤 ≥ 3.5%，则检查当前未变现盈亏是否 &lt; 2R（2R = 实验组USDT净值 × 2%）；若满足，再查询最近3条总分数据。最新总分低于上一次总分、上一次总分低于上上次总分，并且最新总分相对上一轮总分回撤 ≥ 18分时，tag 标记为“绝对分数大幅回撤”。<br>规则五：对于当前已持仓的 symbol，查询最新 total_score、上一轮 total_score、最近两条15分钟K线 close 以及“交易实验交易记录”中匹配到的开仓价。条件1：若本轮评分 &lt; 19分，且当前价格 ≤ 开仓价；条件2：若 19分 ≤ 本轮评分 ≤ 30分，且最近两条15分钟K线 close 均 ≤ 开仓价，并且 19分 ≤ 上一轮评分 ≤ 30分。两个条件任意触发1个，则说明该 symbol 已触发“中危险区+价格确认”，tag 标记为“中危险区+价格确认”，并将此条减仓记录数据库落表；每个新开仓的 symbol 在它的生命周期内只能触发一次规则五。<br>原规则四（最新总分 &lt; 40分即触发“评分进入危险区”）已删除，不再作为减仓触发条件。<br>减仓操作：若同时满足多个规则，按当前最高优先级规则执行；规则五减仓50%，规则三减仓30%，规则二减仓25%。触发减仓时会先取消原限价单，按剩余仓位数量重挂新的限价单，再调用市价单接口卖出对应减仓数量。</div>
           <div class="table-wrap">
             <table>
               <thead>
@@ -1001,8 +1000,7 @@
                   <td>{% if row.tag %}
                     <span class="reduction-tags">
                       {% for tag in row.tag.split('、') %}
-                        {% if tag == '价格领先恶化' %}<span class="reduction-tag reduction-tag-rule1">{{ tag }}</span>
-                        {% elif tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>
+                        {% if tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>
                         {% elif tag == '绝对分数大幅回撤' %}<span class="reduction-tag reduction-tag-rule3">{{ tag }}</span>
                         {% elif tag == '评分进入危险区' %}<span class="reduction-tag reduction-tag-rule4">{{ tag }}</span>
                         {% elif tag == '中危险区+价格确认' %}<span class="reduction-tag reduction-tag-rule5">{{ tag }}</span>
