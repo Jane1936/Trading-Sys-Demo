@@ -118,6 +118,12 @@ class PositionIncreaseRecord:
     status: str
     reason: str
     created_at: int
+    original_quantity: str = ""
+    increased_quantity: str = ""
+    required_margin_usdt: str = ""
+    available_experiment_usdt: str = ""
+    market_order_id: str = ""
+    raw_response: str = ""
 
 
 @dataclass(frozen=True)
@@ -352,7 +358,13 @@ class HoldingPositionScoringSystem:
                     latest_reduction_price TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL,
                     reason TEXT NOT NULL,
-                    created_at INTEGER NOT NULL
+                    created_at INTEGER NOT NULL,
+                    original_quantity TEXT NOT NULL DEFAULT '',
+                    increased_quantity TEXT NOT NULL DEFAULT '',
+                    required_margin_usdt TEXT NOT NULL DEFAULT '',
+                    available_experiment_usdt TEXT NOT NULL DEFAULT '',
+                    market_order_id TEXT NOT NULL DEFAULT '',
+                    raw_response TEXT NOT NULL DEFAULT ''
                 )
                 """
             )
@@ -382,6 +394,17 @@ class HoldingPositionScoringSystem:
             }.items():
                 if column not in reduction_columns:
                     conn.execute(f"ALTER TABLE {self.REDUCTION_CHECKS_TABLE} ADD COLUMN {column} {ddl}")
+            increase_record_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.INCREASE_RECORDS_TABLE})").fetchall()}
+            for column, ddl in {
+                "original_quantity": "TEXT NOT NULL DEFAULT ''",
+                "increased_quantity": "TEXT NOT NULL DEFAULT ''",
+                "required_margin_usdt": "TEXT NOT NULL DEFAULT ''",
+                "available_experiment_usdt": "TEXT NOT NULL DEFAULT ''",
+                "market_order_id": "TEXT NOT NULL DEFAULT ''",
+                "raw_response": "TEXT NOT NULL DEFAULT ''",
+            }.items():
+                if column not in increase_record_columns:
+                    conn.execute(f"ALTER TABLE {self.INCREASE_RECORDS_TABLE} ADD COLUMN {column} {ddl}")
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_created "
                 f"ON {self.RECORDS_TABLE}(created_at DESC, symbol ASC)"
@@ -419,7 +442,7 @@ class HoldingPositionScoringSystem:
         reduction_checks = self.evaluate_reduction_conditions(positions=reduction_positions, decision_round_ts=round_ts, checked_at=now_ms)
         reduction_records = self._execute_reduction_actions(reduction_checks, reduction_positions, now_ms)
         increase_checks = self.evaluate_increase_conditions(positions=reduction_positions, decision_round_ts=round_ts, checked_at=now_ms)
-        increase_records = self._record_increase_actions(increase_checks, now_ms)
+        increase_records = self._record_increase_actions(increase_checks, reduction_positions, now_ms)
         portfolio_risk = self.calculate_portfolio_risk(positions=reduction_positions, decision_round_ts=round_ts, calculated_at=now_ms)
         return {
             "decision_round_ts": round_ts,
@@ -958,14 +981,78 @@ class HoldingPositionScoringSystem:
             ).fetchone()
         return row is not None
 
-    def _record_increase_actions(self, checks: list[PositionIncreaseCheck], now_ms: int) -> int:
+    def _record_increase_actions(self, checks: list[PositionIncreaseCheck], positions: list[dict[str, Any]] | None = None, now_ms: int | None = None) -> int:
+        active_positions = positions if positions is not None else self._active_positions()
+        created_at = now_ms if now_ms is not None else int(time.time() * 1000)
         records = 0
         for check in checks:
             if not check.triggered or self._has_increase_record(check.symbol, check.decision_round_ts):
                 continue
-            self._save_increase_record(PositionIncreaseRecord(0, check.symbol, check.decision_round_ts, self.INCREASE_TAG_FIRST, check.current_price, check.unrealized_pnl, check.one_r_usdt, check.latest_total_score, check.previous_total_score, check.latest_reduction_price, "triggered", check.reason, now_ms))
+            position = next((p for p in active_positions if self._base_symbol(str(p.get("symbol", ""))) == check.symbol), None)
+            record = self._execute_increase_action(position, check, created_at) if position else PositionIncreaseRecord(0, check.symbol, check.decision_round_ts, self.INCREASE_TAG_FIRST, check.current_price, check.unrealized_pnl, check.one_r_usdt, check.latest_total_score, check.previous_total_score, check.latest_reduction_price, "failed", f"{check.reason}; increase_position_missing", created_at)
+            self._save_increase_record(record)
             records += 1
         return records
+
+    def _execute_increase_action(self, position: dict[str, Any], check: PositionIncreaseCheck, now_ms: int) -> PositionIncreaseRecord:
+        amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
+        exchange_symbol = self._exchange_symbol(position, check.symbol)
+        side = "BUY" if amount > 0 else "SELL"
+        original_quantity = abs(amount)
+        increased_quantity = Decimal("0")
+        required_margin = Decimal("0")
+        available_experiment_usdt = Decimal("0")
+        market_order_id = ""
+        status = "submitted"
+        reason_parts = [check.reason]
+        raw_response = ""
+        try:
+            helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
+            exchange_info = helper._exchange_symbol_info(exchange_symbol)
+            increased_quantity = self._floor_to_step(original_quantity * Decimal("0.5"), exchange_info["step_size"])
+            if increased_quantity <= 0:
+                raise RuntimeError("increase_market_quantity_rounded_to_zero")
+            current_price = self._decimal_from(check.current_price, Decimal("0"))
+            if current_price <= 0:
+                current_price = self._current_symbol_price(exchange_symbol, position)
+            leverage = self._position_leverage(position)
+            if current_price <= 0:
+                raise RuntimeError("increase_current_price_missing")
+            if leverage <= 0:
+                raise RuntimeError("increase_position_leverage_missing")
+            required_margin = increased_quantity * current_price / leverage
+            account = self.account_manager._signed_get("/fapi/v3/account")
+            if not isinstance(account, dict):
+                raise RuntimeError("Unexpected Binance account response format")
+            available_balance = self._decimal_from(account.get("availableBalance"), Decimal("0"))
+            available_experiment_usdt = available_balance - helper.config.experiment_uninvested_usdt
+            if available_experiment_usdt < 0:
+                available_experiment_usdt = Decimal("0")
+            if required_margin > available_experiment_usdt:
+                status = "skipped"
+                reason_parts.append("可用金额不足")
+            else:
+                response = self.account_manager._signed_post(
+                    "/fapi/v1/order",
+                    {
+                        "symbol": exchange_symbol,
+                        "side": side,
+                        "type": "MARKET",
+                        "quantity": self._fmt_decimal(increased_quantity),
+                        "newOrderRespType": "RESULT",
+                    },
+                )
+                raw_response = str(response)
+                market_order_id = str(response.get("orderId", "")) if isinstance(response, dict) else ""
+                no_fill_reason = self._no_fill_order_response_reason(response)
+                if no_fill_reason:
+                    status = "failed"
+                    reason_parts.append(no_fill_reason.replace("stop_loss", "increase"))
+                    market_order_id = ""
+        except Exception as exc:
+            status = "failed"
+            reason_parts.append(f"increase_action_failed: {type(exc).__name__}: {exc}")
+        return PositionIncreaseRecord(0, check.symbol, check.decision_round_ts, self.INCREASE_TAG_FIRST, check.current_price, check.unrealized_pnl, check.one_r_usdt, check.latest_total_score, check.previous_total_score, check.latest_reduction_price, status, "; ".join(reason_parts), now_ms, self._fmt_decimal(original_quantity), self._fmt_decimal(increased_quantity), self._fmt_decimal(required_margin), self._fmt_decimal(available_experiment_usdt), market_order_id, raw_response)
 
     def _save_increase_check(self, check: PositionIncreaseCheck) -> None:
         with self._connect() as conn:
@@ -989,10 +1076,10 @@ class HoldingPositionScoringSystem:
             conn.execute(
                 f"""
                 INSERT INTO {self.INCREASE_RECORDS_TABLE}
-                (symbol, decision_round_ts, action_name, current_price, unrealized_pnl, one_r_usdt, latest_total_score, previous_total_score, latest_reduction_price, status, reason, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (symbol, decision_round_ts, action_name, current_price, unrealized_pnl, one_r_usdt, latest_total_score, previous_total_score, latest_reduction_price, status, reason, created_at, original_quantity, increased_quantity, required_margin_usdt, available_experiment_usdt, market_order_id, raw_response)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (record.symbol, record.decision_round_ts, record.action_name, record.current_price, record.unrealized_pnl, record.one_r_usdt, record.latest_total_score, record.previous_total_score, record.latest_reduction_price, record.status, record.reason, record.created_at),
+                (record.symbol, record.decision_round_ts, record.action_name, record.current_price, record.unrealized_pnl, record.one_r_usdt, record.latest_total_score, record.previous_total_score, record.latest_reduction_price, record.status, record.reason, record.created_at, record.original_quantity, record.increased_quantity, record.required_margin_usdt, record.available_experiment_usdt, record.market_order_id, record.raw_response),
             )
 
     def _has_increase_record(self, symbol: str, decision_round_ts: int) -> bool:
