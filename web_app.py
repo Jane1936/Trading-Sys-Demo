@@ -439,6 +439,34 @@ def trailing_stop_summary_api():
         return jsonify({"error": str(exc)}), 502
 
 
+def _holding_increase_payload() -> dict:
+    holding_scoring = HoldingPositionScoringSystem(db_path=DB_PATH)
+    round_ts, checks = holding_scoring.get_latest_increase_checks()
+    since_ms = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp() * 1000)
+    records = holding_scoring.recent_increase_records(limit=100, since_ms=since_ms)
+    return {
+        "round_ts": round_ts,
+        "checks": [dict(row) for row in checks],
+        "records": [dict(row) for row in records],
+    }
+
+
+@app.post("/api/holding-increase/refresh-pretrigger")
+def holding_increase_refresh_pretrigger_api():
+    try:
+        holding_scoring = HoldingPositionScoringSystem(db_path=DB_PATH)
+        result = holding_scoring.refresh_pretrigger_increase_checks()
+        payload = _holding_increase_payload()
+        payload.update(result)
+        return jsonify(payload)
+    except BinanceAccountConfigError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except requests.exceptions.RequestException as exc:
+        return jsonify({"error": f"Binance holding increase refresh failed: {exc}"}), 502
+    except (RuntimeError, sqlite3.Error) as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
 def _btc_5m_payload(page: int = 1) -> dict:
     page = max(1, page)
     page_size = 24

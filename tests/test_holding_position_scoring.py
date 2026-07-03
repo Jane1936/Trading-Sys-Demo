@@ -1,5 +1,6 @@
 import sqlite3
 import tempfile
+from decimal import Decimal
 from pathlib import Path
 
 from holding_position_scoring import HoldingPositionScoringSystem
@@ -966,3 +967,88 @@ def test_increase_cancels_and_recreates_hard_take_profit_from_actual_position():
     assert trade["take_profit_order_id"] != "old-tp-1"
     assert trade["stop_loss_price"] == "6"
     assert trade["stop_loss_order_id"] != "old-sl-1"
+
+class RefreshingMarkAccountManager(FakeAccountManager):
+    def __init__(self, mark_price="10"):
+        super().__init__()
+        self.mark_price = mark_price
+
+    def _public_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v1/premiumIndex":
+            return {"markPrice": self.mark_price}
+        return super()._public_get(endpoint, params)
+
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/positionRisk":
+            return [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": self.mark_price, "unRealizedProfit": "70", "leverage": "5", "entryPrice": "7"}]
+        if endpoint == "/fapi/v3/account":
+            return {"availableBalance": "5000"}
+        return super()._signed_get(endpoint, params)
+
+
+def _seed_increase_pretrigger_db(db_path: str, scoring: HoldingPositionScoringSystem) -> None:
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+        conn.execute("CREATE TABLE trading_experiment_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, status TEXT, created_at INTEGER, total_score TEXT, entry_price TEXT, take_profit_order_id TEXT, stop_loss_order_id TEXT, stop_loss_price TEXT)")
+        conn.executemany(
+            "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
+            [("BANK", 3000, 75), ("BANK", 2000, 76)],
+        )
+        conn.execute(
+            "INSERT INTO trading_experiment_trades (symbol, status, created_at, total_score, entry_price, take_profit_order_id, stop_loss_order_id, stop_loss_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("BANK", "opened", 1000, "72", "7", "", "", "6"),
+        )
+    scoring.init_tables()
+    TradingExperiment(db_path=db_path, account_manager=scoring.account_manager).init_tables()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"INSERT INTO {scoring.REDUCTION_RECORDS_TABLE} (symbol, decision_round_ts, side, matched_rule, reduction_percent, original_quantity, reduced_quantity, remaining_quantity, status, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("BANK", 2500, "SELL", "规则三", "0.3", "2", "0.6", "1.4", "submitted", "test", 2000),
+        )
+        conn.execute(
+            f"INSERT INTO {scoring.REDUCTION_CHECKS_TABLE} (symbol, decision_round_ts, highest_15m_high, current_price, price_drawdown_ratio, account_equity_usdt, two_r_usdt, one_r_usdt, unrealized_pnl, open_total_score, latest_total_score, score_drawdown, triggered, tag, reason, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("BANK", 2500, "10", "9", "0.1", "5000", "100", "50", "20", "72", "70", "2", 1, "tag", "test", 2000),
+        )
+
+
+def test_position_increase_marks_pretrigger_when_only_condition3_fails():
+    fake_account = RefreshingMarkAccountManager(mark_price="8")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        _seed_increase_pretrigger_db(db_path, scoring)
+        positions = [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "8", "unRealizedProfit": "70", "leverage": "5"}]
+
+        checks = scoring.evaluate_increase_conditions(positions=positions, decision_round_ts=3000, checked_at=4000)
+
+    assert checks[0].triggered is False
+    assert checks[0].tag == "预触发"
+    assert checks[0].reason == "condition3_current_price_lt_latest_reduction_price"
+
+
+def test_refresh_pretrigger_updates_mark_price_and_executes_first_add():
+    fake_account = RefreshingMarkAccountManager(mark_price="10")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        _seed_increase_pretrigger_db(db_path, scoring)
+        pretrigger = scoring._evaluate_increase_rules(
+            {"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "8", "unRealizedProfit": "70", "leverage": "5"},
+            "BANK",
+            3000,
+            Decimal("5000"),
+            Decimal("50"),
+            4000,
+        )
+        scoring._save_increase_check(pretrigger)
+
+        result = scoring.refresh_pretrigger_increase_checks(now_ms=5000)
+        _, checks = scoring.get_latest_increase_checks()
+        records = scoring.recent_increase_records()
+
+    assert result["refreshed"] == 1
+    assert result["triggered"] == 1
+    assert result["records"] == 1
+    assert checks[0]["tag"] == "第一次加仓"
+    assert checks[0]["current_price"] == "10"
+    assert records[0]["increased_quantity"] == "1"
