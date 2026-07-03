@@ -189,6 +189,24 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
                     break
         return matches
 
+    if _table_exists(conn, ZombieForceLiquidationModule.RECORDS_TABLE):
+        rows = conn.execute(
+            f"""
+            SELECT checked_at AS matched_at, quantity
+            FROM {ZombieForceLiquidationModule.RECORDS_TABLE}
+            WHERE symbol = ?
+              AND side = 'SELL'
+              AND status = 'submitted'
+              AND checked_at BETWEEN ? AND ?
+            ORDER BY ABS(checked_at - ?) ASC, id DESC
+            """,
+            (symbol, order_time - time_tolerance_ms, order_time + time_tolerance_ms, order_time),
+        ).fetchall()
+        for row in rows:
+            if _decimal_text_equal(row["quantity"], quantity):
+                matches.append({"type": "僵尸强平", "matched_at": str(row["matched_at"] or "")})
+                break
+
     if _table_exists(conn, HoldingPositionScoringSystem.RECORDS_TABLE):
         rows = conn.execute(
             f"""
@@ -269,6 +287,8 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
     if side != "SELL":
         return ""
 
+    if "僵尸强平" in match_types:
+        return "僵尸强平"
     if "结构止损" in match_types:
         return "结构止损"
     if "减仓" in match_types:
