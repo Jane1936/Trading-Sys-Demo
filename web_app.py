@@ -157,7 +157,8 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
     Local strategy tables store symbols without the USDT suffix, while Binance
     userTrades returns symbols like BTCUSDT.  The audit rows are written at order
     submission time, so a small time tolerance is used around the fill time.
-    SELL fills are matched to exit strategy records; BUY fills are matched to
+    Zombie force-liquidation can close long positions with SELL or short positions
+    with BUY, so those records are matched before BUY fills are checked against
     position increase records.
     """
     side = str(order.get("side", "")).upper()
@@ -170,6 +171,24 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
         return []
 
     matches: list[dict[str, str]] = []
+    if _table_exists(conn, ZombieForceLiquidationModule.RECORDS_TABLE):
+        rows = conn.execute(
+            f"""
+            SELECT checked_at AS matched_at, quantity
+            FROM {ZombieForceLiquidationModule.RECORDS_TABLE}
+            WHERE symbol = ?
+              AND side = ?
+              AND status = 'submitted'
+              AND checked_at BETWEEN ? AND ?
+            ORDER BY ABS(checked_at - ?) ASC, id DESC
+            """,
+            (symbol, side, order_time - time_tolerance_ms, order_time + time_tolerance_ms, order_time),
+        ).fetchall()
+        for row in rows:
+            if _decimal_text_equal(row["quantity"], quantity):
+                matches.append({"type": "僵尸强平", "matched_at": str(row["matched_at"] or "")})
+                break
+
     if side == "BUY":
         if _table_exists(conn, HoldingPositionScoringSystem.INCREASE_RECORDS_TABLE):
             rows = conn.execute(
@@ -188,24 +207,6 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
                     matches.append({"type": "加仓", "matched_at": str(row["matched_at"] or "")})
                     break
         return matches
-
-    if _table_exists(conn, ZombieForceLiquidationModule.RECORDS_TABLE):
-        rows = conn.execute(
-            f"""
-            SELECT checked_at AS matched_at, quantity
-            FROM {ZombieForceLiquidationModule.RECORDS_TABLE}
-            WHERE symbol = ?
-              AND side = 'SELL'
-              AND status = 'submitted'
-              AND checked_at BETWEEN ? AND ?
-            ORDER BY ABS(checked_at - ?) ASC, id DESC
-            """,
-            (symbol, order_time - time_tolerance_ms, order_time + time_tolerance_ms, order_time),
-        ).fetchall()
-        for row in rows:
-            if _decimal_text_equal(row["quantity"], quantity):
-                matches.append({"type": "僵尸强平", "matched_at": str(row["matched_at"] or "")})
-                break
 
     if _table_exists(conn, HoldingPositionScoringSystem.RECORDS_TABLE):
         rows = conn.execute(
@@ -282,9 +283,7 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
     """Return the UI label for a filled order's take-profit / stop-loss reason."""
     side = str(order.get("side", "")).upper()
     match_types = {match.get("type", "") for match in matches}
-    if side == "BUY":
-        return "加仓" if "加仓" in match_types else ""
-    if side != "SELL":
+    if side not in {"SELL", "BUY"}:
         return ""
 
     if "僵尸强平" in match_types:
@@ -297,11 +296,15 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
         return "移动追踪止盈"
     if "分批止盈" in match_types:
         return "分批止盈"
+    if side == "BUY" and "加仓" in match_types:
+        return "加仓"
 
     try:
         realized_pnl = Decimal(str(order.get("realized_pnl", "0") or "0"))
     except Exception:
         realized_pnl = Decimal("0")
+    if side == "BUY":
+        return ""
     return "硬止盈" if realized_pnl > 0 else "硬止损"
 
 
