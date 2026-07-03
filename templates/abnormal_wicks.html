@@ -1649,11 +1649,19 @@
             <option value="29">近29天</option>
             <option value="30">近30天</option>
           </select>
+          <label class="control-label" for="filled-orders-score-band">开仓评分档位</label>
+          <select id="filled-orders-score-band" class="select-control" aria-label="已成交订单开仓评分档位">
+            <option value="all" selected>全部档位</option>
+            {% for band in score_band_configs %}
+            <option value="{{ band.lower }}-{{ band.upper }}">{{ band.label }}（{{ band.lower }}-{{ band.upper }}分）</option>
+            {% endfor %}
+            <option value="unknown">无匹配开仓评分</option>
+          </select>
           <button id="query-filled-sell-orders" class="btn btn-primary" type="button">查询近7天已成交订单</button>
           <span id="filled-sell-orders-status" class="muted">尚未查询</span>
         </div>
         <div id="filled-sell-orders-error" class="account-error"></div>
-        <div class="tip">数据来自 Binance USDⓈ-M Futures <code>userTrades</code> 成交明细；同一 symbol、同一 order_id、同一方向的多笔成交会合并为一行；成交价格为按成交额/成交数量计算的均价。</div>
+        <div class="tip">数据来自 Binance USDⓈ-M Futures <code>userTrades</code> 成交明细；同一 symbol、同一 order_id、同一方向的多笔成交会合并为一行；成交价格为按成交额/成交数量计算的均价。开仓评分来自本地“交易实验交易记录”中同一 symbol 在成交时间前最近一次 opened 记录的 total_score，可按评分档位筛选并计算对应胜率。</div>
         <div class="tip"><strong>止盈/止损原因显示规则：</strong>仅对 SELL 成交标注原因；优先按 symbol、成交时间（±5分钟）和成交数量匹配本地策略记录，命中优先级依次为：结构止损（止损记录）、减仓（减仓操作记录）、移动追踪止盈、分批止盈。若没有匹配到策略记录，则按已实现盈亏判断：realized_pnl &gt; 0 显示“硬止盈”，否则显示“硬止损”；BUY 成交不显示原因。</div>
         <div id="filled-orders-summary" class="filled-orders-summary" aria-label="已完成订单统计">
           <div class="account-metric">
@@ -1703,6 +1711,8 @@
               <tr>
                 <th>成交时间</th>
                 <th>symbol</th>
+                <th>开仓评分档位</th>
+                <th>开仓总分</th>
                 <th>止盈/止损原因</th>
                 <th>方向</th>
                 <th>order_id</th>
@@ -1716,7 +1726,7 @@
               </tr>
             </thead>
             <tbody id="filled-sell-orders-rows">
-              <tr><td class="empty" colspan="12">点击“查询近7天已成交订单”后显示数据</td></tr>
+              <tr><td class="empty" colspan="14">点击“查询近7天已成交订单”后显示数据</td></tr>
             </tbody>
           </table>
         </div>
@@ -2329,14 +2339,29 @@
     function setFilledSellOrdersLoading(isLoading) {
       const btn = document.getElementById('query-filled-sell-orders');
       const daysSelect = document.getElementById('filled-orders-days');
+      const scoreBandSelect = document.getElementById('filled-orders-score-band');
       const status = document.getElementById('filled-sell-orders-status');
       if (btn) {
         btn.disabled = isLoading;
         btn.textContent = isLoading ? '查询中...' : `查询近${getFilledOrdersDays()}天已成交订单`;
       }
       if (daysSelect) daysSelect.disabled = isLoading;
+      if (scoreBandSelect) scoreBandSelect.disabled = isLoading;
       if (status && isLoading) status.textContent = `正在请求 Binance REST API（近${getFilledOrdersDays()}天）...`;
       if (isLoading) renderFilledOrdersSummary(null);
+    }
+
+    function getFilledOrdersScoreBandFilter() {
+      const select = document.getElementById('filled-orders-score-band');
+      return select?.value || 'all';
+    }
+
+    function orderMatchesScoreBandFilter(row, scoreBandFilter) {
+      if (!scoreBandFilter || scoreBandFilter === 'all') return true;
+      const score = Number(row.open_total_score);
+      if (scoreBandFilter === 'unknown') return !Number.isFinite(score);
+      const [lower, upper] = scoreBandFilter.split('-').map(Number);
+      return Number.isFinite(score) && score >= lower && score <= upper;
     }
 
     function buildFilledOrderAnalysis(orders) {
@@ -2460,7 +2485,9 @@
       const rowsEl = document.getElementById('filled-sell-orders-rows');
       const statusEl = document.getElementById('filled-sell-orders-status');
       const errorEl = document.getElementById('filled-sell-orders-error');
-      const orders = payload.orders || [];
+      const allOrders = payload.orders || [];
+      const scoreBandFilter = getFilledOrdersScoreBandFilter();
+      const orders = allOrders.filter(row => orderMatchesScoreBandFilter(row, scoreBandFilter));
       const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 
       if (errorEl) {
@@ -2469,11 +2496,12 @@
       }
       if (statusEl) {
         const queriedAt = payload.queried_at ? formatMsDatetime(payload.queried_at) : '未知时间';
-        statusEl.textContent = `${payload.testnet ? 'Demo/Testnet' : 'Real'} 查询完成：${queriedAt}；近${payload.days || 7}天已成交合并记录 ${orders.length} 条`;
+        const filterText = scoreBandFilter === 'all' ? '全部开仓评分档位' : (document.getElementById('filled-orders-score-band')?.selectedOptions?.[0]?.textContent || scoreBandFilter);
+        statusEl.textContent = `${payload.testnet ? 'Demo/Testnet' : 'Real'} 查询完成：${queriedAt}；近${payload.days || 7}天已成交合并记录 ${allOrders.length} 条；当前筛选 ${filterText} 后 ${orders.length} 条`;
       }
       if (!rowsEl) return;
       if (!orders.length) {
-        rowsEl.innerHTML = `<tr><td class="empty" colspan="12">最近${payload.days || getFilledOrdersDays()}天暂无已成交订单</td></tr>`;
+        rowsEl.innerHTML = `<tr><td class="empty" colspan="14">最近${payload.days || getFilledOrdersDays()}天当前评分档位下暂无已成交订单</td></tr>`;
         renderFilledOrdersSummary({ completedCount: 0, totalProfit: 0, profitCount: 0, totalLoss: 0, lossCount: 0, averageProfit: 0, averageLoss: 0, profitLossRatio: 0, winRate: 0, expectancy: 0 });
         return;
       }
@@ -2487,6 +2515,8 @@
         <tr class="filled-order-row" data-group-ids="${escapeHtml(groupIds.join(','))}" title="点击高亮同一 symbol 同一组买卖订单">
           <td>${formatMsDatetime(row.time)}</td>
           <td>${escapeHtml(row.symbol)}${groupLabel}</td>
+          <td>${escapeHtml(row.open_score_band || '-')}</td>
+          <td>${row.open_total_score ?? '-'}</td>
           <td>${escapeHtml(row.exit_reason || '-')}</td>
           <td><span class="status-badge ${row.side === 'BUY' ? 'status-ok' : 'status-fail'}">${escapeHtml(row.side || '-')}</span></td>
           <td>${escapeHtml(row.order_id)}</td>
@@ -2513,12 +2543,18 @@
       renderFilledOrdersSummary(null);
     }
 
+    let latestFilledOrdersPayload = null;
+
     (function initFilledSellOrdersQuery() {
       const btn = document.getElementById('query-filled-sell-orders');
       if (!btn) return;
       setFilledOrdersButtonLabel();
       const daysSelect = document.getElementById('filled-orders-days');
       if (daysSelect) daysSelect.addEventListener('change', setFilledOrdersButtonLabel);
+      const scoreBandSelect = document.getElementById('filled-orders-score-band');
+      if (scoreBandSelect) scoreBandSelect.addEventListener('change', () => {
+        if (latestFilledOrdersPayload) renderFilledSellOrders(latestFilledOrdersPayload);
+      });
       btn.addEventListener('click', async () => {
         setFilledSellOrdersLoading(true);
         try {
@@ -2528,6 +2564,7 @@
           });
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          latestFilledOrdersPayload = payload;
           renderFilledSellOrders(payload);
         } catch (error) {
           renderFilledSellOrdersError(`已成交订单查询失败：${error.message}`);
