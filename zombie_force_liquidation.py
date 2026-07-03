@@ -47,6 +47,7 @@ class ZombieForceLiquidationRecord:
     quantity: str
     entry_price: str
     status: str
+    order_id: str
     reason: str
     raw_response: str
 
@@ -106,11 +107,15 @@ class ZombieForceLiquidationModule:
                     quantity TEXT NOT NULL,
                     entry_price TEXT NOT NULL,
                     status TEXT NOT NULL,
+                    order_id TEXT NOT NULL DEFAULT '',
                     reason TEXT NOT NULL,
                     raw_response TEXT NOT NULL DEFAULT ''
                 )
                 """
             )
+            record_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.RECORDS_TABLE})").fetchall()}
+            if "order_id" not in record_columns:
+                conn.execute(f"ALTER TABLE {self.RECORDS_TABLE} ADD COLUMN order_id TEXT NOT NULL DEFAULT ''")
             conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
             conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_checked ON {self.RECORDS_TABLE}(checked_at DESC, symbol ASC)")
 
@@ -162,6 +167,7 @@ class ZombieForceLiquidationModule:
         status = "submitted"
         reason_parts = ["zombie_position_force_liquidation"]
         raw_parts: list[str] = []
+        order_id = ""
         quantity = abs(amount)
         try:
             for endpoint, label in (("/fapi/v1/allOpenOrders", "open_orders_cancel"), ("/fapi/v1/algoOpenOrders", "algo_orders_cancel")):
@@ -184,11 +190,12 @@ class ZombieForceLiquidationModule:
                 trading_symbol=exchange_symbol,
                 tick_size=exchange_info["tick_size"],
             )
+            order_id = str(response.get("orderId", "")) if isinstance(response, dict) else ""
             raw_parts.append(str({"market_close": response}))
         except Exception as exc:
             status = "failed"
             reason_parts.append(f"zombie_force_liquidation_failed: {type(exc).__name__}: {exc}")
-        self._insert_record(symbol, now, opened_at, side, amount, quantity, entry_price, status, "; ".join(reason_parts), " | ".join(raw_parts))
+        self._insert_record(symbol, now, opened_at, side, amount, quantity, entry_price, status, order_id, "; ".join(reason_parts), " | ".join(raw_parts))
 
     def _latest_opened_at(self, symbol: str, now: int) -> int | None:
         with self._connect() as conn:
@@ -223,11 +230,11 @@ class ZombieForceLiquidationModule:
                 (symbol, checked_at, opened_at, self._fmt_decimal(holding_hours), self._fmt_decimal(amount), self._fmt_decimal(entry_price), int(has_break_even), int(triggered), reason),
             )
 
-    def _insert_record(self, symbol: str, checked_at: int, opened_at: int | None, side: str, amount: Decimal, quantity: Decimal, entry_price: Decimal, status: str, reason: str, raw: str) -> None:
+    def _insert_record(self, symbol: str, checked_at: int, opened_at: int | None, side: str, amount: Decimal, quantity: Decimal, entry_price: Decimal, status: str, order_id: str, reason: str, raw: str) -> None:
         with self._connect() as conn:
             conn.execute(
-                f"INSERT INTO {self.RECORDS_TABLE} (symbol, checked_at, opened_at, side, position_amt, quantity, entry_price, status, reason, raw_response) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (symbol, checked_at, opened_at, side, self._fmt_decimal(amount), self._fmt_decimal(quantity), self._fmt_decimal(entry_price), status, reason, raw),
+                f"INSERT INTO {self.RECORDS_TABLE} (symbol, checked_at, opened_at, side, position_amt, quantity, entry_price, status, order_id, reason, raw_response) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (symbol, checked_at, opened_at, side, self._fmt_decimal(amount), self._fmt_decimal(quantity), self._fmt_decimal(entry_price), status, order_id, reason, raw),
             )
 
     def get_latest_round_checks(self) -> tuple[int | None, list[ZombieForceLiquidationCheck]]:

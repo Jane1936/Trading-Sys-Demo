@@ -202,9 +202,11 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
 
     matches: list[dict[str, str]] = []
     if _table_exists(conn, ZombieForceLiquidationModule.RECORDS_TABLE):
+        zombie_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({ZombieForceLiquidationModule.RECORDS_TABLE})").fetchall()}
+        zombie_order_id_select = "order_id" if "order_id" in zombie_columns else "'' AS order_id"
         rows = conn.execute(
             f"""
-            SELECT checked_at AS matched_at, quantity, raw_response
+            SELECT checked_at AS matched_at, quantity, {zombie_order_id_select}, raw_response
             FROM {ZombieForceLiquidationModule.RECORDS_TABLE}
             WHERE symbol = ?
               AND side = ?
@@ -216,7 +218,9 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
         ).fetchall()
         order_id = order.get("order_id", "")
         for row in rows:
-            if _raw_response_contains_order_id(row["raw_response"], order_id) or _decimal_text_equal(row["quantity"], quantity):
+            stored_order_id = str(row["order_id"] or "").strip()
+            expected_order_id = str(order_id or "").strip()
+            if (stored_order_id and stored_order_id == expected_order_id) or _raw_response_contains_order_id(row["raw_response"], order_id) or _decimal_text_equal(row["quantity"], quantity):
                 matches.append({"type": "僵尸强平", "matched_at": str(row["matched_at"] or "")})
                 break
 

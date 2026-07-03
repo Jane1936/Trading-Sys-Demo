@@ -70,6 +70,10 @@ class ZombieForceLiquidationTests(unittest.TestCase):
             self.assertEqual(account.posts[-1][1]["type"], "MARKET")
             self.assertEqual(account.posts[-1][1]["quantity"], "2")
             self.assertEqual(account.posts[-1][1]["reduceOnly"], "true")
+            with sqlite3.connect(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                record = conn.execute(f"SELECT order_id FROM {ZombieForceLiquidationModule.RECORDS_TABLE}").fetchone()
+            self.assertEqual(record["order_id"], "123")
 
     def test_skips_old_position_with_lifecycle_break_even_record(self):
         with tempfile.TemporaryDirectory() as tmpdir:
