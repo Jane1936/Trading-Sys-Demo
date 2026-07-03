@@ -240,10 +240,21 @@ class ZombieForceLiquidationModule:
             rows = conn.execute(f"SELECT * FROM {self.CHECKS_TABLE} WHERE checked_at = ? ORDER BY symbol ASC, id DESC", (int(latest_checked_at),)).fetchall()
         return int(latest_checked_at), [ZombieForceLiquidationCheck(**{**dict(row), "break_even_record_found": bool(row["break_even_record_found"]), "triggered": bool(row["triggered"])}) for row in rows]
 
-    def recent_records(self, limit: int = 100) -> list[ZombieForceLiquidationRecord]:
+    def recent_records(self, limit: int = 100, since_ms: int | None = None) -> list[ZombieForceLiquidationRecord]:
         self.init_tables()
+        if since_ms is not None:
+            query = f"""
+                SELECT * FROM {self.RECORDS_TABLE}
+                WHERE checked_at >= ?
+                ORDER BY checked_at DESC, id DESC
+                LIMIT ?
+            """
+            params = (int(since_ms), int(limit))
+        else:
+            query = f"SELECT * FROM {self.RECORDS_TABLE} ORDER BY checked_at DESC, id DESC LIMIT ?"
+            params = (int(limit),)
         with self._connect() as conn:
-            rows = conn.execute(f"SELECT * FROM {self.RECORDS_TABLE} ORDER BY checked_at DESC, id DESC LIMIT ?", (int(limit),)).fetchall()
+            rows = conn.execute(query, params).fetchall()
         return [ZombieForceLiquidationRecord(**dict(row)) for row in rows]
 
     @staticmethod

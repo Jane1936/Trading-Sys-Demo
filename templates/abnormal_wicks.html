@@ -1804,6 +1804,52 @@
         <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
           <div class="symbol-strip collapsible-header">
             <div>
+              <div><strong>僵尸单强平操作记录</strong></div>
+              <div class="muted">只显示最近7天内记录；当持仓超过48小时且本轮生命周期内未匹配到保本止盈记录时，会先取消该 symbol 所有止盈/止损单，再通过 reduceOnly 市价单全部平仓。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+          <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>opened_at</th>
+                <th>side</th>
+                <th>position_amt</th>
+                <th>quantity</th>
+                <th>entry_price</th>
+                <th>status</th>
+                <th>reason</th>
+                <th>raw_response</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in zombie_force_liquidation_records %}
+              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.opened_at|fmt_ms_datetime if row.opened_at else '-' }}</td>
+                <td>{{ row.side }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>{{ row.quantity }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
+                <td>{{ row.reason }}</td>
+                <td class="mono-cell">{{ row.raw_response or '-' }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="10">暂无最近7天僵尸单强平操作记录</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          </div>
+        </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
               <div><strong>交易实验交易记录</strong></div>
               <div class="muted">只显示7天内已开仓记录，以及55USDT硬止盈/止损挂单信息；跳过记录不在此表展示。本轮新开仓 symbol 会用红色徽标高亮。</div>
             </div>

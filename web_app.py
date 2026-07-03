@@ -627,6 +627,8 @@ def abnormal_wicks():
     trading_used_margin_usdt = _trading_used_margin_text(trading_position_snapshots)
     trading_error_records = trading_experiment.recent_error_records(limit=100, since_ms=trading_records_since_ms)
     trading_equity_trend_rows = _experiment_equity_trend_rows(trading_records_since_ms)
+    zombie_force_liquidation = ZombieForceLiquidationModule(db_path=DB_PATH)
+    zombie_force_liquidation_records = zombie_force_liquidation.recent_records(limit=100, since_ms=trading_records_since_ms)
     holding_scoring = HoldingPositionScoringSystem(db_path=DB_PATH)
     holding_stop_loss_round_ts, holding_stop_loss_checks = holding_scoring.get_latest_round_checks()
     holding_portfolio_risk = holding_scoring.get_latest_portfolio_risk()
@@ -716,6 +718,7 @@ def abnormal_wicks():
         trading_used_margin_usdt=trading_used_margin_usdt,
         trading_error_records=trading_error_records,
         trading_equity_trend_rows=trading_equity_trend_rows,
+        zombie_force_liquidation_records=zombie_force_liquidation_records,
         holding_stop_loss_round_ts=holding_stop_loss_round_ts,
         holding_stop_loss_checks=holding_stop_loss_checks,
         holding_portfolio_risk=holding_portfolio_risk,
