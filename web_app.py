@@ -6,6 +6,7 @@ Run:
 
 from __future__ import annotations
 
+import ast
 import os
 import sqlite3
 from dataclasses import asdict
@@ -151,14 +152,44 @@ def _trading_used_margin_text(position_snapshots: list[object]) -> str:
     return _format_decimal_display(total)
 
 
+def _raw_response_contains_order_id(raw_response: object, order_id: object) -> bool:
+    """Return whether a stored strategy raw response mentions a Binance order id."""
+    expected = str(order_id or "").strip()
+    if not expected:
+        return False
+    raw_text = str(raw_response or "")
+    if not raw_text:
+        return False
+
+    def iter_values(value: object):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                yield key, item
+                yield from iter_values(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from iter_values(item)
+
+    for part in raw_text.split(" | "):
+        try:
+            parsed = ast.literal_eval(part)
+        except Exception:
+            continue
+        for key, value in iter_values(parsed):
+            if str(key) == "orderId" and str(value).strip() == expected:
+                return True
+    return False
+
+
 def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, time_tolerance_ms: int = 5 * 60 * 1000) -> list[dict[str, str]]:
     """Match a filled order to local strategy records.
 
     Local strategy tables store symbols without the USDT suffix, while Binance
     userTrades returns symbols like BTCUSDT.  The audit rows are written at order
     submission time, so a small time tolerance is used around the fill time.
-    SELL fills are matched to exit strategy records; BUY fills are matched to
-    position increase records.
+    Zombie force-liquidation records are matched before BUY fills are checked
+    against position increase records, and order-id matches are preferred when
+    the local raw exchange response contains the Binance order id.
     """
     side = str(order.get("side", "")).upper()
     if side not in {"SELL", "BUY"}:
@@ -170,6 +201,25 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
         return []
 
     matches: list[dict[str, str]] = []
+    if _table_exists(conn, ZombieForceLiquidationModule.RECORDS_TABLE):
+        rows = conn.execute(
+            f"""
+            SELECT checked_at AS matched_at, quantity, raw_response
+            FROM {ZombieForceLiquidationModule.RECORDS_TABLE}
+            WHERE symbol = ?
+              AND side = ?
+              AND status = 'submitted'
+              AND checked_at BETWEEN ? AND ?
+            ORDER BY ABS(checked_at - ?) ASC, id DESC
+            """,
+            (symbol, side, order_time - time_tolerance_ms, order_time + time_tolerance_ms, order_time),
+        ).fetchall()
+        order_id = order.get("order_id", "")
+        for row in rows:
+            if _raw_response_contains_order_id(row["raw_response"], order_id) or _decimal_text_equal(row["quantity"], quantity):
+                matches.append({"type": "僵尸强平", "matched_at": str(row["matched_at"] or "")})
+                break
+
     if side == "BUY":
         if _table_exists(conn, HoldingPositionScoringSystem.INCREASE_RECORDS_TABLE):
             rows = conn.execute(
@@ -188,24 +238,6 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
                     matches.append({"type": "加仓", "matched_at": str(row["matched_at"] or "")})
                     break
         return matches
-
-    if _table_exists(conn, ZombieForceLiquidationModule.RECORDS_TABLE):
-        rows = conn.execute(
-            f"""
-            SELECT checked_at AS matched_at, quantity
-            FROM {ZombieForceLiquidationModule.RECORDS_TABLE}
-            WHERE symbol = ?
-              AND side = 'SELL'
-              AND status = 'submitted'
-              AND checked_at BETWEEN ? AND ?
-            ORDER BY ABS(checked_at - ?) ASC, id DESC
-            """,
-            (symbol, order_time - time_tolerance_ms, order_time + time_tolerance_ms, order_time),
-        ).fetchall()
-        for row in rows:
-            if _decimal_text_equal(row["quantity"], quantity):
-                matches.append({"type": "僵尸强平", "matched_at": str(row["matched_at"] or "")})
-                break
 
     if _table_exists(conn, HoldingPositionScoringSystem.RECORDS_TABLE):
         rows = conn.execute(
@@ -282,9 +314,7 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
     """Return the UI label for a filled order's take-profit / stop-loss reason."""
     side = str(order.get("side", "")).upper()
     match_types = {match.get("type", "") for match in matches}
-    if side == "BUY":
-        return "加仓" if "加仓" in match_types else ""
-    if side != "SELL":
+    if side not in {"SELL", "BUY"}:
         return ""
 
     if "僵尸强平" in match_types:
@@ -297,11 +327,15 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
         return "移动追踪止盈"
     if "分批止盈" in match_types:
         return "分批止盈"
+    if side == "BUY" and "加仓" in match_types:
+        return "加仓"
 
     try:
         realized_pnl = Decimal(str(order.get("realized_pnl", "0") or "0"))
     except Exception:
         realized_pnl = Decimal("0")
+    if side == "BUY":
+        return ""
     return "硬止盈" if realized_pnl > 0 else "硬止损"
 
 

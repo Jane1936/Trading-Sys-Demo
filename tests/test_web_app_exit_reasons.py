@@ -110,6 +110,35 @@ def test_filled_sell_order_exit_reason_uses_zombie_force_liquidation_match(tmp_p
     assert "zombie_position_force_liquidation" not in str(annotated["orders"][0])
 
 
+
+def test_filled_sell_order_exit_reason_uses_zombie_force_liquidation_order_id_match(tmp_path, monkeypatch):
+    db_path = tmp_path / "orders.db"
+    _create_exit_reason_tables(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"INSERT INTO {ZombieForceLiquidationModule.RECORDS_TABLE} (symbol, checked_at, opened_at, side, position_amt, quantity, entry_price, status, reason, raw_response) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "BANK",
+                1000,
+                1,
+                "SELL",
+                "2",
+                "2.00",
+                "10",
+                "submitted",
+                "zombie_position_force_liquidation",
+                "{'open_orders_cancel': {'code': 200}} | {'market_close': {'orderId': 98765, 'executedQty': '2'}}",
+            ),
+        )
+    monkeypatch.setattr(web_app, "DB_PATH", str(db_path))
+
+    payload = {"orders": [{"symbol": "BANKUSDT", "order_id": "98765", "side": "SELL", "time": 1000, "quantity": "1", "realized_pnl": "1"}]}
+
+    annotated = web_app._annotate_filled_order_exit_reasons(payload)
+
+    assert annotated["orders"][0]["exit_reason"] == "僵尸强平"
+    assert annotated["orders"][0]["exit_reason_matches"] == [{"type": "僵尸强平", "matched_at": "1000"}]
+
 def test_filled_sell_order_exit_reason_uses_structural_stop_loss_match(tmp_path, monkeypatch):
     db_path = tmp_path / "orders.db"
     _create_exit_reason_tables(db_path)
@@ -183,7 +212,6 @@ def test_filled_sell_order_exit_reason_uses_trailing_stop_match(tmp_path, monkey
 
     assert annotated["orders"][0]["exit_reason"] == "移动追踪止盈"
     assert annotated["orders"][0]["exit_reason_matches"] == [{"type": "移动追踪止盈", "matched_at": "1000"}]
-
 
 
 def test_filled_buy_order_exit_reason_uses_increase_match(tmp_path, monkeypatch):
