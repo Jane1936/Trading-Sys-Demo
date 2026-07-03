@@ -32,14 +32,18 @@ def test_trading_used_margin_sums_abs_position_amt_times_mark_price_divided_by_l
     assert _trading_used_margin_text(snapshots) == "22"
 
 
-def test_trading_position_snapshots_render_after_trade_records():
+def test_zombie_force_liquidation_records_render_above_trade_records():
     template = Path("templates/abnormal_wicks.html").read_text()
 
+    trend_chart_index = template.index('aria-label="近7天实验组USDT净值变化趋势图"')
+    zombie_records_index = template.index("<strong>僵尸单强平操作记录</strong>")
     trade_records_index = template.index("<strong>交易实验交易记录</strong>")
     position_snapshots_index = template.index("<strong>交易实验持仓快照</strong>")
     error_records_index = template.index("<strong>交易实验错误信息记录</strong>")
 
-    assert trade_records_index < position_snapshots_index < error_records_index
+    assert trend_chart_index < zombie_records_index < trade_records_index < position_snapshots_index < error_records_index
+    assert "只显示最近7天内记录" in template
+    assert "zombie_force_liquidation_records" in template
 
 
 def test_experiment_equity_trend_chart_renders_under_equity_metric():
@@ -65,6 +69,16 @@ def test_filled_orders_summary_includes_expectancy_metric():
     assert "已完成订单期望" in template
     assert "const expectancy = winRate * profitLossRatio - (1 - winRate);" in template
     assert "setPnl('filled-expectancy', summary?.expectancy ?? 0);" in template
+
+
+def test_filled_orders_exit_reason_tip_includes_zombie_force_liquidation():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    tip_index = template.index("止盈/止损原因显示规则")
+    zombie_index = template.index("僵尸强平（僵尸单强平操作记录）", tip_index)
+    structural_index = template.index("结构止损（止损记录）", tip_index)
+
+    assert tip_index < zombie_index < structural_index
 
 
 

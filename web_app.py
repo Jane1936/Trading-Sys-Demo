@@ -26,6 +26,7 @@ from trailing_stop_tracker import TrailingStopTracker
 from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
+from zombie_force_liquidation import ZombieForceLiquidationModule
 
 app = Flask(__name__)
 
@@ -188,6 +189,24 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
                     break
         return matches
 
+    if _table_exists(conn, ZombieForceLiquidationModule.RECORDS_TABLE):
+        rows = conn.execute(
+            f"""
+            SELECT checked_at AS matched_at, quantity
+            FROM {ZombieForceLiquidationModule.RECORDS_TABLE}
+            WHERE symbol = ?
+              AND side = 'SELL'
+              AND status = 'submitted'
+              AND checked_at BETWEEN ? AND ?
+            ORDER BY ABS(checked_at - ?) ASC, id DESC
+            """,
+            (symbol, order_time - time_tolerance_ms, order_time + time_tolerance_ms, order_time),
+        ).fetchall()
+        for row in rows:
+            if _decimal_text_equal(row["quantity"], quantity):
+                matches.append({"type": "僵尸强平", "matched_at": str(row["matched_at"] or "")})
+                break
+
     if _table_exists(conn, HoldingPositionScoringSystem.RECORDS_TABLE):
         rows = conn.execute(
             f"""
@@ -268,6 +287,8 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
     if side != "SELL":
         return ""
 
+    if "僵尸强平" in match_types:
+        return "僵尸强平"
     if "结构止损" in match_types:
         return "结构止损"
     if "减仓" in match_types:
@@ -540,7 +561,9 @@ def btc_5m_api():
 @app.post("/api/trading-experiment/run")
 def trading_experiment_run_api():
     try:
+        zombie_result = ZombieForceLiquidationModule(db_path=DB_PATH).run_round()
         result = TradingExperiment(db_path=DB_PATH).run_latest_round()
+        result["zombie_force_liquidation"] = zombie_result
         return jsonify(result)
     except BinanceAccountConfigError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -624,6 +647,8 @@ def abnormal_wicks():
     trading_used_margin_usdt = _trading_used_margin_text(trading_position_snapshots)
     trading_error_records = trading_experiment.recent_error_records(limit=100, since_ms=trading_records_since_ms)
     trading_equity_trend_rows = _experiment_equity_trend_rows(trading_records_since_ms)
+    zombie_force_liquidation = ZombieForceLiquidationModule(db_path=DB_PATH)
+    zombie_force_liquidation_records = zombie_force_liquidation.recent_records(limit=100, since_ms=trading_records_since_ms)
     holding_scoring = HoldingPositionScoringSystem(db_path=DB_PATH)
     holding_stop_loss_round_ts, holding_stop_loss_checks = holding_scoring.get_latest_round_checks()
     holding_portfolio_risk = holding_scoring.get_latest_portfolio_risk()
@@ -713,6 +738,7 @@ def abnormal_wicks():
         trading_used_margin_usdt=trading_used_margin_usdt,
         trading_error_records=trading_error_records,
         trading_equity_trend_rows=trading_equity_trend_rows,
+        zombie_force_liquidation_records=zombie_force_liquidation_records,
         holding_stop_loss_round_ts=holding_stop_loss_round_ts,
         holding_stop_loss_checks=holding_stop_loss_checks,
         holding_portfolio_risk=holding_portfolio_risk,

@@ -1674,7 +1674,7 @@
         </div>
         <div id="filled-sell-orders-error" class="account-error"></div>
         <div class="tip">数据来自 Binance USDⓈ-M Futures <code>userTrades</code> 成交明细；同一 symbol、同一 order_id、同一方向的多笔成交会合并为一行；成交价格为按成交额/成交数量计算的均价。开仓评分来自本地“交易实验交易记录”中同一 symbol 在成交时间前最近一次 opened 记录的 total_score，可按评分档位筛选并计算对应胜率。</div>
-        <div class="tip"><strong>止盈/止损原因显示规则：</strong>SELL 成交优先按 symbol、成交时间（±5分钟）和成交数量匹配本地策略记录，命中优先级依次为：结构止损（止损记录）、减仓（减仓操作记录）、移动追踪止盈、分批止盈；若没有匹配到策略记录，则按已实现盈亏判断：realized_pnl &gt; 0 显示“硬止盈”，否则显示“硬止损”。BUY 成交会按相同匹配条件查询“加仓操作记录”，命中则显示“加仓”，未命中则不显示原因。</div>
+        <div class="tip"><strong>止盈/止损原因显示规则：</strong>SELL 成交优先按 symbol、成交时间（±5分钟）和成交数量匹配本地策略记录，命中优先级依次为：僵尸强平（僵尸单强平操作记录）、结构止损（止损记录）、减仓（减仓操作记录）、移动追踪止盈、分批止盈；若没有匹配到策略记录，则按已实现盈亏判断：realized_pnl &gt; 0 显示“硬止盈”，否则显示“硬止损”。BUY 成交会按相同匹配条件查询“加仓操作记录”，命中则显示“加仓”，未命中则不显示原因。</div>
         <div id="filled-orders-summary" class="filled-orders-summary" aria-label="已完成订单统计">
           <div class="account-metric">
             <div class="account-metric-label">已完成订单数量</div>
@@ -1800,6 +1800,52 @@
             <span>随页面每15分钟自动刷新；数据来自开仓、保本止盈、分批止盈扫描记录。</span>
           </div>
           <div id="experiment-equity-trend-chart"></div>
+        </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>僵尸单强平操作记录</strong></div>
+              <div class="muted">只显示最近7天内记录；当持仓超过48小时且本轮生命周期内未匹配到保本止盈记录时，会先取消该 symbol 所有止盈/止损单，再通过 reduceOnly 市价单全部平仓。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+          <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>opened_at</th>
+                <th>side</th>
+                <th>position_amt</th>
+                <th>quantity</th>
+                <th>entry_price</th>
+                <th>status</th>
+                <th>reason</th>
+                <th>raw_response</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in zombie_force_liquidation_records %}
+              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.opened_at|fmt_ms_datetime if row.opened_at else '-' }}</td>
+                <td>{{ row.side }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>{{ row.quantity }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
+                <td>{{ row.reason }}</td>
+                <td class="mono-cell">{{ row.raw_response or '-' }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="10">暂无最近7天僵尸单强平操作记录</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          </div>
         </div>
         <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
           <div class="symbol-strip collapsible-header">
