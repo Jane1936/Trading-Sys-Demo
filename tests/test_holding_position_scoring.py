@@ -858,6 +858,7 @@ def test_position_increase_triggers_first_add_once_per_open_lifecycle():
     assert checks[0].tag == "第一次加仓"
     assert records == 1
     assert second_checks[0].triggered is False
+    assert second_checks[0].tag == "已完成第一次加仓"
     assert second_checks[0].reason == "first_increase_already_triggered_in_current_lifecycle"
 
 
@@ -969,9 +970,10 @@ def test_increase_cancels_and_recreates_hard_take_profit_from_actual_position():
     assert trade["stop_loss_order_id"] != "old-sl-1"
 
 class RefreshingMarkAccountManager(FakeAccountManager):
-    def __init__(self, mark_price="10"):
+    def __init__(self, mark_price="10", unrealized_profit="70"):
         super().__init__()
         self.mark_price = mark_price
+        self.unrealized_profit = unrealized_profit
 
     def _public_get(self, endpoint, params=None):
         if endpoint == "/fapi/v1/premiumIndex":
@@ -980,7 +982,7 @@ class RefreshingMarkAccountManager(FakeAccountManager):
 
     def _signed_get(self, endpoint, params=None):
         if endpoint == "/fapi/v3/positionRisk":
-            return [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": self.mark_price, "unRealizedProfit": "70", "leverage": "5", "entryPrice": "7"}]
+            return [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": self.mark_price, "unRealizedProfit": self.unrealized_profit, "leverage": "5", "entryPrice": "7"}]
         if endpoint == "/fapi/v3/account":
             return {"availableBalance": "5000"}
         return super()._signed_get(endpoint, params)
@@ -1011,20 +1013,46 @@ def _seed_increase_pretrigger_db(db_path: str, scoring: HoldingPositionScoringSy
         )
 
 
-def test_position_increase_marks_pretrigger_when_only_condition3_fails():
+def test_position_increase_marks_pretrigger_when_conditions2_and4_met_but_conditions1_and3_fail():
     fake_account = RefreshingMarkAccountManager(mark_price="8")
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
         _seed_increase_pretrigger_db(db_path, scoring)
-        positions = [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "8", "unRealizedProfit": "70", "leverage": "5"}]
+        positions = [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "8", "unRealizedProfit": "10", "leverage": "5"}]
 
         checks = scoring.evaluate_increase_conditions(positions=positions, decision_round_ts=3000, checked_at=4000)
 
     assert checks[0].triggered is False
     assert checks[0].tag == "预触发"
-    assert checks[0].reason == "condition3_current_price_lt_latest_reduction_price"
+    assert checks[0].reason == "condition1_unrealized_pnl_lt_1_3r; condition3_current_price_lt_latest_reduction_price"
 
+
+def test_refresh_pretrigger_waits_until_conditions1_and3_are_met():
+    fake_account = RefreshingMarkAccountManager(mark_price="10", unrealized_profit="10")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        _seed_increase_pretrigger_db(db_path, scoring)
+        pretrigger = scoring._evaluate_increase_rules(
+            {"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "8", "unRealizedProfit": "10", "leverage": "5"},
+            "BANK",
+            3000,
+            Decimal("5000"),
+            Decimal("50"),
+            4000,
+        )
+        scoring._save_increase_check(pretrigger)
+        result = scoring.refresh_pretrigger_increase_checks(now_ms=5000)
+        _, checks = scoring.get_latest_increase_checks()
+        records = scoring.recent_increase_records()
+
+    assert result["refreshed"] == 1
+    assert result["triggered"] == 0
+    assert result["records"] == 0
+    assert checks[0]["tag"] == ""
+    assert checks[0]["reason"] == "condition1_unrealized_pnl_lt_1_3r"
+    assert records == []
 
 def test_refresh_pretrigger_updates_mark_price_and_executes_first_add():
     fake_account = RefreshingMarkAccountManager(mark_price="10")
@@ -1033,7 +1061,7 @@ def test_refresh_pretrigger_updates_mark_price_and_executes_first_add():
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
         _seed_increase_pretrigger_db(db_path, scoring)
         pretrigger = scoring._evaluate_increase_rules(
-            {"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "8", "unRealizedProfit": "70", "leverage": "5"},
+            {"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "8", "unRealizedProfit": "10", "leverage": "5"},
             "BANK",
             3000,
             Decimal("5000"),

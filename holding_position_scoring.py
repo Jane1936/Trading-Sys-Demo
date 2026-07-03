@@ -179,6 +179,7 @@ class HoldingPositionScoringSystem:
     INCREASE_RECORDS_TABLE = "holding_position_increase_records"
     INCREASE_TAG_FIRST = "第一次加仓"
     INCREASE_TAG_PRE_TRIGGER = "预触发"
+    INCREASE_TAG_FIRST_COMPLETED = "已完成第一次加仓"
     REDUCTION_TAG_ABSOLUTE_SCORE_DRAWDOWN = "绝对分数大幅回撤"
     REDUCTION_TAG_MEDIUM_DRAWDOWN_WEAKENING = "中等回撤且趋势连续弱化"
     REDUCTION_TAG_SCORE_DANGER_ZONE = "评分进入危险区"
@@ -1121,36 +1122,47 @@ class HoldingPositionScoringSystem:
         latest_reduction_price = self._latest_reduction_price_since(symbol, lifecycle_started_at) if lifecycle_started_at else ""
         reasons: list[str] = []
         triggered = False
+        tag = ""
         if open_trade_created_at == "":
             reasons.append("missing_open_trade_lifecycle")
         elif self._has_first_increase_record_since(symbol, lifecycle_started_at):
             reasons.append("first_increase_already_triggered_in_current_lifecycle")
+            tag = self.INCREASE_TAG_FIRST_COMPLETED
         elif one_r <= 0:
             reasons.append("non_positive_one_r")
-        elif unrealized_pnl < one_r * Decimal("1.3"):
-            reasons.append("condition1_unrealized_pnl_lt_1_3r")
-        elif latest_score == "" or previous_score == "":
-            reasons.append("condition2_missing_latest_or_previous_total_score")
-        elif self._decimal_from(latest_score, Decimal("0")) < self._decimal_from(previous_score, Decimal("0")) - Decimal("5"):
-            reasons.append("condition2_latest_score_lt_previous_minus_5")
-        elif latest_score == "" or self._decimal_from(latest_score, Decimal("0")) < Decimal("69"):
-            reasons.append("condition4_latest_total_score_lt_69")
-        elif latest_reduction_price and current_price < self._decimal_from(latest_reduction_price, Decimal("0")):
-            reasons.append("condition3_current_price_lt_latest_reduction_price")
         else:
-            triggered = True
-            reasons.append("first_increase_conditions_met")
-        tag = self.INCREASE_TAG_FIRST if triggered else self.INCREASE_TAG_PRE_TRIGGER if reasons == ["condition3_current_price_lt_latest_reduction_price"] else ""
+            condition1_met = unrealized_pnl >= one_r * Decimal("1.3")
+            condition2_met = latest_score != "" and previous_score != "" and self._decimal_from(latest_score, Decimal("0")) >= self._decimal_from(previous_score, Decimal("0")) - Decimal("5")
+            condition3_met = not latest_reduction_price or current_price >= self._decimal_from(latest_reduction_price, Decimal("0"))
+            condition4_met = latest_score != "" and self._decimal_from(latest_score, Decimal("0")) >= Decimal("69")
+
+            if not condition1_met:
+                reasons.append("condition1_unrealized_pnl_lt_1_3r")
+            if latest_score == "" or previous_score == "":
+                reasons.append("condition2_missing_latest_or_previous_total_score")
+            elif not condition2_met:
+                reasons.append("condition2_latest_score_lt_previous_minus_5")
+            if latest_score == "" or not condition4_met:
+                reasons.append("condition4_latest_total_score_lt_69")
+            if not condition3_met:
+                reasons.append("condition3_current_price_lt_latest_reduction_price")
+
+            if condition1_met and condition2_met and condition3_met and condition4_met:
+                triggered = True
+                tag = self.INCREASE_TAG_FIRST
+                reasons = ["first_increase_conditions_met"]
+            elif condition2_met and condition4_met and not condition1_met and not condition3_met:
+                tag = self.INCREASE_TAG_PRE_TRIGGER
         return PositionIncreaseCheck(symbol, round_ts, self._fmt_decimal(current_price), self._fmt_decimal(equity), self._fmt_decimal(one_r), self._fmt_decimal(unrealized_pnl), latest_score, previous_score, latest_reduction_price, open_trade_created_at, triggered, tag, "; ".join(reasons), now_ms)
 
     def refresh_pretrigger_increase_checks(self, now_ms: int | None = None) -> dict[str, Any]:
         """Refresh latest mark prices for pre-triggered first-add checks.
 
-        A pre-triggered symbol has already passed conditions 1, 2 and 4, but
-        is still waiting for condition 3 (current mark price >= latest lifecycle
-        reduction price).  This method re-reads active positions, forces a fresh
+        A pre-triggered symbol has already passed conditions 2 and 4 while
+        conditions 1 and 3 are not yet satisfied.  This method re-reads active
+        positions, forces a fresh
         mark-price lookup for those symbols, re-evaluates the same decision
-        round, and executes the first-add action when condition 3 becomes true.
+        round, and executes the first-add action when conditions 1 and 3 both become true.
         """
         self.init_tables()
         checked_at = now_ms if now_ms is not None else int(time.time() * 1000)
