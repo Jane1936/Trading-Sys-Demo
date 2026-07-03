@@ -255,6 +255,25 @@ def start_pre_safety_task() -> None:
         time.sleep(5)
 
 
+def start_increase_pretrigger_refresh_task() -> None:
+    """Refresh pre-triggered first-add symbols once per minute."""
+    holding_scoring = HoldingPositionScoringSystem(db_path=collector.DB_PATH)
+    holding_scoring.init_tables()
+    print("🟣 Increase pre-trigger refresh task started")
+    while True:
+        try:
+            result = holding_scoring.refresh_pretrigger_increase_checks()
+            if result.get("refreshed", 0):
+                print(
+                    f"🟣 increase pretrigger refresh round={result.get('round_ts')} "
+                    f"refreshed={result.get('refreshed', 0)} "
+                    f"triggered={result.get('triggered', 0)} "
+                    f"records={result.get('records', 0)}"
+                )
+        except Exception as exc:
+            print(f"⚠️ increase pretrigger refresh failed: {exc}")
+        time.sleep(60)
+
 def on_ma20_result(result: MACalcResult) -> None:
     save_ma20_result(collector.DB_PATH, result)
     print(
@@ -303,7 +322,7 @@ if __name__ == "__main__":
     # 预先构建一次 universe，并按12小时周期刷新
     symbols = ensure_universe()
 
-    # 四个独立 task：collector / pre_safety（异常插针后立即执行冷却期symbol） / break_even_take_profit / data_processor
+    # 五个独立 task：collector / pre_safety（异常插针后立即执行冷却期symbol） / break_even_take_profit / 加仓预触发刷新 / data_processor
     collector_thread = threading.Thread(target=start_collector_task, args=(symbols,), daemon=True)
     collector_thread.start()
 
@@ -312,6 +331,9 @@ if __name__ == "__main__":
 
     break_even_thread = threading.Thread(target=start_break_even_take_profit_task, daemon=True)
     break_even_thread.start()
+
+    increase_pretrigger_thread = threading.Thread(target=start_increase_pretrigger_refresh_task, daemon=True)
+    increase_pretrigger_thread.start()
 
     # 主线程跑 processor task
     start_processor_task(symbols)

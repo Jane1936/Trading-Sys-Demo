@@ -178,6 +178,7 @@ class HoldingPositionScoringSystem:
     INCREASE_CHECKS_TABLE = "holding_position_increase_checks"
     INCREASE_RECORDS_TABLE = "holding_position_increase_records"
     INCREASE_TAG_FIRST = "第一次加仓"
+    INCREASE_TAG_PRE_TRIGGER = "预触发"
     REDUCTION_TAG_ABSOLUTE_SCORE_DRAWDOWN = "绝对分数大幅回撤"
     REDUCTION_TAG_MEDIUM_DRAWDOWN_WEAKENING = "中等回撤且趋势连续弱化"
     REDUCTION_TAG_SCORE_DANGER_ZONE = "评分进入危险区"
@@ -1132,14 +1133,67 @@ class HoldingPositionScoringSystem:
             reasons.append("condition2_missing_latest_or_previous_total_score")
         elif self._decimal_from(latest_score, Decimal("0")) < self._decimal_from(previous_score, Decimal("0")) - Decimal("5"):
             reasons.append("condition2_latest_score_lt_previous_minus_5")
-        elif latest_reduction_price and current_price < self._decimal_from(latest_reduction_price, Decimal("0")):
-            reasons.append("condition3_current_price_lt_latest_reduction_price")
         elif latest_score == "" or self._decimal_from(latest_score, Decimal("0")) < Decimal("69"):
             reasons.append("condition4_latest_total_score_lt_69")
+        elif latest_reduction_price and current_price < self._decimal_from(latest_reduction_price, Decimal("0")):
+            reasons.append("condition3_current_price_lt_latest_reduction_price")
         else:
             triggered = True
             reasons.append("first_increase_conditions_met")
-        return PositionIncreaseCheck(symbol, round_ts, self._fmt_decimal(current_price), self._fmt_decimal(equity), self._fmt_decimal(one_r), self._fmt_decimal(unrealized_pnl), latest_score, previous_score, latest_reduction_price, open_trade_created_at, triggered, self.INCREASE_TAG_FIRST if triggered else "", "; ".join(reasons), now_ms)
+        tag = self.INCREASE_TAG_FIRST if triggered else self.INCREASE_TAG_PRE_TRIGGER if reasons == ["condition3_current_price_lt_latest_reduction_price"] else ""
+        return PositionIncreaseCheck(symbol, round_ts, self._fmt_decimal(current_price), self._fmt_decimal(equity), self._fmt_decimal(one_r), self._fmt_decimal(unrealized_pnl), latest_score, previous_score, latest_reduction_price, open_trade_created_at, triggered, tag, "; ".join(reasons), now_ms)
+
+    def refresh_pretrigger_increase_checks(self, now_ms: int | None = None) -> dict[str, Any]:
+        """Refresh latest mark prices for pre-triggered first-add checks.
+
+        A pre-triggered symbol has already passed conditions 1, 2 and 4, but
+        is still waiting for condition 3 (current mark price >= latest lifecycle
+        reduction price).  This method re-reads active positions, forces a fresh
+        mark-price lookup for those symbols, re-evaluates the same decision
+        round, and executes the first-add action when condition 3 becomes true.
+        """
+        self.init_tables()
+        checked_at = now_ms if now_ms is not None else int(time.time() * 1000)
+        round_ts, latest_checks = self.get_latest_increase_checks()
+        pretrigger_symbols = {str(row["symbol"]) for row in latest_checks if str(row["tag"] or "") == self.INCREASE_TAG_PRE_TRIGGER}
+        if round_ts is None or not pretrigger_symbols:
+            return {"round_ts": round_ts, "refreshed": 0, "triggered": 0, "records": 0}
+
+        positions = [
+            position
+            for position in self._active_positions()
+            if self._base_symbol(str(position.get("symbol", ""))) in pretrigger_symbols
+        ]
+        equity = TradingExperiment(self.db_path, account_manager=self.account_manager)._fetch_experiment_usdt_equity()
+        one_r = equity * Decimal("0.01")
+        refreshed_checks: list[PositionIncreaseCheck] = []
+        for position in positions:
+            symbol = self._base_symbol(str(position.get("symbol", "")))
+            exchange_symbol = self._exchange_symbol(position, symbol)
+            latest_mark_price = self._latest_mark_price(exchange_symbol)
+            refreshed_position = dict(position)
+            if latest_mark_price > 0:
+                refreshed_position["markPrice"] = self._fmt_decimal(latest_mark_price)
+            check = self._evaluate_increase_rules(refreshed_position, symbol, int(round_ts), equity, one_r, checked_at)
+            if check.tag in {self.INCREASE_TAG_PRE_TRIGGER, self.INCREASE_TAG_FIRST} or check.symbol in pretrigger_symbols:
+                self._save_increase_check(check)
+                refreshed_checks.append(check)
+        records = self._record_increase_actions(refreshed_checks, positions, checked_at)
+        return {
+            "round_ts": round_ts,
+            "refreshed": len(refreshed_checks),
+            "triggered": sum(1 for row in refreshed_checks if row.triggered),
+            "records": records,
+        }
+
+    def _latest_mark_price(self, exchange_symbol: str) -> Decimal:
+        try:
+            response = self.account_manager._public_get("/fapi/v1/premiumIndex", {"symbol": exchange_symbol})
+            if isinstance(response, dict):
+                return self._decimal_from(response.get("markPrice"), Decimal("0"))
+        except Exception:
+            return Decimal("0")
+        return Decimal("0")
 
     def _latest_reduction_price_since(self, symbol: str, lifecycle_started_at: int) -> str:
         try:
