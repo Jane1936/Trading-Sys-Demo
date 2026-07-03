@@ -478,7 +478,10 @@ def holding_increase_refresh_pretrigger_api():
         holding_scoring = HoldingPositionScoringSystem(db_path=DB_PATH)
         result = holding_scoring.refresh_pretrigger_increase_checks()
         payload = _holding_increase_payload()
+        payload["action_records"] = payload["records"]
         payload.update(result)
+        payload["created_records"] = result.get("records", 0)
+        payload["refresh_result"] = result
         return jsonify(payload)
     except BinanceAccountConfigError as exc:
         return jsonify({"error": str(exc)}), 400

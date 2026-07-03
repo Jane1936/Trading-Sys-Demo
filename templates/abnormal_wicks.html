@@ -1109,28 +1109,26 @@
               <span id="holding-increase-refresh-status" class="muted">可刷新“预触发”symbol的 current_price</span>
             </div>
             {% if holding_increase_round_ts %}
-              <div class="muted">最近判断轮次：{{ holding_increase_round_ts|fmt_ms_datetime }}。该15分钟模块在“减仓条件模块”之后执行；若当前未变现盈利 ≥ 1.3R、最新总分 ≥ 上一轮总分 - 5、最近一次本生命周期内减仓价为空或当前标记价格 ≥ 该减仓价、且最新总分 ≥ 69，则触发“第一次加仓”，并立即调用市价单接口买入当前持仓数量的50%（杠杆沿用当前持仓）。每个 symbol 的单次开仓生命周期内最多触发一次。</div>
+              <div class="muted" id="holding-increase-round-note">最近判断轮次：{{ holding_increase_round_ts|fmt_ms_datetime }}。该15分钟模块在“减仓条件模块”之后执行；若当前未变现盈利 ≥ 1.3R、最新总分 ≥ 上一轮总分 - 5、最近一次本生命周期内减仓价为空或当前标记价格 ≥ 该减仓价、且最新总分 ≥ 69，则触发“第一次加仓”，并立即调用市价单接口买入当前持仓数量的50%（杠杆沿用当前持仓）。每个 symbol 的单次开仓生命周期内最多触发一次。</div>
             {% else %}
-              <div class="muted">暂无加仓条件模块执行结果。</div>
+              <div class="muted" id="holding-increase-round-note">暂无加仓条件模块执行结果。</div>
             {% endif %}
             {% set pretrigger_increase_checks = holding_increase_checks|selectattr('tag', 'equalto', '预触发')|list %}
             {% set triggered_increase_checks = holding_increase_checks|selectattr('triggered')|list %}
             {% if triggered_increase_checks %}
-              <div class="chips">
+              <div class="chips" id="holding-increase-triggered-chips">
                 {% for row in triggered_increase_checks %}
                   <span class="reduction-tags" title="{{ row.reason }}"><span class="chip">{{ row.symbol }}</span><span class="reduction-tag reduction-tag-default">第一次加仓</span></span>
                 {% endfor %}
               </div>
             {% else %}
-              <div class="chips"><span class="chip">本轮无触发第一次加仓symbol</span></div>
+              <div class="chips" id="holding-increase-triggered-chips"><span class="chip">本轮无触发第一次加仓symbol</span></div>
             {% endif %}
-            {% if pretrigger_increase_checks %}
-              <div class="chips">
+            <div class="chips" id="holding-increase-pretrigger-chips" {% if not pretrigger_increase_checks %}style="display:none;"{% endif %}>
                 {% for row in pretrigger_increase_checks %}
                   <span class="reduction-tags" title="{{ row.reason }}"><span class="chip">{{ row.symbol }}</span><span class="reduction-tag reduction-tag-default">预触发</span></span>
                 {% endfor %}
               </div>
-            {% endif %}
           </div>
           <div class="tip">条件1：当前未变现盈利 ≥ 1.3 × R（R = 实验组USDT净值 × 1%）；条件2：最新总分 ≥ 上一轮总分 - 5；条件3：读取本生命周期内最近一次减仓记录对应价格，若存在则当前标记价格需 ≥ 该价格，若不存在减仓记录则跳过；条件4：最新总分 ≥ 69。若同时满足条件1、条件2、条件4但不满足条件3，则打上“预触发”tag，并由后台每1分钟查询一次最新标记价格；当刷新后满足条件3时触发“第一次加仓”并买入当前持仓数量的50%。全部满足后写入“加仓操作记录”，并给该 symbol 打上“第一次加仓”tag；若所需保证金超出实验组可用USDT，则先不加仓，并在记录中标记“可用金额不足”。未变现盈亏 ≥ 1.3R 时显示为紫色。</div>
           <div class="table-wrap">
@@ -1150,7 +1148,7 @@
                   <th>checked_at</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody id="holding-increase-checks-body">
                 {% for row in holding_increase_checks %}
                 <tr>
                   <td>{{ row.symbol }}</td>
@@ -1203,7 +1201,7 @@
                   <th>reason</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody id="holding-increase-records-body">
                 {% for row in holding_increase_records %}
                 <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
                   <td>{{ row.created_at|fmt_ms_datetime }}</td>
@@ -1786,7 +1784,7 @@
             </tbody>
           </table>
         </div>
-        <div class="experiment-note">第一组交易实验：总预算仍按 1000USDT 保证金预算管理；每次新开仓前查询当前“实验组USDT净值”，按 1% 风险、止损距离和杠杆动态计算保证金：保证金 = (实验组USDT净值 × 1%) ÷ (distance_ratio × 杠杆)，名义仓位 = 保证金 × 杠杆；distance_ratio 和杠杆来自“本轮可开仓symbol情况”，趋势标准单及以上且 distance_ratio 为 0 时不再设置默认止损距离或杠杆并且不开单；开多前查询当前持仓和当前总风险，若当前总风险 &gt; 18 且候选总分低于 81、可用余额不足本笔所需保证金或总保证金预算不足则不开仓；不再按持仓数量限制新开仓；候选按“最终可开仓=是”的总分降序遍历；新开仓后会立即通过限价条件单接口设置硬止盈单，按“入场价 + 55USDT / 持仓数量”计算触发/委托价格，浮盈达到55USDT时 reduceOnly 平仓；同时设置止损单；若持仓期间触发“分批止盈规则”卖出30%仓位，或触发持仓评分模块的加仓/减仓导致仓位数量变化，系统会先取消原硬止盈单，再按变化后的实际仓位重新计算“入场价 + 55USDT / 最新持仓数量”，重新挂硬止盈单，仍以利润达到55USDT为目标；止损价格距离仍按 min(入场价 × 10%，实验组USDT净值 × 1% / 持仓数量) 控制。</div>
+        <div class="experiment-note">第一组交易实验：总预算仍按 1000USDT 保证金预算管理；每次新开仓前查询当前“实验组USDT净值”，按 1% 风险、止损距离和杠杆动态计算保证金：保证金 = (实验组USDT净值 × 1%) ÷ (distance_ratio × 杠杆)，名义仓位 = 保证金 × 杠杆；distance_ratio 和杠杆来自“本轮可开仓symbol情况”，趋势标准单及以上且 distance_ratio 为 0 时不再设置默认止损距离或杠杆并且不开单；开多前查询当前持仓和当前总风险，若当前总风险 &gt; 18 且候选总分低于 81、可用余额不足本笔所需保证金或总保证金预算不足则不开仓；不再按持仓数量限制新开仓；候选按“最终可开仓=是”的总分降序遍历；若候选 symbol 当前已有持仓则跳过该 symbol 并继续遍历下一个可开仓 symbol；新开仓后会立即通过限价条件单接口设置硬止盈单，按“入场价 + 55USDT / 持仓数量”计算触发/委托价格，浮盈达到55USDT时 reduceOnly 平仓；同时设置止损单；若持仓期间触发“分批止盈规则”卖出30%仓位，或触发持仓评分模块的加仓/减仓导致仓位数量变化，系统会先取消原硬止盈单，再按变化后的实际仓位重新计算“入场价 + 55USDT / 最新持仓数量”，重新挂硬止盈单，仍以利润达到55USDT为目标；止损价格距离仍按 min(入场价 × 10%，实验组USDT净值 × 1% / 持仓数量) 控制。</div>
         <div class="account-summary" aria-label="实验组USDT净值">
           <div class="account-metric account-metric-highlight">
             <div class="account-metric-label">实验组USDT净值</div>
@@ -2360,6 +2358,88 @@
       if (statusEl && isLoading) statusEl.textContent = '正在刷新移动追踪止盈数据...';
     }
 
+    const HOLDING_INCREASE_RULE_NOTE = '该15分钟模块在“减仓条件模块”之后执行；若当前未变现盈利 ≥ 1.3R、最新总分 ≥ 上一轮总分 - 5、最近一次本生命周期内减仓价为空或当前标记价格 ≥ 该减仓价、且最新总分 ≥ 69，则触发“第一次加仓”，并立即调用市价单接口买入当前持仓数量的50%（杠杆沿用当前持仓）。每个 symbol 的单次开仓生命周期内最多触发一次。';
+
+    function holdingIncreasePnlCell(unrealizedPnl, oneRUsdt) {
+      const pnl = Number(unrealizedPnl);
+      const oneR = Number(oneRUsdt);
+      const multiple = Number.isFinite(pnl) && Number.isFinite(oneR) && oneR > 0 ? pnl / oneR : 0;
+      const cls = multiple >= 1.3 ? 'reduction-pnl-strong-profit' : multiple >= 1 ? 'reduction-pnl-profit' : 'reduction-metric-neutral';
+      return `<span class="reduction-metric ${cls}">${escapeHtml(unrealizedPnl)}</span> / ${escapeHtml(oneRUsdt)}`;
+    }
+
+    function renderHoldingIncreaseChecks(rows) {
+      const rowsEl = document.getElementById('holding-increase-checks-body');
+      if (!rowsEl) return;
+      if (!rows.length) {
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="11">暂无加仓条件模块执行结果</td></tr>';
+        return;
+      }
+      rowsEl.innerHTML = rows.map(row => `
+        <tr>
+          <td>${escapeHtml(row.symbol)}</td>
+          <td>${formatMsDatetime(row.decision_round_ts)}</td>
+          <td>${row.tag ? `<span class="reduction-tag reduction-tag-default">${escapeHtml(row.tag)}</span>` : '-'}</td>
+          <td>${escapeHtml(row.current_price)}</td>
+          <td>${holdingIncreasePnlCell(row.unrealized_pnl, row.one_r_usdt)}</td>
+          <td>${row.latest_total_score || '-'}</td>
+          <td>${row.previous_total_score || '-'}</td>
+          <td>${row.latest_reduction_price ? escapeHtml(row.latest_reduction_price) : '无，已跳过条件3'}</td>
+          <td>${row.open_trade_created_at ? formatMsDatetime(row.open_trade_created_at) : '-'}</td>
+          <td>${escapeHtml(row.reason)}</td>
+          <td>${formatMsDatetime(row.checked_at)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderHoldingIncreaseRecords(rows) {
+      const rowsEl = document.getElementById('holding-increase-records-body');
+      if (!rowsEl) return;
+      if (!rows.length) {
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="11">最近7天暂无加仓操作记录</td></tr>';
+        return;
+      }
+      rowsEl.innerHTML = rows.map((row, index) => `
+        <tr class="${index >= 10 ? 'collapsed-extra' : ''}">
+          <td>${formatMsDatetime(row.created_at)}</td>
+          <td>${escapeHtml(row.symbol)}</td>
+          <td>${formatMsDatetime(row.decision_round_ts)}</td>
+          <td><span class="reduction-tag reduction-tag-default">${escapeHtml(row.action_name)}</span></td>
+          <td>${escapeHtml(row.current_price)}</td>
+          <td>${holdingIncreasePnlCell(row.unrealized_pnl, row.one_r_usdt)}</td>
+          <td>${escapeHtml(row.latest_total_score)} / ${escapeHtml(row.previous_total_score)}</td>
+          <td>${row.latest_reduction_price ? escapeHtml(row.latest_reduction_price) : '-'}</td>
+          <td>${row.increased_quantity || '-'} / ${row.required_margin_usdt || '-'} / ${row.available_experiment_usdt || '-'}</td>
+          <td><span class="status-badge ${row.status === 'submitted' ? 'status-pass' : row.status === 'skipped' ? 'status-warn' : 'status-fail'}">${escapeHtml(row.status)}</span></td>
+          <td>${escapeHtml(row.reason)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderHoldingIncreaseSummary(payload) {
+      const checks = payload.checks || [];
+      const records = payload.action_records || [];
+      const roundNoteEl = document.getElementById('holding-increase-round-note');
+      if (roundNoteEl) {
+        roundNoteEl.textContent = payload.round_ts ? `最近判断轮次：${formatMsDatetime(payload.round_ts)}。${HOLDING_INCREASE_RULE_NOTE}` : '暂无加仓条件模块执行结果。';
+      }
+      const triggeredChipsEl = document.getElementById('holding-increase-triggered-chips');
+      if (triggeredChipsEl) {
+        const triggeredRows = checks.filter(row => row.triggered);
+        triggeredChipsEl.innerHTML = triggeredRows.length
+          ? triggeredRows.map(row => `<span class="reduction-tags" title="${escapeHtml(row.reason)}"><span class="chip">${escapeHtml(row.symbol)}</span><span class="reduction-tag reduction-tag-default">第一次加仓</span></span>`).join('')
+          : '<span class="chip">本轮无触发第一次加仓symbol</span>';
+      }
+      const pretriggerChipsEl = document.getElementById('holding-increase-pretrigger-chips');
+      if (pretriggerChipsEl) {
+        const pretriggerRows = checks.filter(row => row.tag === '预触发');
+        pretriggerChipsEl.style.display = pretriggerRows.length ? '' : 'none';
+        pretriggerChipsEl.innerHTML = pretriggerRows.map(row => `<span class="reduction-tags" title="${escapeHtml(row.reason)}"><span class="chip">${escapeHtml(row.symbol)}</span><span class="reduction-tag reduction-tag-default">预触发</span></span>`).join('');
+      }
+      renderHoldingIncreaseChecks(checks);
+      renderHoldingIncreaseRecords(records);
+    }
+
     (function initHoldingIncreaseRefresh() {
       const btn = document.getElementById('refresh-holding-increase');
       const statusEl = document.getElementById('holding-increase-refresh-status');
@@ -2376,9 +2456,9 @@
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
           if (statusEl) {
-            statusEl.textContent = `刷新完成：预触发刷新 ${payload.refreshed || 0} 个，触发 ${payload.triggered || 0} 个，加仓记录 ${payload.records || 0} 条；正在重新载入表格...`;
+            statusEl.textContent = `刷新完成：预触发刷新 ${payload.refreshed || 0} 个，触发 ${payload.triggered || 0} 个，加仓记录 ${payload.created_records || payload.records || 0} 条；已更新加仓模块。`;
           }
-          window.setTimeout(() => window.location.reload(), 500);
+          renderHoldingIncreaseSummary(payload);
         } catch (error) {
           if (statusEl) statusEl.textContent = `刷新失败：${error.message}`;
         } finally {

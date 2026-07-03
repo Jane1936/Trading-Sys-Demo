@@ -82,6 +82,34 @@ class TenExistingPositionsAccountManager(FakeAccountManager):
             return [{"symbol": f"COIN{i}USDT", "positionAmt": "1", "leverage": "1"} for i in range(10)]
         return super()._signed_get(endpoint, params)
 
+class ExistingBankPositionAccountManager(FakeAccountManager):
+    def _public_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v1/exchangeInfo":
+            return {
+                "symbols": [
+                    {
+                        "symbol": "BANKUSDT",
+                        "filters": [
+                            {"filterType": "LOT_SIZE", "stepSize": "1"},
+                            {"filterType": "PRICE_FILTER", "tickSize": "0.000001"},
+                        ],
+                    },
+                    {
+                        "symbol": "COINUSDT",
+                        "filters": [
+                            {"filterType": "LOT_SIZE", "stepSize": "1"},
+                            {"filterType": "PRICE_FILTER", "tickSize": "0.000001"},
+                        ],
+                    },
+                ]
+            }
+        return super()._public_get(endpoint, params)
+
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/positionRisk" and not params:
+            return [{"symbol": "BANKUSDT", "positionAmt": "3", "leverage": "5"}]
+        return super()._signed_get(endpoint, params)
+
 class CoarseLotAccountManager(FakeAccountManager):
     def _public_get(self, endpoint, params=None):
         if endpoint == "/fapi/v1/exchangeInfo":
@@ -838,6 +866,61 @@ class TradingExperimentSymbolTests(unittest.TestCase):
                 {"symbol": "BANKUSDT", "leverage": 4},
             ],
         )
+
+
+    def test_existing_position_symbol_is_skipped_and_next_candidate_is_opened(self):
+        fake_account = ExistingBankPositionAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "klines.db")
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, close REAL)")
+                conn.execute("INSERT INTO klines_15m (symbol, open_time, close) VALUES ('BANK', 1, 1)")
+            experiment = TradingExperiment(db_path=db_path, account_manager=fake_account)
+            candidates = [
+                OpenableSymbol(
+                    symbol="BANK",
+                    decision_round_ts=1,
+                    total_score=95,
+                    score_band="确定性强趋势单",
+                    stop_loss_distance_ratio=0.10,
+                    distance_threshold=0.08,
+                    stop_loss_distance_tier="A档",
+                    opening_leverage="10x",
+                    distance_qualified=True,
+                    qualified=True,
+                    reason="test",
+                    evaluated_at=1,
+                ),
+                OpenableSymbol(
+                    symbol="COIN",
+                    decision_round_ts=1,
+                    total_score=90,
+                    score_band="确定性强趋势单",
+                    stop_loss_distance_ratio=0.10,
+                    distance_threshold=0.08,
+                    stop_loss_distance_tier="A档",
+                    opening_leverage="10x",
+                    distance_qualified=True,
+                    qualified=True,
+                    reason="test",
+                    evaluated_at=1,
+                ),
+            ]
+
+            result = experiment.run_round(candidates)
+            with sqlite3.connect(experiment.db_path) as conn:
+                rows = conn.execute(
+                    f"SELECT symbol, status, reason FROM {TradingExperiment.TRADES_TABLE} ORDER BY id ASC"
+                ).fetchall()
+
+        self.assertEqual(result, {"opened": 1, "skipped": 1, "reason": "completed"})
+        self.assertEqual(rows[0], ("BANK", "skipped", "symbol_position_already_open"))
+        self.assertEqual(rows[1][0:2], ("COIN", "opened"))
+        market_orders = [
+            params for endpoint, params in fake_account.signed_posts
+            if endpoint == "/fapi/v1/order" and params.get("side") == "BUY"
+        ]
+        self.assertEqual([row["symbol"] for row in market_orders], ["COINUSDT"])
 
     def test_opening_is_not_blocked_by_existing_position_count_when_balance_is_enough(self):
         fake_account = TenExistingPositionsAccountManager()

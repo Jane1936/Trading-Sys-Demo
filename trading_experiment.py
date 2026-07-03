@@ -260,8 +260,6 @@ class TradingExperiment:
         account_equity = self._fetch_experiment_usdt_equity()
         max_loss = account_equity * self.config.risk_fraction
         positions = self._fetch_and_store_positions()
-        open_positions = self._open_position_symbols(positions)
-
         reserved_margin_budget = self._reserved_margin_from_positions(positions)
 
         opened = 0
@@ -273,7 +271,7 @@ class TradingExperiment:
         ]
         for candidate in sorted(eligible_candidates, key=lambda row: (-row.total_score, row.symbol)):
             trading_symbol = self._binance_symbol(candidate.symbol)
-            if trading_symbol in open_positions:
+            if self._has_open_position(trading_symbol, positions):
                 self._record_skip(candidate, account_equity, max_loss, "symbol_position_already_open")
                 skipped += 1
                 continue
@@ -341,7 +339,6 @@ class TradingExperiment:
                 opened += 1
                 available_balance -= required_margin
                 reserved_margin_budget += required_margin
-                open_positions.add(trading_symbol)
                 positions = self._fetch_and_store_positions()
             else:
                 skipped += 1
@@ -857,14 +854,15 @@ class TradingExperiment:
             return raw_leverage
         return fallback_leverages.get(TradingExperiment._base_symbol(row.get("symbol", "")), "-")
 
-    @staticmethod
-    def _open_position_symbols(positions: Iterable[dict[str, Any]]) -> set[str]:
-        symbols: set[str] = set()
-        for row in positions:
-            amt = TradingExperiment._decimal_from(row.get("positionAmt"), Decimal("0"))
-            if amt != 0:
-                symbols.add(str(row.get("symbol", "")))
-        return symbols
+    def _has_open_position(self, trading_symbol: str, cached_positions: Iterable[dict[str, Any]]) -> bool:
+        """Return true when the candidate symbol already has an active position."""
+        normalized_symbol = trading_symbol.upper()
+        for row in cached_positions:
+            if str(row.get("symbol", "")).upper() != normalized_symbol:
+                continue
+            if self._decimal_from(row.get("positionAmt"), Decimal("0")) != 0:
+                return True
+        return False
 
     def _record_error(self, candidate: OpenableSymbol, operation: str, exc: Exception) -> None:
         now = int(time.time() * 1000)
