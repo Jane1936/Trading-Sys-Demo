@@ -259,6 +259,56 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
     return "硬止盈" if realized_pnl > 0 else "硬止损"
 
 
+def _filled_order_open_score(conn: sqlite3.Connection, order: dict) -> tuple[int | None, str]:
+    """Return the latest local experiment opening score before a Binance fill."""
+    if not _table_exists(conn, TradingExperiment.TRADES_TABLE):
+        return None, ""
+    symbol = _base_symbol(str(order.get("symbol", "")))
+    order_time = int(order.get("time") or 0)
+    if not symbol or order_time <= 0:
+        return None, ""
+
+    side = str(order.get("side", "")).upper()
+    if side == "BUY":
+        row = conn.execute(
+            f"""
+            SELECT total_score, created_at
+            FROM {TradingExperiment.TRADES_TABLE}
+            WHERE symbol = ?
+              AND status = 'opened'
+              AND created_at BETWEEN ? AND ?
+              AND total_score IS NOT NULL
+            ORDER BY ABS(created_at - ?) ASC, id DESC
+            LIMIT 1
+            """,
+            (symbol, order_time - 5 * 60 * 1000, order_time + 5 * 60 * 1000, order_time),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            f"""
+            SELECT total_score, created_at
+            FROM {TradingExperiment.TRADES_TABLE}
+            WHERE symbol = ?
+              AND status = 'opened'
+              AND created_at <= ?
+              AND total_score IS NOT NULL
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (symbol, order_time),
+        ).fetchone()
+    if row is None:
+        return None, ""
+    return int(row["total_score"]), str(row["created_at"] or "")
+
+
+def _score_band_label(total_score: int | None) -> str:
+    if total_score is None:
+        return ""
+    band = OpenableSymbolModule.score_band_config_for_total(int(total_score))
+    return band.label if band is not None else "未命中开仓档位"
+
+
 def _annotate_filled_order_exit_reasons(payload: dict) -> dict:
     orders = payload.get("orders")
     if not isinstance(orders, list) or not orders:
@@ -272,12 +322,19 @@ def _annotate_filled_order_exit_reasons(payload: dict) -> dict:
                 matches = _filled_order_exit_reason_matches(conn, order)
                 order["exit_reason"] = _filled_order_exit_reason_label(order, matches)
                 order["exit_reason_matches"] = matches
+                open_score, matched_at = _filled_order_open_score(conn, order)
+                order["open_total_score"] = open_score
+                order["open_score_band"] = _score_band_label(open_score)
+                order["open_score_matched_at"] = matched_at
     except sqlite3.OperationalError:
         for order in orders:
             if isinstance(order, dict):
                 matches = []
                 order.setdefault("exit_reason_matches", matches)
                 order["exit_reason"] = _filled_order_exit_reason_label(order, matches)
+                order.setdefault("open_total_score", None)
+                order.setdefault("open_score_band", "")
+                order.setdefault("open_score_matched_at", "")
     return payload
 
 @app.get("/")

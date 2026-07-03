@@ -165,3 +165,36 @@ def test_trailing_stop_summary_api_returns_latest_rows(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert response.get_json() == {"round_ts": None, "checks": [], "records": []}
+
+
+def test_filled_order_annotation_adds_open_score_from_latest_trade_record(tmp_path, monkeypatch):
+    db_path = tmp_path / "scores.db"
+    monkeypatch.setattr(web_app, "DB_PATH", str(db_path))
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"""
+            CREATE TABLE {web_app.TradingExperiment.TRADES_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                status TEXT NOT NULL,
+                total_score INTEGER,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            f"INSERT INTO {web_app.TradingExperiment.TRADES_TABLE} (symbol, status, total_score, created_at) VALUES (?, ?, ?, ?)",
+            ("BANK", "opened", 82, 800),
+        )
+        conn.execute(
+            f"INSERT INTO {web_app.TradingExperiment.TRADES_TABLE} (symbol, status, total_score, created_at) VALUES (?, ?, ?, ?)",
+            ("BANK", "opened", 90, 1100),
+        )
+
+    payload = {"orders": [{"symbol": "BANKUSDT", "side": "BUY", "time": 1000, "quantity": "1"}]}
+
+    annotated = web_app._annotate_filled_order_exit_reasons(payload)
+
+    assert annotated["orders"][0]["open_total_score"] == 90
+    assert annotated["orders"][0]["open_score_band"] == "确定性强趋势单"
+    assert annotated["orders"][0]["open_score_matched_at"] == "1100"
