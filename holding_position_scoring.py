@@ -596,8 +596,8 @@ class HoldingPositionScoringSystem:
                 reasons.append("rule2_latest_score_not_below_previous_score")
             elif self._decimal_from(previous_score, Decimal("0")) >= self._decimal_from(previous_previous_score, Decimal("0")):
                 reasons.append("rule2_previous_score_not_below_previous_previous_score")
-            elif rule2_score_drawdown < Decimal("15"):
-                reasons.append("rule2_recent_score_drawdown_lt_15")
+            elif rule2_score_drawdown < Decimal("17"):
+                reasons.append("rule2_recent_score_drawdown_lt_17")
             else:
                 triggered = True
                 tags.append(self.REDUCTION_TAG_MEDIUM_DRAWDOWN_WEAKENING)
