@@ -1820,6 +1820,7 @@
                 <th>quantity</th>
                 <th>entry_price</th>
                 <th>status</th>
+                <th>orderId</th>
                 <th>reason</th>
                 <th>raw_response</th>
               </tr>
@@ -1835,11 +1836,12 @@
                 <td>{{ row.quantity }}</td>
                 <td>{{ row.entry_price }}</td>
                 <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
+                <td>{{ row.order_id or '-' }}</td>
                 <td>{{ row.reason }}</td>
                 <td class="mono-cell">{{ row.raw_response or '-' }}</td>
               </tr>
               {% else %}
-              <tr><td class="empty" colspan="10">暂无最近7天僵尸单强平操作记录</td></tr>
+              <tr><td class="empty" colspan="11">暂无最近7天僵尸单强平操作记录</td></tr>
               {% endfor %}
             </tbody>
           </table>
