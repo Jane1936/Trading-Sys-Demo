@@ -26,6 +26,7 @@ from trailing_stop_tracker import TrailingStopTracker
 from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
+from zombie_force_liquidation import ZombieForceLiquidationModule
 
 app = Flask(__name__)
 
@@ -540,7 +541,9 @@ def btc_5m_api():
 @app.post("/api/trading-experiment/run")
 def trading_experiment_run_api():
     try:
+        zombie_result = ZombieForceLiquidationModule(db_path=DB_PATH).run_round()
         result = TradingExperiment(db_path=DB_PATH).run_latest_round()
+        result["zombie_force_liquidation"] = zombie_result
         return jsonify(result)
     except BinanceAccountConfigError as exc:
         return jsonify({"error": str(exc)}), 400

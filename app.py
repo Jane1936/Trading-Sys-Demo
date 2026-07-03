@@ -31,6 +31,7 @@ from trailing_stop_tracker import TrailingStopTracker
 from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
+from zombie_force_liquidation import ZombieForceLiquidationModule
 
 _universe_lock = threading.Lock()
 _universe_refresh_interval_sec = 12 * 60 * 60
@@ -74,11 +75,18 @@ def run_first_experiment_after_openable_round(openable_symbols: Iterable[Openabl
     """Run the first experiment only after openable-symbol evaluation is complete."""
     openable_rows = list(openable_symbols)
     qualified_openable_count = sum(1 for row in openable_rows if row.qualified)
-    if qualified_openable_count <= 0:
-        print(f"🧪 first trading experiment round={round_ts} skipped after openable round: no qualified symbols")
-        return
 
     try:
+        zombie_result = ZombieForceLiquidationModule(db_path=collector.DB_PATH).run_round(checked_at=round_ts)
+        print(
+            f"🧟 zombie force liquidation before open round={round_ts} "
+            f"checked={zombie_result.get('checked', 0)} "
+            f"triggered={zombie_result.get('triggered', 0)} "
+            f"records={zombie_result.get('records', 0)}"
+        )
+        if qualified_openable_count <= 0:
+            print(f"🧪 first trading experiment round={round_ts} skipped after zombie force liquidation: no qualified symbols")
+            return
         experiment_result = TradingExperiment(db_path=collector.DB_PATH).run_round(openable_rows)
         print(
             f"🧪 first trading experiment after openable round={round_ts} "
