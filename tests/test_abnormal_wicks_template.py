@@ -153,6 +153,19 @@ def test_abnormal_wicks_template_mentions_recent_limits():
     assert "/api/btc/5m?page=" in template
 
 
+
+
+def test_holding_increase_refresh_updates_module_without_page_reload():
+    template = Path("templates/abnormal_wicks.html").read_text()
+    init_index = template.index("function renderHoldingIncreaseSummary")
+    refresh_index = template.index("/api/holding-increase/refresh-pretrigger")
+
+    assert 'id="holding-increase-checks-body"' in template
+    assert 'id="holding-increase-records-body"' in template
+    assert "renderHoldingIncreaseSummary(payload)" in template
+    assert "已更新加仓模块" in template
+    assert "window.location.reload()" not in template[init_index:refresh_index + 500]
+
 def test_score_page_includes_ma20_skip_warning_at_top():
     template = Path("templates/abnormal_wicks.html").read_text()
 
