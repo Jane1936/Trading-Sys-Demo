@@ -515,7 +515,7 @@ def test_position_reduction_rule_tags_medium_drawdown_and_continuous_weakening()
             )
             conn.executemany(
                 "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
-                [("BANK", 4000, 55), ("BANK", 3000, 70), ("BANK", 2000, 80)],
+                [("BANK", 4000, 53), ("BANK", 3000, 70), ("BANK", 2000, 80)],
             )
             conn.execute(
                 "INSERT INTO trading_experiment_trades (symbol, status, total_score, created_at) VALUES (?, ?, ?, ?)",
@@ -536,10 +536,10 @@ def test_position_reduction_rule_tags_medium_drawdown_and_continuous_weakening()
     assert checks[0]["latest_15m_open"] == "10"
     assert checks[0]["latest_15m_close"] == "8"
     assert checks[0]["open_total_score"] == "80"
-    assert checks[0]["latest_total_score"] == "55"
+    assert checks[0]["latest_total_score"] == "53"
     assert checks[0]["previous_total_score"] == "70"
-    assert checks[0]["score_drawdown"] == "25"
-    assert checks[0]["recent_score_drawdown"] == "15"
+    assert checks[0]["score_drawdown"] == "27"
+    assert checks[0]["recent_score_drawdown"] == "17"
     assert checks[0]["rule_name"] == "规则二"
 
 def test_position_reduction_no_longer_triggers_on_removed_rule_four_score_danger_zone():
