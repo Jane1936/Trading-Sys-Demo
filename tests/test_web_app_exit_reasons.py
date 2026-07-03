@@ -60,6 +60,17 @@ def _create_exit_reason_tables(db_path):
             )
             """
         )
+        conn.execute(
+            f"""
+            CREATE TABLE {HoldingPositionScoringSystem.INCREASE_RECORDS_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                status TEXT NOT NULL,
+                increased_quantity TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
 
 
 def test_filled_sell_order_exit_reason_uses_structural_stop_loss_match(tmp_path, monkeypatch):
@@ -136,6 +147,24 @@ def test_filled_sell_order_exit_reason_uses_trailing_stop_match(tmp_path, monkey
     assert annotated["orders"][0]["exit_reason"] == "移动追踪止盈"
     assert annotated["orders"][0]["exit_reason_matches"] == [{"type": "移动追踪止盈", "matched_at": "1000"}]
 
+
+
+def test_filled_buy_order_exit_reason_uses_increase_match(tmp_path, monkeypatch):
+    db_path = tmp_path / "orders.db"
+    _create_exit_reason_tables(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"INSERT INTO {HoldingPositionScoringSystem.INCREASE_RECORDS_TABLE} (symbol, status, increased_quantity, created_at) VALUES (?, ?, ?, ?)",
+            ("BANK", "submitted", "4.50", 1000),
+        )
+    monkeypatch.setattr(web_app, "DB_PATH", str(db_path))
+
+    payload = {"orders": [{"symbol": "BANKUSDT", "side": "BUY", "time": 1000, "quantity": "4.5", "realized_pnl": "0"}]}
+
+    annotated = web_app._annotate_filled_order_exit_reasons(payload)
+
+    assert annotated["orders"][0]["exit_reason"] == "加仓"
+    assert annotated["orders"][0]["exit_reason_matches"] == [{"type": "加仓", "matched_at": "1000"}]
 
 def test_unmatched_filled_sell_order_exit_reason_falls_back_to_realized_pnl(tmp_path, monkeypatch):
     db_path = tmp_path / "orders.db"
