@@ -844,6 +844,53 @@ class HoldingPositionScoringSystem:
             f"quantity={self._fmt_decimal(quantity)}; price={self._fmt_decimal(take_profit_price)}; order_id={order_id}"
         )
 
+    def _replace_stop_loss_for_position(
+        self,
+        exchange_symbol: str,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        tick_size: Decimal,
+    ) -> tuple[str, Decimal, str]:
+        old_order_id = self._latest_open_trade_stop_loss_order_id(symbol)
+        stop_loss_price = self._decimal_from(self._latest_open_trade_stop_loss_price(symbol), Decimal("0"))
+        stop_loss_price = TradingExperiment._floor_to_tick(stop_loss_price, tick_size) if stop_loss_price > 0 else Decimal("0")
+        if quantity <= 0 or stop_loss_price <= 0:
+            raise RuntimeError("stop_loss_recreate_invalid_price_or_quantity")
+        cancel_reason = self._cancel_latest_stop_loss_order(exchange_symbol, old_order_id)
+        response = self.account_manager._signed_post(
+            "/fapi/v1/order",
+            {
+                "symbol": exchange_symbol,
+                "side": side,
+                "type": "STOP",
+                "quantity": self._fmt_decimal(quantity),
+                "price": self._fmt_decimal(stop_loss_price),
+                "stopPrice": self._fmt_decimal(stop_loss_price),
+                "timeInForce": "GTC",
+                "reduceOnly": "true",
+                "workingType": "MARK_PRICE",
+            },
+        )
+        order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
+        if not order_id:
+            raise RuntimeError(f"stop_loss_order_id_missing: response={response}")
+        return order_id, stop_loss_price, (
+            f"{cancel_reason}; stop_loss_recreated; quantity={self._fmt_decimal(quantity)}; "
+            f"price={self._fmt_decimal(stop_loss_price)}; order_id={order_id}"
+        )
+
+    def _cancel_latest_stop_loss_order(self, exchange_symbol: str, order_id: str) -> str:
+        if not order_id:
+            return "stop_loss_cancel_skipped_missing_order_id"
+        try:
+            response = self.account_manager._signed_delete("/fapi/v1/algoOrder", {"symbol": exchange_symbol, "algoId": order_id})
+        except AttributeError as exc:
+            return f"stop_loss_cancel_unsupported: {type(exc).__name__}: {exc}"
+        except Exception as exc:
+            return f"stop_loss_cancel_failed: {type(exc).__name__}: {exc}"
+        return f"stop_loss_cancelled; order_id={order_id}; response={response}"
+
     def _current_position_quantity_and_entry(
         self,
         exchange_symbol: str,
@@ -889,6 +936,24 @@ class HoldingPositionScoringSystem:
                     """
                     UPDATE trading_experiment_trades
                     SET take_profit_order_id = ?, take_profit_price = ?, updated_at = ?
+                    WHERE id = (
+                        SELECT id FROM trading_experiment_trades
+                        WHERE symbol = ? AND status = 'opened'
+                        ORDER BY created_at DESC, id DESC LIMIT 1
+                    )
+                    """,
+                    (order_id, self._fmt_decimal(price), int(time.time() * 1000), symbol),
+                )
+        except sqlite3.Error:
+            return
+
+    def _update_latest_open_trade_stop_loss(self, symbol: str, order_id: str, price: Decimal) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE trading_experiment_trades
+                    SET stop_loss_order_id = ?, stop_loss_price = ?, updated_at = ?
                     WHERE id = (
                         SELECT id FROM trading_experiment_trades
                         WHERE symbol = ? AND status = 'opened'
@@ -1194,6 +1259,19 @@ class HoldingPositionScoringSystem:
                         if take_profit_order_id:
                             self._update_latest_open_trade_take_profit(check.symbol, take_profit_order_id, take_profit_price)
                         reason_parts.append(take_profit_reason)
+                        try:
+                            stop_loss_order_id, stop_loss_price, stop_loss_reason = self._replace_stop_loss_for_position(
+                                exchange_symbol,
+                                check.symbol,
+                                close_side,
+                                actual_quantity,
+                                exchange_info["tick_size"],
+                            )
+                            if stop_loss_order_id:
+                                self._update_latest_open_trade_stop_loss(check.symbol, stop_loss_order_id, stop_loss_price)
+                            reason_parts.append(stop_loss_reason)
+                        except Exception as exc:
+                            reason_parts.append(f"stop_loss_recreate_failed: {type(exc).__name__}: {exc}")
                     except Exception as exc:
                         reason_parts.append(f"hard_take_profit_recreate_failed: {type(exc).__name__}: {exc}")
         except Exception as exc:

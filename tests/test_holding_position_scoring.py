@@ -955,10 +955,14 @@ def test_increase_cancels_and_recreates_hard_take_profit_from_actual_position():
         positions = [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "8", "entryPrice": "7", "unRealizedProfit": "70", "leverage": "5"}]
         checks = scoring.evaluate_increase_conditions(positions=positions, decision_round_ts=3000, checked_at=4000)
         records = scoring._record_increase_actions(checks, positions=positions, now_ms=4000)
-        trade = scoring._connect().execute(f"SELECT take_profit_price, take_profit_order_id FROM {TradingExperiment.TRADES_TABLE} WHERE symbol = 'BANK'").fetchone()
+        trade = scoring._connect().execute(f"SELECT take_profit_price, take_profit_order_id, stop_loss_price, stop_loss_order_id FROM {TradingExperiment.TRADES_TABLE} WHERE symbol = 'BANK'").fetchone()
 
     assert records == 1
     assert ("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "old-tp-1"}) in fake_account.signed_deletes
+    assert ("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "old-sl-1"}) in fake_account.signed_deletes
     assert any(params.get("type") == "TAKE_PROFIT" and params.get("quantity") == "3" and params.get("price") == "27.34" for _, params in fake_account.signed_posts)
+    assert any(endpoint == "/fapi/v1/order" and params.get("type") == "STOP" and params.get("quantity") == "3" and params.get("price") == "6" and params.get("stopPrice") == "6" for endpoint, params in fake_account.signed_posts)
     assert trade["take_profit_price"] == "27.34"
     assert trade["take_profit_order_id"] != "old-tp-1"
+    assert trade["stop_loss_price"] == "6"
+    assert trade["stop_loss_order_id"] != "old-sl-1"
