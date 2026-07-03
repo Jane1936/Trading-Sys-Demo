@@ -151,13 +151,16 @@ def _trading_used_margin_text(position_snapshots: list[object]) -> str:
 
 
 def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, time_tolerance_ms: int = 5 * 60 * 1000) -> list[dict[str, str]]:
-    """Match a filled SELL order to local stop-loss / partial take-profit records.
+    """Match a filled order to local strategy records.
 
     Local strategy tables store symbols without the USDT suffix, while Binance
     userTrades returns symbols like BTCUSDT.  The audit rows are written at order
     submission time, so a small time tolerance is used around the fill time.
+    SELL fills are matched to exit strategy records; BUY fills are matched to
+    position increase records.
     """
-    if str(order.get("side", "")).upper() != "SELL":
+    side = str(order.get("side", "")).upper()
+    if side not in {"SELL", "BUY"}:
         return []
     symbol = _base_symbol(str(order.get("symbol", "")))
     order_time = int(order.get("time") or 0)
@@ -166,6 +169,25 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
         return []
 
     matches: list[dict[str, str]] = []
+    if side == "BUY":
+        if _table_exists(conn, HoldingPositionScoringSystem.INCREASE_RECORDS_TABLE):
+            rows = conn.execute(
+                f"""
+                SELECT created_at AS matched_at, increased_quantity
+                FROM {HoldingPositionScoringSystem.INCREASE_RECORDS_TABLE}
+                WHERE symbol = ?
+                  AND status = 'submitted'
+                  AND created_at BETWEEN ? AND ?
+                ORDER BY ABS(created_at - ?) ASC, id DESC
+                """,
+                (symbol, order_time - time_tolerance_ms, order_time + time_tolerance_ms, order_time),
+            ).fetchall()
+            for row in rows:
+                if _decimal_text_equal(row["increased_quantity"], quantity):
+                    matches.append({"type": "加仓", "matched_at": str(row["matched_at"] or "")})
+                    break
+        return matches
+
     if _table_exists(conn, HoldingPositionScoringSystem.RECORDS_TABLE):
         rows = conn.execute(
             f"""
@@ -239,10 +261,13 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
 
 def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) -> str:
     """Return the UI label for a filled order's take-profit / stop-loss reason."""
-    if str(order.get("side", "")).upper() != "SELL":
+    side = str(order.get("side", "")).upper()
+    match_types = {match.get("type", "") for match in matches}
+    if side == "BUY":
+        return "加仓" if "加仓" in match_types else ""
+    if side != "SELL":
         return ""
 
-    match_types = {match.get("type", "") for match in matches}
     if "结构止损" in match_types:
         return "结构止损"
     if "减仓" in match_types:
