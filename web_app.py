@@ -501,11 +501,17 @@ def trailing_stop_summary_api():
 def _holding_increase_payload() -> dict:
     holding_scoring = HoldingPositionScoringSystem(db_path=DB_PATH)
     round_ts, checks = holding_scoring.get_latest_increase_checks()
+    latest_pretrigger_rounds = holding_scoring.latest_pretrigger_increase_rounds()
+    annotated_checks = []
+    for row in checks:
+        item = dict(row)
+        item["latest_pretrigger_round_ts"] = latest_pretrigger_rounds.get(str(item.get("symbol", "")))
+        annotated_checks.append(item)
     since_ms = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp() * 1000)
     records = holding_scoring.recent_increase_records(limit=100, since_ms=since_ms)
     return {
         "round_ts": round_ts,
-        "checks": [dict(row) for row in checks],
+        "checks": annotated_checks,
         "records": [dict(row) for row in records],
     }
 
@@ -695,6 +701,7 @@ def abnormal_wicks():
     holding_portfolio_risk = holding_scoring.get_latest_portfolio_risk()
     holding_reduction_round_ts, holding_reduction_checks = holding_scoring.get_latest_reduction_checks()
     holding_increase_round_ts, holding_increase_checks = holding_scoring.get_latest_increase_checks()
+    holding_increase_pretrigger_rounds = holding_scoring.latest_pretrigger_increase_rounds()
     holding_stop_loss_records = holding_scoring.recent_stop_loss_records(limit=100)
     holding_reduction_records = holding_scoring.recent_reduction_records(limit=100)
     holding_increase_records = holding_scoring.recent_increase_records(limit=100, since_ms=trading_records_since_ms)
@@ -787,6 +794,7 @@ def abnormal_wicks():
         holding_reduction_checks=holding_reduction_checks,
         holding_increase_round_ts=holding_increase_round_ts,
         holding_increase_checks=holding_increase_checks,
+        holding_increase_pretrigger_rounds=holding_increase_pretrigger_rounds,
         holding_stop_loss_records=holding_stop_loss_records,
         holding_reduction_records=holding_reduction_records,
         holding_increase_records=holding_increase_records,
