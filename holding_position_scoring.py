@@ -1134,7 +1134,6 @@ class HoldingPositionScoringSystem:
             condition1_met = unrealized_pnl >= one_r * Decimal("1.3")
             condition2_met = latest_score != "" and previous_score != "" and self._decimal_from(latest_score, Decimal("0")) >= self._decimal_from(previous_score, Decimal("0")) - Decimal("5")
             condition3_met = not latest_reduction_price or current_price >= self._decimal_from(latest_reduction_price, Decimal("0"))
-            condition4_met = latest_score != "" and self._decimal_from(latest_score, Decimal("0")) >= Decimal("69")
 
             if not condition1_met:
                 reasons.append("condition1_unrealized_pnl_lt_1_3r")
@@ -1142,24 +1141,22 @@ class HoldingPositionScoringSystem:
                 reasons.append("condition2_missing_latest_or_previous_total_score")
             elif not condition2_met:
                 reasons.append("condition2_latest_score_lt_previous_minus_5")
-            if latest_score == "" or not condition4_met:
-                reasons.append("condition4_latest_total_score_lt_69")
             if not condition3_met:
                 reasons.append("condition3_current_price_lt_latest_reduction_price")
 
-            if condition1_met and condition2_met and condition3_met and condition4_met:
+            if condition1_met and condition2_met and condition3_met:
                 triggered = True
                 tag = self.INCREASE_TAG_FIRST
                 reasons = ["first_increase_conditions_met"]
-            elif condition2_met and condition4_met and not condition1_met and not condition3_met:
+            elif condition2_met and not condition1_met and not condition3_met:
                 tag = self.INCREASE_TAG_PRE_TRIGGER
         return PositionIncreaseCheck(symbol, round_ts, self._fmt_decimal(current_price), self._fmt_decimal(equity), self._fmt_decimal(one_r), self._fmt_decimal(unrealized_pnl), latest_score, previous_score, latest_reduction_price, open_trade_created_at, triggered, tag, "; ".join(reasons), now_ms)
 
     def refresh_pretrigger_increase_checks(self, now_ms: int | None = None) -> dict[str, Any]:
         """Refresh latest mark prices for pre-triggered first-add checks.
 
-        A pre-triggered symbol has already passed conditions 2 and 4 while
-        conditions 1 and 3 are not yet satisfied.  This method re-reads active
+        A pre-triggered symbol has already passed condition 2 while conditions
+        1 and 3 are not yet satisfied.  This method re-reads active
         positions, forces a fresh
         mark-price lookup for those symbols, re-evaluates the same decision
         round, and executes the first-add action when conditions 1 and 3 both become true.
@@ -1387,6 +1384,22 @@ class HoldingPositionScoringSystem:
                 return None, []
             rows = conn.execute(f"SELECT * FROM {self.INCREASE_CHECKS_TABLE} WHERE decision_round_ts = ? ORDER BY triggered DESC, symbol ASC", (round_ts,)).fetchall()
         return round_ts, rows
+
+
+    def latest_pretrigger_increase_rounds(self) -> dict[str, int]:
+        """Return each symbol's most recent decision round with a pre-trigger tag."""
+        self.init_tables()
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT symbol, MAX(decision_round_ts) AS decision_round_ts
+                FROM {self.INCREASE_CHECKS_TABLE}
+                WHERE tag = ?
+                GROUP BY symbol
+                """,
+                (self.INCREASE_TAG_PRE_TRIGGER,),
+            ).fetchall()
+        return {str(row["symbol"]): int(row["decision_round_ts"]) for row in rows if row["decision_round_ts"] is not None}
 
     def recent_increase_records(self, limit: int = 100, since_ms: int | None = None) -> list[sqlite3.Row]:
         self.init_tables()

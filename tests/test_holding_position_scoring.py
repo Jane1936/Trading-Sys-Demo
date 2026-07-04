@@ -871,7 +871,7 @@ def test_position_increase_requires_current_price_not_below_lifecycle_reduction_
             conn.execute("CREATE TABLE trading_experiment_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, status TEXT, created_at INTEGER, total_score TEXT, entry_price TEXT, stop_loss_order_id TEXT, stop_loss_price TEXT)")
             conn.executemany(
                 "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
-                [("BANK", 3000, 75), ("BANK", 2000, 76)],
+                [("BANK", 3000, 65), ("BANK", 2000, 66)],
             )
             conn.execute(
                 "INSERT INTO trading_experiment_trades (symbol, status, created_at, total_score, entry_price, stop_loss_order_id, stop_loss_price) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -994,7 +994,7 @@ def _seed_increase_pretrigger_db(db_path: str, scoring: HoldingPositionScoringSy
         conn.execute("CREATE TABLE trading_experiment_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, status TEXT, created_at INTEGER, total_score TEXT, entry_price TEXT, take_profit_order_id TEXT, stop_loss_order_id TEXT, stop_loss_price TEXT)")
         conn.executemany(
             "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
-            [("BANK", 3000, 75), ("BANK", 2000, 76)],
+            [("BANK", 3000, 65), ("BANK", 2000, 66)],
         )
         conn.execute(
             "INSERT INTO trading_experiment_trades (symbol, status, created_at, total_score, entry_price, take_profit_order_id, stop_loss_order_id, stop_loss_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1013,7 +1013,7 @@ def _seed_increase_pretrigger_db(db_path: str, scoring: HoldingPositionScoringSy
         )
 
 
-def test_position_increase_marks_pretrigger_when_conditions2_and4_met_but_conditions1_and3_fail():
+def test_position_increase_marks_pretrigger_when_condition2_met_but_conditions1_and3_fail():
     fake_account = RefreshingMarkAccountManager(mark_price="8")
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
