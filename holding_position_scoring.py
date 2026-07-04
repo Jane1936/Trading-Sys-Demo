@@ -1149,7 +1149,7 @@ class HoldingPositionScoringSystem:
                 triggered = True
                 tag = self.INCREASE_TAG_FIRST
                 reasons = ["first_increase_conditions_met"]
-            elif condition2_met and not condition1_met and (not has_reduction_record or not condition3_met):
+            elif condition2_met and not condition1_met and (not has_reduction_record or condition3_met):
                 tag = self.INCREASE_TAG_PRE_TRIGGER
         return PositionIncreaseCheck(symbol, round_ts, self._fmt_decimal(current_price), self._fmt_decimal(equity), self._fmt_decimal(one_r), self._fmt_decimal(unrealized_pnl), latest_score, previous_score, latest_reduction_price, open_trade_created_at, triggered, tag, "; ".join(reasons), now_ms)
 
@@ -1158,7 +1158,7 @@ class HoldingPositionScoringSystem:
 
         A pre-triggered symbol has already passed condition 2 while condition
         1 is not yet satisfied; when a reduction record exists, condition 3
-        is also not yet satisfied.  This method re-reads active
+        is already satisfied.  This method re-reads active
         positions, forces a fresh
         mark-price lookup for those symbols, re-evaluates the same decision
         round, and executes the first-add action when conditions 1 and 3 both become true.

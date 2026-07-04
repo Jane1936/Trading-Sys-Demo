@@ -1014,7 +1014,7 @@ def _seed_increase_pretrigger_db(db_path: str, scoring: HoldingPositionScoringSy
             )
 
 
-def test_position_increase_marks_pretrigger_when_condition2_met_but_conditions1_and3_fail():
+def test_position_increase_does_not_mark_pretrigger_when_reduction_condition3_fails():
     fake_account = RefreshingMarkAccountManager(mark_price="8")
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
@@ -1025,8 +1025,23 @@ def test_position_increase_marks_pretrigger_when_condition2_met_but_conditions1_
         checks = scoring.evaluate_increase_conditions(positions=positions, decision_round_ts=3000, checked_at=4000)
 
     assert checks[0].triggered is False
-    assert checks[0].tag == "预触发"
+    assert checks[0].tag == ""
     assert checks[0].reason == "condition1_unrealized_pnl_lt_1_3r; condition3_current_price_lt_latest_reduction_price"
+
+
+def test_position_increase_marks_pretrigger_when_reduction_condition2_and3_met_but_condition1_fails():
+    fake_account = RefreshingMarkAccountManager(mark_price="10")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        _seed_increase_pretrigger_db(db_path, scoring)
+        positions = [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "10", "unRealizedProfit": "10", "leverage": "5"}]
+
+        checks = scoring.evaluate_increase_conditions(positions=positions, decision_round_ts=3000, checked_at=4000)
+
+    assert checks[0].triggered is False
+    assert checks[0].tag == "预触发"
+    assert checks[0].reason == "condition1_unrealized_pnl_lt_1_3r"
 
 
 def test_position_increase_marks_pretrigger_without_reduction_when_condition2_met_but_condition1_fails():
@@ -1045,14 +1060,14 @@ def test_position_increase_marks_pretrigger_without_reduction_when_condition2_me
     assert checks[0].reason == "condition1_unrealized_pnl_lt_1_3r"
 
 
-def test_refresh_pretrigger_waits_until_conditions1_and3_are_met():
+def test_refresh_pretrigger_waits_until_condition1_is_met():
     fake_account = RefreshingMarkAccountManager(mark_price="10", unrealized_profit="10")
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
         _seed_increase_pretrigger_db(db_path, scoring)
         pretrigger = scoring._evaluate_increase_rules(
-            {"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "8", "unRealizedProfit": "10", "leverage": "5"},
+            {"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "9", "unRealizedProfit": "10", "leverage": "5"},
             "BANK",
             3000,
             Decimal("5000"),
@@ -1067,7 +1082,7 @@ def test_refresh_pretrigger_waits_until_conditions1_and3_are_met():
     assert result["refreshed"] == 1
     assert result["triggered"] == 0
     assert result["records"] == 0
-    assert checks[0]["tag"] == ""
+    assert checks[0]["tag"] == "预触发"
     assert checks[0]["reason"] == "condition1_unrealized_pnl_lt_1_3r"
     assert records == []
 
@@ -1078,7 +1093,7 @@ def test_refresh_pretrigger_updates_mark_price_and_executes_first_add():
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
         _seed_increase_pretrigger_db(db_path, scoring)
         pretrigger = scoring._evaluate_increase_rules(
-            {"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "8", "unRealizedProfit": "10", "leverage": "5"},
+            {"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "9", "unRealizedProfit": "10", "leverage": "5"},
             "BANK",
             3000,
             Decimal("5000"),
