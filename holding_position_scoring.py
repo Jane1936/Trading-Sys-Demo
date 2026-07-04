@@ -1133,7 +1133,8 @@ class HoldingPositionScoringSystem:
         else:
             condition1_met = unrealized_pnl >= one_r * Decimal("1.3")
             condition2_met = latest_score != "" and previous_score != "" and self._decimal_from(latest_score, Decimal("0")) >= self._decimal_from(previous_score, Decimal("0")) - Decimal("5")
-            condition3_met = not latest_reduction_price or current_price >= self._decimal_from(latest_reduction_price, Decimal("0"))
+            has_reduction_record = latest_reduction_price != ""
+            condition3_met = not has_reduction_record or current_price >= self._decimal_from(latest_reduction_price, Decimal("0"))
 
             if not condition1_met:
                 reasons.append("condition1_unrealized_pnl_lt_1_3r")
@@ -1148,15 +1149,16 @@ class HoldingPositionScoringSystem:
                 triggered = True
                 tag = self.INCREASE_TAG_FIRST
                 reasons = ["first_increase_conditions_met"]
-            elif condition2_met and not condition1_met and not condition3_met:
+            elif condition2_met and not condition1_met and (not has_reduction_record or not condition3_met):
                 tag = self.INCREASE_TAG_PRE_TRIGGER
         return PositionIncreaseCheck(symbol, round_ts, self._fmt_decimal(current_price), self._fmt_decimal(equity), self._fmt_decimal(one_r), self._fmt_decimal(unrealized_pnl), latest_score, previous_score, latest_reduction_price, open_trade_created_at, triggered, tag, "; ".join(reasons), now_ms)
 
     def refresh_pretrigger_increase_checks(self, now_ms: int | None = None) -> dict[str, Any]:
         """Refresh latest mark prices for pre-triggered first-add checks.
 
-        A pre-triggered symbol has already passed condition 2 while conditions
-        1 and 3 are not yet satisfied.  This method re-reads active
+        A pre-triggered symbol has already passed condition 2 while condition
+        1 is not yet satisfied; when a reduction record exists, condition 3
+        is also not yet satisfied.  This method re-reads active
         positions, forces a fresh
         mark-price lookup for those symbols, re-evaluates the same decision
         round, and executes the first-add action when conditions 1 and 3 both become true.

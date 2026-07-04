@@ -988,7 +988,7 @@ class RefreshingMarkAccountManager(FakeAccountManager):
         return super()._signed_get(endpoint, params)
 
 
-def _seed_increase_pretrigger_db(db_path: str, scoring: HoldingPositionScoringSystem) -> None:
+def _seed_increase_pretrigger_db(db_path: str, scoring: HoldingPositionScoringSystem, include_reduction: bool = True) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
         conn.execute("CREATE TABLE trading_experiment_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, status TEXT, created_at INTEGER, total_score TEXT, entry_price TEXT, take_profit_order_id TEXT, stop_loss_order_id TEXT, stop_loss_price TEXT)")
@@ -1002,15 +1002,16 @@ def _seed_increase_pretrigger_db(db_path: str, scoring: HoldingPositionScoringSy
         )
     scoring.init_tables()
     TradingExperiment(db_path=db_path, account_manager=scoring.account_manager).init_tables()
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            f"INSERT INTO {scoring.REDUCTION_RECORDS_TABLE} (symbol, decision_round_ts, side, matched_rule, reduction_percent, original_quantity, reduced_quantity, remaining_quantity, status, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            ("BANK", 2500, "SELL", "规则三", "0.3", "2", "0.6", "1.4", "submitted", "test", 2000),
-        )
-        conn.execute(
-            f"INSERT INTO {scoring.REDUCTION_CHECKS_TABLE} (symbol, decision_round_ts, highest_15m_high, current_price, price_drawdown_ratio, account_equity_usdt, two_r_usdt, one_r_usdt, unrealized_pnl, open_total_score, latest_total_score, score_drawdown, triggered, tag, reason, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            ("BANK", 2500, "10", "9", "0.1", "5000", "100", "50", "20", "72", "70", "2", 1, "tag", "test", 2000),
-        )
+    if include_reduction:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                f"INSERT INTO {scoring.REDUCTION_RECORDS_TABLE} (symbol, decision_round_ts, side, matched_rule, reduction_percent, original_quantity, reduced_quantity, remaining_quantity, status, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("BANK", 2500, "SELL", "规则三", "0.3", "2", "0.6", "1.4", "submitted", "test", 2000),
+            )
+            conn.execute(
+                f"INSERT INTO {scoring.REDUCTION_CHECKS_TABLE} (symbol, decision_round_ts, highest_15m_high, current_price, price_drawdown_ratio, account_equity_usdt, two_r_usdt, one_r_usdt, unrealized_pnl, open_total_score, latest_total_score, score_drawdown, triggered, tag, reason, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("BANK", 2500, "10", "9", "0.1", "5000", "100", "50", "20", "72", "70", "2", 1, "tag", "test", 2000),
+            )
 
 
 def test_position_increase_marks_pretrigger_when_condition2_met_but_conditions1_and3_fail():
@@ -1026,6 +1027,22 @@ def test_position_increase_marks_pretrigger_when_condition2_met_but_conditions1_
     assert checks[0].triggered is False
     assert checks[0].tag == "预触发"
     assert checks[0].reason == "condition1_unrealized_pnl_lt_1_3r; condition3_current_price_lt_latest_reduction_price"
+
+
+def test_position_increase_marks_pretrigger_without_reduction_when_condition2_met_but_condition1_fails():
+    fake_account = RefreshingMarkAccountManager(mark_price="10")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        _seed_increase_pretrigger_db(db_path, scoring, include_reduction=False)
+        positions = [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "10", "unRealizedProfit": "10", "leverage": "5"}]
+
+        checks = scoring.evaluate_increase_conditions(positions=positions, decision_round_ts=3000, checked_at=4000)
+
+    assert checks[0].triggered is False
+    assert checks[0].tag == "预触发"
+    assert checks[0].latest_reduction_price == ""
+    assert checks[0].reason == "condition1_unrealized_pnl_lt_1_3r"
 
 
 def test_refresh_pretrigger_waits_until_conditions1_and3_are_met():
