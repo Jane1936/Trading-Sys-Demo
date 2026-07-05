@@ -18,6 +18,7 @@ from typing import Any, Iterable
 
 from binance_account_manager import BinanceAccountManager
 from trading_experiment import TradingExperiment
+from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
 
 
 @dataclass(frozen=True)
@@ -204,6 +205,7 @@ class HoldingPositionScoringSystem:
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
+        TradeActionLockManager(self.db_path).init_table()
         with self._connect() as conn:
             conn.execute(
                 f"""
@@ -716,10 +718,15 @@ class HoldingPositionScoringSystem:
         status = "submitted"
         reason_parts = [check.reason, f"matched_rule={matched_rule}", f"reduction_percent={self._fmt_decimal(percent * Decimal('100'))}%"]
         raw_parts: list[str] = []
-        cancel_reason = self._cancel_existing_exit_orders(exchange_symbol)
-        if cancel_reason:
-            reason_parts.append(cancel_reason)
+        lock_manager, lock_handle, lock_reason = acquire_trade_action_lock(
+            self.db_path, check.symbol, "holding_position_scoring", "reduction", now_ms
+        )
+        if lock_handle is None:
+            return PositionReductionRecord(0, check.symbol, check.decision_round_ts, side, matched_rule, self._fmt_decimal(percent), self._fmt_decimal(original_quantity), self._fmt_decimal(reduced_quantity), self._fmt_decimal(remaining_quantity), old_limit_order_id, new_limit_order_id, market_order_id, limit_price, "failed", f"{'; '.join(reason_parts)}; {lock_reason}", "", now_ms)
         try:
+            cancel_reason = self._cancel_existing_exit_orders(exchange_symbol)
+            if cancel_reason:
+                reason_parts.append(cancel_reason)
             helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
             exchange_info = helper._exchange_symbol_info(exchange_symbol)
             if percent >= Decimal("1"):
@@ -794,6 +801,8 @@ class HoldingPositionScoringSystem:
             reason_parts.append(f"reduction_action_failed: {type(exc).__name__}: {exc}")
             if self._is_reduce_only_rejected(exc):
                 reason_parts.append(f"reduce_only_diagnostics: {self._reduce_only_diagnostics(exchange_symbol)}")
+        finally:
+            lock_manager.release(lock_handle)
         return PositionReductionRecord(0, check.symbol, check.decision_round_ts, side, matched_rule, self._fmt_decimal(percent), self._fmt_decimal(original_quantity), self._fmt_decimal(reduced_quantity), self._fmt_decimal(remaining_quantity), old_limit_order_id, new_limit_order_id, market_order_id, limit_price, status, "; ".join(reason_parts), " | ".join(raw_parts), now_ms)
 
 
@@ -1258,6 +1267,11 @@ class HoldingPositionScoringSystem:
         status = "submitted"
         reason_parts = [check.reason]
         raw_response = ""
+        lock_manager, lock_handle, lock_reason = acquire_trade_action_lock(
+            self.db_path, check.symbol, "holding_position_scoring", "increase", now_ms
+        )
+        if lock_handle is None:
+            return PositionIncreaseRecord(0, check.symbol, check.decision_round_ts, self.INCREASE_TAG_FIRST, check.current_price, check.unrealized_pnl, check.one_r_usdt, check.latest_total_score, check.previous_total_score, check.latest_reduction_price, "failed", f"{'; '.join(reason_parts)}; {lock_reason}", now_ms, self._fmt_decimal(original_quantity), self._fmt_decimal(increased_quantity), self._fmt_decimal(required_margin), self._fmt_decimal(available_experiment_usdt), market_order_id, raw_response)
         try:
             helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
             exchange_info = helper._exchange_symbol_info(exchange_symbol)
@@ -1342,6 +1356,8 @@ class HoldingPositionScoringSystem:
         except Exception as exc:
             status = "failed"
             reason_parts.append(f"increase_action_failed: {type(exc).__name__}: {exc}")
+        finally:
+            lock_manager.release(lock_handle)
         return PositionIncreaseRecord(0, check.symbol, check.decision_round_ts, self.INCREASE_TAG_FIRST, check.current_price, check.unrealized_pnl, check.one_r_usdt, check.latest_total_score, check.previous_total_score, check.latest_reduction_price, status, "; ".join(reason_parts), now_ms, self._fmt_decimal(original_quantity), self._fmt_decimal(increased_quantity), self._fmt_decimal(required_margin), self._fmt_decimal(available_experiment_usdt), market_order_id, raw_response)
 
     def _save_increase_check(self, check: PositionIncreaseCheck) -> None:
@@ -1638,10 +1654,16 @@ class HoldingPositionScoringSystem:
         order_id = ""
         reason = check.reason
         raw_response = ""
-        cancel_reason = self._cancel_existing_exit_orders(exchange_symbol)
-        if cancel_reason:
-            reason = f"{reason}; {cancel_reason}"
+        cancel_reason = ""
+        lock_manager, lock_handle, lock_reason = acquire_trade_action_lock(
+            self.db_path, check.symbol, "holding_position_scoring", "stop_loss", now_ms
+        )
+        if lock_handle is None:
+            return HoldingStopLossRecord(0, check.symbol, check.decision_round_ts, side, self._fmt_decimal(quantity), check.latest_15m_close or 0.0, check.latest_structural_stop_loss or 0.0, check.prev_15m_close or 0.0, check.prev_structural_stop_loss or 0.0, "failed", "", "", f"{reason}; {lock_reason}", "", now_ms)
         try:
+            cancel_reason = self._cancel_existing_exit_orders(exchange_symbol)
+            if cancel_reason:
+                reason = f"{reason}; {cancel_reason}"
             response = self.account_manager._signed_post("/fapi/v1/order", self._market_close_order_params(exchange_symbol, side, quantity))
             order_id = str(response.get("orderId", "")) if isinstance(response, dict) else ""
             raw_response = str(response)
@@ -1666,6 +1688,7 @@ class HoldingPositionScoringSystem:
             )
         if pnl_failure_reason:
             reason = f"{reason}; {pnl_failure_reason}"
+        lock_manager.release(lock_handle)
         return HoldingStopLossRecord(0, check.symbol, check.decision_round_ts, side, self._fmt_decimal(quantity), float(check.latest_15m_close or 0), float(check.latest_structural_stop_loss or 0), float(check.prev_15m_close or 0), float(check.prev_structural_stop_loss or 0), status, order_id, realized_pnl, reason, raw_response, now_ms)
 
     def _cancel_existing_exit_orders(self, exchange_symbol: str) -> str:

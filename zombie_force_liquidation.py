@@ -19,6 +19,7 @@ from typing import Any
 
 from binance_account_manager import BinanceAccountManager
 from break_even_take_profit import BreakEvenTakeProfitStrategy
+from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
 from trading_experiment import ExperimentConfig, TradingExperiment
 
 
@@ -78,6 +79,7 @@ class ZombieForceLiquidationModule:
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
+        TradeActionLockManager(self.db_path).init_table()
         with self._connect() as conn:
             conn.execute(
                 f"""
@@ -169,6 +171,12 @@ class ZombieForceLiquidationModule:
         raw_parts: list[str] = []
         order_id = ""
         quantity = abs(amount)
+        lock_manager, lock_handle, lock_reason = acquire_trade_action_lock(
+            self.db_path, symbol, "zombie_force_liquidation", "force_close", now
+        )
+        if lock_handle is None:
+            self._insert_record(symbol, now, opened_at, side, amount, Decimal("0"), entry_price, "failed", "", "; ".join(reason_parts + [lock_reason]), "")
+            return
         try:
             for endpoint, label in (("/fapi/v1/allOpenOrders", "open_orders_cancel"), ("/fapi/v1/algoOpenOrders", "algo_orders_cancel")):
                 response = self.account_manager._signed_delete(endpoint, {"symbol": exchange_symbol})
@@ -195,6 +203,8 @@ class ZombieForceLiquidationModule:
         except Exception as exc:
             status = "failed"
             reason_parts.append(f"zombie_force_liquidation_failed: {type(exc).__name__}: {exc}")
+        finally:
+            lock_manager.release(lock_handle)
         self._insert_record(symbol, now, opened_at, side, amount, quantity, entry_price, status, order_id, "; ".join(reason_parts), " | ".join(raw_parts))
 
     def _latest_opened_at(self, symbol: str, now: int) -> int | None:

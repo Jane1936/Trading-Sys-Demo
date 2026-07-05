@@ -19,6 +19,7 @@ from typing import Any
 
 from binance_account_manager import BinanceAccountManager
 from partial_take_profit import PartialTakeProfitStrategy
+from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
 from trading_experiment import TradingExperiment
 
 
@@ -68,6 +69,7 @@ class TrailingStopTracker:
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
         PartialTakeProfitStrategy(db_path=self.db_path, account_manager=self.account_manager).init_tables()
+        TradeActionLockManager(self.db_path).init_table()
         with self._connect() as conn:
             conn.execute(
                 f"""
@@ -246,20 +248,25 @@ class TrailingStopTracker:
         cancel_order_id = self._latest_take_profit_order_id(symbol, entry_price)
         cancel_status = "submitted"
         raw_parts: list[str] = []
-        cancel_failures: list[str] = []
-        for endpoint, label in (
-            ("/fapi/v1/allOpenOrders", "open_orders_cancel"),
-            ("/fapi/v1/algoOpenOrders", "algo_orders_cancel"),
-        ):
-            try:
-                cancel_response = self.account_manager._signed_delete(endpoint, {"symbol": exchange_symbol})
-                raw_parts.append(str({label: cancel_response}))
-            except Exception as exc:
-                cancel_failures.append(f"{label}_failed: {type(exc).__name__}: {exc}")
-        if cancel_failures:
-            cancel_status = "failed"
-            return cancel_order_id, cancel_status, Decimal("0"), "", "failed", "trailing_stop_cancel_existing_orders_failed: " + " | ".join(cancel_failures)
+        lock_manager, lock_handle, lock_reason = acquire_trade_action_lock(
+            self.db_path, symbol, "trailing_stop_tracker", "trailing_stop_close"
+        )
+        if lock_handle is None:
+            return cancel_order_id, "failed", Decimal("0"), "", "failed", lock_reason
         try:
+            cancel_failures: list[str] = []
+            for endpoint, label in (
+                ("/fapi/v1/allOpenOrders", "open_orders_cancel"),
+                ("/fapi/v1/algoOpenOrders", "algo_orders_cancel"),
+            ):
+                try:
+                    cancel_response = self.account_manager._signed_delete(endpoint, {"symbol": exchange_symbol})
+                    raw_parts.append(str({label: cancel_response}))
+                except Exception as exc:
+                    cancel_failures.append(f"{label}_failed: {type(exc).__name__}: {exc}")
+            if cancel_failures:
+                cancel_status = "failed"
+                return cancel_order_id, cancel_status, Decimal("0"), "", "failed", "trailing_stop_cancel_existing_orders_failed: " + " | ".join(cancel_failures)
             helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
             exchange_info = helper._exchange_symbol_info(exchange_symbol)
             quantity = self._floor_to_step(abs(amount), exchange_info["step_size"])
@@ -281,6 +288,8 @@ class TrailingStopTracker:
             return cancel_order_id, cancel_status, quantity, close_order_id, "submitted", "trailing_stop_triggered_close_position; " + " | ".join(raw_parts)
         except Exception as exc:
             return cancel_order_id, cancel_status, Decimal("0"), "", "failed", f"trailing_stop_close_failed: {type(exc).__name__}: {exc}; " + " | ".join(raw_parts)
+        finally:
+            lock_manager.release(lock_handle)
 
     def _latest_1m_high(self, symbol: str) -> Decimal:
         with self._connect() as conn:
