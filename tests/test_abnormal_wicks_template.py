@@ -46,6 +46,18 @@ def test_zombie_force_liquidation_records_render_above_trade_records():
     assert "zombie_force_liquidation_records" in template
 
 
+
+def test_zombie_force_liquidation_records_hide_raw_response_column():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    zombie_records_index = template.index("<strong>僵尸单强平操作记录</strong>")
+    trade_records_index = template.index("<strong>交易实验交易记录</strong>")
+    zombie_section = template[zombie_records_index:trade_records_index]
+
+    assert "<th>raw_response</th>" not in zombie_section
+    assert "row.raw_response" not in zombie_section
+    assert 'colspan="10"' in zombie_section
+
 def test_experiment_equity_trend_chart_renders_under_equity_metric():
     template = Path("templates/abnormal_wicks.html").read_text()
 
