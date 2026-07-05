@@ -230,6 +230,8 @@ def test_trailing_stop_tracker_closes_position_when_drawdown_threshold_hit():
     assert fake_account.signed_deletes == [
         ("/fapi/v1/allOpenOrders", {"symbol": "BANKUSDT"}),
         ("/fapi/v1/algoOpenOrders", {"symbol": "BANKUSDT"}),
+        ("/fapi/v1/allOpenOrders", {"symbol": "BANKUSDT"}),
+        ("/fapi/v1/algoOpenOrders", {"symbol": "BANKUSDT"}),
     ]
     assert fake_account.signed_posts == [
         ("/fapi/v1/order", {"symbol": "BANKUSDT", "side": "SELL", "type": "MARKET", "quantity": "10", "reduceOnly": "true", "newOrderRespType": "RESULT"})

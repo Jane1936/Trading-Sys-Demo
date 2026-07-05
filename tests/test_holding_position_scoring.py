@@ -197,6 +197,8 @@ def test_holding_position_scoring_strips_usdt_for_database_lookups_and_records()
     assert fake_account.signed_deletes == [
         ("/fapi/v1/allOpenOrders", {"symbol": "BANKUSDT"}),
         ("/fapi/v1/algoOpenOrders", {"symbol": "BANKUSDT"}),
+        ("/fapi/v1/allOpenOrders", {"symbol": "BANKUSDT"}),
+        ("/fapi/v1/algoOpenOrders", {"symbol": "BANKUSDT"}),
     ]
     assert fake_account.signed_posts[0][1]["symbol"] == "BANKUSDT"
 

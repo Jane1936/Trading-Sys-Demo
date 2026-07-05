@@ -285,6 +285,15 @@ class TrailingStopTracker:
             )
             raw_parts.append(str({"close_position": response}))
             close_order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
+            for endpoint, label in (
+                ("/fapi/v1/allOpenOrders", "post_close_open_orders_cancel"),
+                ("/fapi/v1/algoOpenOrders", "post_close_algo_orders_cancel"),
+            ):
+                try:
+                    cancel_response = self.account_manager._signed_delete(endpoint, {"symbol": exchange_symbol})
+                    raw_parts.append(str({label: cancel_response}))
+                except Exception as exc:
+                    return cancel_order_id, cancel_status, quantity, close_order_id, "failed", f"trailing_stop_post_close_cancel_failed: {label}: {type(exc).__name__}: {exc}; " + " | ".join(raw_parts)
             return cancel_order_id, cancel_status, quantity, close_order_id, "submitted", "trailing_stop_triggered_close_position; " + " | ".join(raw_parts)
         except Exception as exc:
             return cancel_order_id, cancel_status, Decimal("0"), "", "failed", f"trailing_stop_close_failed: {type(exc).__name__}: {exc}; " + " | ".join(raw_parts)
