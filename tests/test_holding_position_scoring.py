@@ -936,13 +936,16 @@ def test_reduction_recreates_hard_take_profit_from_actual_remaining_position():
             conn.execute(f"INSERT INTO {TradingExperiment.TRADES_TABLE} (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt, required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity, notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation, take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at) VALUES ('BANK', 1, 'LONG', 'opened', 80, 5, '100', '20', '1000', '10', '10', '2', '20', '37.5', '7', '', 'old-tp-1', 'old-sl-1', '', '', 1, 1)")
         result = scoring.run_round(decision_round_ts=4000)
         records = scoring.recent_reduction_records()
-        trade = scoring._connect().execute(f"SELECT take_profit_price, take_profit_order_id FROM {TradingExperiment.TRADES_TABLE} WHERE symbol = 'BANK'").fetchone()
+        trade = scoring._connect().execute(f"SELECT take_profit_price, take_profit_order_id, stop_loss_price, stop_loss_order_id FROM {TradingExperiment.TRADES_TABLE} WHERE symbol = 'BANK'").fetchone()
 
     assert result["reduction_records"] == 1
     assert records[0]["status"] == "submitted"
     assert any(params.get("type") == "TAKE_PROFIT" and params.get("quantity") == "1.5" and params.get("price") == "46.67" for _, params in fake_account.signed_posts)
+    assert any(endpoint == "/fapi/v1/order" and params.get("type") == "STOP" and params.get("quantity") == "1.5" and params.get("price") == "7" and params.get("stopPrice") == "7" for endpoint, params in fake_account.signed_posts)
     assert trade["take_profit_price"] == "46.67"
     assert trade["take_profit_order_id"] != "old-tp-1"
+    assert trade["stop_loss_price"] == "7"
+    assert trade["stop_loss_order_id"] != "old-sl-1"
 
 
 def test_increase_cancels_and_recreates_hard_take_profit_from_actual_position():
