@@ -21,6 +21,7 @@ from decimal import Decimal, ROUND_DOWN
 from typing import Any
 
 from binance_account_manager import BinanceAccountManager
+from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
 from trading_experiment import ExperimentConfig, TradingExperiment
 
 
@@ -82,6 +83,7 @@ class BreakEvenTakeProfitStrategy:
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
+        TradeActionLockManager(self.db_path).init_table()
         with self._connect() as conn:
             conn.execute(
                 f"""
@@ -195,6 +197,12 @@ class BreakEvenTakeProfitStrategy:
         status = "submitted"
         reason_parts = ["unrealized_pnl_ge_r_move_stop_loss_to_entry"]
         raw_parts: list[str] = []
+        lock_manager, lock_handle, lock_reason = acquire_trade_action_lock(
+            self.db_path, symbol, "break_even_take_profit", "replace_stop_loss", now
+        )
+        if lock_handle is None:
+            self._insert_record(symbol, now, side, amount, entry_price, equity, r_value, unrealized_pnl, old_order_id, "", stop_loss_price or entry_price, "failed", "; ".join(reason_parts + [lock_reason]), "")
+            return
         try:
             for stale_order in stale_stop_losses:
                 stale_order_id = self._stop_loss_order_id(stale_order)
@@ -239,6 +247,8 @@ class BreakEvenTakeProfitStrategy:
             stop_loss_price = entry_price
             new_order_id = ""
             reason_parts.append(f"break_even_stop_loss_failed: {type(exc).__name__}: {exc}")
+        finally:
+            lock_manager.release(lock_handle)
         self._insert_record(symbol, now, side, amount, entry_price, equity, r_value, unrealized_pnl, old_order_id, new_order_id, stop_loss_price, status, "; ".join(reason_parts), " | ".join(raw_parts))
 
 

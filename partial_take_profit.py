@@ -18,6 +18,7 @@ from decimal import Decimal, ROUND_DOWN
 from typing import Any
 
 from binance_account_manager import BinanceAccountManager
+from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
 from trading_experiment import ExperimentConfig, TradingExperiment
 
 
@@ -82,6 +83,7 @@ class PartialTakeProfitStrategy:
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
+        TradeActionLockManager(self.db_path).init_table()
         with self._connect() as conn:
             conn.execute(
                 f"""
@@ -170,6 +172,12 @@ class PartialTakeProfitStrategy:
         order_id = ""
         raw_response = ""
         reason = "unrealized_pnl_ge_2r_take_profit_30_percent"
+        lock_manager, lock_handle, lock_reason = acquire_trade_action_lock(
+            self.db_path, symbol, "partial_take_profit", "partial_take_profit", now
+        )
+        if lock_handle is None:
+            self._insert_record(symbol, now, side, amount, Decimal("0"), entry_price, equity, r_value, trigger_r, unrealized_pnl, "", "failed", f"{reason}; {lock_reason}", raw_response)
+            return
         try:
             helper = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)
             exchange_info = helper._exchange_symbol_info(exchange_symbol)
@@ -220,6 +228,8 @@ class PartialTakeProfitStrategy:
             status = "failed"
             quantity = Decimal("0")
             reason = f"partial_take_profit_failed: {type(exc).__name__}: {exc}"
+        finally:
+            lock_manager.release(lock_handle)
         self._insert_record(symbol, now, side, amount, quantity, entry_price, equity, r_value, trigger_r, unrealized_pnl, order_id, status, reason, raw_response)
 
     def _cancel_existing_exit_orders(self, exchange_symbol: str, raw_parts: list[str]) -> str:
