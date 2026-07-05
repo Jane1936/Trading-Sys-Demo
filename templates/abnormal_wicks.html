@@ -77,6 +77,8 @@
     .reduction-tag-rule4 { background:#ede9fe; color:#5b21b6; border-color:#c4b5fd; }
     .reduction-tag-rule5 { background:#dcfce7; color:#166534; border-color:#86efac; }
     .reduction-tag-default { background:#e0f2fe; color:#075985; border-color:#7dd3fc; }
+    .reduction-tag-stale-pretrigger { background:#f1f5f9; color:#64748b; border-color:#cbd5e1; }
+    .reduction-tag-increase-completed { background:#dcfce7; color:#166534; border-color:#86efac; }
     .score-delta { display:inline-flex; align-items:center; justify-content:center; min-width:58px; padding:3px 8px; border-radius:999px; font-weight:900; border:1px solid transparent; }
     .score-delta-negative { color:#dc2626; background:#fee2e2; border-color:#fca5a5; }
     .score-delta-positive { color:#16a34a; background:#dcfce7; border-color:#86efac; }
@@ -1153,7 +1155,7 @@
                 <tr>
                   <td>{{ row.symbol }}</td>
                   <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
-                  <td>{% set latest_pretrigger_round = holding_increase_pretrigger_rounds.get(row.symbol) if holding_increase_pretrigger_rounds else none %}{% if row.tag %}<span class="reduction-tag reduction-tag-default">{{ row.tag }}</span>{% endif %}{% if latest_pretrigger_round %}<span class="reduction-tag reduction-tag-rule4">触发轮次 {{ latest_pretrigger_round|fmt_ms_datetime }} 预触发</span>{% endif %}{% if not row.tag and not latest_pretrigger_round %}-{% endif %}</td>
+                  <td>{% set latest_pretrigger_round = holding_increase_pretrigger_rounds.get(row.symbol) if holding_increase_pretrigger_rounds else none %}{% if row.tag %}<span class="reduction-tag {% if row.tag == '已完成第一次加仓' %}reduction-tag-increase-completed{% else %}reduction-tag-default{% endif %}">{{ row.tag }}</span>{% endif %}{% if latest_pretrigger_round %}<span class="reduction-tag reduction-tag-stale-pretrigger">触发轮次 {{ latest_pretrigger_round|fmt_ms_datetime }} 预触发</span>{% endif %}{% if not row.tag and not latest_pretrigger_round %}-{% endif %}</td>
                   <td>{{ row.current_price }}</td>
                   <td>
                     {% set inc_one_r = row.one_r_usdt|float %}
@@ -2370,10 +2372,14 @@
       return `<span class="reduction-metric ${cls}">${escapeHtml(unrealizedPnl)}</span> / ${escapeHtml(oneRUsdt)}`;
     }
 
+    function holdingIncreaseTagClass(tag) {
+      return tag === '已完成第一次加仓' ? 'reduction-tag-increase-completed' : 'reduction-tag-default';
+    }
+
     function holdingIncreaseTagCell(row) {
       const parts = [];
-      if (row.tag) parts.push(`<span class="reduction-tag reduction-tag-default">${escapeHtml(row.tag)}</span>`);
-      if (row.latest_pretrigger_round_ts) parts.push(`<span class="reduction-tag reduction-tag-rule4">触发轮次 ${formatMsDatetime(row.latest_pretrigger_round_ts)} 预触发</span>`);
+      if (row.tag) parts.push(`<span class="reduction-tag ${holdingIncreaseTagClass(row.tag)}">${escapeHtml(row.tag)}</span>`);
+      if (row.latest_pretrigger_round_ts) parts.push(`<span class="reduction-tag reduction-tag-stale-pretrigger">触发轮次 ${formatMsDatetime(row.latest_pretrigger_round_ts)} 预触发</span>`);
       return parts.length ? parts.join('') : '-';
     }
 

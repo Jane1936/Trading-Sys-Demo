@@ -166,6 +166,17 @@ def test_holding_increase_refresh_updates_module_without_page_reload():
     assert "已更新加仓模块" in template
     assert "window.location.reload()" not in template[init_index:refresh_index + 500]
 
+
+def test_holding_increase_tags_have_requested_colors():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    assert ".reduction-tag-stale-pretrigger" in template
+    assert ".reduction-tag-increase-completed" in template
+    assert "row.tag == '已完成第一次加仓'" in template
+    assert "tag === '已完成第一次加仓'" in template
+    assert "latest_pretrigger_round" in template
+    assert 'reduction-tag-stale-pretrigger">触发轮次' in template
+
 def test_score_page_includes_ma20_skip_warning_at_top():
     template = Path("templates/abnormal_wicks.html").read_text()
 
