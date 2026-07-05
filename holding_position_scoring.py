@@ -779,6 +779,10 @@ class HoldingPositionScoringSystem:
                 status = "failed"
                 reason_parts.append(no_fill_reason.replace("stop_loss", "reduction"))
                 market_order_id = ""
+            elif remaining_quantity <= 0:
+                post_close_cancel_reason = self._cancel_existing_exit_orders(exchange_symbol, context="post_close")
+                if post_close_cancel_reason:
+                    reason_parts.append(post_close_cancel_reason)
             elif remaining_quantity > 0:
                 try:
                     actual_quantity, actual_entry_price = self._current_position_quantity_and_entry(exchange_symbol, remaining_quantity, position)
@@ -1672,6 +1676,10 @@ class HoldingPositionScoringSystem:
                 status = "failed"
                 reason = f"{reason}; {no_fill_reason}"
                 order_id = ""
+            else:
+                post_close_cancel_reason = self._cancel_existing_exit_orders(exchange_symbol, context="post_close")
+                if post_close_cancel_reason:
+                    reason = f"{reason}; {post_close_cancel_reason}"
         except Exception as exc:
             status = "failed"
             reason = f"{check.reason}; stop_loss_order_failed: {type(exc).__name__}: {exc}"
@@ -1691,8 +1699,8 @@ class HoldingPositionScoringSystem:
         lock_manager.release(lock_handle)
         return HoldingStopLossRecord(0, check.symbol, check.decision_round_ts, side, self._fmt_decimal(quantity), float(check.latest_15m_close or 0), float(check.latest_structural_stop_loss or 0), float(check.prev_15m_close or 0), float(check.prev_structural_stop_loss or 0), status, order_id, realized_pnl, reason, raw_response, now_ms)
 
-    def _cancel_existing_exit_orders(self, exchange_symbol: str) -> str:
-        """Cancel normal and conditional open orders before a reduce-only MARKET close."""
+    def _cancel_existing_exit_orders(self, exchange_symbol: str, context: str = "pre_close") -> str:
+        """Cancel normal and conditional open orders around a reduce-only MARKET close."""
         failures: list[str] = []
         for endpoint, label in (
             ("/fapi/v1/allOpenOrders", "open_orders_cancel"),
@@ -1705,8 +1713,8 @@ class HoldingPositionScoringSystem:
             except Exception as exc:
                 failures.append(f"{label}_failed: {type(exc).__name__}: {exc}")
         if failures:
-            return "pre_close_cancel_warnings: " + " | ".join(failures)
-        return "pre_close_cancelled_existing_open_orders"
+            return f"{context}_cancel_warnings: " + " | ".join(failures)
+        return f"{context}_cancelled_existing_open_orders"
 
     def _reduce_only_diagnostics(self, exchange_symbol: str) -> str:
         diagnostics: list[str] = []

@@ -200,6 +200,9 @@ class ZombieForceLiquidationModule:
             )
             order_id = str(response.get("orderId", "")) if isinstance(response, dict) else ""
             raw_parts.append(str({"market_close": response}))
+            for endpoint, label in (("/fapi/v1/allOpenOrders", "post_close_open_orders_cancel"), ("/fapi/v1/algoOpenOrders", "post_close_algo_orders_cancel")):
+                cancel_response = self.account_manager._signed_delete(endpoint, {"symbol": exchange_symbol})
+                raw_parts.append(str({label: cancel_response}))
         except Exception as exc:
             status = "failed"
             reason_parts.append(f"zombie_force_liquidation_failed: {type(exc).__name__}: {exc}")
