@@ -771,6 +771,7 @@ class HoldingPositionScoringSystem:
                         new_limit_order_id = TradingExperiment._exit_order_id(new_limit_response if isinstance(new_limit_response, dict) else None)
                         if not new_limit_order_id:
                             raise RuntimeError(f"reduction_new_limit_order_id_missing: response={new_limit_response}")
+                        self._update_latest_open_trade_stop_loss(check.symbol, new_limit_order_id, stop_trigger)
             market_response = self.account_manager._signed_post("/fapi/v1/order", self._market_close_order_params(exchange_symbol, side, reduced_quantity))
             raw_parts.append(str({"market_order": market_response}))
             market_order_id = str(market_response.get("orderId", "")) if isinstance(market_response, dict) else ""
@@ -798,6 +799,20 @@ class HoldingPositionScoringSystem:
                     if take_profit_order_id:
                         self._update_latest_open_trade_take_profit(check.symbol, take_profit_order_id, take_profit_price)
                     reason_parts.append(take_profit_reason)
+                    try:
+                        stop_loss_order_id, stop_loss_price, stop_loss_reason = self._replace_stop_loss_for_position(
+                            exchange_symbol,
+                            check.symbol,
+                            side,
+                            actual_quantity,
+                            exchange_info["tick_size"],
+                        )
+                        if stop_loss_order_id:
+                            self._update_latest_open_trade_stop_loss(check.symbol, stop_loss_order_id, stop_loss_price)
+                            new_limit_order_id = stop_loss_order_id
+                        reason_parts.append(stop_loss_reason)
+                    except Exception as exc:
+                        reason_parts.append(f"stop_loss_recreate_failed: {type(exc).__name__}: {exc}")
                 except Exception as exc:
                     reason_parts.append(f"hard_take_profit_recreate_failed: {type(exc).__name__}: {exc}")
         except Exception as exc:
