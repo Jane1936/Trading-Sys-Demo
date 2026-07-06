@@ -731,10 +731,16 @@ class TradingExperiment:
             row for row in self._fetch_and_store_positions()
             if self._decimal_from(row.get("positionAmt"), Decimal("0")) != 0
         ]
+        live_symbols = {str(row.get("symbol", "")).upper() for row in positions}
         checked = 0
         created = 0
+        cancelled = 0
         errors = 0
         records: list[dict[str, str]] = []
+        stale_result = self._cancel_stale_algo_exit_orders(live_symbols)
+        cancelled += stale_result["cancelled"]
+        errors += stale_result["errors"]
+        records.extend(stale_result["records"])
         for position in positions:
             checked += 1
             exchange_symbol = str(position.get("symbol", "")).upper()
@@ -801,7 +807,45 @@ class TradingExperiment:
                 candidate = OpenableSymbol(symbol=symbol, decision_round_ts=None, total_score=None, qualified=True, reason="exit_order_reconcile")
                 self._record_error(candidate, f"reconcile_exit_orders:{exchange_symbol}", exc)
                 records.append({"symbol": symbol, "status": "failed", "reason": f"{type(exc).__name__}: {exc}"})
-        return {"checked": checked, "created": created, "errors": errors, "records": records}
+        return {"checked": checked, "created": created, "cancelled": cancelled, "errors": errors, "records": records}
+
+    def _cancel_stale_algo_exit_orders(self, live_symbols: set[str]) -> dict[str, Any]:
+        """Cancel reduce-only conditional exit orders for symbols with no live position."""
+        try:
+            open_algo_orders = self._open_algo_orders("")
+        except Exception as exc:
+            return {"cancelled": 0, "errors": 1, "records": [{"symbol": "", "status": "failed", "reason": f"stale_algo_orders_query_failed: {type(exc).__name__}: {exc}"}]}
+
+        cancelled = 0
+        errors = 0
+        records: list[dict[str, str]] = []
+        for order in open_algo_orders:
+            exchange_symbol = str(order.get("symbol", "")).upper()
+            if not exchange_symbol or exchange_symbol in live_symbols:
+                continue
+            order_side = str(order.get("side", "")).upper()
+            order_type = str(order.get("type") or order.get("orderType") or "").upper()
+            status = str(order.get("status", "NEW")).upper()
+            if order_type not in {"TAKE_PROFIT", "TAKE_PROFIT_MARKET", "STOP", "STOP_MARKET"}:
+                continue
+            if status not in {"NEW", "PENDING", "PARTIALLY_FILLED"}:
+                continue
+            order_id = str(order.get("algoId") or order.get("orderId") or "")
+            if not order_id:
+                records.append({"symbol": exchange_symbol, "status": "skipped", "reason": "stale_exit_order_missing_id"})
+                continue
+            params = {"symbol": exchange_symbol, "algoId": order_id}
+            try:
+                self.account_manager._signed_delete("/fapi/v1/algoOrder", params)
+            except Exception as exc:
+                errors += 1
+                records.append({"symbol": exchange_symbol, "status": "failed", "reason": f"stale_exit_order_cancel_failed: {type(exc).__name__}: {exc}"})
+                candidate = OpenableSymbol(symbol=self._base_symbol(exchange_symbol), decision_round_ts=None, total_score=None, qualified=True, reason="stale_exit_order_cleanup")
+                self._record_error(candidate, f"stale_exit_order_cleanup:{exchange_symbol}", exc)
+            else:
+                cancelled += 1
+                records.append({"symbol": exchange_symbol, "status": "cancelled", "reason": f"stale_{order_side}_{order_type}_algo_order_cancelled:{order_id}"})
+        return {"cancelled": cancelled, "errors": errors, "records": records}
 
     def _latest_open_trade_for_symbol(self, symbol: str) -> sqlite3.Row | None:
         with self._connect() as conn:
@@ -811,7 +855,8 @@ class TradingExperiment:
             ).fetchone()
 
     def _open_algo_orders(self, exchange_symbol: str) -> list[dict[str, Any]]:
-        rows = self.account_manager._signed_get("/fapi/v1/openAlgoOrders", {"symbol": exchange_symbol})
+        params = {"symbol": exchange_symbol} if exchange_symbol else None
+        rows = self.account_manager._signed_get("/fapi/v1/openAlgoOrders", params)
         return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
 
     @staticmethod

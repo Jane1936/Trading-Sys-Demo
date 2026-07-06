@@ -10,6 +10,7 @@ from trading_experiment import ExperimentConfig, TradingExperiment
 class FakeAccountManager:
     def __init__(self):
         self.signed_posts = []
+        self.signed_deletes = []
 
     def validate_config(self):
         return None
@@ -40,6 +41,10 @@ class FakeAccountManager:
         if endpoint == "/fapi/v1/algoOrder":
             return {"algoId": len(self.signed_posts)}
         return {"orderId": len(self.signed_posts)}
+
+    def _signed_delete(self, endpoint, params=None):
+        self.signed_deletes.append((endpoint, dict(params or {})))
+        return {"code": 200, "msg": "success"}
 
     def _signed_get(self, endpoint, params=None):
         if endpoint == "/fapi/v3/account":
@@ -1202,3 +1207,37 @@ def test_reconcile_missing_exit_orders_recreates_missing_take_profit_only(tmp_pa
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(f"SELECT take_profit_order_id, stop_loss_order_id FROM {TradingExperiment.TRADES_TABLE}").fetchone()
     assert row == ("1", "sl-1")
+
+
+def test_reconcile_missing_exit_orders_cancels_stale_take_profit_without_position(tmp_path):
+    db_path = tmp_path / "klines.db"
+    account = MissingExitOrdersAccountManager()
+    account.open_algo_orders = [
+        {"symbol": "BANKUSDT", "side": "SELL", "orderType": "STOP", "status": "NEW", "algoId": "sl-1"},
+        {"symbol": "GONEUSDT", "side": "SELL", "orderType": "TAKE_PROFIT", "status": "NEW", "algoId": "tp-stale"},
+    ]
+    experiment = TradingExperiment(
+        db_path=str(db_path),
+        account_manager=account,
+        config=ExperimentConfig(exit_order_missing_position_retry_delay_seconds=Decimal("0")),
+    )
+    experiment.init_tables()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {TradingExperiment.TRADES_TABLE}
+            (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt,
+             required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity,
+             notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation,
+             take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at)
+            VALUES ('BANK', 1, 'LONG', 'opened', 80, 5, '100', '20', '1000', '10',
+                    '1', '50', '50', '2.1', '0.8', '', 'tp-1', 'sl-1', '', '', 1, 1)
+            """
+        )
+
+    result = experiment.reconcile_missing_exit_orders(checked_at=2000)
+
+    assert result["checked"] == 1
+    assert result["cancelled"] == 1
+    assert ("/fapi/v1/algoOrder", {"symbol": "GONEUSDT", "algoId": "tp-stale"}) in account.signed_deletes
+    assert ("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "sl-1"}) not in account.signed_deletes
