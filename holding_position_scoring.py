@@ -1306,6 +1306,8 @@ class HoldingPositionScoringSystem:
             if leverage <= 0:
                 raise RuntimeError("increase_position_leverage_missing")
             required_margin = increased_quantity * current_price / leverage
+            account_equity = helper._fetch_experiment_usdt_equity()
+            reserved_margin_budget = helper._reserved_margin_from_positions(helper._fetch_and_store_positions())
             account = self.account_manager._signed_get("/fapi/v3/account")
             if not isinstance(account, dict):
                 raise RuntimeError("Unexpected Binance account response format")
@@ -1313,7 +1315,10 @@ class HoldingPositionScoringSystem:
             available_experiment_usdt = available_balance - helper.config.experiment_uninvested_usdt
             if available_experiment_usdt < 0:
                 available_experiment_usdt = Decimal("0")
-            if required_margin > available_experiment_usdt:
+            if reserved_margin_budget + required_margin > account_equity:
+                status = "skipped"
+                reason_parts.append("实验组净值预算不足")
+            elif required_margin > available_experiment_usdt:
                 status = "skipped"
                 reason_parts.append("可用金额不足")
             else:
