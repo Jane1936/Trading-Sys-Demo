@@ -115,6 +115,16 @@ class ExistingBankPositionAccountManager(FakeAccountManager):
             return [{"symbol": "BANKUSDT", "positionAmt": "3", "leverage": "5"}]
         return super()._signed_get(endpoint, params)
 
+class ProfitableExperimentBudgetAccountManager(FakeAccountManager):
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/account":
+            return {"availableBalance": "1200", "totalMarginBalance": "1200"}
+        if endpoint == "/fapi/v3/balance":
+            return [{"asset": "USDT", "balance": "5200"}]
+        if endpoint == "/fapi/v3/positionRisk" and not params:
+            return [{"symbol": "OLDUSDT", "positionAmt": "1100", "notional": "1100", "leverage": "1"}]
+        return super()._signed_get(endpoint, params)
+
 class CoarseLotAccountManager(FakeAccountManager):
     def _public_get(self, endpoint, params=None):
         if endpoint == "/fapi/v1/exchangeInfo":
@@ -956,6 +966,33 @@ class TradingExperimentSymbolTests(unittest.TestCase):
 
         self.assertEqual(result, {"opened": 1, "skipped": 0, "reason": "completed"})
         self.assertEqual(rows[0].symbol, "BANK")
+
+    def test_opening_budget_uses_current_experiment_equity_after_profit(self):
+        fake_account = ProfitableExperimentBudgetAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "klines.db")
+            experiment = TradingExperiment(db_path=db_path, account_manager=fake_account)
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=90,
+                score_band="确定性强趋势单",
+                stop_loss_distance_ratio=0.02,
+                distance_threshold=0.08,
+                stop_loss_distance_tier="A档",
+                opening_leverage="10x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            result = experiment.run_round([candidate])
+            rows = experiment.recent_trade_records()
+
+        self.assertEqual(result, {"opened": 1, "skipped": 0, "reason": "completed"})
+        self.assertEqual(rows[0].symbol, "BANK")
+        self.assertEqual(rows[0].account_equity_usdt, "1200")
 
     def test_usdt_pair_symbol_is_not_double_suffixed(self):
         self.assertEqual(TradingExperiment._binance_symbol("BANKUSDT"), "BANKUSDT")

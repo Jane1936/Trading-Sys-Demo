@@ -104,7 +104,7 @@ class TradingExperiment:
     * experiment equity matches the web page "experiment USDT equity" metric;
     * open-position count is not capped; new entries are allowed as long as
       available balance and the experiment margin budget can cover the order;
-    * the experiment's total margin budget is capped at 1,000 USDT;
+    * the experiment's total margin budget floats with current experiment USDT equity;
     * before each new entry, query the latest experiment USDT equity from Binance;
     * each candidate's base margin is sized from 1% equity risk, stop-loss distance,
       and leverage: base margin = (equity * 1%) / (distance_ratio * leverage);
@@ -277,8 +277,8 @@ class TradingExperiment:
             max_loss = account_equity * self.config.risk_fraction
             trade_plan = self._trade_plan(candidate, account_equity)
             required_margin = trade_plan.required_margin_usdt
-            if reserved_margin_budget + required_margin > self.config.total_margin_budget_usdt:
-                self._record_skip(candidate, account_equity, max_loss, "total_margin_budget_exhausted", required_margin)
+            if reserved_margin_budget + required_margin > account_equity:
+                self._record_skip(candidate, account_equity, max_loss, "experiment_equity_budget_exhausted", required_margin)
                 skipped += 1
                 break
             if available_balance < required_margin:
