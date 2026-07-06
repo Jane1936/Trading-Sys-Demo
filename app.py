@@ -109,6 +109,12 @@ def start_break_even_take_profit_task() -> None:
     print("🟢 Break-even, partial take-profit and trailing stop tracker task started")
     while True:
         try:
+            reconcile_result = TradingExperiment(db_path=collector.DB_PATH).reconcile_missing_exit_orders()
+            print(
+                f"🧩 exit-order reconcile checked={reconcile_result.get('checked', 0)} "
+                f"created={reconcile_result.get('created', 0)} "
+                f"errors={reconcile_result.get('errors', 0)}"
+            )
             result = strategy.run_round()
             print(
                 f"🟢 break-even take-profit checked={result.get('checked', 0)} "

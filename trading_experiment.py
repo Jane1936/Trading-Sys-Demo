@@ -717,6 +717,131 @@ class TradingExperiment:
             self._record_error(candidate, f"{operation}:{trading_symbol}", last_exc)
         return None
 
+    def reconcile_missing_exit_orders(self, checked_at: int | None = None) -> dict[str, Any]:
+        """Create missing hard take-profit/stop-loss protection for live positions.
+
+        Binance exit orders can fail independently after the entry MARKET order is
+        already filled.  A later reconciliation pass compares live positions with
+        currently open conditional orders and recreates any missing reduce-only
+        protection from the latest opened trade row.
+        """
+        now = checked_at or int(time.time() * 1000)
+        self.init_tables()
+        positions = [
+            row for row in self._fetch_and_store_positions()
+            if self._decimal_from(row.get("positionAmt"), Decimal("0")) != 0
+        ]
+        checked = 0
+        created = 0
+        errors = 0
+        records: list[dict[str, str]] = []
+        for position in positions:
+            checked += 1
+            exchange_symbol = str(position.get("symbol", "")).upper()
+            symbol = exchange_symbol[:-4] if exchange_symbol.endswith("USDT") else exchange_symbol
+            amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
+            side = "SELL" if amount > 0 else "BUY"
+            quantity_abs = abs(amount)
+            trade = self._latest_open_trade_for_symbol(symbol)
+            if not trade:
+                records.append({"symbol": symbol, "status": "skipped", "reason": "missing_open_trade_row"})
+                continue
+            try:
+                exchange_info = self._exchange_symbol_info(exchange_symbol)
+                quantity = self._floor_to_step(quantity_abs, exchange_info["step_size"])
+                if quantity <= 0:
+                    records.append({"symbol": symbol, "status": "skipped", "reason": "position_quantity_rounded_to_zero"})
+                    continue
+                open_algo_orders = self._open_algo_orders(exchange_symbol)
+                created_ids: dict[str, str] = {}
+                if not self._has_open_exit_order(open_algo_orders, side, {"TAKE_PROFIT", "TAKE_PROFIT_MARKET"}):
+                    entry_price = self._decimal_from(position.get("entryPrice"), self._decimal_from(trade["entry_price"], Decimal("0")))
+                    take_profit_price = self._hard_take_profit_price(
+                        entry_price=entry_price,
+                        quantity=quantity,
+                        profit_usdt=self.config.hard_take_profit_usdt,
+                        tick_size=exchange_info["tick_size"],
+                    )
+                    if take_profit_price > 0:
+                        endpoint, params = self._exit_order_request({
+                            "symbol": exchange_symbol,
+                            "side": side,
+                            "type": "TAKE_PROFIT",
+                            "quantity": self._fmt_decimal(quantity),
+                            "price": self._fmt_decimal(take_profit_price),
+                            "stopPrice": self._fmt_decimal(take_profit_price),
+                            "timeInForce": "GTC",
+                            "reduceOnly": "true",
+                            "workingType": "MARK_PRICE",
+                        })
+                        response = self._signed_post_order_with_ioc_retry(endpoint, params, trading_symbol=exchange_symbol)
+                        created_ids["take_profit_order_id"] = self._exit_order_id(response if isinstance(response, dict) else None)
+                        self._update_latest_open_trade_exit_order(symbol, "take_profit_order_id", created_ids["take_profit_order_id"], now)
+                        created += 1
+                stop_loss_price = self._decimal_from(trade["stop_loss_price"], Decimal("0"))
+                if stop_loss_price > 0 and not self._has_open_exit_order(open_algo_orders, side, {"STOP", "STOP_MARKET"}):
+                    endpoint, params = self._exit_order_request({
+                        "symbol": exchange_symbol,
+                        "side": side,
+                        "type": "STOP",
+                        "quantity": self._fmt_decimal(quantity),
+                        "price": self._fmt_decimal(stop_loss_price),
+                        "stopPrice": self._fmt_decimal(stop_loss_price),
+                        "timeInForce": "GTC",
+                        "reduceOnly": "true",
+                        "workingType": "MARK_PRICE",
+                    })
+                    response = self._signed_post_order_with_ioc_retry(endpoint, params, trading_symbol=exchange_symbol)
+                    created_ids["stop_loss_order_id"] = self._exit_order_id(response if isinstance(response, dict) else None)
+                    self._update_latest_open_trade_exit_order(symbol, "stop_loss_order_id", created_ids["stop_loss_order_id"], now)
+                    created += 1
+                records.append({"symbol": symbol, "status": "ok", "reason": str(created_ids or "already_protected")})
+            except Exception as exc:
+                errors += 1
+                candidate = OpenableSymbol(symbol=symbol, decision_round_ts=None, total_score=None, qualified=True, reason="exit_order_reconcile")
+                self._record_error(candidate, f"reconcile_exit_orders:{exchange_symbol}", exc)
+                records.append({"symbol": symbol, "status": "failed", "reason": f"{type(exc).__name__}: {exc}"})
+        return {"checked": checked, "created": created, "errors": errors, "records": records}
+
+    def _latest_open_trade_for_symbol(self, symbol: str) -> sqlite3.Row | None:
+        with self._connect() as conn:
+            return conn.execute(
+                f"SELECT * FROM {self.TRADES_TABLE} WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
+
+    def _open_algo_orders(self, exchange_symbol: str) -> list[dict[str, Any]]:
+        rows = self.account_manager._signed_get("/fapi/v1/openAlgoOrders", {"symbol": exchange_symbol})
+        return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+    @staticmethod
+    def _has_open_exit_order(open_orders: list[dict[str, Any]], side: str, order_types: set[str]) -> bool:
+        for order in open_orders:
+            order_side = str(order.get("side", "")).upper()
+            order_type = str(order.get("type") or order.get("orderType") or "").upper()
+            status = str(order.get("status", "NEW")).upper()
+            if order_side == side and order_type in order_types and status in {"NEW", "PENDING", "PARTIALLY_FILLED"}:
+                return True
+        return False
+
+    def _update_latest_open_trade_exit_order(self, symbol: str, column: str, order_id: str, updated_at: int) -> None:
+        if column not in {"take_profit_order_id", "stop_loss_order_id"} or not order_id:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                UPDATE {self.TRADES_TABLE}
+                SET {column} = ?, updated_at = ?
+                WHERE id = (
+                    SELECT id FROM {self.TRADES_TABLE}
+                    WHERE symbol = ? AND status = 'opened'
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT 1
+                )
+                """,
+                (order_id, updated_at, symbol),
+            )
+
     def _wait_for_position_visibility(self, trading_symbol: str) -> None:
         delay_seconds = float(self.config.exit_order_missing_position_retry_delay_seconds)
         if delay_seconds > 0:

@@ -1146,3 +1146,59 @@ class TradingExperimentSymbolTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class MissingExitOrdersAccountManager(FakeAccountManager):
+    def __init__(self):
+        super().__init__()
+        self.open_algo_orders = []
+
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/positionRisk":
+            if params and params.get("symbol") == "BANKUSDT":
+                return [{"symbol": "BANKUSDT", "positionAmt": "50", "entryPrice": "1"}]
+            return [{"symbol": "BANKUSDT", "positionAmt": "50", "entryPrice": "1"}]
+        if endpoint == "/fapi/v1/openAlgoOrders":
+            return list(self.open_algo_orders)
+        return super()._signed_get(endpoint, params)
+
+
+def test_reconcile_missing_exit_orders_recreates_missing_take_profit_only(tmp_path):
+    db_path = tmp_path / "klines.db"
+    account = MissingExitOrdersAccountManager()
+    account.open_algo_orders = [
+        {"symbol": "BANKUSDT", "side": "SELL", "orderType": "STOP", "status": "NEW", "algoId": "sl-1"}
+    ]
+    experiment = TradingExperiment(
+        db_path=str(db_path),
+        account_manager=account,
+        config=ExperimentConfig(exit_order_missing_position_retry_delay_seconds=Decimal("0")),
+    )
+    experiment.init_tables()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {TradingExperiment.TRADES_TABLE}
+            (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt,
+             required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity,
+             notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation,
+             take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at)
+            VALUES ('BANK', 1, 'LONG', 'opened', 80, 5, '100', '20', '1000', '10',
+                    '1', '50', '50', '2.1', '0.8', '', '', 'sl-1', '', '', 1, 1)
+            """
+        )
+
+    result = experiment.reconcile_missing_exit_orders(checked_at=2000)
+
+    assert result["checked"] == 1
+    assert result["created"] == 1
+    assert result["errors"] == 0
+    take_profit_posts = [params for endpoint, params in account.signed_posts if endpoint == "/fapi/v1/algoOrder" and params.get("type") == "TAKE_PROFIT"]
+    stop_posts = [params for endpoint, params in account.signed_posts if endpoint == "/fapi/v1/algoOrder" and params.get("type") == "STOP"]
+    assert len(take_profit_posts) == 1
+    assert take_profit_posts[0]["symbol"] == "BANKUSDT"
+    assert take_profit_posts[0]["quantity"] == "50"
+    assert take_profit_posts[0]["triggerPrice"] == "2.1"
+    assert stop_posts == []
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(f"SELECT take_profit_order_id, stop_loss_order_id FROM {TradingExperiment.TRADES_TABLE}").fetchone()
+    assert row == ("1", "sl-1")
