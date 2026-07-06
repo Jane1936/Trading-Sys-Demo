@@ -31,8 +31,6 @@ class ExperimentConfig:
     exit_order_missing_position_retries: int = 3
     exit_order_missing_position_retry_delay_seconds: Decimal = Decimal("0.5")
     percent_price_ioc_slippage: Decimal = Decimal("0.01")
-    high_total_risk_threshold: Decimal = Decimal("18")
-    high_total_risk_min_total_score: int = 81
     hard_take_profit_usdt: Decimal = Decimal("55")
 
 
@@ -107,8 +105,6 @@ class TradingExperiment:
     * open-position count is not capped; new entries are allowed as long as
       available balance and the experiment margin budget can cover the order;
     * the experiment's total margin budget is capped at 1,000 USDT;
-    * before each new entry, query current total portfolio risk; when it is
-      greater than 18, only candidates with total_score >= 81 may open;
     * before each new entry, query the latest experiment USDT equity from Binance;
     * each candidate's base margin is sized from 1% equity risk, stop-loss distance,
       and leverage: base margin = (equity * 1%) / (distance_ratio * leverage);
@@ -273,17 +269,6 @@ class TradingExperiment:
             trading_symbol = self._binance_symbol(candidate.symbol)
             if self._has_open_position(trading_symbol, positions):
                 self._record_skip(candidate, account_equity, max_loss, "symbol_position_already_open")
-                skipped += 1
-                continue
-            current_total_risk = self._current_total_risk(
-                positions=positions,
-                decision_round_ts=candidate.decision_round_ts,
-            )
-            if (
-                current_total_risk > self.config.high_total_risk_threshold
-                and candidate.total_score < self.config.high_total_risk_min_total_score
-            ):
-                self._record_skip(candidate, account_equity, max_loss, "current_total_risk_gt_18_and_total_score_lt_81")
                 skipped += 1
                 continue
             account = self._fetch_account()
