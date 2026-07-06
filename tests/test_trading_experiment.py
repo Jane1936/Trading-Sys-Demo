@@ -401,7 +401,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(fake_account.latest_mark_price_params, {"symbol": "BANKUSDT"})
         self.assertEqual(fake_account.signed_posts[1][1]["quantity"], "500")
 
-    def test_run_round_skips_low_score_new_entries_when_current_total_risk_exceeds_eighteen(self):
+    def test_run_round_allows_low_score_new_entries_when_current_total_risk_exceeds_eighteen(self):
         fake_account = HighRiskAccountManager()
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "klines.db"
@@ -432,17 +432,17 @@ class TradingExperimentSymbolTests(unittest.TestCase):
             with sqlite3.connect(db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 trade_row = conn.execute(
-                    f"SELECT status, reason FROM {experiment.TRADES_TABLE} ORDER BY id DESC LIMIT 1"
-                ).fetchone()
-                risk_row = conn.execute(
-                    "SELECT total_risk FROM holding_portfolio_risk_summaries ORDER BY decision_round_ts DESC LIMIT 1"
+                    f"SELECT status, reason, required_margin_usdt FROM {experiment.TRADES_TABLE} ORDER BY id DESC LIMIT 1"
                 ).fetchone()
 
-        self.assertEqual(result, {"opened": 0, "skipped": 1, "reason": "completed"})
-        self.assertEqual(fake_account.signed_posts, [])
-        self.assertEqual(trade_row["status"], "skipped")
-        self.assertEqual(trade_row["reason"], "current_total_risk_gt_18_and_total_score_lt_81")
-        self.assertEqual(risk_row["total_risk"], "22")
+        self.assertEqual(result, {"opened": 1, "skipped": 0, "reason": "completed"})
+        self.assertEqual(trade_row["status"], "opened")
+        self.assertIn("market_order_id=", trade_row["reason"])
+        self.assertEqual(trade_row["required_margin_usdt"], "250")
+        self.assertEqual(
+            [endpoint for endpoint, _ in fake_account.signed_posts],
+            ["/fapi/v1/leverage", "/fapi/v1/order", "/fapi/v1/algoOrder", "/fapi/v1/algoOrder"],
+        )
 
     def test_run_round_skips_candidate_when_latest_price_is_unavailable(self):
         fake_account = InvalidPriceAccountManager()
