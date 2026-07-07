@@ -1053,7 +1053,7 @@
           <div class="symbol-strip collapsible-header">
             <div>
               <div><strong>减仓操作记录</strong></div>
-              <div class="muted">记录减仓条件触发后的命中规则、减仓比例、原限价单取消后重挂的新限价单、市价减仓订单ID与接口执行状态。</div>
+              <div class="muted">记录减仓条件触发后的命中规则、减仓比例、原限价单取消后重挂的新限价单、市价减仓订单ID与接口执行状态；若剩余仓位重挂硬止盈或硬止损失败，错误会写入下方“交易实验错误信息记录”。</div>
             </div>
             <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
           </div>
@@ -1962,7 +1962,7 @@
           <div class="symbol-strip collapsible-header">
             <div>
               <div><strong>交易实验错误信息记录</strong></div>
-              <div class="muted">只显示7天内第一组实验遍历可开仓 symbol 时捕获到的错误信息；用于定位 exchangeInfo 缺失等开仓流程问题。</div>
+              <div class="muted">只显示7天内第一组实验和持仓管理模块捕获到的错误信息；用于定位 exchangeInfo 缺失、减仓后硬止盈/硬止损重挂失败等流程问题。</div>
             </div>
             <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
           </div>
