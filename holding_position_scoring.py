@@ -17,6 +17,7 @@ from decimal import Decimal, ROUND_DOWN
 from typing import Any, Iterable
 
 from binance_account_manager import BinanceAccountManager
+from openable_symbol_module import OpenableSymbol
 from trading_experiment import TradingExperiment
 from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
 
@@ -785,8 +786,14 @@ class HoldingPositionScoringSystem:
                 if post_close_cancel_reason:
                     reason_parts.append(post_close_cancel_reason)
             elif remaining_quantity > 0:
+                actual_quantity = remaining_quantity
+                actual_entry_price = self._decimal_from(position.get("entryPrice"), Decimal("0"))
                 try:
                     actual_quantity, actual_entry_price = self._current_position_quantity_and_entry(exchange_symbol, remaining_quantity, position)
+                except Exception as exc:
+                    reason_parts.append(f"position_refresh_failed_using_fallback: {type(exc).__name__}: {exc}")
+
+                try:
                     take_profit_order_id, take_profit_price, take_profit_reason = self._replace_hard_take_profit_for_position(
                         helper,
                         exchange_symbol,
@@ -799,22 +806,27 @@ class HoldingPositionScoringSystem:
                     if take_profit_order_id:
                         self._update_latest_open_trade_take_profit(check.symbol, take_profit_order_id, take_profit_price)
                     reason_parts.append(take_profit_reason)
-                    try:
-                        stop_loss_order_id, stop_loss_price, stop_loss_reason = self._replace_stop_loss_for_position(
-                            exchange_symbol,
-                            check.symbol,
-                            side,
-                            actual_quantity,
-                            exchange_info["tick_size"],
-                        )
-                        if stop_loss_order_id:
-                            self._update_latest_open_trade_stop_loss(check.symbol, stop_loss_order_id, stop_loss_price)
-                            new_limit_order_id = stop_loss_order_id
-                        reason_parts.append(stop_loss_reason)
-                    except Exception as exc:
-                        reason_parts.append(f"stop_loss_recreate_failed: {type(exc).__name__}: {exc}")
                 except Exception as exc:
                     reason_parts.append(f"hard_take_profit_recreate_failed: {type(exc).__name__}: {exc}")
+                    self._record_reduction_error(check, "hard_take_profit_recreate", exc)
+
+                try:
+                    stop_loss_order_id, stop_loss_price, stop_loss_reason = self._replace_stop_loss_for_position(
+                        exchange_symbol,
+                        check.symbol,
+                        side,
+                        actual_quantity,
+                        exchange_info["tick_size"],
+                        self._decimal_from(check.current_price, Decimal("0")),
+                    )
+                    if stop_loss_order_id:
+                        self._update_latest_open_trade_stop_loss(check.symbol, stop_loss_order_id, stop_loss_price)
+                        new_limit_order_id = stop_loss_order_id
+                    reason_parts.append(stop_loss_reason)
+                except Exception as exc:
+                    status = "failed"
+                    reason_parts.append(f"stop_loss_recreate_failed: {type(exc).__name__}: {exc}")
+                    self._record_reduction_error(check, "stop_loss_recreate", exc)
         except Exception as exc:
             status = "failed"
             reason_parts.append(f"reduction_action_failed: {type(exc).__name__}: {exc}")
@@ -823,6 +835,26 @@ class HoldingPositionScoringSystem:
         finally:
             lock_manager.release(lock_handle)
         return PositionReductionRecord(0, check.symbol, check.decision_round_ts, side, matched_rule, self._fmt_decimal(percent), self._fmt_decimal(original_quantity), self._fmt_decimal(reduced_quantity), self._fmt_decimal(remaining_quantity), old_limit_order_id, new_limit_order_id, market_order_id, limit_price, status, "; ".join(reason_parts), " | ".join(raw_parts), now_ms)
+
+
+    def _record_reduction_error(self, check: PositionReductionCheck, operation: str, exc: Exception) -> None:
+        helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
+        helper.init_tables()
+        candidate = OpenableSymbol(
+            symbol=check.symbol,
+            decision_round_ts=check.decision_round_ts,
+            total_score=int(self._decimal_from(check.latest_total_score, Decimal("0"))) if check.latest_total_score else 0,
+            score_band="",
+            stop_loss_distance_ratio=None,
+            distance_threshold=None,
+            stop_loss_distance_tier="",
+            opening_leverage="0",
+            distance_qualified=False,
+            qualified=False,
+            reason="holding_position_reduction",
+            evaluated_at=int(time.time() * 1000),
+        )
+        helper._record_error(candidate, f"holding_reduction:{operation}", exc)
 
 
     def _cancel_latest_hard_take_profit_order(self, exchange_symbol: str, symbol: str) -> str:
@@ -881,12 +913,16 @@ class HoldingPositionScoringSystem:
         side: str,
         quantity: Decimal,
         tick_size: Decimal,
+        current_mark_price: Decimal = Decimal("0"),
     ) -> tuple[str, Decimal, str]:
         old_order_id = self._latest_open_trade_stop_loss_order_id(symbol)
         stop_loss_price = self._decimal_from(self._latest_open_trade_stop_loss_price(symbol), Decimal("0"))
         stop_loss_price = TradingExperiment._floor_to_tick(stop_loss_price, tick_size) if stop_loss_price > 0 else Decimal("0")
         if quantity <= 0 or stop_loss_price <= 0:
             raise RuntimeError("stop_loss_recreate_invalid_price_or_quantity")
+        skip_reason = self._replacement_stop_immediate_trigger_reason(side, stop_loss_price, current_mark_price)
+        if skip_reason:
+            raise RuntimeError(skip_reason)
         cancel_reason = self._cancel_latest_stop_loss_order(exchange_symbol, old_order_id)
         response = self.account_manager._signed_post(
             "/fapi/v1/order",

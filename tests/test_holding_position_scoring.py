@@ -782,10 +782,11 @@ def test_reduction_action_uses_highest_rule_replaces_limit_and_market_reduces():
     assert records[0]["new_limit_order_id"] == "123"
     assert records[0]["market_order_id"] == "123"
     assert ("/fapi/v1/allOpenOrders", {"symbol": "BANKUSDT"}) in fake_account.signed_deletes
-    assert fake_account.signed_posts[-1] == (
+    assert (
         "/fapi/v1/order",
         {"symbol": "BANKUSDT", "side": "SELL", "type": "MARKET", "quantity": "1", "reduceOnly": "true", "newOrderRespType": "RESULT"},
-    )
+    ) in fake_account.signed_posts
+    assert any(endpoint == "/fapi/v1/order" and params.get("type") == "STOP" and params.get("quantity") == "1" for endpoint, params in fake_account.signed_posts)
 
 def test_reduction_action_skips_replacement_stop_that_would_immediately_trigger_and_still_reduces():
     fake_account = FakeAccountManager()
@@ -826,6 +827,7 @@ def test_reduction_action_skips_replacement_stop_that_would_immediately_trigger_
     assert records[0]["remaining_quantity"] == "1.4"
     assert records[0]["new_limit_order_id"] == ""
     assert records[0]["market_order_id"] == "123"
+    assert records[0]["status"] == "failed"
     assert "reduction_replacement_stop_skipped_immediate_trigger" in records[0]["reason"]
     assert fake_account.signed_posts == [
         (
@@ -1158,3 +1160,37 @@ def test_increase_uses_current_experiment_equity_budget():
     assert records[0]["status"] == "skipped"
     assert "实验组净值预算不足" in records[0]["reason"]
     assert fake_account.signed_posts == []
+
+class FailingHardTakeProfitRecreateAccountManager(PositionChangeHardTakeProfitAccountManager):
+    def _signed_post(self, endpoint, params=None):
+        self.signed_posts.append((endpoint, dict(params or {})))
+        if endpoint == "/fapi/v1/algoOrder" and params and params.get("type") == "TAKE_PROFIT":
+            raise RuntimeError("take profit rejected")
+        return {"orderId": 100 + len(self.signed_posts)}
+
+
+def test_reduction_recreates_stop_loss_even_when_hard_take_profit_recreate_fails():
+    fake_account = FailingHardTakeProfitRecreateAccountManager(refreshed_amount="1", refreshed_entry="10")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account, realized_pnl_retry_delays=())
+        scoring.init_tables()
+        TradingExperiment(db_path=db_path, account_manager=fake_account).init_tables()
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, open REAL, high REAL, close REAL)")
+            conn.execute("CREATE TABLE symbol_structural_stop_losses (symbol TEXT, decision_round_ts INTEGER, structural_stop_loss REAL)")
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.executemany("INSERT INTO klines_15m (symbol, open_time, open, high, close) VALUES (?, ?, ?, ?, ?)", [("BANK", 3000, 10, 10, 8), ("BANK", 2000, 10, 11, 10), ("BANK", 1000, 10, 10, 10)])
+            conn.executemany("INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)", [("BANK", 3000, 1), ("BANK", 2000, 1)])
+            conn.executemany("INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)", [("BANK", 4000, 18), ("BANK", 3000, 25)])
+            conn.execute(f"INSERT INTO {TradingExperiment.TRADES_TABLE} (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt, required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity, notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation, take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at) VALUES ('BANK', 1, 'LONG', 'opened', 80, 5, '100', '20', '1000', '10', '10', '2', '20', '37.5', '7', '', 'old-tp-1', 'old-sl-1', '', '', 1, 1)")
+        result = scoring.run_round(decision_round_ts=4000)
+        records = scoring.recent_reduction_records()
+        errors = TradingExperiment(db_path=db_path, account_manager=fake_account).recent_error_records()
+
+    assert result["reduction_records"] == 1
+    assert records[0]["status"] == "submitted"
+    assert "hard_take_profit_recreate_failed" in records[0]["reason"]
+    assert "stop_loss_recreated" in records[0]["reason"]
+    assert any(endpoint == "/fapi/v1/order" and params.get("type") == "STOP" and params.get("quantity") == "1" for endpoint, params in fake_account.signed_posts)
+    assert errors[0].operation == "holding_reduction:hard_take_profit_recreate"
