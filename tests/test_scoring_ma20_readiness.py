@@ -244,3 +244,46 @@ def test_score_round_continues_when_one_symbol_rule_fails(tmp_path, monkeypatch)
     assert len(symbol_errors) == 1
     assert symbol_errors[0].symbol == "BADUSDT"
     assert symbol_errors[0].error == "bad source row"
+
+
+def test_score_round_records_symbol_error_when_three_15m_ma20_values_missing(tmp_path, monkeypatch):
+    db_path = tmp_path / "klines.db"
+    scoring = ScoringSystem(db_path=str(db_path))
+    scoring.init_table()
+
+    rule_methods = [
+        "_save_close_gt_ma20_score",
+        "_save_1h_close_gt_prev_score",
+        "_save_15m_bullish_3of4_score",
+        "_save_15m_close_increasing_3of4_score",
+        "_save_1m_close_gt_5m_ma20_score",
+        "_save_15m_close_near_high_2of4_score",
+        "_save_1h_latest_highest_24_score",
+        "_save_15m_close_desc_3_with_oi_45m_score",
+        "_save_1m_close_gt_60m_open_with_oi_60m_score",
+        "_save_oi_loss_rate_240m_score",
+        "_save_15m_funding_rate_4bars_score",
+        "_save_15m_bullish_volume_breakout_score",
+        "_save_15m_volume_spike_2of3_score",
+        "_save_1h_volume_spike_latest_score",
+        "_save_15m_pullback_low_volume_score",
+        "_save_15m_low_rebound_3bars_score",
+        "_save_structural_stop_loss",
+        "_save_structural_stop_loss_distance_score",
+    ]
+    for method_name in rule_methods:
+        monkeypatch.setattr(scoring, method_name, lambda **_kwargs: None)
+    monkeypatch.setattr(scoring, "_latest_three_ma20_15m", lambda symbol: None)
+    monkeypatch.setattr(scoring, "persist_total_scores_for_round", lambda **_kwargs: None)
+
+    results = scoring.score_round(
+        decision_round_ts=1_800_000,
+        all_symbols=["BTCUSDT"],
+        abnormal_symbols=[],
+    )
+
+    assert results == []
+    symbol_errors = scoring.get_symbol_errors_for_round(1_800_000)
+    assert len(symbol_errors) == 1
+    assert symbol_errors[0].symbol == "BTCUSDT"
+    assert symbol_errors[0].error == "missing_latest_three_15m_ma20_records"

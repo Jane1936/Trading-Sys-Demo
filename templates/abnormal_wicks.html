@@ -382,7 +382,7 @@
       {% if scoring_symbol_errors %}
       <div class="score-ma20-warning score-symbol-error" role="status" aria-live="polite">
         <strong>本轮数据异常跳过提示：</strong>
-        当前总分轮次 {{ score_total_round_ts|fmt_ms_datetime }} 中有 {{ scoring_symbol_errors|length }} 个 symbol 在评分规则计算时遇到数据异常。
+        评分轮次 {{ scoring_symbol_error_round_ts|fmt_ms_datetime }} 中有 {{ scoring_symbol_errors|length }} 个 symbol 在评分规则计算时遇到数据异常。
         系统已跳过这些 symbol，并继续完成其他 symbol 的评分，避免单个坏数据拖停整轮评分。
         <div class="missing-symbols">
           异常symbol：
