@@ -79,6 +79,10 @@ class PositionReductionCheck:
     score_drawdown: str
     latest_15m_open: str
     latest_15m_close: str
+    second_15m_open: str
+    second_15m_close: str
+    third_15m_open: str
+    third_15m_close: str
     previous_total_score: str
     recent_score_drawdown: str
     open_entry_price: str
@@ -286,6 +290,10 @@ class HoldingPositionScoringSystem:
                     score_drawdown TEXT NOT NULL,
                     latest_15m_open TEXT NOT NULL DEFAULT '',
                     latest_15m_close TEXT NOT NULL DEFAULT '',
+                    second_15m_open TEXT NOT NULL DEFAULT '',
+                    second_15m_close TEXT NOT NULL DEFAULT '',
+                    third_15m_open TEXT NOT NULL DEFAULT '',
+                    third_15m_close TEXT NOT NULL DEFAULT '',
                     previous_total_score TEXT NOT NULL DEFAULT '',
                     recent_score_drawdown TEXT NOT NULL DEFAULT '',
                     open_entry_price TEXT NOT NULL DEFAULT '',
@@ -396,6 +404,10 @@ class HoldingPositionScoringSystem:
             for column, ddl in {
                 "latest_15m_open": "TEXT NOT NULL DEFAULT ''",
                 "latest_15m_close": "TEXT NOT NULL DEFAULT ''",
+                "second_15m_open": "TEXT NOT NULL DEFAULT ''",
+                "second_15m_close": "TEXT NOT NULL DEFAULT ''",
+                "third_15m_open": "TEXT NOT NULL DEFAULT ''",
+                "third_15m_close": "TEXT NOT NULL DEFAULT ''",
                 "previous_total_score": "TEXT NOT NULL DEFAULT ''",
                 "recent_score_drawdown": "TEXT NOT NULL DEFAULT ''",
                 "rule_name": "TEXT NOT NULL DEFAULT ''",
@@ -618,6 +630,12 @@ class HoldingPositionScoringSystem:
 
         latest_open = latest_kline[0] if latest_kline else Decimal("0")
         latest_close = latest_kline[1] if latest_kline else Decimal("0")
+        second_kline = recent_15m_open_closes[1] if len(recent_15m_open_closes) > 1 else None
+        third_kline = recent_15m_open_closes[2] if len(recent_15m_open_closes) > 2 else None
+        second_open = second_kline[0] if second_kline else Decimal("0")
+        second_close = second_kline[1] if second_kline else Decimal("0")
+        third_open = third_kline[0] if third_kline else Decimal("0")
+        third_close = third_kline[1] if third_kline else Decimal("0")
         if len(recent_15m_open_closes) < 2:
             reasons.append("rule2_missing_recent_two_15m_klines")
         elif any(close >= open_ for open_, close in recent_15m_open_closes[:2]):
@@ -710,7 +728,7 @@ class HoldingPositionScoringSystem:
         }
         if matched_rules:
             reason = "; ".join(matched_reason_map[rule] for rule in matched_rules)
-        return PositionReductionCheck(symbol, round_ts, self._fmt_decimal(highest), self._fmt_decimal(current_price), self._fmt_decimal(latest_ema16), self._fmt_decimal(latest_ema21), self._fmt_decimal(drawdown), self._fmt_decimal(equity), self._fmt_decimal(two_r), self._fmt_decimal(one_r), self._fmt_decimal(unrealized_pnl), open_score, latest_score, self._fmt_decimal(score_drawdown), self._fmt_decimal(latest_open), self._fmt_decimal(latest_close), previous_score, self._fmt_decimal(recent_score_drawdown), self._fmt_decimal(self._decimal_from(open_entry_price, Decimal("0"))) if open_entry_price else "", "+".join(matched_rules), triggered, "、".join(dict.fromkeys(tags)), reason, now_ms)
+        return PositionReductionCheck(symbol, round_ts, self._fmt_decimal(highest), self._fmt_decimal(current_price), self._fmt_decimal(latest_ema16), self._fmt_decimal(latest_ema21), self._fmt_decimal(drawdown), self._fmt_decimal(equity), self._fmt_decimal(two_r), self._fmt_decimal(one_r), self._fmt_decimal(unrealized_pnl), open_score, latest_score, self._fmt_decimal(score_drawdown), self._fmt_decimal(latest_open), self._fmt_decimal(latest_close), self._fmt_decimal(second_open), self._fmt_decimal(second_close), self._fmt_decimal(third_open), self._fmt_decimal(third_close), previous_score, self._fmt_decimal(recent_score_drawdown), self._fmt_decimal(self._decimal_from(open_entry_price, Decimal("0"))) if open_entry_price else "", "+".join(matched_rules), triggered, "、".join(dict.fromkeys(tags)), reason, now_ms)
 
     def _execute_reduction_actions(self, checks: list[PositionReductionCheck], positions: list[dict[str, Any]], now_ms: int) -> int:
         records = 0
@@ -1902,8 +1920,8 @@ class HoldingPositionScoringSystem:
             conn.execute(
                 f"""
                 INSERT INTO {self.REDUCTION_CHECKS_TABLE}
-                (symbol, decision_round_ts, highest_15m_high, current_price, ema16, ema21, price_drawdown_ratio, account_equity_usdt, two_r_usdt, one_r_usdt, unrealized_pnl, open_total_score, latest_total_score, score_drawdown, latest_15m_open, latest_15m_close, previous_total_score, recent_score_drawdown, open_entry_price, rule_name, triggered, tag, reason, checked_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (symbol, decision_round_ts, highest_15m_high, current_price, ema16, ema21, price_drawdown_ratio, account_equity_usdt, two_r_usdt, one_r_usdt, unrealized_pnl, open_total_score, latest_total_score, score_drawdown, latest_15m_open, latest_15m_close, second_15m_open, second_15m_close, third_15m_open, third_15m_close, previous_total_score, recent_score_drawdown, open_entry_price, rule_name, triggered, tag, reason, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
                     highest_15m_high=excluded.highest_15m_high,
                     current_price=excluded.current_price,
@@ -1919,6 +1937,10 @@ class HoldingPositionScoringSystem:
                     score_drawdown=excluded.score_drawdown,
                     latest_15m_open=excluded.latest_15m_open,
                     latest_15m_close=excluded.latest_15m_close,
+                    second_15m_open=excluded.second_15m_open,
+                    second_15m_close=excluded.second_15m_close,
+                    third_15m_open=excluded.third_15m_open,
+                    third_15m_close=excluded.third_15m_close,
                     previous_total_score=excluded.previous_total_score,
                     recent_score_drawdown=excluded.recent_score_drawdown,
                     open_entry_price=excluded.open_entry_price,
@@ -1928,7 +1950,7 @@ class HoldingPositionScoringSystem:
                     reason=excluded.reason,
                     checked_at=excluded.checked_at
                 """,
-                (check.symbol, check.decision_round_ts, check.highest_15m_high, check.current_price, check.ema16, check.ema21, check.price_drawdown_ratio, check.account_equity_usdt, check.two_r_usdt, check.one_r_usdt, check.unrealized_pnl, check.open_total_score, check.latest_total_score, check.score_drawdown, check.latest_15m_open, check.latest_15m_close, check.previous_total_score, check.recent_score_drawdown, check.open_entry_price, check.rule_name, int(check.triggered), check.tag, check.reason, check.checked_at),
+                (check.symbol, check.decision_round_ts, check.highest_15m_high, check.current_price, check.ema16, check.ema21, check.price_drawdown_ratio, check.account_equity_usdt, check.two_r_usdt, check.one_r_usdt, check.unrealized_pnl, check.open_total_score, check.latest_total_score, check.score_drawdown, check.latest_15m_open, check.latest_15m_close, check.second_15m_open, check.second_15m_close, check.third_15m_open, check.third_15m_close, check.previous_total_score, check.recent_score_drawdown, check.open_entry_price, check.rule_name, int(check.triggered), check.tag, check.reason, check.checked_at),
             )
 
     def _save_reduction_record(self, record: PositionReductionRecord) -> None:
