@@ -263,7 +263,13 @@ def run_loop(
                 last_bar_open_time[symbol][interval] = latest.open_time
 
             if interval_results and on_interval_complete is not None:
-                on_interval_complete(interval, interval_results)
+                try:
+                    on_interval_complete(interval, interval_results)
+                except Exception as exc:
+                    print(
+                        "⚠️ indicator interval-complete callback failed "
+                        f"interval={interval}: {exc}"
+                    )
 
         time.sleep(poll_seconds)
 
