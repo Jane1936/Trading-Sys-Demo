@@ -882,6 +882,7 @@ class HoldingPositionScoringSystem:
 
                 try:
                     stop_loss_order_id, stop_loss_price, stop_loss_reason = self._replace_stop_loss_for_position(
+                        helper,
                         exchange_symbol,
                         check.symbol,
                         side,
@@ -978,6 +979,7 @@ class HoldingPositionScoringSystem:
 
     def _replace_stop_loss_for_position(
         self,
+        helper: TradingExperiment,
         exchange_symbol: str,
         symbol: str,
         side: str,
@@ -994,8 +996,7 @@ class HoldingPositionScoringSystem:
         if skip_reason:
             raise RuntimeError(skip_reason)
         cancel_reason = self._cancel_latest_stop_loss_order(exchange_symbol, old_order_id)
-        response = self.account_manager._signed_post(
-            "/fapi/v1/order",
+        endpoint, params = TradingExperiment._exit_order_request(
             {
                 "symbol": exchange_symbol,
                 "side": side,
@@ -1006,8 +1007,9 @@ class HoldingPositionScoringSystem:
                 "timeInForce": "GTC",
                 "reduceOnly": "true",
                 "workingType": "MARK_PRICE",
-            },
+            }
         )
+        response = helper._signed_post_order_with_ioc_retry(endpoint, params, trading_symbol=exchange_symbol)
         order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
         if not order_id:
             raise RuntimeError(f"stop_loss_order_id_missing: response={response}")
@@ -1470,6 +1472,7 @@ class HoldingPositionScoringSystem:
                         reason_parts.append(take_profit_reason)
                         try:
                             stop_loss_order_id, stop_loss_price, stop_loss_reason = self._replace_stop_loss_for_position(
+                                helper,
                                 exchange_symbol,
                                 check.symbol,
                                 close_side,
