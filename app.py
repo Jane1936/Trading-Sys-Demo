@@ -20,9 +20,11 @@ from data_processor import (
     MA20Scheduler,
     MACalcResult,
     init_ema_table,
+    init_macd_table,
     init_ma20_table,
     run_loop,
     save_ema_result,
+    save_macd_result,
     save_ma20_result,
 )
 from break_even_take_profit import BreakEvenTakeProfitStrategy
@@ -392,14 +394,42 @@ def on_ma20_result(result: MACalcResult) -> None:
     )
     if (
         result.interval == "15m"
+        and result.ema12 is not None
         and result.ema16 is not None
         and result.ema21 is not None
+        and result.ema26 is not None
     ):
         print(
             f"📈 EMA {result.symbol} {result.interval} "
             f"open_time={result.open_time} close={result.close:.6f} "
-            f"ema16={result.ema16:.6f} ema21={result.ema21:.6f}"
+            f"ema12={result.ema12:.6f} ema16={result.ema16:.6f} "
+            f"ema21={result.ema21:.6f} ema26={result.ema26:.6f}"
         )
+
+
+def on_indicator_interval_complete(interval: str, results: List[MACalcResult]) -> None:
+    """Persist MACD only after the interval's EMA/MA20 collection has completed."""
+    if interval != "15m":
+        return
+
+    macd_saved = 0
+    for result in results:
+        if (
+            result.macd_dif is None
+            or result.macd_dea is None
+            or result.macd_histogram is None
+        ):
+            continue
+        save_macd_result(collector.DB_PATH, result)
+        macd_saved += 1
+        print(
+            f"📈 MACD {result.symbol} {result.interval} "
+            f"open_time={result.open_time} close={result.close:.6f} "
+            f"dif={result.macd_dif:.6f} dea={result.macd_dea:.6f} "
+            f"macd={result.macd_histogram:.6f}"
+        )
+
+    print(f"📈 MACD 15m round complete, saved={macd_saved}")
 
 
 def start_collector_task(symbols: List[str]) -> None:
@@ -438,10 +468,11 @@ def start_collector_task(symbols: List[str]) -> None:
 def start_processor_task(symbols: List[str]) -> None:
     init_ma20_table(db_path=collector.DB_PATH)
     init_ema_table(db_path=collector.DB_PATH)
+    init_macd_table(db_path=collector.DB_PATH)
     processor = MA20Processor(db_path=collector.DB_PATH)
     scheduler = MA20Scheduler(grace_seconds=5)
 
-    print(f"🚀 MA20 processor task started, symbols={len(symbols)}")
+    print(f"🚀 MA20/MACD processor task started, symbols={len(symbols)}")
     run_loop(
         symbols=symbols,
         processor=processor,
@@ -449,6 +480,7 @@ def start_processor_task(symbols: List[str]) -> None:
         on_result=on_ma20_result,
         symbol_provider=ensure_universe,
         poll_seconds=20,
+        on_interval_complete=on_indicator_interval_complete,
     )
 
 

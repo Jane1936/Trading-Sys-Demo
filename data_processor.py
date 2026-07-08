@@ -21,8 +21,13 @@ class MACalcResult:
     close_time: int
     close: float
     ma20: Optional[float]
+    ema12: Optional[float] = None
     ema16: Optional[float] = None
     ema21: Optional[float] = None
+    ema26: Optional[float] = None
+    macd_dif: Optional[float] = None
+    macd_dea: Optional[float] = None
+    macd_histogram: Optional[float] = None
 
 
 def _interval_to_ms(interval: str) -> int:
@@ -45,7 +50,11 @@ class MA20Processor:
         average close of latest 20 candles
 
     15m EMA definition:
-        pandas ewm(span=N, adjust=False).mean() on close prices, for N=16 and N=21
+        pandas ewm(span=N, adjust=False).mean() on close prices, for N=12, 16, 21, and 26
+
+    15m MACD definition:
+        DIF = EMA12 - EMA26, DEA = EMA9(DIF), MACD histogram = 2 * (DIF - DEA).
+        All EMA calculations use adjust=False semantics.
     """
 
     SUPPORTED_INTERVALS = ("5m", "15m", "1h")
@@ -71,8 +80,8 @@ class MA20Processor:
         table = self._table_name(interval)
         query_limit = max(20, limit + 19)
         if interval == "15m":
-            # EMA(adjust=False) is recursive; keep a wider warm-up window than MA20
-            # while preserving the existing bounded-query MA20 processing pattern.
+            # EMA/MACD(adjust=False) are recursive; keep a wider warm-up window than
+            # MA20 while preserving the existing bounded-query processing pattern.
             query_limit = max(200, limit + 199)
 
         with self._connect() as conn:
@@ -93,10 +102,18 @@ class MA20Processor:
         ordered = list(reversed(rows))
         closes: List[float] = []
         series: List[MACalcResult] = []
+        ema12: Optional[float] = None
         ema16: Optional[float] = None
         ema21: Optional[float] = None
+        ema26: Optional[float] = None
+        macd_dea: Optional[float] = None
+        macd_dif: Optional[float] = None
+        macd_histogram: Optional[float] = None
+        ema12_alpha = 2 / (12 + 1)
         ema16_alpha = 2 / (16 + 1)
         ema21_alpha = 2 / (21 + 1)
+        ema26_alpha = 2 / (26 + 1)
+        macd_dea_alpha = 2 / (9 + 1)
 
         for row in ordered:
             close_price = float(row["close"])
@@ -104,6 +121,11 @@ class MA20Processor:
             ma20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else None
 
             if interval == "15m":
+                ema12 = (
+                    close_price
+                    if ema12 is None
+                    else (close_price * ema12_alpha) + (ema12 * (1 - ema12_alpha))
+                )
                 ema16 = (
                     close_price
                     if ema16 is None
@@ -114,6 +136,18 @@ class MA20Processor:
                     if ema21 is None
                     else (close_price * ema21_alpha) + (ema21 * (1 - ema21_alpha))
                 )
+                ema26 = (
+                    close_price
+                    if ema26 is None
+                    else (close_price * ema26_alpha) + (ema26 * (1 - ema26_alpha))
+                )
+                macd_dif = ema12 - ema26
+                macd_dea = (
+                    macd_dif
+                    if macd_dea is None
+                    else (macd_dif * macd_dea_alpha) + (macd_dea * (1 - macd_dea_alpha))
+                )
+                macd_histogram = 2 * (macd_dif - macd_dea)
 
             series.append(
                 MACalcResult(
@@ -123,8 +157,13 @@ class MA20Processor:
                     close_time=int(row["close_time"]),
                     close=close_price,
                     ma20=ma20,
+                    ema12=ema12 if interval == "15m" else None,
                     ema16=ema16 if interval == "15m" else None,
                     ema21=ema21 if interval == "15m" else None,
+                    ema26=ema26 if interval == "15m" else None,
+                    macd_dif=macd_dif if interval == "15m" else None,
+                    macd_dea=macd_dea if interval == "15m" else None,
+                    macd_histogram=macd_histogram if interval == "15m" else None,
                 )
             )
 
@@ -192,8 +231,9 @@ def run_loop(
     on_result: Callable[[MACalcResult], None],
     symbol_provider: Optional[Callable[[], List[str]]] = None,
     poll_seconds: int = 20,
+    on_interval_complete: Optional[Callable[[str, List[MACalcResult]], None]] = None,
 ) -> None:
-    """Run MA20 calculation on schedule and dispatch latest results."""
+    """Run MA20/EMA calculation and dispatch MACD only after each interval round."""
     last_bar_open_time: Dict[str, Dict[str, int]] = {s: {} for s in symbols}
 
     while True:
@@ -203,8 +243,9 @@ def run_loop(
                 last_bar_open_time[s] = {}
 
         due_intervals = scheduler.due_intervals()
-        for symbol in active_symbols:
-            for interval in due_intervals:
+        for interval in due_intervals:
+            interval_results: List[MACalcResult] = []
+            for symbol in active_symbols:
                 latest = processor.get_latest_ma20(symbol, interval)
                 if latest is None or latest.ma20 is None:
                     continue
@@ -218,7 +259,11 @@ def run_loop(
                     continue
 
                 on_result(latest)
+                interval_results.append(latest)
                 last_bar_open_time[symbol][interval] = latest.open_time
+
+            if interval_results and on_interval_complete is not None:
+                on_interval_complete(interval, interval_results)
 
         time.sleep(poll_seconds)
 
@@ -245,7 +290,7 @@ def init_ma20_table(db_path: str = "data/klines.db") -> None:
 
 
 def init_ema_table(db_path: str = "data/klines.db") -> None:
-    """Create table for persisted EMA16/EMA21 15m values."""
+    """Create table for persisted EMA12/EMA16/EMA21/EMA26 15m values."""
     with sqlite3.connect(db_path) as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS ema_indicators (
@@ -254,12 +299,22 @@ def init_ema_table(db_path: str = "data/klines.db") -> None:
                 open_time INTEGER NOT NULL,
                 close_time INTEGER NOT NULL,
                 close REAL NOT NULL,
+                ema12 REAL,
                 ema16 REAL NOT NULL,
                 ema21 REAL NOT NULL,
+                ema26 REAL,
                 updated_at INTEGER NOT NULL,
                 PRIMARY KEY (symbol, interval, open_time)
             )
             """)
+        columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(ema_indicators)").fetchall()
+        }
+        if "ema12" not in columns:
+            conn.execute("ALTER TABLE ema_indicators ADD COLUMN ema12 REAL")
+        if "ema26" not in columns:
+            conn.execute("ALTER TABLE ema_indicators ADD COLUMN ema26 REAL")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_ema_symbol_interval_time "
             "ON ema_indicators(symbol, interval, open_time)"
@@ -297,8 +352,14 @@ def save_ma20_result(db_path: str, result: MACalcResult) -> None:
 
 
 def save_ema_result(db_path: str, result: MACalcResult) -> None:
-    """Upsert one 15m EMA16/EMA21 record to ema_indicators table."""
-    if result.interval != "15m" or result.ema16 is None or result.ema21 is None:
+    """Upsert one 15m EMA12/EMA16/EMA21/EMA26 record to ema_indicators table."""
+    if (
+        result.interval != "15m"
+        or result.ema12 is None
+        or result.ema16 is None
+        or result.ema21 is None
+        or result.ema26 is None
+    ):
         return
 
     now_ms = int(time.time() * 1000)
@@ -306,13 +367,15 @@ def save_ema_result(db_path: str, result: MACalcResult) -> None:
         conn.execute(
             """
             INSERT INTO ema_indicators
-            (symbol, interval, open_time, close_time, close, ema16, ema21, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (symbol, interval, open_time, close_time, close, ema12, ema16, ema21, ema26, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(symbol, interval, open_time) DO UPDATE SET
                 close_time=excluded.close_time,
                 close=excluded.close,
+                ema12=excluded.ema12,
                 ema16=excluded.ema16,
                 ema21=excluded.ema21,
+                ema26=excluded.ema26,
                 updated_at=excluded.updated_at
             """,
             (
@@ -321,8 +384,72 @@ def save_ema_result(db_path: str, result: MACalcResult) -> None:
                 result.open_time,
                 result.close_time,
                 result.close,
+                result.ema12,
                 result.ema16,
                 result.ema21,
+                result.ema26,
+                now_ms,
+            ),
+        )
+
+
+def init_macd_table(db_path: str = "data/klines.db") -> None:
+    """Create table for persisted MACD 15m values."""
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS macd_indicators (
+                symbol TEXT NOT NULL,
+                interval TEXT NOT NULL,
+                open_time INTEGER NOT NULL,
+                close_time INTEGER NOT NULL,
+                close REAL NOT NULL,
+                dif REAL NOT NULL,
+                dea REAL NOT NULL,
+                macd REAL NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (symbol, interval, open_time)
+            )
+            """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_macd_symbol_interval_time "
+            "ON macd_indicators(symbol, interval, open_time)"
+        )
+
+
+def save_macd_result(db_path: str, result: MACalcResult) -> None:
+    """Upsert one 15m MACD record to macd_indicators table."""
+    if (
+        result.interval != "15m"
+        or result.macd_dif is None
+        or result.macd_dea is None
+        or result.macd_histogram is None
+    ):
+        return
+
+    now_ms = int(time.time() * 1000)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO macd_indicators
+            (symbol, interval, open_time, close_time, close, dif, dea, macd, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(symbol, interval, open_time) DO UPDATE SET
+                close_time=excluded.close_time,
+                close=excluded.close,
+                dif=excluded.dif,
+                dea=excluded.dea,
+                macd=excluded.macd,
+                updated_at=excluded.updated_at
+            """,
+            (
+                result.symbol,
+                result.interval,
+                result.open_time,
+                result.close_time,
+                result.close,
+                result.macd_dif,
+                result.macd_dea,
+                result.macd_histogram,
                 now_ms,
             ),
         )
