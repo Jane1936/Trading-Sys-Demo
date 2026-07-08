@@ -1001,6 +1001,8 @@
                   <th>tag</th>
                   <th>命中规则</th>
                   <th>最近15m open/close</th>
+                  <th>最近第二条15m open/close</th>
+                  <th>最近第三条15m open/close</th>
                   <th>highest</th>
                   <th>current_price</th>
                   <th>EMA16 / EMA21</th>
@@ -1034,13 +1036,18 @@
                   {% else %}-{% endif %}</td>
                   <td>{{ row.rule_name if row.rule_name else '-' }}</td>
                   <td>{{ row.latest_15m_open if row.latest_15m_open else '-' }} / {{ row.latest_15m_close if row.latest_15m_close else '-' }}</td>
+                  <td>{{ row.second_15m_open if row.second_15m_open else '-' }} / {{ row.second_15m_close if row.second_15m_close else '-' }}</td>
+                  <td>{{ row.third_15m_open if row.third_15m_open else '-' }} / {{ row.third_15m_close if row.third_15m_close else '-' }}</td>
                   <td>{{ row.highest_15m_high }}</td>
                   <td>
                     {% set current_price_decimal = row.current_price|float %}
                     {% set open_entry_price_decimal = row.open_entry_price|float %}
                     <span class="{{ 'reduction-current-price-danger' if open_entry_price_decimal > 0 and current_price_decimal <= open_entry_price_decimal else '' }}">{{ row.current_price }}</span>
                   </td>
-                  <td>{{ row.ema16 if row.ema16 else '-' }} / {{ row.ema21 if row.ema21 else '-' }}</td>
+                  <td>
+                    {% set ema21_decimal = row.ema21|float %}
+                    {{ row.ema16 if row.ema16 else '-' }} / <span class="{{ 'reduction-current-price-danger' if ema21_decimal > current_price_decimal else '' }}">{{ row.ema21 if row.ema21 else '-' }}</span>
+                  </td>
                   <td>
                     {% set price_drawdown_percent = (row.price_drawdown_ratio|float) * 100 %}
                     <span class="reduction-metric {{ 'reduction-drawdown-danger' if price_drawdown_percent >= 3.5 else 'reduction-drawdown-warning' if price_drawdown_percent >= 3 else 'reduction-metric-neutral' }}">{{ '%.2f%%'|format(price_drawdown_percent) }}</span>
@@ -1068,7 +1075,7 @@
                   <td>{{ row.checked_at|fmt_ms_datetime }}</td>
                 </tr>
                 {% else %}
-                <tr><td class="empty" colspan="18">暂无减仓条件模块执行结果</td></tr>
+                <tr><td class="empty" colspan="20">暂无减仓条件模块执行结果</td></tr>
                 {% endfor %}
               </tbody>
             </table>
