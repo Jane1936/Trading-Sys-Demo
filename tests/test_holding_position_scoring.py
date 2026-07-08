@@ -589,7 +589,7 @@ def test_position_reduction_no_longer_triggers_on_removed_rule_four_score_danger
     assert checks[0]["rule_name"] == ""
     assert checks[0]["latest_total_score"] == "39"
 
-def test_position_reduction_rule_tags_medium_danger_zone_price_confirmation():
+def test_position_reduction_rule5_tags_deep_weakness():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
@@ -609,7 +609,7 @@ def test_position_reduction_rule_tags_medium_danger_zone_price_confirmation():
             """)
             conn.executemany(
                 "INSERT INTO klines_15m (symbol, open_time, open, high, close) VALUES (?, ?, ?, ?, ?)",
-                [("BANK", 3000, 8, 8.1, 8), ("BANK", 2000, 8, 8.1, 8), ("BANK", 1000, 8, 8.1, 8)],
+                [("BANK", 3000, 9, 9.1, 8), ("BANK", 2000, 9, 9.1, 8), ("BANK", 1000, 8, 8.1, 8)],
             )
             conn.executemany(
                 "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
@@ -630,8 +630,8 @@ def test_position_reduction_rule_tags_medium_danger_zone_price_confirmation():
     assert round_ts == 4000
     assert checks[0]["symbol"] == "BANK"
     assert checks[0]["triggered"] == 1
-    assert checks[0]["tag"] == "中危险区+价格确认"
-    assert checks[0]["reason"] == "medium_danger_zone_price_confirmation"
+    assert checks[0]["tag"] == "深度弱势"
+    assert checks[0]["reason"] == "deep_weakness"
     assert checks[0]["rule_name"] == "规则五"
     assert checks[0]["latest_total_score"] == "30"
     assert checks[0]["current_price"] == "8"
@@ -683,7 +683,7 @@ def test_position_reduction_rule5_condition2_requires_recent_two_closes_below_en
     assert checks[0]["triggered"] == 0
     assert checks[0]["tag"] == ""
     assert checks[0]["rule_name"] == ""
-    assert checks[0]["reason"].endswith("rule5_condition2_recent_two_15m_closes_not_all_lte_open_entry_price")
+    assert checks[0]["reason"].endswith("rule5_recent_three_15m_bearish_count_lt_2")
 
 def test_position_reduction_rule5_only_triggers_once_per_open_lifecycle():
     fake_account = FakeAccountManager()
@@ -754,7 +754,7 @@ def test_reduction_action_uses_highest_rule_replaces_limit_and_market_reduces():
             )
             conn.executemany(
                 "INSERT INTO klines_15m (symbol, open_time, open, high, close) VALUES (?, ?, ?, ?, ?)",
-                [("BANK", 3000, 10, 10, 8), ("BANK", 2000, 10, 11, 10), ("BANK", 1000, 10, 10, 10)],
+                [("BANK", 3000, 10, 10, 8), ("BANK", 2000, 10, 11, 8), ("BANK", 1000, 10, 10, 10)],
             )
             conn.executemany(
                 "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
@@ -932,7 +932,7 @@ def test_reduction_recreates_hard_take_profit_from_actual_remaining_position():
             conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, open REAL, high REAL, close REAL)")
             conn.execute("CREATE TABLE symbol_structural_stop_losses (symbol TEXT, decision_round_ts INTEGER, structural_stop_loss REAL)")
             conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
-            conn.executemany("INSERT INTO klines_15m (symbol, open_time, open, high, close) VALUES (?, ?, ?, ?, ?)", [("BANK", 3000, 10, 10, 8), ("BANK", 2000, 10, 11, 10), ("BANK", 1000, 10, 10, 10)])
+            conn.executemany("INSERT INTO klines_15m (symbol, open_time, open, high, close) VALUES (?, ?, ?, ?, ?)", [("BANK", 3000, 10, 10, 8), ("BANK", 2000, 10, 11, 8), ("BANK", 1000, 10, 10, 10)])
             conn.executemany("INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)", [("BANK", 3000, 1), ("BANK", 2000, 1)])
             conn.executemany("INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)", [("BANK", 4000, 18), ("BANK", 3000, 25)])
             conn.execute(f"INSERT INTO {TradingExperiment.TRADES_TABLE} (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt, required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity, notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation, take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at) VALUES ('BANK', 1, 'LONG', 'opened', 80, 5, '100', '20', '1000', '10', '10', '2', '20', '37.5', '7', '', 'old-tp-1', 'old-sl-1', '', '', 1, 1)")
@@ -1180,7 +1180,7 @@ def test_reduction_recreates_stop_loss_even_when_hard_take_profit_recreate_fails
             conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, open REAL, high REAL, close REAL)")
             conn.execute("CREATE TABLE symbol_structural_stop_losses (symbol TEXT, decision_round_ts INTEGER, structural_stop_loss REAL)")
             conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
-            conn.executemany("INSERT INTO klines_15m (symbol, open_time, open, high, close) VALUES (?, ?, ?, ?, ?)", [("BANK", 3000, 10, 10, 8), ("BANK", 2000, 10, 11, 10), ("BANK", 1000, 10, 10, 10)])
+            conn.executemany("INSERT INTO klines_15m (symbol, open_time, open, high, close) VALUES (?, ?, ?, ?, ?)", [("BANK", 3000, 10, 10, 8), ("BANK", 2000, 10, 11, 8), ("BANK", 1000, 10, 10, 10)])
             conn.executemany("INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)", [("BANK", 3000, 1), ("BANK", 2000, 1)])
             conn.executemany("INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)", [("BANK", 4000, 18), ("BANK", 3000, 25)])
             conn.execute(f"INSERT INTO {TradingExperiment.TRADES_TABLE} (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt, required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity, notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation, take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at) VALUES ('BANK', 1, 'LONG', 'opened', 80, 5, '100', '20', '1000', '10', '10', '2', '20', '37.5', '7', '', 'old-tp-1', 'old-sl-1', '', '', 1, 1)")

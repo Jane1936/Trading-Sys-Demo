@@ -186,6 +186,7 @@ class HoldingPositionScoringSystem:
     REDUCTION_TAG_MEDIUM_DRAWDOWN_WEAKENING = "中等回撤且趋势连续弱化"
     REDUCTION_TAG_SCORE_DANGER_ZONE = "评分进入危险区"
     REDUCTION_TAG_MEDIUM_DANGER_PRICE_CONFIRMATION = "中危险区+价格确认"
+    REDUCTION_TAG_DEEP_WEAKNESS = "深度弱势"
 
     def __init__(
         self,
@@ -526,6 +527,30 @@ class HoldingPositionScoringSystem:
             return False
         return row is not None
 
+    def _has_ema_for_round(self, decision_round_ts: int) -> bool:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM ema_indicators WHERE interval = '15m' AND open_time <= ? LIMIT 1",
+                    (int(decision_round_ts),),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return True
+        return row is not None
+
+    def _latest_15m_ema21(self, symbol: str, round_ts: int) -> Decimal:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT ema21 FROM ema_indicators WHERE symbol = ? AND interval = '15m' AND open_time <= ? ORDER BY open_time DESC LIMIT 1",
+                    (symbol, int(round_ts)),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return Decimal("Infinity")
+        except sqlite3.Error:
+            return Decimal("0")
+        return self._decimal_from(row["ema21"], Decimal("0")) if row else Decimal("0")
+
     def evaluate_reduction_conditions(
         self,
         positions: list[dict[str, Any]] | None = None,
@@ -535,7 +560,7 @@ class HoldingPositionScoringSystem:
         """Evaluate 15m position-reduction condition rules for active holdings."""
         self.init_tables()
         round_ts = decision_round_ts if decision_round_ts is not None else self._current_decision_round_ts()
-        if not self._has_total_scores_for_round(round_ts):
+        if not self._has_total_scores_for_round(round_ts) or not self._has_ema_for_round(round_ts):
             return []
         now_ms = checked_at if checked_at is not None else int(time.time() * 1000)
         active_positions = positions if positions is not None else self._active_positions()
@@ -557,7 +582,7 @@ class HoldingPositionScoringSystem:
         self, position: dict[str, Any], symbol: str, round_ts: int, equity: Decimal, one_r: Decimal, two_r: Decimal, now_ms: int
     ) -> PositionReductionCheck:
         highest = self._highest_recent_15m_high(symbol, limit=3)
-        recent_15m_open_closes = self._recent_15m_open_closes(symbol, limit=2)
+        recent_15m_open_closes = self._recent_15m_open_closes(symbol, limit=3)
         latest_kline = recent_15m_open_closes[0] if recent_15m_open_closes else None
         exchange_symbol = self._exchange_symbol(position, symbol)
         current_price = self._current_symbol_price(exchange_symbol, position)
@@ -589,7 +614,7 @@ class HoldingPositionScoringSystem:
         latest_close = latest_kline[1] if latest_kline else Decimal("0")
         if len(recent_15m_open_closes) < 2:
             reasons.append("rule2_missing_recent_two_15m_klines")
-        elif any(close >= open_ for open_, close in recent_15m_open_closes):
+        elif any(close >= open_ for open_, close in recent_15m_open_closes[:2]):
             reasons.append("rule2_recent_two_15m_not_all_bearish")
         elif unrealized_pnl >= two_r:
             reasons.append("rule2_unrealized_pnl_ge_2r")
@@ -635,57 +660,47 @@ class HoldingPositionScoringSystem:
             else:
                 reasons.append("rule3_score_drawdown_lt_18")
 
-        latest_score_decimal = self._decimal_from(latest_score, Decimal("0")) if latest_score != "" else Decimal("0")
-        previous_score_decimal = self._decimal_from(previous_score, Decimal("0")) if previous_score != "" else Decimal("0")
         open_entry_price_decimal = self._decimal_from(open_entry_price, Decimal("0")) if open_entry_price != "" else Decimal("0")
-        rule5_first_condition = latest_score != "" and latest_score_decimal < Decimal("19") and current_price <= open_entry_price_decimal
-        rule5_recent_two_closes_confirmed = (
-            len(recent_15m_open_closes) >= 2
-            and all(close > 0 and close <= open_entry_price_decimal for _, close in recent_15m_open_closes[:2])
+        latest_ema21 = self._latest_15m_ema21(symbol, round_ts)
+        rule5_bearish_count = sum(1 for open_, close in recent_15m_open_closes[:3] if close < open_)
+        rule5_deep_weakness = (
+            latest_ema21 > 0
+            and current_price > 0
+            and current_price < latest_ema21
+            and open_entry_price_decimal > 0
+            and current_price <= open_entry_price_decimal
+            and len(recent_15m_open_closes) >= 3
+            and rule5_bearish_count >= 2
         )
-        rule5_second_condition = (
-            latest_score != ""
-            and previous_score != ""
-            and Decimal("19") <= latest_score_decimal <= Decimal("30")
-            and Decimal("19") <= previous_score_decimal <= Decimal("30")
-            and rule5_recent_two_closes_confirmed
-        )
-        if latest_score == "":
-            reasons.append("rule5_missing_latest_total_score")
-        elif open_entry_price == "":
+        if open_entry_price == "":
             reasons.append("rule5_missing_open_entry_price")
         elif open_trade_created_at == "":
             reasons.append("rule5_missing_open_trade_lifecycle")
         elif self._has_rule5_reduction_record_since(symbol, int(open_trade_created_at)):
             reasons.append("rule5_already_triggered_in_current_open_lifecycle")
-        elif latest_score_decimal < Decimal("19") and current_price <= 0:
-            reasons.append("rule5_condition1_missing_current_price")
-        elif Decimal("19") <= latest_score_decimal <= Decimal("30") and len(recent_15m_open_closes) < 2:
-            reasons.append("rule5_condition2_missing_recent_two_15m_closes")
-        elif rule5_first_condition or rule5_second_condition:
+        elif current_price <= 0:
+            reasons.append("rule5_missing_current_price")
+        elif latest_ema21 <= 0:
+            reasons.append("rule5_missing_15m_ema21")
+        elif current_price >= latest_ema21:
+            reasons.append("rule5_current_price_not_below_15m_ema21")
+        elif current_price > open_entry_price_decimal:
+            reasons.append("rule5_current_price_gt_open_entry_price")
+        elif len(recent_15m_open_closes) < 3:
+            reasons.append("rule5_missing_recent_three_15m_klines")
+        elif rule5_bearish_count < 2:
+            reasons.append("rule5_recent_three_15m_bearish_count_lt_2")
+        elif rule5_deep_weakness:
             triggered = True
-            tags.append(self.REDUCTION_TAG_MEDIUM_DANGER_PRICE_CONFIRMATION)
+            tags.append(self.REDUCTION_TAG_DEEP_WEAKNESS)
             matched_rules.append("规则五")
-            if rule5_first_condition:
-                reasons.append("rule5_medium_danger_zone_price_confirmation_condition1")
-            else:
-                reasons.append("rule5_medium_danger_zone_price_confirmation_condition2")
-        elif latest_score_decimal < Decimal("19"):
-            reasons.append("rule5_condition1_current_price_gt_open_entry_price")
-        elif latest_score_decimal > Decimal("30"):
-            reasons.append("rule5_latest_total_score_gt_30")
-        elif previous_score == "":
-            reasons.append("rule5_condition2_missing_previous_total_score")
-        elif not (Decimal("19") <= previous_score_decimal <= Decimal("30")):
-            reasons.append("rule5_condition2_previous_total_score_not_between_19_and_30")
-        else:
-            reasons.append("rule5_condition2_recent_two_15m_closes_not_all_lte_open_entry_price")
+            reasons.append("rule5_deep_weakness")
 
         reason = "; ".join(reasons)
         matched_reason_map = {
             "规则二": "medium_drawdown_and_continuous_weakening",
             "规则三": "absolute_score_large_drawdown",
-            "规则五": "medium_danger_zone_price_confirmation",
+            "规则五": "deep_weakness",
         }
         if matched_rules:
             reason = "; ".join(matched_reason_map[rule] for rule in matched_rules)
