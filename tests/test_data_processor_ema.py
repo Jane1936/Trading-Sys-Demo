@@ -250,3 +250,74 @@ def test_run_loop_dispatches_interval_complete_after_all_interval_results(monkey
         ("ema_saved", "ETHUSDT"),
         ("macd_round", "15m", ["BTCUSDT", "ETHUSDT"]),
     ]
+
+
+def test_run_loop_keeps_processing_when_interval_complete_callback_fails(monkeypatch):
+    import data_processor
+
+    first_round = data_processor.MACalcResult(
+        symbol="BTCUSDT",
+        interval="15m",
+        open_time=900_000,
+        close_time=1_799_999,
+        close=10.0,
+        ma20=9.0,
+    )
+    second_round = data_processor.MACalcResult(
+        symbol="BTCUSDT",
+        interval="15m",
+        open_time=1_800_000,
+        close_time=2_699_999,
+        close=11.0,
+        ma20=10.0,
+    )
+
+    class FakeProcessor:
+        def __init__(self):
+            self.calls = 0
+
+        def get_latest_ma20(self, symbol, interval):
+            assert symbol == "BTCUSDT"
+            assert interval == "15m"
+            self.calls += 1
+            return first_round if self.calls == 1 else second_round
+
+    class FakeScheduler:
+        def due_intervals(self):
+            return ["15m"]
+
+    events = []
+    sleep_calls = 0
+
+    def on_result(result):
+        events.append(("ma20_saved", result.open_time))
+
+    def on_interval_complete(_interval, _results):
+        events.append(("macd_callback", "failed"))
+        raise RuntimeError("macd write failed")
+
+    def stop_after_second_loop(_seconds):
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls >= 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(data_processor.time, "sleep", stop_after_second_loop)
+
+    try:
+        data_processor.run_loop(
+            symbols=["BTCUSDT"],
+            processor=FakeProcessor(),
+            scheduler=FakeScheduler(),
+            on_result=on_result,
+            on_interval_complete=on_interval_complete,
+        )
+    except KeyboardInterrupt:
+        pass
+
+    assert events == [
+        ("ma20_saved", 900_000),
+        ("macd_callback", "failed"),
+        ("ma20_saved", 1_800_000),
+        ("macd_callback", "failed"),
+    ]
