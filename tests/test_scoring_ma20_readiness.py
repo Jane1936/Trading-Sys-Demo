@@ -194,3 +194,53 @@ def test_ma20_skip_record_for_round_only_returns_requested_round(tmp_path):
     assert scoring.get_ma20_skip_record_for_round(1_800_000) is not None
     assert scoring.get_ma20_skip_record_for_round(2_700_000) is None
     assert scoring.get_ma20_skip_record_for_round(None) is None
+
+
+def test_score_round_continues_when_one_symbol_rule_fails(tmp_path, monkeypatch):
+    db_path = tmp_path / "klines.db"
+    scoring = ScoringSystem(db_path=str(db_path))
+    scoring.init_table()
+
+    def maybe_fail_rule(symbol, **_kwargs):
+        if symbol == "BADUSDT":
+            raise ValueError("bad source row")
+
+    rule_methods = [
+        "_save_close_gt_ma20_score",
+        "_save_1h_close_gt_prev_score",
+        "_save_15m_bullish_3of4_score",
+        "_save_15m_close_increasing_3of4_score",
+        "_save_1m_close_gt_5m_ma20_score",
+        "_save_15m_close_near_high_2of4_score",
+        "_save_1h_latest_highest_24_score",
+        "_save_15m_close_desc_3_with_oi_45m_score",
+        "_save_1m_close_gt_60m_open_with_oi_60m_score",
+        "_save_oi_loss_rate_240m_score",
+        "_save_15m_funding_rate_4bars_score",
+        "_save_15m_bullish_volume_breakout_score",
+        "_save_15m_volume_spike_2of3_score",
+        "_save_1h_volume_spike_latest_score",
+        "_save_15m_pullback_low_volume_score",
+        "_save_15m_low_rebound_3bars_score",
+        "_save_structural_stop_loss",
+        "_save_structural_stop_loss_distance_score",
+    ]
+    monkeypatch.setattr(scoring, rule_methods[0], maybe_fail_rule)
+    for method_name in rule_methods[1:]:
+        monkeypatch.setattr(scoring, method_name, lambda **_kwargs: None)
+    monkeypatch.setattr(scoring, "_latest_three_ma20_15m", lambda symbol: (3.0, 2.0, 1.0))
+    monkeypatch.setattr(scoring, "persist_total_scores_for_round", lambda **_kwargs: None)
+
+    results = scoring.score_round(
+        decision_round_ts=1_800_000,
+        all_symbols=["BADUSDT", "BTCUSDT"],
+        abnormal_symbols=[],
+    )
+
+    assert [result.symbol for result in results] == ["BTCUSDT"]
+    _, saved_scores = scoring.get_latest_round_scores()
+    assert [score.symbol for score in saved_scores] == ["BTCUSDT"]
+    symbol_errors = scoring.get_symbol_errors_for_round(1_800_000)
+    assert len(symbol_errors) == 1
+    assert symbol_errors[0].symbol == "BADUSDT"
+    assert symbol_errors[0].error == "bad source row"

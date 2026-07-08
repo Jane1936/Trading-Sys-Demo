@@ -670,6 +670,7 @@ def abnormal_wicks():
     score_total_round_ts, round_scores_total = scoring.get_latest_round_total_scores()
     score_total_updated_at = scoring.get_total_score_round_updated_at(score_total_round_ts)
     scoring_ma20_skip_record = scoring.get_ma20_skip_record_for_round(score_total_round_ts)
+    scoring_symbol_errors = scoring.get_symbol_errors_for_round(score_total_round_ts)
     score_band_configs, score_distance_threshold_text, score_leverage_mapping_text, openable_min_total_score = _score_band_context()
     openable = OpenableSymbolModule(db_path=DB_PATH)
     openable.init_table()
@@ -774,6 +775,7 @@ def abnormal_wicks():
         score_total_updated_at=score_total_updated_at,
         round_scores_total=round_scores_total,
         scoring_ma20_skip_record=scoring_ma20_skip_record,
+        scoring_symbol_errors=scoring_symbol_errors,
         openable_round_ts=openable_round_ts,
         openable_symbols=openable_symbols,
         score_band_configs=score_band_configs,

@@ -47,6 +47,9 @@
     .score-ma20-warning strong { color: #b45309; }
     .score-ma20-warning code { background: #fef3c7; padding: 2px 5px; border-radius: 6px; }
     .score-ma20-warning .missing-symbols { margin-top: 6px; word-break: break-all; }
+    .score-symbol-error { border-color:#fca5a5; background:#fef2f2; color:#991b1b; }
+    .score-symbol-error strong { color:#b91c1c; }
+    .score-symbol-error code { background:#fee2e2; }
     .table-wrap { overflow: auto; border-top: 1px solid var(--line); }
     table { border-collapse: collapse; width: 100%; min-width: 980px; }
     th, td { padding: 10px 9px; font-size: 13px; border-bottom: 1px solid #e6f6ff; text-align: left; white-space: nowrap; }
@@ -376,6 +379,22 @@
     <div class="card">
       <div class="header"><h2>评分系统</h2></div>
       <div class="tip">评分对象：Universe 扣除本轮异常插针symbol。每15分钟更新。默认展示总分结果；可点击各规则 Tab 查看该规则下所有 symbol 得分明细。</div>
+      {% if scoring_symbol_errors %}
+      <div class="score-ma20-warning score-symbol-error" role="status" aria-live="polite">
+        <strong>本轮数据异常跳过提示：</strong>
+        当前总分轮次 {{ score_total_round_ts|fmt_ms_datetime }} 中有 {{ scoring_symbol_errors|length }} 个 symbol 在评分规则计算时遇到数据异常。
+        系统已跳过这些 symbol，并继续完成其他 symbol 的评分，避免单个坏数据拖停整轮评分。
+        <div class="missing-symbols">
+          异常symbol：
+          {% for error_row in scoring_symbol_errors[:30] %}
+            <span class="chip" title="{{ error_row.error }}">{{ error_row.symbol }}</span>
+          {% endfor %}
+          {% if scoring_symbol_errors|length > 30 %}
+            <span class="muted">等 {{ scoring_symbol_errors|length }} 个</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
       {% if scoring_ma20_skip_record %}
       <div class="score-ma20-warning" role="status" aria-live="polite">
         <strong>MA20缺失跳过提示：</strong>

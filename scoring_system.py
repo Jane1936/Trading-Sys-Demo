@@ -216,6 +216,14 @@ class MA20SkipRecord:
     created_at: int
 
 
+@dataclass(frozen=True)
+class ScoringSymbolError:
+    symbol: str
+    decision_round_ts: int
+    error: str
+    created_at: int
+
+
 class ScoringSystem:
     """Score symbols after pre-safety using latest 3 rows of 15m MA20."""
 
@@ -634,6 +642,20 @@ class ScoringSystem:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS scoring_symbol_error_records (
+                    symbol TEXT NOT NULL,
+                    decision_round_ts INTEGER NOT NULL,
+                    error TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY(symbol, decision_round_ts)
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_scoring_symbol_error_records_round ON scoring_symbol_error_records(decision_round_ts DESC, symbol ASC)"
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS symbol_structural_stop_losses (
                     symbol TEXT NOT NULL,
                     decision_round_ts INTEGER NOT NULL,
@@ -703,36 +725,70 @@ class ScoringSystem:
         now_ms = int(time.time() * 1000)
         results: List[SymbolScore] = []
         for symbol in candidates:
-            self._save_close_gt_ma20_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_1h_close_gt_prev_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_15m_bullish_3of4_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_15m_close_increasing_3of4_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_1m_close_gt_5m_ma20_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_15m_close_near_high_2of4_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_1h_latest_highest_24_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_15m_close_desc_3_with_oi_45m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_1m_close_gt_60m_open_with_oi_60m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_oi_loss_rate_240m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_15m_funding_rate_4bars_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_15m_bullish_volume_breakout_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_15m_volume_spike_2of3_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_1h_volume_spike_latest_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_15m_pullback_low_volume_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_15m_low_rebound_3bars_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_structural_stop_loss(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            self._save_structural_stop_loss_distance_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-            ma20s = self._latest_three_ma20_15m(symbol)
-            if ma20s is None:
-                continue
-            m1, m2, m3 = ma20s
-            hit = m1 > m2 > m3
-            score = self._score_weight(1) if hit else 0
-            reason = "ma20_15m_desc_3bars" if hit else "ma20_15m_rule_not_met"
-            rec = SymbolScore(symbol, decision_round_ts, score, reason, m1, m2, m3, now_ms)
-            results.append(rec)
-            self._save_score(rec)
+            try:
+                self._save_close_gt_ma20_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_1h_close_gt_prev_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_15m_bullish_3of4_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_15m_close_increasing_3of4_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_1m_close_gt_5m_ma20_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_15m_close_near_high_2of4_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_1h_latest_highest_24_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_15m_close_desc_3_with_oi_45m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_1m_close_gt_60m_open_with_oi_60m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_oi_loss_rate_240m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_15m_funding_rate_4bars_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_15m_bullish_volume_breakout_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_15m_volume_spike_2of3_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_1h_volume_spike_latest_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_15m_pullback_low_volume_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_15m_low_rebound_3bars_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_structural_stop_loss(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                self._save_structural_stop_loss_distance_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
+                ma20s = self._latest_three_ma20_15m(symbol)
+                if ma20s is None:
+                    continue
+                m1, m2, m3 = ma20s
+                hit = m1 > m2 > m3
+                score = self._score_weight(1) if hit else 0
+                reason = "ma20_15m_desc_3bars" if hit else "ma20_15m_rule_not_met"
+                rec = SymbolScore(symbol, decision_round_ts, score, reason, m1, m2, m3, now_ms)
+                results.append(rec)
+                self._save_score(rec)
+            except Exception as exc:
+                self.record_symbol_error_for_round(
+                    decision_round_ts=decision_round_ts,
+                    symbol=symbol,
+                    error=str(exc),
+                    created_at=now_ms,
+                )
+                print(f"⚠️ scoring symbol failed round={decision_round_ts} symbol={symbol}: {exc}")
         self.persist_total_scores_for_round(decision_round_ts=decision_round_ts, updated_at=now_ms)
         return results
+
+    def record_symbol_error_for_round(
+        self,
+        decision_round_ts: int,
+        symbol: str,
+        error: str,
+        created_at: int | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO scoring_symbol_error_records
+                (symbol, decision_round_ts, error, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
+                    error=excluded.error,
+                    created_at=excluded.created_at
+                """,
+                (
+                    symbol,
+                    int(decision_round_ts),
+                    error[:500],
+                    int(created_at if created_at is not None else time.time() * 1000),
+                ),
+            )
 
     def get_15m_ma20_readiness_for_round(
         self, decision_round_ts: int, symbols: Iterable[str]
@@ -864,6 +920,31 @@ class ScoringSystem:
                 (int(decision_round_ts),),
             ).fetchone()
         return self._row_to_ma20_skip_record(row)
+
+    def get_symbol_errors_for_round(
+        self, decision_round_ts: int | None
+    ) -> list[ScoringSymbolError]:
+        if decision_round_ts is None:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT symbol, decision_round_ts, error, created_at
+                FROM scoring_symbol_error_records
+                WHERE decision_round_ts = ?
+                ORDER BY symbol ASC
+                """,
+                (int(decision_round_ts),),
+            ).fetchall()
+        return [
+            ScoringSymbolError(
+                symbol=str(row["symbol"]),
+                decision_round_ts=int(row["decision_round_ts"]),
+                error=str(row["error"]),
+                created_at=int(row["created_at"]),
+            )
+            for row in rows
+        ]
 
     def _latest_1m_close_and_15m_ma20(self, symbol: str) -> tuple[float, float] | None:
         with self._connect() as conn:
