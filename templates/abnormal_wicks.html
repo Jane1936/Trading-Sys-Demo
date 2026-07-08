@@ -89,6 +89,7 @@
     .reduction-drawdown-danger { color:#991b1b; background:#fee2e2; border-color:#fca5a5; }
     .reduction-pnl-profit { color:#166534; background:#dcfce7; border-color:#86efac; }
     .reduction-pnl-strong-profit { color:#6d28d9; background:#ede9fe; border-color:#c4b5fd; }
+    .reduction-current-price-danger { color:#dc2626; font-weight:900; }
     .muted { color: #6b7280; font-size: 12px; }
     .top-score-row { background: #fff7cc; font-weight: 700; }
     .top-score-badge { display:inline-block; margin-left:6px; padding:2px 8px; border-radius:999px; background:#f59e0b; color:white; font-size:11px; }
@@ -983,6 +984,7 @@
                   <th>最近15m open/close</th>
                   <th>highest</th>
                   <th>current_price</th>
+                  <th>EMA16 / EMA21</th>
                   <th>价格回撤</th>
                   <th>未变现盈亏 / 1R / 2R</th>
                   <th>开仓总分</th>
@@ -1014,7 +1016,12 @@
                   <td>{{ row.rule_name if row.rule_name else '-' }}</td>
                   <td>{{ row.latest_15m_open if row.latest_15m_open else '-' }} / {{ row.latest_15m_close if row.latest_15m_close else '-' }}</td>
                   <td>{{ row.highest_15m_high }}</td>
-                  <td>{{ row.current_price }}</td>
+                  <td>
+                    {% set current_price_decimal = row.current_price|float %}
+                    {% set open_entry_price_decimal = row.open_entry_price|float %}
+                    <span class="{{ 'reduction-current-price-danger' if open_entry_price_decimal > 0 and current_price_decimal <= open_entry_price_decimal else '' }}">{{ row.current_price }}</span>
+                  </td>
+                  <td>{{ row.ema16 if row.ema16 else '-' }} / {{ row.ema21 if row.ema21 else '-' }}</td>
                   <td>
                     {% set price_drawdown_percent = (row.price_drawdown_ratio|float) * 100 %}
                     <span class="reduction-metric {{ 'reduction-drawdown-danger' if price_drawdown_percent >= 3.5 else 'reduction-drawdown-warning' if price_drawdown_percent >= 3 else 'reduction-metric-neutral' }}">{{ '%.2f%%'|format(price_drawdown_percent) }}</span>
@@ -1042,7 +1049,7 @@
                   <td>{{ row.checked_at|fmt_ms_datetime }}</td>
                 </tr>
                 {% else %}
-                <tr><td class="empty" colspan="17">暂无减仓条件模块执行结果</td></tr>
+                <tr><td class="empty" colspan="18">暂无减仓条件模块执行结果</td></tr>
                 {% endfor %}
               </tbody>
             </table>
