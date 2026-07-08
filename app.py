@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import sqlite3
 import threading
@@ -113,6 +114,85 @@ def run_first_experiment_after_openable_round(
         )
 
 
+def run_scoring_round_worker(
+    db_path: str,
+    decision_round_ts: int,
+    symbols: List[str],
+    abnormal_symbols: List[str],
+    evaluated_at: int,
+) -> None:
+    """Run one scoring round in an isolated process.
+
+    The parent process owns scheduling and may terminate this worker when the
+    round deadline is reached, so stale rounds do not block later decisions.
+    """
+    scoring = ScoringSystem(db_path=db_path)
+    scoring.init_table()
+    openable = OpenableSymbolModule(db_path=db_path)
+    openable.init_table()
+    holding_scoring = HoldingPositionScoringSystem(db_path=db_path)
+    holding_scoring.init_tables()
+
+    readiness = scoring.wait_for_15m_ma20_readiness_for_round(
+        decision_round_ts=decision_round_ts,
+        symbols=symbols,
+        retries=6,
+        retry_delay_seconds=5.0,
+    )
+    if not readiness.ready:
+        scoring.record_ma20_skip_for_round(
+            decision_round_ts=decision_round_ts,
+            readiness=readiness,
+            universe_count=len(symbols),
+            created_at=int(time.time() * 1000),
+        )
+        missing_preview = ",".join(readiness.missing_symbols[:10])
+        if len(readiness.missing_symbols) > 10:
+            missing_preview += ",..."
+        print(
+            f"⚠️ scoring round={decision_round_ts} skipping symbols missing 15m MA20 "
+            f"target_open_time={readiness.target_open_time} "
+            f"ready={len(readiness.ready_symbols)} "
+            f"missing={len(readiness.missing_symbols)} "
+            f"missing_symbols={missing_preview}"
+        )
+
+    scored = scoring.score_round(
+        decision_round_ts=decision_round_ts,
+        all_symbols=readiness.ready_symbols,
+        abnormal_symbols=abnormal_symbols,
+    )
+    print(
+        f"🧮 scoring round={decision_round_ts} universe={len(symbols)} "
+        f"ready={len(readiness.ready_symbols)} "
+        f"abnormal={len(set(abnormal_symbols))} scored={len(scored)}"
+    )
+
+    try:
+        holding_result = holding_scoring.run_round(decision_round_ts=decision_round_ts)
+        print(
+            f"📊 holding scoring round={decision_round_ts} "
+            f"checked={holding_result.get('checked', 0)} "
+            f"triggered={holding_result.get('triggered', 0)} "
+            f"records={holding_result.get('records', 0)} "
+            f"reduction_checked={holding_result.get('reduction_checked', 0)} "
+            f"reduction_triggered={holding_result.get('reduction_triggered', 0)}"
+        )
+    except Exception as exc:
+        print(f"⚠️ holding scoring failed round={decision_round_ts}: {exc}")
+
+    openable_symbols = openable.run_round(
+        decision_round_ts=decision_round_ts, evaluated_at=evaluated_at
+    )
+    qualified_openable_count = sum(1 for row in openable_symbols if row.qualified)
+    print(
+        f"🚪 openable round={decision_round_ts} candidates={len(openable_symbols)} "
+        f"qualified={qualified_openable_count}"
+    )
+
+    run_first_experiment_after_openable_round(openable_symbols, decision_round_ts)
+
+
 def start_break_even_take_profit_task() -> None:
     """Run break-even and partial take-profit protection every 5 minutes."""
     strategy = BreakEvenTakeProfitStrategy(db_path=collector.DB_PATH)
@@ -168,15 +248,15 @@ def start_pre_safety_task() -> None:
     module.init_table()
     cooldown = CooldownModule(db_path=collector.DB_PATH)
     cooldown.init_table()
-    scoring = ScoringSystem(db_path=collector.DB_PATH)
-    scoring.init_table()
-    openable = OpenableSymbolModule(db_path=collector.DB_PATH)
-    openable.init_table()
-    holding_scoring = HoldingPositionScoringSystem(db_path=collector.DB_PATH)
-    holding_scoring.init_tables()
+    ScoringSystem(db_path=collector.DB_PATH).init_table()
+    OpenableSymbolModule(db_path=collector.DB_PATH).init_table()
+    HoldingPositionScoringSystem(db_path=collector.DB_PATH).init_tables()
 
     last_pre_safety_round_ts = None
-    last_scoring_round_ts = None
+    last_scoring_started_round_ts = None
+    active_scoring_process: multiprocessing.Process | None = None
+    active_scoring_round_ts: int | None = None
+    active_scoring_deadline_ts: int | None = None
     round_ms = 15 * 60_000
 
     print("🛡️ Pre-safety task started")
@@ -215,82 +295,70 @@ def start_pre_safety_task() -> None:
 
             last_pre_safety_round_ts = round_ts
 
-        if round_ts != last_scoring_round_ts and now_ms >= scoring_execute_ts:
+        if active_scoring_process is not None:
+            if active_scoring_process.is_alive():
+                if (
+                    active_scoring_deadline_ts is not None
+                    and now_ms >= active_scoring_deadline_ts
+                ):
+                    print(
+                        f"⏱️ scoring round={active_scoring_round_ts} exceeded deadline "
+                        f"deadline={active_scoring_deadline_ts}; terminating stale worker"
+                    )
+                    active_scoring_process.terminate()
+                    active_scoring_process.join(timeout=5)
+                    if active_scoring_process.is_alive():
+                        print(
+                            f"⏱️ scoring round={active_scoring_round_ts} did not terminate gracefully; killing worker"
+                        )
+                        active_scoring_process.kill()
+                        active_scoring_process.join(timeout=5)
+                    active_scoring_process = None
+                    active_scoring_round_ts = None
+                    active_scoring_deadline_ts = None
+            else:
+                active_scoring_process.join(timeout=0)
+                print(
+                    f"✅ scoring worker finished round={active_scoring_round_ts} "
+                    f"exitcode={active_scoring_process.exitcode}"
+                )
+                active_scoring_process = None
+                active_scoring_round_ts = None
+                active_scoring_deadline_ts = None
+
+        if (
+            active_scoring_process is None
+            and round_ts != last_scoring_started_round_ts
+            and now_ms >= scoring_execute_ts
+        ):
             try:
                 _, abnormal_symbols = module.get_latest_round_abnormal_symbols(
                     decision_round_ts=round_ts
                 )
-                # 评分系统固定在整15分钟后第30秒执行（如 15:30:30）。
-                # 当前轮次 round_ts 对应的最新已收盘15m K线 open_time=round_ts-15m；
-                # 若 MA20 写入与评分任务存在轻微竞态，最多等到整15分钟后约第60秒；
-                # 仍缺少15m MA20的 symbol 才跳过，避免在 :30.5 附近误跳过已即将入库的数据。
-                readiness = scoring.wait_for_15m_ma20_readiness_for_round(
-                    decision_round_ts=round_ts,
-                    symbols=symbols,
-                    retries=6,
-                    retry_delay_seconds=5.0,
+                active_scoring_deadline_ts = round_ts + round_ms
+                active_scoring_round_ts = round_ts
+                active_scoring_process = multiprocessing.Process(
+                    target=run_scoring_round_worker,
+                    args=(
+                        collector.DB_PATH,
+                        round_ts,
+                        list(symbols),
+                        list(abnormal_symbols),
+                        now_ms,
+                    ),
+                    name=f"scoring-round-{round_ts}",
                 )
-                if not readiness.ready:
-                    scoring.record_ma20_skip_for_round(
-                        decision_round_ts=round_ts,
-                        readiness=readiness,
-                        universe_count=len(symbols),
-                        created_at=int(time.time() * 1000),
-                    )
-                    missing_preview = ",".join(readiness.missing_symbols[:10])
-                    if len(readiness.missing_symbols) > 10:
-                        missing_preview += ",..."
-                    print(
-                        f"⚠️ scoring round={round_ts} skipping symbols missing 15m MA20 "
-                        f"target_open_time={readiness.target_open_time} "
-                        f"ready={len(readiness.ready_symbols)} "
-                        f"missing={len(readiness.missing_symbols)} "
-                        f"missing_symbols={missing_preview}"
-                    )
-                scored = scoring.score_round(
-                    decision_round_ts=round_ts,
-                    all_symbols=readiness.ready_symbols,
-                    abnormal_symbols=abnormal_symbols,
-                )
+                active_scoring_process.start()
+                last_scoring_started_round_ts = round_ts
                 print(
-                    f"🧮 scoring round={round_ts} universe={len(symbols)} "
-                    f"ready={len(readiness.ready_symbols)} "
-                    f"abnormal={len(set(abnormal_symbols))} scored={len(scored)}"
+                    f"🚀 scoring worker started round={round_ts} "
+                    f"pid={active_scoring_process.pid} deadline={active_scoring_deadline_ts}"
                 )
-                # 持仓评分系统只依赖本轮总分评分完成后生成的结构止损位，
-                # 不依赖“本轮可开仓symbol情况”的评估结果。
-                try:
-                    holding_result = holding_scoring.run_round(
-                        decision_round_ts=round_ts
-                    )
-                    print(
-                        f"📊 holding scoring round={round_ts} "
-                        f"checked={holding_result.get('checked', 0)} "
-                        f"triggered={holding_result.get('triggered', 0)} "
-                        f"records={holding_result.get('records', 0)} "
-                        f"reduction_checked={holding_result.get('reduction_checked', 0)} "
-                        f"reduction_triggered={holding_result.get('reduction_triggered', 0)}"
-                    )
-                except Exception as exc:
-                    print(f"⚠️ holding scoring failed round={round_ts}: {exc}")
-
-                openable_symbols = openable.run_round(
-                    decision_round_ts=round_ts, evaluated_at=now_ms
-                )
-                qualified_openable_count = sum(
-                    1 for row in openable_symbols if row.qualified
-                )
-                print(
-                    f"🚪 openable round={round_ts} candidates={len(openable_symbols)} "
-                    f"qualified={qualified_openable_count}"
-                )
-
-                # 第一组实验必须在“本轮可开仓symbol情况”完成计算之后执行，
-                # 这样才能使用该模块计算出的最终可开仓结果和杠杆大小。
-                run_first_experiment_after_openable_round(openable_symbols, round_ts)
-                last_scoring_round_ts = round_ts
             except Exception as exc:
-                print(f"⚠️ scoring failed round={round_ts}: {exc}")
+                print(f"⚠️ scoring worker start failed round={round_ts}: {exc}")
+                active_scoring_process = None
+                active_scoring_round_ts = None
+                active_scoring_deadline_ts = None
 
         time.sleep(5)
 
