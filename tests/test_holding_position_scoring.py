@@ -823,7 +823,7 @@ def test_reduction_action_uses_highest_rule_replaces_limit_and_market_reduces():
         "/fapi/v1/order",
         {"symbol": "BANKUSDT", "side": "SELL", "type": "MARKET", "quantity": "1", "reduceOnly": "true", "newOrderRespType": "RESULT"},
     ) in fake_account.signed_posts
-    assert any(endpoint == "/fapi/v1/order" and params.get("type") == "STOP" and params.get("quantity") == "1" for endpoint, params in fake_account.signed_posts)
+    assert any(endpoint == "/fapi/v1/algoOrder" and params.get("type") == "STOP" and params.get("quantity") == "1" for endpoint, params in fake_account.signed_posts)
 
 def test_reduction_action_skips_replacement_stop_that_would_immediately_trigger_and_still_reduces():
     fake_account = FakeAccountManager()
@@ -980,7 +980,7 @@ def test_reduction_recreates_hard_take_profit_from_actual_remaining_position():
     assert result["reduction_records"] == 1
     assert records[0]["status"] == "submitted"
     assert any(params.get("type") == "TAKE_PROFIT" and params.get("quantity") == "1.5" and params.get("price") == "46.67" for _, params in fake_account.signed_posts)
-    assert any(endpoint == "/fapi/v1/order" and params.get("type") == "STOP" and params.get("quantity") == "1.5" and params.get("price") == "7" and params.get("stopPrice") == "7" for endpoint, params in fake_account.signed_posts)
+    assert any(endpoint == "/fapi/v1/algoOrder" and params.get("type") == "STOP" and params.get("quantity") == "1.5" and params.get("price") == "7" and params.get("triggerPrice") == "7" for endpoint, params in fake_account.signed_posts)
     assert trade["take_profit_price"] == "46.67"
     assert trade["take_profit_order_id"] != "old-tp-1"
     assert trade["stop_loss_price"] == "7"
@@ -1007,7 +1007,7 @@ def test_increase_cancels_and_recreates_hard_take_profit_from_actual_position():
     assert ("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "old-tp-1"}) in fake_account.signed_deletes
     assert ("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "old-sl-1"}) in fake_account.signed_deletes
     assert any(params.get("type") == "TAKE_PROFIT" and params.get("quantity") == "3" and params.get("price") == "27.34" for _, params in fake_account.signed_posts)
-    assert any(endpoint == "/fapi/v1/order" and params.get("type") == "STOP" and params.get("quantity") == "3" and params.get("price") == "6" and params.get("stopPrice") == "6" for endpoint, params in fake_account.signed_posts)
+    assert any(endpoint == "/fapi/v1/algoOrder" and params.get("type") == "STOP" and params.get("quantity") == "3" and params.get("price") == "6" and params.get("triggerPrice") == "6" for endpoint, params in fake_account.signed_posts)
     assert trade["take_profit_price"] == "27.34"
     assert trade["take_profit_order_id"] != "old-tp-1"
     assert trade["stop_loss_price"] == "6"
@@ -1229,5 +1229,5 @@ def test_reduction_recreates_stop_loss_even_when_hard_take_profit_recreate_fails
     assert records[0]["status"] == "submitted"
     assert "hard_take_profit_recreate_failed" in records[0]["reason"]
     assert "stop_loss_recreated" in records[0]["reason"]
-    assert any(endpoint == "/fapi/v1/order" and params.get("type") == "STOP" and params.get("quantity") == "1" for endpoint, params in fake_account.signed_posts)
+    assert any(endpoint == "/fapi/v1/algoOrder" and params.get("type") == "STOP" and params.get("quantity") == "1" for endpoint, params in fake_account.signed_posts)
     assert errors[0].operation == "holding_reduction:hard_take_profit_recreate"
