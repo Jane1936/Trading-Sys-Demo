@@ -18,8 +18,10 @@ from data_processor import (
     MA20Processor,
     MA20Scheduler,
     MACalcResult,
+    init_ema_table,
     init_ma20_table,
     run_loop,
+    save_ema_result,
     save_ma20_result,
 )
 from break_even_take_profit import BreakEvenTakeProfitStrategy
@@ -64,20 +66,27 @@ def ensure_universe() -> List[str]:
     global _universe_last_refresh_ts
     with _universe_lock:
         now_ts = time.time()
-        should_refresh = collector.UNIVERSE is None or (now_ts - _universe_last_refresh_ts) >= _universe_refresh_interval_sec
+        should_refresh = (
+            collector.UNIVERSE is None
+            or (now_ts - _universe_last_refresh_ts) >= _universe_refresh_interval_sec
+        )
         if should_refresh:
             collector.UNIVERSE = collector.build_universe()
             _universe_last_refresh_ts = now_ts
         return list(collector.UNIVERSE)
 
 
-def run_first_experiment_after_openable_round(openable_symbols: Iterable[OpenableSymbol], round_ts: int) -> None:
+def run_first_experiment_after_openable_round(
+    openable_symbols: Iterable[OpenableSymbol], round_ts: int
+) -> None:
     """Run the first experiment only after openable-symbol evaluation is complete."""
     openable_rows = list(openable_symbols)
     qualified_openable_count = sum(1 for row in openable_rows if row.qualified)
 
     try:
-        zombie_result = ZombieForceLiquidationModule(db_path=collector.DB_PATH).run_round(checked_at=round_ts)
+        zombie_result = ZombieForceLiquidationModule(
+            db_path=collector.DB_PATH
+        ).run_round(checked_at=round_ts)
         print(
             f"🧟 zombie force liquidation before open round={round_ts} "
             f"checked={zombie_result.get('checked', 0)} "
@@ -85,9 +94,13 @@ def run_first_experiment_after_openable_round(openable_symbols: Iterable[Openabl
             f"records={zombie_result.get('records', 0)}"
         )
         if qualified_openable_count <= 0:
-            print(f"🧪 first trading experiment round={round_ts} skipped after zombie force liquidation: no qualified symbols")
+            print(
+                f"🧪 first trading experiment round={round_ts} skipped after zombie force liquidation: no qualified symbols"
+            )
             return
-        experiment_result = TradingExperiment(db_path=collector.DB_PATH).run_round(openable_rows)
+        experiment_result = TradingExperiment(db_path=collector.DB_PATH).run_round(
+            openable_rows
+        )
         print(
             f"🧪 first trading experiment after openable round={round_ts} "
             f"opened={experiment_result.get('opened', 0)} "
@@ -95,7 +108,9 @@ def run_first_experiment_after_openable_round(openable_symbols: Iterable[Openabl
             f"reason={experiment_result.get('reason', '')}"
         )
     except Exception as exc:
-        print(f"⚠️ first trading experiment failed after openable round={round_ts}: {exc}")
+        print(
+            f"⚠️ first trading experiment failed after openable round={round_ts}: {exc}"
+        )
 
 
 def start_break_even_take_profit_task() -> None:
@@ -109,7 +124,9 @@ def start_break_even_take_profit_task() -> None:
     print("🟢 Break-even, partial take-profit and trailing stop tracker task started")
     while True:
         try:
-            reconcile_result = TradingExperiment(db_path=collector.DB_PATH).reconcile_missing_exit_orders()
+            reconcile_result = TradingExperiment(
+                db_path=collector.DB_PATH
+            ).reconcile_missing_exit_orders()
             print(
                 f"🧩 exit-order reconcile checked={reconcile_result.get('checked', 0)} "
                 f"created={reconcile_result.get('created', 0)} "
@@ -186,7 +203,9 @@ def start_pre_safety_task() -> None:
                     print(f"⚠️ pre-safety detect failed symbol={symbol}: {exc}")
 
             try:
-                cooldown_symbols = cooldown.run_round(symbols=symbols, decision_round_ts=round_ts, now_ms=now_ms)
+                cooldown_symbols = cooldown.run_round(
+                    symbols=symbols, decision_round_ts=round_ts, now_ms=now_ms
+                )
                 print(
                     f"🧊 cooldown round={round_ts} universe={len(symbols)} "
                     f"cooldown={len(cooldown_symbols)}"
@@ -198,7 +217,9 @@ def start_pre_safety_task() -> None:
 
         if round_ts != last_scoring_round_ts and now_ms >= scoring_execute_ts:
             try:
-                _, abnormal_symbols = module.get_latest_round_abnormal_symbols(decision_round_ts=round_ts)
+                _, abnormal_symbols = module.get_latest_round_abnormal_symbols(
+                    decision_round_ts=round_ts
+                )
                 # 评分系统固定在整15分钟后第30秒执行（如 15:30:30）。
                 # 当前轮次 round_ts 对应的最新已收盘15m K线 open_time=round_ts-15m；
                 # 若 MA20 写入与评分任务存在轻微竞态，最多等到整15分钟后约第60秒；
@@ -239,7 +260,9 @@ def start_pre_safety_task() -> None:
                 # 持仓评分系统只依赖本轮总分评分完成后生成的结构止损位，
                 # 不依赖“本轮可开仓symbol情况”的评估结果。
                 try:
-                    holding_result = holding_scoring.run_round(decision_round_ts=round_ts)
+                    holding_result = holding_scoring.run_round(
+                        decision_round_ts=round_ts
+                    )
                     print(
                         f"📊 holding scoring round={round_ts} "
                         f"checked={holding_result.get('checked', 0)} "
@@ -251,8 +274,12 @@ def start_pre_safety_task() -> None:
                 except Exception as exc:
                     print(f"⚠️ holding scoring failed round={round_ts}: {exc}")
 
-                openable_symbols = openable.run_round(decision_round_ts=round_ts, evaluated_at=now_ms)
-                qualified_openable_count = sum(1 for row in openable_symbols if row.qualified)
+                openable_symbols = openable.run_round(
+                    decision_round_ts=round_ts, evaluated_at=now_ms
+                )
+                qualified_openable_count = sum(
+                    1 for row in openable_symbols if row.qualified
+                )
                 print(
                     f"🚪 openable round={round_ts} candidates={len(openable_symbols)} "
                     f"qualified={qualified_openable_count}"
@@ -288,12 +315,24 @@ def start_increase_pretrigger_refresh_task() -> None:
             print(f"⚠️ increase pretrigger refresh failed: {exc}")
         time.sleep(60)
 
+
 def on_ma20_result(result: MACalcResult) -> None:
     save_ma20_result(collector.DB_PATH, result)
+    save_ema_result(collector.DB_PATH, result)
     print(
         f"📈 MA20 {result.symbol} {result.interval} "
         f"open_time={result.open_time} close={result.close:.6f} ma20={result.ma20:.6f}"
     )
+    if (
+        result.interval == "15m"
+        and result.ema16 is not None
+        and result.ema21 is not None
+    ):
+        print(
+            f"📈 EMA {result.symbol} {result.interval} "
+            f"open_time={result.open_time} close={result.close:.6f} "
+            f"ema16={result.ema16:.6f} ema21={result.ema21:.6f}"
+        )
 
 
 def start_collector_task(symbols: List[str]) -> None:
@@ -306,10 +345,24 @@ def start_collector_task(symbols: List[str]) -> None:
 
     scheduler = collector.BlockingScheduler()
     scheduler.add_job(ensure_universe, "interval", hours=12)
-    scheduler.add_job(lambda: _run_with_fresh_universe(collector.kline_job), "cron", second=0)
-    scheduler.add_job(lambda: _run_with_fresh_universe(collector.oi_job), "cron", second=20)
-    scheduler.add_job(lambda: _run_with_fresh_universe(collector.funding_job), "cron", minute=1, second=40)
-    scheduler.add_job(lambda: _run_with_fresh_universe(collector.btc_5m_job), "cron", minute="*/5", second=10)
+    scheduler.add_job(
+        lambda: _run_with_fresh_universe(collector.kline_job), "cron", second=0
+    )
+    scheduler.add_job(
+        lambda: _run_with_fresh_universe(collector.oi_job), "cron", second=20
+    )
+    scheduler.add_job(
+        lambda: _run_with_fresh_universe(collector.funding_job),
+        "cron",
+        minute=1,
+        second=40,
+    )
+    scheduler.add_job(
+        lambda: _run_with_fresh_universe(collector.btc_5m_job),
+        "cron",
+        minute="*/5",
+        second=10,
+    )
 
     print("🚀 Collector task started")
     scheduler.start()
@@ -317,6 +370,7 @@ def start_collector_task(symbols: List[str]) -> None:
 
 def start_processor_task(symbols: List[str]) -> None:
     init_ma20_table(db_path=collector.DB_PATH)
+    init_ema_table(db_path=collector.DB_PATH)
     processor = MA20Processor(db_path=collector.DB_PATH)
     scheduler = MA20Scheduler(grace_seconds=5)
 
@@ -337,16 +391,22 @@ if __name__ == "__main__":
     symbols = ensure_universe()
 
     # 五个独立 task：collector / pre_safety（异常插针后立即执行冷却期symbol） / break_even_take_profit / 加仓预触发刷新 / data_processor
-    collector_thread = threading.Thread(target=start_collector_task, args=(symbols,), daemon=True)
+    collector_thread = threading.Thread(
+        target=start_collector_task, args=(symbols,), daemon=True
+    )
     collector_thread.start()
 
     pre_safety_thread = threading.Thread(target=start_pre_safety_task, daemon=True)
     pre_safety_thread.start()
 
-    break_even_thread = threading.Thread(target=start_break_even_take_profit_task, daemon=True)
+    break_even_thread = threading.Thread(
+        target=start_break_even_take_profit_task, daemon=True
+    )
     break_even_thread.start()
 
-    increase_pretrigger_thread = threading.Thread(target=start_increase_pretrigger_refresh_task, daemon=True)
+    increase_pretrigger_thread = threading.Thread(
+        target=start_increase_pretrigger_refresh_task, daemon=True
+    )
     increase_pretrigger_thread.start()
 
     # 主线程跑 processor task
