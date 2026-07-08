@@ -21,6 +21,8 @@ class MACalcResult:
     close_time: int
     close: float
     ma20: Optional[float]
+    ema16: Optional[float] = None
+    ema21: Optional[float] = None
 
 
 def _interval_to_ms(interval: str) -> int:
@@ -41,6 +43,9 @@ class MA20Processor:
 
     MA20 definition:
         average close of latest 20 candles
+
+    15m EMA definition:
+        pandas ewm(span=N, adjust=False).mean() on close prices, for N=16 and N=21
     """
 
     SUPPORTED_INTERVALS = ("5m", "15m", "1h")
@@ -57,12 +62,18 @@ class MA20Processor:
     def _table_name(interval: str) -> str:
         return f"klines_{interval}"
 
-    def get_ma20_series(self, symbol: str, interval: str, limit: int = 200) -> List[MACalcResult]:
+    def get_ma20_series(
+        self, symbol: str, interval: str, limit: int = 200
+    ) -> List[MACalcResult]:
         if interval not in self.SUPPORTED_INTERVALS:
             raise ValueError(f"interval must be one of {self.SUPPORTED_INTERVALS}")
 
         table = self._table_name(interval)
         query_limit = max(20, limit + 19)
+        if interval == "15m":
+            # EMA(adjust=False) is recursive; keep a wider warm-up window than MA20
+            # while preserving the existing bounded-query MA20 processing pattern.
+            query_limit = max(200, limit + 199)
 
         with self._connect() as conn:
             rows = conn.execute(
@@ -82,11 +93,27 @@ class MA20Processor:
         ordered = list(reversed(rows))
         closes: List[float] = []
         series: List[MACalcResult] = []
+        ema16: Optional[float] = None
+        ema21: Optional[float] = None
+        ema16_alpha = 2 / (16 + 1)
+        ema21_alpha = 2 / (21 + 1)
 
         for row in ordered:
             close_price = float(row["close"])
             closes.append(close_price)
             ma20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else None
+
+            if interval == "15m":
+                ema16 = (
+                    close_price
+                    if ema16 is None
+                    else (close_price * ema16_alpha) + (ema16 * (1 - ema16_alpha))
+                )
+                ema21 = (
+                    close_price
+                    if ema21 is None
+                    else (close_price * ema21_alpha) + (ema21 * (1 - ema21_alpha))
+                )
 
             series.append(
                 MACalcResult(
@@ -96,6 +123,8 @@ class MA20Processor:
                     close_time=int(row["close_time"]),
                     close=close_price,
                     ma20=ma20,
+                    ema16=ema16 if interval == "15m" else None,
+                    ema21=ema21 if interval == "15m" else None,
                 )
             )
 
@@ -105,8 +134,13 @@ class MA20Processor:
         series = self.get_ma20_series(symbol=symbol, interval=interval, limit=1)
         return series[0] if series else None
 
-    def get_latest_multi_interval_ma20(self, symbol: str) -> Dict[str, Optional[MACalcResult]]:
-        return {interval: self.get_latest_ma20(symbol, interval) for interval in self.SUPPORTED_INTERVALS}
+    def get_latest_multi_interval_ma20(
+        self, symbol: str
+    ) -> Dict[str, Optional[MACalcResult]]:
+        return {
+            interval: self.get_latest_ma20(symbol, interval)
+            for interval in self.SUPPORTED_INTERVALS
+        }
 
 
 class MA20Scheduler:
@@ -139,12 +173,16 @@ class MA20Scheduler:
 
     def next_run_at(self, interval: str, now_ts: Optional[int] = None) -> datetime:
         if interval not in self.INTERVAL_SECONDS:
-            raise ValueError(f"interval must be one of {tuple(self.INTERVAL_SECONDS.keys())}")
+            raise ValueError(
+                f"interval must be one of {tuple(self.INTERVAL_SECONDS.keys())}"
+            )
         if now_ts is None:
             now_ts = int(time.time())
         sec = self.INTERVAL_SECONDS[interval]
         next_boundary = ((now_ts // sec) + 1) * sec
-        return datetime.fromtimestamp(next_boundary + self.grace_seconds, tz=timezone.utc)
+        return datetime.fromtimestamp(
+            next_boundary + self.grace_seconds, tz=timezone.utc
+        )
 
 
 def run_loop(
@@ -188,8 +226,7 @@ def run_loop(
 def init_ma20_table(db_path: str = "data/klines.db") -> None:
     """Create table for persisted MA20 values."""
     with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS ma20_indicators (
                 symbol TEXT NOT NULL,
                 interval TEXT NOT NULL,
@@ -200,11 +237,32 @@ def init_ma20_table(db_path: str = "data/klines.db") -> None:
                 updated_at INTEGER NOT NULL,
                 PRIMARY KEY (symbol, interval, open_time)
             )
-            """
-        )
+            """)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_ma20_symbol_interval_time "
             "ON ma20_indicators(symbol, interval, open_time)"
+        )
+
+
+def init_ema_table(db_path: str = "data/klines.db") -> None:
+    """Create table for persisted EMA16/EMA21 15m values."""
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ema_indicators (
+                symbol TEXT NOT NULL,
+                interval TEXT NOT NULL,
+                open_time INTEGER NOT NULL,
+                close_time INTEGER NOT NULL,
+                close REAL NOT NULL,
+                ema16 REAL NOT NULL,
+                ema21 REAL NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (symbol, interval, open_time)
+            )
+            """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ema_symbol_interval_time "
+            "ON ema_indicators(symbol, interval, open_time)"
         )
 
 
@@ -233,6 +291,38 @@ def save_ma20_result(db_path: str, result: MACalcResult) -> None:
                 result.close_time,
                 result.close,
                 result.ma20,
+                now_ms,
+            ),
+        )
+
+
+def save_ema_result(db_path: str, result: MACalcResult) -> None:
+    """Upsert one 15m EMA16/EMA21 record to ema_indicators table."""
+    if result.interval != "15m" or result.ema16 is None or result.ema21 is None:
+        return
+
+    now_ms = int(time.time() * 1000)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO ema_indicators
+            (symbol, interval, open_time, close_time, close, ema16, ema21, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(symbol, interval, open_time) DO UPDATE SET
+                close_time=excluded.close_time,
+                close=excluded.close,
+                ema16=excluded.ema16,
+                ema21=excluded.ema21,
+                updated_at=excluded.updated_at
+            """,
+            (
+                result.symbol,
+                result.interval,
+                result.open_time,
+                result.close_time,
+                result.close,
+                result.ema16,
+                result.ema21,
                 now_ms,
             ),
         )
