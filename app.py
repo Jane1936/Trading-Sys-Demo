@@ -288,10 +288,9 @@ def start_pre_safety_task() -> None:
                 # 第一组实验必须在“本轮可开仓symbol情况”完成计算之后执行，
                 # 这样才能使用该模块计算出的最终可开仓结果和杠杆大小。
                 run_first_experiment_after_openable_round(openable_symbols, round_ts)
+                last_scoring_round_ts = round_ts
             except Exception as exc:
                 print(f"⚠️ scoring failed round={round_ts}: {exc}")
-
-            last_scoring_round_ts = round_ts
 
         time.sleep(5)
 
