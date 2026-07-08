@@ -274,6 +274,36 @@ def test_position_reduction_waits_for_current_round_total_scores():
     assert result["reduction_checked"] == 0
     assert result["reduction_triggered"] == 0
 
+def test_position_reduction_waits_for_current_round_macd_data():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, open REAL, high REAL, close REAL)")
+            conn.execute("CREATE TABLE symbol_structural_stop_losses (symbol TEXT, decision_round_ts INTEGER, structural_stop_loss REAL)")
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.execute("CREATE TABLE ema_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ema16 REAL, ema21 REAL)")
+            conn.execute("CREATE TABLE macd_indicators (symbol TEXT, interval TEXT, open_time INTEGER, macd REAL)")
+            conn.executemany(
+                "INSERT INTO klines_15m (symbol, open_time, open, high, close) VALUES (?, ?, ?, ?, ?)",
+                [("BANK", 3000, 10, 8, 8), ("BANK", 2000, 9, 8, 8), ("BANK", 1000, 8, 8, 8)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_structural_stop_losses (symbol, decision_round_ts, structural_stop_loss) VALUES (?, ?, ?)",
+                [("BANK", 3000, 7), ("BANK", 2000, 7)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
+                [("BANK", 4000, 53), ("BANK", 3000, 70), ("BANK", 2000, 80)],
+            )
+            conn.execute("INSERT INTO ema_indicators (symbol, interval, open_time, ema16, ema21) VALUES (?, ?, ?, ?, ?)", ("BANK", "15m", 4000, 9, 12))
+
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        result = scoring.run_round(decision_round_ts=4000)
+
+    assert result["reduction_checked"] == 0
+    assert result["reduction_triggered"] == 0
+
 def test_portfolio_risk_runs_after_holding_stop_loss_round():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -491,7 +521,7 @@ def test_position_reduction_rule_tags_absolute_score_large_drawdown():
     assert checks[0]["score_drawdown"] == "28"
     assert checks[0]["recent_score_drawdown"] == "18"
 
-def test_position_reduction_rule_tags_medium_drawdown_and_continuous_weakening():
+def test_position_reduction_rule2_tags_trend_weakening_with_descending_macd():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
@@ -520,6 +550,10 @@ def test_position_reduction_rule_tags_medium_drawdown_and_continuous_weakening()
                 "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
                 [("BANK", 4000, 53), ("BANK", 3000, 70), ("BANK", 2000, 80)],
             )
+            conn.execute("CREATE TABLE ema_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ema16 REAL, ema21 REAL)")
+            conn.execute("CREATE TABLE macd_indicators (symbol TEXT, interval TEXT, open_time INTEGER, macd REAL)")
+            conn.execute("INSERT INTO ema_indicators (symbol, interval, open_time, ema16, ema21) VALUES (?, ?, ?, ?, ?)", ("BANK", "15m", 4000, 9, 12))
+            conn.executemany("INSERT INTO macd_indicators (symbol, interval, open_time, macd) VALUES (?, ?, ?, ?)", [("BANK", "15m", 4000, 1), ("BANK", "15m", 3000, 2), ("BANK", "15m", 2000, 3)])
             conn.execute(
                 "INSERT INTO trading_experiment_trades (symbol, status, total_score, created_at) VALUES (?, ?, ?, ?)",
                 ("BANK", "opened", 80, 1000),
@@ -534,8 +568,8 @@ def test_position_reduction_rule_tags_medium_drawdown_and_continuous_weakening()
     assert round_ts == 4000
     assert checks[0]["symbol"] == "BANK"
     assert checks[0]["triggered"] == 1
-    assert checks[0]["tag"] == "中等回撤且趋势连续弱化"
-    assert checks[0]["reason"] == "medium_drawdown_and_continuous_weakening"
+    assert checks[0]["tag"] == "趋势走弱"
+    assert checks[0]["reason"] == "trend_weakening"
     assert checks[0]["latest_15m_open"] == "10"
     assert checks[0]["latest_15m_close"] == "8"
     assert checks[0]["open_total_score"] == "80"
@@ -543,6 +577,9 @@ def test_position_reduction_rule_tags_medium_drawdown_and_continuous_weakening()
     assert checks[0]["previous_total_score"] == "70"
     assert checks[0]["score_drawdown"] == "27"
     assert checks[0]["recent_score_drawdown"] == "17"
+    assert checks[0]["latest_macd"] == "1"
+    assert checks[0]["second_macd"] == "2"
+    assert checks[0]["third_macd"] == "3"
     assert checks[0]["rule_name"] == "规则二"
 
 def test_position_reduction_no_longer_triggers_on_removed_rule_four_score_danger_zone():
