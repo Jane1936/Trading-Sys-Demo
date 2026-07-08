@@ -746,6 +746,17 @@ class ScoringSystem:
                 self._save_structural_stop_loss_distance_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
                 ma20s = self._latest_three_ma20_15m(symbol)
                 if ma20s is None:
+                    error = "missing_latest_three_15m_ma20_records"
+                    self.record_symbol_error_for_round(
+                        decision_round_ts=decision_round_ts,
+                        symbol=symbol,
+                        error=error,
+                        created_at=now_ms,
+                    )
+                    print(
+                        f"⚠️ scoring symbol skipped round={decision_round_ts} "
+                        f"symbol={symbol}: {error}"
+                    )
                     continue
                 m1, m2, m3 = ma20s
                 hit = m1 > m2 > m3
@@ -945,6 +956,16 @@ class ScoringSystem:
             )
             for row in rows
         ]
+
+    def get_latest_symbol_error_round(self) -> tuple[int | None, list[ScoringSymbolError]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT MAX(decision_round_ts) AS ts FROM scoring_symbol_error_records"
+            ).fetchone()
+        if row is None or row["ts"] is None:
+            return None, []
+        round_ts = int(row["ts"])
+        return round_ts, self.get_symbol_errors_for_round(round_ts)
 
     def _latest_1m_close_and_15m_ma20(self, symbol: str) -> tuple[float, float] | None:
         with self._connect() as conn:
