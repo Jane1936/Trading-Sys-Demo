@@ -85,6 +85,9 @@ class PositionReductionCheck:
     third_15m_close: str
     previous_total_score: str
     recent_score_drawdown: str
+    latest_macd: str
+    second_macd: str
+    third_macd: str
     open_entry_price: str
     rule_name: str
     triggered: bool
@@ -189,7 +192,7 @@ class HoldingPositionScoringSystem:
     INCREASE_TAG_PRE_TRIGGER = "预触发"
     INCREASE_TAG_FIRST_COMPLETED = "已完成第一次加仓"
     REDUCTION_TAG_ABSOLUTE_SCORE_DRAWDOWN = "绝对分数大幅回撤"
-    REDUCTION_TAG_MEDIUM_DRAWDOWN_WEAKENING = "中等回撤且趋势连续弱化"
+    REDUCTION_TAG_TREND_WEAKENING = "趋势走弱"
     REDUCTION_TAG_SCORE_DANGER_ZONE = "评分进入危险区"
     REDUCTION_TAG_MEDIUM_DANGER_PRICE_CONFIRMATION = "中危险区+价格确认"
     REDUCTION_TAG_DEEP_WEAKNESS = "深度弱势"
@@ -296,6 +299,9 @@ class HoldingPositionScoringSystem:
                     third_15m_close TEXT NOT NULL DEFAULT '',
                     previous_total_score TEXT NOT NULL DEFAULT '',
                     recent_score_drawdown TEXT NOT NULL DEFAULT '',
+                    latest_macd TEXT NOT NULL DEFAULT '',
+                    second_macd TEXT NOT NULL DEFAULT '',
+                    third_macd TEXT NOT NULL DEFAULT '',
                     open_entry_price TEXT NOT NULL DEFAULT '',
                     rule_name TEXT NOT NULL DEFAULT '',
                     triggered INTEGER NOT NULL,
@@ -412,6 +418,9 @@ class HoldingPositionScoringSystem:
                 "recent_score_drawdown": "TEXT NOT NULL DEFAULT ''",
                 "rule_name": "TEXT NOT NULL DEFAULT ''",
                 "one_r_usdt": "TEXT NOT NULL DEFAULT ''",
+                "latest_macd": "TEXT NOT NULL DEFAULT ''",
+                "second_macd": "TEXT NOT NULL DEFAULT ''",
+                "third_macd": "TEXT NOT NULL DEFAULT ''",
                 "open_entry_price": "TEXT NOT NULL DEFAULT ''",
                 "ema16": "TEXT NOT NULL DEFAULT ''",
                 "ema21": "TEXT NOT NULL DEFAULT ''",
@@ -556,6 +565,26 @@ class HoldingPositionScoringSystem:
             return True
         return row is not None
 
+
+    def _has_macd_for_positions(self, positions: list[dict[str, Any]], decision_round_ts: int) -> bool:
+        """Return True only after current-round 15m MACD exists for active held symbols."""
+        symbols = [self._base_symbol(str(position.get("symbol", ""))) for position in positions]
+        symbols = [symbol for symbol in symbols if symbol]
+        if not symbols:
+            return True
+        try:
+            with self._connect() as conn:
+                for symbol in symbols:
+                    row = conn.execute(
+                        "SELECT 1 FROM macd_indicators WHERE symbol = ? AND interval = '15m' AND open_time <= ? LIMIT 1",
+                        (symbol, int(decision_round_ts)),
+                    ).fetchone()
+                    if row is None:
+                        return False
+        except sqlite3.OperationalError:
+            return True
+        return True
+
     def _latest_15m_emas(self, symbol: str, round_ts: int) -> tuple[Decimal, Decimal]:
         try:
             with self._connect() as conn:
@@ -582,6 +611,8 @@ class HoldingPositionScoringSystem:
             return []
         now_ms = checked_at if checked_at is not None else int(time.time() * 1000)
         active_positions = positions if positions is not None else self._active_positions()
+        if not self._has_macd_for_positions(active_positions, round_ts):
+            return []
         equity = TradingExperiment(self.db_path, account_manager=self.account_manager)._fetch_experiment_usdt_equity()
         one_r = equity * Decimal("0.01")
         two_r = equity * Decimal("0.02")
@@ -607,9 +638,13 @@ class HoldingPositionScoringSystem:
         drawdown = (highest - current_price) / highest if highest > 0 and current_price > 0 else Decimal("0")
         unrealized_pnl = self._position_unrealized_pnl(position)
         recent_scores = self._recent_total_scores(symbol, limit=3)
+        recent_macds = self._recent_15m_macds(symbol, limit=3)
         latest_score = recent_scores[0] if recent_scores else ""
         previous_score = recent_scores[1] if len(recent_scores) > 1 else ""
         previous_previous_score = recent_scores[2] if len(recent_scores) > 2 else ""
+        latest_macd = recent_macds[0] if recent_macds else Decimal("0")
+        second_macd = recent_macds[1] if len(recent_macds) > 1 else Decimal("0")
+        third_macd = recent_macds[2] if len(recent_macds) > 2 else Decimal("0")
         open_score = self._latest_open_trade_total_score(symbol)
         open_entry_price = self._latest_open_trade_entry_price(symbol)
         open_trade_created_at = self._latest_open_trade_created_at(symbol)
@@ -636,27 +671,24 @@ class HoldingPositionScoringSystem:
         second_close = second_kline[1] if second_kline else Decimal("0")
         third_open = third_kline[0] if third_kline else Decimal("0")
         third_close = third_kline[1] if third_kline else Decimal("0")
-        if len(recent_15m_open_closes) < 2:
-            reasons.append("rule2_missing_recent_two_15m_klines")
-        elif any(close >= open_ for open_, close in recent_15m_open_closes[:2]):
-            reasons.append("rule2_recent_two_15m_not_all_bearish")
+        latest_ema16, latest_ema21 = self._latest_15m_emas(symbol, round_ts)
+        if current_price <= 0:
+            reasons.append("rule2_missing_current_price")
+        elif latest_ema16 <= 0:
+            reasons.append("rule2_missing_15m_ema16")
+        elif current_price >= latest_ema16:
+            reasons.append("rule2_current_price_not_below_15m_ema16")
         elif unrealized_pnl >= two_r:
             reasons.append("rule2_unrealized_pnl_ge_2r")
-        elif latest_score == "" or previous_score == "" or previous_previous_score == "":
-            reasons.append("rule2_missing_recent_three_total_scores")
+        elif len(recent_macds) < 3:
+            reasons.append("rule2_missing_recent_three_macd")
+        elif not (third_macd > second_macd > latest_macd):
+            reasons.append("rule2_recent_three_macd_not_descending")
         else:
-            rule2_score_drawdown = recent_score_drawdown
-            if self._decimal_from(latest_score, Decimal("0")) >= self._decimal_from(previous_score, Decimal("0")):
-                reasons.append("rule2_latest_score_not_below_previous_score")
-            elif self._decimal_from(previous_score, Decimal("0")) >= self._decimal_from(previous_previous_score, Decimal("0")):
-                reasons.append("rule2_previous_score_not_below_previous_previous_score")
-            elif rule2_score_drawdown < Decimal("17"):
-                reasons.append("rule2_recent_score_drawdown_lt_17")
-            else:
-                triggered = True
-                tags.append(self.REDUCTION_TAG_MEDIUM_DRAWDOWN_WEAKENING)
-                matched_rules.append("规则二")
-                reasons.append("rule2_medium_drawdown_and_continuous_weakening")
+            triggered = True
+            tags.append(self.REDUCTION_TAG_TREND_WEAKENING)
+            matched_rules.append("规则二")
+            reasons.append("rule2_trend_weakening")
 
         if highest <= 0:
             reasons.append("rule3_missing_recent_three_15m_highs")
@@ -685,7 +717,6 @@ class HoldingPositionScoringSystem:
                 reasons.append("rule3_score_drawdown_lt_18")
 
         open_entry_price_decimal = self._decimal_from(open_entry_price, Decimal("0")) if open_entry_price != "" else Decimal("0")
-        latest_ema16, latest_ema21 = self._latest_15m_emas(symbol, round_ts)
         rule5_bearish_count = sum(1 for open_, close in recent_15m_open_closes[:3] if close < open_)
         rule5_deep_weakness = (
             latest_ema21 > 0
@@ -722,13 +753,13 @@ class HoldingPositionScoringSystem:
 
         reason = "; ".join(reasons)
         matched_reason_map = {
-            "规则二": "medium_drawdown_and_continuous_weakening",
+            "规则二": "trend_weakening",
             "规则三": "absolute_score_large_drawdown",
             "规则五": "deep_weakness",
         }
         if matched_rules:
             reason = "; ".join(matched_reason_map[rule] for rule in matched_rules)
-        return PositionReductionCheck(symbol, round_ts, self._fmt_decimal(highest), self._fmt_decimal(current_price), self._fmt_decimal(latest_ema16), self._fmt_decimal(latest_ema21), self._fmt_decimal(drawdown), self._fmt_decimal(equity), self._fmt_decimal(two_r), self._fmt_decimal(one_r), self._fmt_decimal(unrealized_pnl), open_score, latest_score, self._fmt_decimal(score_drawdown), self._fmt_decimal(latest_open), self._fmt_decimal(latest_close), self._fmt_decimal(second_open), self._fmt_decimal(second_close), self._fmt_decimal(third_open), self._fmt_decimal(third_close), previous_score, self._fmt_decimal(recent_score_drawdown), self._fmt_decimal(self._decimal_from(open_entry_price, Decimal("0"))) if open_entry_price else "", "+".join(matched_rules), triggered, "、".join(dict.fromkeys(tags)), reason, now_ms)
+        return PositionReductionCheck(symbol, round_ts, self._fmt_decimal(highest), self._fmt_decimal(current_price), self._fmt_decimal(latest_ema16), self._fmt_decimal(latest_ema21), self._fmt_decimal(drawdown), self._fmt_decimal(equity), self._fmt_decimal(two_r), self._fmt_decimal(one_r), self._fmt_decimal(unrealized_pnl), open_score, latest_score, self._fmt_decimal(score_drawdown), self._fmt_decimal(latest_open), self._fmt_decimal(latest_close), self._fmt_decimal(second_open), self._fmt_decimal(second_close), self._fmt_decimal(third_open), self._fmt_decimal(third_close), previous_score, self._fmt_decimal(recent_score_drawdown), self._fmt_decimal(latest_macd), self._fmt_decimal(second_macd), self._fmt_decimal(third_macd), self._fmt_decimal(self._decimal_from(open_entry_price, Decimal("0"))) if open_entry_price else "", "+".join(matched_rules), triggered, "、".join(dict.fromkeys(tags)), reason, now_ms)
 
     def _execute_reduction_actions(self, checks: list[PositionReductionCheck], positions: list[dict[str, Any]], now_ms: int) -> int:
         records = 0
@@ -1645,6 +1676,18 @@ class HoldingPositionScoringSystem:
             return []
         return [(self._decimal_from(row["open"], Decimal("0")), self._decimal_from(row["close"], Decimal("0"))) for row in rows]
 
+
+    def _recent_15m_macds(self, symbol: str, limit: int = 3) -> list[Decimal]:
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT macd FROM macd_indicators WHERE symbol = ? AND interval = '15m' ORDER BY open_time DESC LIMIT ?",
+                    (symbol, limit),
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        return [self._decimal_from(row["macd"], Decimal("0")) for row in rows]
+
     def _position_leverage(self, position: dict[str, Any]) -> Decimal:
         raw = str(position.get("leverage", "")).strip().lower().replace("x", "")
         if raw:
@@ -1920,8 +1963,8 @@ class HoldingPositionScoringSystem:
             conn.execute(
                 f"""
                 INSERT INTO {self.REDUCTION_CHECKS_TABLE}
-                (symbol, decision_round_ts, highest_15m_high, current_price, ema16, ema21, price_drawdown_ratio, account_equity_usdt, two_r_usdt, one_r_usdt, unrealized_pnl, open_total_score, latest_total_score, score_drawdown, latest_15m_open, latest_15m_close, second_15m_open, second_15m_close, third_15m_open, third_15m_close, previous_total_score, recent_score_drawdown, open_entry_price, rule_name, triggered, tag, reason, checked_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (symbol, decision_round_ts, highest_15m_high, current_price, ema16, ema21, price_drawdown_ratio, account_equity_usdt, two_r_usdt, one_r_usdt, unrealized_pnl, open_total_score, latest_total_score, score_drawdown, latest_15m_open, latest_15m_close, second_15m_open, second_15m_close, third_15m_open, third_15m_close, previous_total_score, recent_score_drawdown, latest_macd, second_macd, third_macd, open_entry_price, rule_name, triggered, tag, reason, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
                     highest_15m_high=excluded.highest_15m_high,
                     current_price=excluded.current_price,
@@ -1943,6 +1986,9 @@ class HoldingPositionScoringSystem:
                     third_15m_close=excluded.third_15m_close,
                     previous_total_score=excluded.previous_total_score,
                     recent_score_drawdown=excluded.recent_score_drawdown,
+                    latest_macd=excluded.latest_macd,
+                    second_macd=excluded.second_macd,
+                    third_macd=excluded.third_macd,
                     open_entry_price=excluded.open_entry_price,
                     rule_name=excluded.rule_name,
                     triggered=excluded.triggered,
@@ -1950,7 +1996,7 @@ class HoldingPositionScoringSystem:
                     reason=excluded.reason,
                     checked_at=excluded.checked_at
                 """,
-                (check.symbol, check.decision_round_ts, check.highest_15m_high, check.current_price, check.ema16, check.ema21, check.price_drawdown_ratio, check.account_equity_usdt, check.two_r_usdt, check.one_r_usdt, check.unrealized_pnl, check.open_total_score, check.latest_total_score, check.score_drawdown, check.latest_15m_open, check.latest_15m_close, check.second_15m_open, check.second_15m_close, check.third_15m_open, check.third_15m_close, check.previous_total_score, check.recent_score_drawdown, check.open_entry_price, check.rule_name, int(check.triggered), check.tag, check.reason, check.checked_at),
+                (check.symbol, check.decision_round_ts, check.highest_15m_high, check.current_price, check.ema16, check.ema21, check.price_drawdown_ratio, check.account_equity_usdt, check.two_r_usdt, check.one_r_usdt, check.unrealized_pnl, check.open_total_score, check.latest_total_score, check.score_drawdown, check.latest_15m_open, check.latest_15m_close, check.second_15m_open, check.second_15m_close, check.third_15m_open, check.third_15m_close, check.previous_total_score, check.recent_score_drawdown, check.latest_macd, check.second_macd, check.third_macd, check.open_entry_price, check.rule_name, int(check.triggered), check.tag, check.reason, check.checked_at),
             )
 
     def _save_reduction_record(self, record: PositionReductionRecord) -> None:
