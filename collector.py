@@ -34,10 +34,12 @@ kline_job_running = False
 oi_job_running = False
 funding_job_running = False
 btc_5m_job_running = False
+atr_15m_job_running = False
 kline_job_lock = threading.Lock()
 oi_job_lock = threading.Lock()
 funding_job_lock = threading.Lock()
 btc_5m_job_lock = threading.Lock()
+atr_15m_job_lock = threading.Lock()
 db_write_lock = threading.Lock()
 last_funding_update_hour = None
 
@@ -82,6 +84,7 @@ def init_db():
         conn.execute("PRAGMA journal_mode=WAL;")
 
         init_btc_5m_table(conn)
+        init_atr_15m_table(conn)
 
         for interval in ALL_INTERVALS:
             tbl = table_name(interval)
@@ -147,6 +150,25 @@ def init_btc_5m_table(conn):
     )
     conn.execute(
         f"CREATE INDEX IF NOT EXISTS idx_{BTC_5M_TABLE}_open_time ON {BTC_5M_TABLE}(open_time)"
+    )
+
+
+def init_atr_15m_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS atr_15m_indicators (
+            symbol TEXT NOT NULL,
+            open_time INTEGER NOT NULL,
+            close_time INTEGER NOT NULL,
+            atr14 REAL NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (symbol, open_time)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_atr_15m_symbol_time "
+        "ON atr_15m_indicators(symbol, open_time)"
     )
 
 
@@ -799,6 +821,76 @@ def process_symbol_oi(symbol):
     return symbol, oi_inserted
 
 
+def calculate_atr14_from_15m_rows(rows):
+    """Calculate ATR(14) from 15m kline rows using the latest 14 true ranges."""
+    if len(rows) < 15:
+        return None
+
+    true_ranges = []
+    previous_close = float(rows[0][3])
+    for _open_time, high, low, close, _close_time in rows[1:]:
+        high = float(high)
+        low = float(low)
+        true_ranges.append(
+            max(
+                high - low,
+                abs(high - previous_close),
+                abs(low - previous_close),
+            )
+        )
+        previous_close = float(close)
+
+    return sum(true_ranges[-14:]) / 14
+
+
+def process_symbol_atr_15m(symbol):
+    with get_db_conn() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT open_time, high, low, close, close_time
+            FROM {table_name("15m")}
+            WHERE symbol = ?
+            ORDER BY open_time DESC
+            LIMIT 15
+            """,
+            (symbol,),
+        ).fetchall()
+
+    if len(rows) < 15:
+        return symbol, 0, None
+
+    rows = list(reversed(rows))
+    latest_open_time = int(rows[-1][0])
+    latest_close_time = int(rows[-1][4])
+    expected_close_time = latest_open_time + interval_to_ms("15m") - 1
+    if latest_close_time != expected_close_time:
+        return symbol, 0, None
+
+    atr14 = calculate_atr14_from_15m_rows(rows)
+    if atr14 is None:
+        return symbol, 0, None
+
+    now_ms = int(time.time() * 1000)
+    with db_write_lock:
+        with get_db_conn() as conn:
+            before = conn.total_changes
+            conn.execute(
+                """
+                INSERT INTO atr_15m_indicators
+                (symbol, open_time, close_time, atr14, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, open_time) DO UPDATE SET
+                    close_time=excluded.close_time,
+                    atr14=excluded.atr14,
+                    updated_at=excluded.updated_at
+                """,
+                (symbol, latest_open_time, latest_close_time, atr14, now_ms),
+            )
+            changed = conn.total_changes - before
+
+    return symbol, changed, atr14
+
+
 # ================= 8. 主任务 =================
 def run_kline_main(universe):
     funding_rates = fetch_all_funding_rates()
@@ -842,6 +934,21 @@ def run_oi_main(universe):
                 print(f"✅ {symbol}: inserted_oi_1m={oi_inserted}")
             except Exception as e:
                 print(f"❌ oi symbol task failed: {e}")
+
+
+def run_atr_15m_main(universe):
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = [executor.submit(process_symbol_atr_15m, s) for s in universe]
+
+        for future in as_completed(futures):
+            try:
+                symbol, changed, atr14 = future.result()
+                if atr14 is None:
+                    print(f"⏭️ {symbol}: atr14_15m skipped")
+                    continue
+                print(f"✅ {symbol}: atr14_15m={atr14}, changed={changed}")
+            except Exception as e:
+                print(f"❌ atr 15m symbol task failed: {e}")
 
 
 # ================= 9. 定时任务 =================
@@ -957,6 +1064,34 @@ def btc_5m_job():
 
     btc_5m_job_running = False
 
+
+def atr_15m_job():
+    global atr_15m_job_running
+
+    if atr_15m_job_running:
+        print("⚠️ Skip ATR 15m job (still running)")
+        return
+
+    with atr_15m_job_lock:
+        atr_15m_job_running = True
+
+    print("\n🟠 ATR 15m job start:", time.strftime("%Y-%m-%d %H:%M:%S"))
+    start = time.time()
+
+    try:
+        global UNIVERSE
+
+        if UNIVERSE is None:
+            UNIVERSE = build_universe()
+
+        run_atr_15m_main(UNIVERSE)
+    except Exception as e:
+        print("❌ ATR 15m error:", e)
+
+    print(f"⏱ ATR 15m cost: {round(time.time() - start, 2)}s")
+
+    atr_15m_job_running = False
+
 # ================= 全局 =================
 UNIVERSE = None
 
@@ -971,6 +1106,7 @@ if __name__ == "__main__":
     scheduler.add_job(oi_job, "cron", second=20)
     scheduler.add_job(funding_job, "cron", minute=1, second=40)
     scheduler.add_job(btc_5m_job, "cron", minute="*/5", second=10)
+    scheduler.add_job(atr_15m_job, "cron", minute="*/15", second=30)
 
     print(
         f"🚀 Alpha ∩ Futures Kline System started (source={BASE_INTERVAL}, aggregates={AGG_INTERVALS}, SQLite)"

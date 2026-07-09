@@ -465,6 +465,27 @@ def start_collector_task(symbols: List[str]) -> None:
     scheduler.start()
 
 
+def start_atr_15m_task(symbols: List[str]) -> None:
+    """Run 15m ATR collection in its own scheduler thread.
+
+    ATR is deliberately isolated from the scoring scheduler/process so a failed
+    ATR round is logged by ``collector.atr_15m_job`` and cannot block scoring.
+    """
+    collector.init_db()
+    collector.UNIVERSE = list(symbols)
+
+    def _run_with_fresh_universe():
+        ensure_universe()
+        collector.atr_15m_job()
+
+    scheduler = collector.BlockingScheduler()
+    scheduler.add_job(ensure_universe, "interval", hours=12)
+    scheduler.add_job(_run_with_fresh_universe, "cron", minute="*/15", second=30)
+
+    print("🚀 ATR 15m task started")
+    scheduler.start()
+
+
 def start_processor_task(symbols: List[str]) -> None:
     init_ma20_table(db_path=collector.DB_PATH)
     init_ema_table(db_path=collector.DB_PATH)
@@ -489,11 +510,16 @@ if __name__ == "__main__":
     # 预先构建一次 universe，并按12小时周期刷新
     symbols = ensure_universe()
 
-    # 五个独立 task：collector / pre_safety（异常插针后立即执行冷却期symbol） / break_even_take_profit / 加仓预触发刷新 / data_processor
+    # 六个独立 task：collector / ATR 15m / pre_safety（异常插针后立即执行冷却期symbol） / break_even_take_profit / 加仓预触发刷新 / data_processor
     collector_thread = threading.Thread(
         target=start_collector_task, args=(symbols,), daemon=True
     )
     collector_thread.start()
+
+    atr_15m_thread = threading.Thread(
+        target=start_atr_15m_task, args=(symbols,), daemon=True
+    )
+    atr_15m_thread.start()
 
     pre_safety_thread = threading.Thread(target=start_pre_safety_task, daemon=True)
     pre_safety_thread.start()
