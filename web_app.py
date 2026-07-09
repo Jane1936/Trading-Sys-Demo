@@ -132,7 +132,7 @@ def _format_decimal_display(value: Decimal) -> str:
     return normalized or "0"
 
 
-def _trading_used_margin_text(position_snapshots: list[object]) -> str:
+def _trading_used_margin(position_snapshots: list[object]) -> Decimal:
     total = Decimal("0")
     for row in position_snapshots:
         try:
@@ -149,7 +149,21 @@ def _trading_used_margin_text(position_snapshots: list[object]) -> str:
         ):
             continue
         total += abs(position_amt) * mark_price / leverage
-    return _format_decimal_display(total)
+    return total
+
+
+def _trading_used_margin_text(position_snapshots: list[object]) -> str:
+    return _format_decimal_display(_trading_used_margin(position_snapshots))
+
+
+def _trading_open_increase_blocked(account_equity_usdt: object, position_snapshots: list[object]) -> bool:
+    try:
+        account_equity = Decimal(str(account_equity_usdt))
+    except Exception:
+        return False
+    if not account_equity.is_finite() or account_equity <= 0:
+        return False
+    return _trading_used_margin(position_snapshots) > account_equity
 
 
 def _raw_response_contains_order_id(raw_response: object, order_id: object) -> bool:
@@ -696,6 +710,7 @@ def abnormal_wicks():
     })
     trading_position_snapshots = trading_experiment.latest_position_snapshots(limit=100)
     trading_used_margin_usdt = _trading_used_margin_text(trading_position_snapshots)
+    trading_open_increase_blocked = _trading_open_increase_blocked(trading_equity, trading_position_snapshots)
     trading_error_records = trading_experiment.recent_error_records(limit=100, since_ms=trading_records_since_ms)
     trading_equity_trend_rows = _experiment_equity_trend_rows(trading_records_since_ms)
     zombie_force_liquidation = ZombieForceLiquidationModule(db_path=DB_PATH)
@@ -790,6 +805,7 @@ def abnormal_wicks():
         trading_new_open_symbols=trading_new_open_symbols,
         trading_position_snapshots=trading_position_snapshots,
         trading_used_margin_usdt=trading_used_margin_usdt,
+        trading_open_increase_blocked=trading_open_increase_blocked,
         trading_error_records=trading_error_records,
         trading_equity_trend_rows=trading_equity_trend_rows,
         zombie_force_liquidation_records=zombie_force_liquidation_records,

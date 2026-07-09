@@ -275,6 +275,11 @@ class TradingExperiment:
             available_balance = self._decimal_from(account.get("availableBalance"), Decimal("0"))
             account_equity = self._fetch_experiment_usdt_equity()
             max_loss = account_equity * self.config.risk_fraction
+            reserved_margin_budget = self._reserved_margin_from_positions(positions)
+            if self._equity_below_used_margin(account_equity, reserved_margin_budget):
+                self._record_skip(candidate, account_equity, max_loss, "experiment_equity_below_used_margin_open_increase_blocked")
+                skipped += 1
+                break
             trade_plan = self._trade_plan(candidate, account_equity)
             required_margin = trade_plan.required_margin_usdt
             if reserved_margin_budget + required_margin > account_equity:
@@ -1235,6 +1240,10 @@ class TradingExperiment:
     @classmethod
     def _candidate_distance_ratio(cls, candidate: OpenableSymbol) -> Decimal:
         return cls._decimal_from(candidate.stop_loss_distance_ratio, Decimal("0"))
+
+    @staticmethod
+    def _equity_below_used_margin(account_equity: Decimal, used_margin: Decimal) -> bool:
+        return account_equity > 0 and used_margin > account_equity
 
     def _reserved_margin_from_positions(self, positions: Iterable[dict[str, Any]]) -> Decimal:
         reserved = Decimal("0")
