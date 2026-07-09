@@ -978,7 +978,7 @@
           <div class="symbol-strip">
             <div><strong>减仓条件模块：本轮执行结果</strong></div>
             {% if holding_reduction_round_ts %}
-              <div class="muted">最近判断轮次：{{ holding_reduction_round_ts|fmt_ms_datetime }}。该15分钟定时任务会等待本轮EMA/MACD数据计算完成后，才在“持仓评分系统：止损规则判断结果”完成并落库后执行；规则二检查当前价格低于15分钟EMA16、未变现盈利小于2R以及最近3条MACD连续走弱，规则三检查价格、最近一次总分大幅回撤以及最近3次总分连续弱化，规则五检查当前价格低于15分钟EMA21、当前价格≤开仓价，且最近3条15分钟K线中至少2条收盘价低于开盘价；满足后标记“深度弱势”，且每个新开仓生命周期内仅触发一次；原规则四（最新总分&lt;40即触发“评分进入危险区”）已删除，不再作为减仓触发条件。</div>
+              <div class="muted">最近判断轮次：{{ holding_reduction_round_ts|fmt_ms_datetime }}。该15分钟定时任务会等待本轮EMA/MACD数据计算完成后，才在“持仓评分系统：止损规则判断结果”完成并落库后执行；规则二检查当前价格低于15分钟EMA16、未变现盈利小于2R以及最近3条MACD连续走弱，规则五检查当前价格低于15分钟EMA21、当前价格≤开仓价，且最近3条15分钟K线中至少2条收盘价低于开盘价；满足后标记“深度弱势”，且每个新开仓生命周期内仅触发一次；原规则三与原规则四（最新总分&lt;40即触发“评分进入危险区”）已删除，不再作为减仓触发条件。</div>
             {% else %}
               <div class="muted">暂无减仓条件模块执行结果。</div>
             {% endif %}
@@ -993,7 +993,7 @@
               <div class="chips"><span class="chip">本轮无触发减仓条件symbol</span></div>
             {% endif %}
           </div>
-          <div class="tip">规则二：若最近90分钟内已触发过规则二，则本轮跳过规则二检查，并打灰色 tag“90分钟内已触发趋势走弱”；否则若当前价格 &lt; 15分钟EMA16，且当前未变现盈利 &lt; 2R；再查询最近3条MACD数据，若最近第3条MACD &gt; 最近第2条MACD &gt; 最近第1条MACD，则代表该 symbol 触发“趋势走弱”，tag 标记为“趋势走弱”。<br>规则三：对当前已持仓 symbol 查询最近3条15分钟K线 high 并取最高价 highest；若当前价从 highest 回撤 ≥ 3.5%，则检查当前未变现盈亏是否 &lt; 2R（2R = 实验组USDT净值 × 2%）；若满足，再查询最近3条总分数据。最新总分低于上一次总分、上一次总分低于上上次总分，并且最新总分相对上一轮总分回撤 ≥ 18分时，tag 标记为“绝对分数大幅回撤”。<br>规则五：对于当前已持仓的 symbol，查询15分钟EMA21、当前价格、“交易实验交易记录”中匹配到的开仓价，以及最近3条15分钟K线。若当前价格 &lt; 15分钟EMA21，且当前价格 ≤ 开仓价，并且最近3条15分钟K线中存在两条及以上满足收盘价低于开盘价，则说明该 symbol 已触发“深度弱势”，tag 标记为“深度弱势”，并将此条减仓记录数据库落表；每个新开仓的 symbol 在它的生命周期内只能触发一次规则五。<br>原规则四（最新总分 &lt; 40分即触发“评分进入危险区”）已删除，不再作为减仓触发条件。<br>减仓操作：若同时满足多个规则，按当前最高优先级规则执行；规则五减仓50%，规则三减仓30%，规则二减仓25%。触发减仓时会先取消原限价单，按剩余仓位数量重挂新的限价单，再调用市价单接口卖出对应减仓数量。</div>
+          <div class="tip">规则二：若最近90分钟内已触发过规则二，则本轮跳过规则二检查，并打灰色 tag“90分钟内已触发趋势走弱”；否则若当前价格 &lt; 15分钟EMA16，且当前未变现盈利 &lt; 2R；再查询最近3条MACD数据，若最近第3条MACD &gt; 最近第2条MACD &gt; 最近第1条MACD，则代表该 symbol 触发“趋势走弱”，tag 标记为“趋势走弱”。<br>规则五：对于当前已持仓的 symbol，查询15分钟EMA21、当前价格、“交易实验交易记录”中匹配到的开仓价，以及最近3条15分钟K线。若当前价格 &lt; 15分钟EMA21，且当前价格 ≤ 开仓价，并且最近3条15分钟K线中存在两条及以上满足收盘价低于开盘价，则说明该 symbol 已触发“深度弱势”，tag 标记为“深度弱势”，并将此条减仓记录数据库落表；每个新开仓的 symbol 在它的生命周期内只能触发一次规则五。<br>原规则三（绝对分数大幅回撤）与原规则四（最新总分 &lt; 40分即触发“评分进入危险区”）已删除，不再作为减仓触发条件。<br>减仓操作：若同时满足多个规则，按当前最高优先级规则执行；规则五减仓50%，规则二减仓25%。触发减仓时会先取消原限价单，按剩余仓位数量重挂新的限价单，再调用市价单接口卖出对应减仓数量。</div>
           <div class="table-wrap">
             <table>
               <thead>
@@ -1005,18 +1005,15 @@
                   <th>最近15m open/close</th>
                   <th>最近第二条15m open/close</th>
                   <th>最近第三条15m open/close</th>
-                  <th>highest</th>
                   <th>current_price</th>
+                  <th>ATR(14)</th>
                   <th>EMA16 / EMA21</th>
                   <th>最近3条MACD（第1/第2/第3）</th>
-                  <th>价格回撤</th>
                   <th>未变现盈亏 / 1R / 2R</th>
                   <th>开仓总分</th>
                   <th>开仓价</th>
                   <th>最新总分</th>
-                  <th>上次总分</th>
                   <th>开仓分数回撤</th>
-                  <th>最近一次分数回撤</th>
                   <th>reason</th>
                   <th>checked_at</th>
                 </tr>
@@ -1041,22 +1038,18 @@
                   <td>{{ row.latest_15m_open if row.latest_15m_open else '-' }} / {{ row.latest_15m_close if row.latest_15m_close else '-' }}</td>
                   <td>{{ row.second_15m_open if row.second_15m_open else '-' }} / {{ row.second_15m_close if row.second_15m_close else '-' }}</td>
                   <td>{{ row.third_15m_open if row.third_15m_open else '-' }} / {{ row.third_15m_close if row.third_15m_close else '-' }}</td>
-                  <td>{{ row.highest_15m_high }}</td>
                   <td>
                     {% set current_price_decimal = row.current_price|float %}
                     {% set open_entry_price_decimal = row.open_entry_price|float %}
                     <span class="{{ 'reduction-current-price-danger' if open_entry_price_decimal > 0 and current_price_decimal <= open_entry_price_decimal else '' }}">{{ row.current_price }}</span>
                   </td>
+                  <td>{{ row.atr14 if row.atr14 else '-' }}</td>
                   <td>
                     {% set ema16_decimal = row.ema16|float %}
                     {% set ema21_decimal = row.ema21|float %}
                     <span class="{{ 'reduction-current-price-danger' if ema16_decimal > current_price_decimal else '' }}">{{ row.ema16 if row.ema16 else '-' }}</span> / <span class="{{ 'reduction-current-price-danger' if ema21_decimal > current_price_decimal else '' }}">{{ row.ema21 if row.ema21 else '-' }}</span>
                   </td>
                   <td>{{ row.latest_macd if row.latest_macd else '-' }} / {{ row.second_macd if row.second_macd else '-' }} / {{ row.third_macd if row.third_macd else '-' }}</td>
-                  <td>
-                    {% set price_drawdown_percent = (row.price_drawdown_ratio|float) * 100 %}
-                    <span class="reduction-metric {{ 'reduction-drawdown-danger' if price_drawdown_percent >= 3.5 else 'reduction-drawdown-warning' if price_drawdown_percent >= 3 else 'reduction-metric-neutral' }}">{{ '%.2f%%'|format(price_drawdown_percent) }}</span>
-                  </td>
                   <td>
                     {% set one_r = row.one_r_usdt|float %}
                     {% set pnl_r_multiple = (row.unrealized_pnl|float) / one_r if one_r > 0 else 0 %}
@@ -1065,22 +1058,15 @@
                   <td>{{ row.open_total_score if row.open_total_score else '-' }}</td>
                   <td>{{ row.open_entry_price if row.open_entry_price else '-' }}</td>
                   <td>{{ row.latest_total_score if row.latest_total_score else '-' }}</td>
-                  <td>{{ row.previous_total_score if row.previous_total_score else '-' }}</td>
                   <td>
                     {% set open_score_delta = -(row.score_drawdown|float) %}
                     <span class="score-delta {{ 'score-delta-positive' if open_score_delta > 0 else 'score-delta-negative' if open_score_delta < 0 else 'score-delta-zero' }}">{{ '%+.2f分'|format(open_score_delta) if open_score_delta != 0 else '0.00分' }}</span>
-                  </td>
-                  <td>
-                    {% if row.recent_score_drawdown %}
-                      {% set recent_score_delta = -(row.recent_score_drawdown|float) %}
-                      <span class="score-delta {{ 'score-delta-positive' if recent_score_delta > 0 else 'score-delta-negative' if recent_score_delta < 0 else 'score-delta-zero' }}">{{ '%+.2f分'|format(recent_score_delta) if recent_score_delta != 0 else '0.00分' }}</span>
-                    {% else %}-{% endif %}
                   </td>
                   <td>{{ row.reason }}</td>
                   <td>{{ row.checked_at|fmt_ms_datetime }}</td>
                 </tr>
                 {% else %}
-                <tr><td class="empty" colspan="21">暂无减仓条件模块执行结果</td></tr>
+                <tr><td class="empty" colspan="18">暂无减仓条件模块执行结果</td></tr>
                 {% endfor %}
               </tbody>
             </table>

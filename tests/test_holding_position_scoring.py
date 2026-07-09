@@ -472,7 +472,7 @@ def test_reduce_only_rejection_records_positions_and_open_order_diagnostics():
     assert "open_orders=[{symbol=BANKUSDT, side=SELL, type=STOP_MARKET" in records[0]["reason"]
     assert "open_algo_orders=[{symbol=BANKUSDT, side=SELL, type=TAKE_PROFIT_MARKET" in records[0]["reason"]
 
-def test_position_reduction_rule_tags_absolute_score_large_drawdown():
+def test_position_reduction_rule3_absolute_score_large_drawdown_is_removed():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
@@ -505,13 +505,13 @@ def test_position_reduction_rule_tags_absolute_score_large_drawdown():
         round_ts, checks = scoring.get_latest_reduction_checks()
 
     assert result["reduction_checked"] == 1
-    assert result["reduction_triggered"] == 1
+    assert result["reduction_triggered"] == 0
     assert round_ts == 4000
     assert checks[0]["symbol"] == "BANK"
-    assert checks[0]["triggered"] == 1
-    assert checks[0]["tag"] == "绝对分数大幅回撤"
-    assert checks[0]["reason"] == "absolute_score_large_drawdown"
-    assert checks[0]["rule_name"] == "规则三"
+    assert checks[0]["triggered"] == 0
+    assert checks[0]["tag"] == ""
+    assert "absolute_score_large_drawdown" not in checks[0]["reason"]
+    assert checks[0]["rule_name"] == ""
     assert checks[0]["highest_15m_high"] == "10"
     assert checks[0]["current_price"] == "8"
     assert checks[0]["two_r_usdt"] == "20"
@@ -626,7 +626,7 @@ def test_position_reduction_rule2_skips_when_recent_trend_weakening_triggered():
     assert second_checks[0].triggered is False
     assert second_checks[0].tag == "90分钟内已触发趋势走弱"
     assert second_checks[0].rule_name == ""
-    assert second_checks[0].reason == "rule2_skipped_recent_trend_weakening_within_90m; rule3_price_drawdown_lt_3_5_percent; rule5_missing_open_entry_price"
+    assert second_checks[0].reason == "rule2_skipped_recent_trend_weakening_within_90m; rule5_missing_open_entry_price"
 
 def test_position_reduction_no_longer_triggers_on_removed_rule_four_score_danger_zone():
     fake_account = FakeAccountManager()
@@ -903,21 +903,8 @@ def test_reduction_action_skips_replacement_stop_that_would_immediately_trigger_
         result = scoring.run_round(decision_round_ts=4000)
         records = scoring.recent_reduction_records()
 
-    assert result["reduction_records"] == 1
-    assert records[0]["matched_rule"] == "规则三"
-    assert records[0]["reduction_percent"] == "0.3"
-    assert records[0]["reduced_quantity"] == "0.6"
-    assert records[0]["remaining_quantity"] == "1.4"
-    assert records[0]["new_limit_order_id"] == ""
-    assert records[0]["market_order_id"] == "123"
-    assert records[0]["status"] == "failed"
-    assert "reduction_replacement_stop_skipped_immediate_trigger" in records[0]["reason"]
-    assert fake_account.signed_posts == [
-        (
-            "/fapi/v1/order",
-            {"symbol": "BANKUSDT", "side": "SELL", "type": "MARKET", "quantity": "0.6", "reduceOnly": "true", "newOrderRespType": "RESULT"},
-        )
-    ]
+    assert result["reduction_records"] == 0
+    assert records == []
 
 def test_position_increase_triggers_first_add_once_per_open_lifecycle():
     fake_account = FakeAccountManager()
