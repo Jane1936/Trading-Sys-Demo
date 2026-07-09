@@ -32,6 +32,7 @@ from zombie_force_liquidation import ZombieForceLiquidationModule
 app = Flask(__name__)
 
 DB_PATH = os.getenv("DB_PATH", collector.DB_PATH)
+DEFAULT_TRADING_EQUITY_USDT = Decimal("1000")
 
 
 def _score_band_context() -> tuple[list[dict], str, str, int]:
@@ -164,6 +165,17 @@ def _trading_open_increase_blocked(account_equity_usdt: object, position_snapsho
     if not account_equity.is_finite() or account_equity <= 0:
         return False
     return _trading_used_margin(position_snapshots) > account_equity
+
+
+def _latest_trading_equity_usdt(equity_trend_rows: list[object]) -> object:
+    if not equity_trend_rows:
+        return DEFAULT_TRADING_EQUITY_USDT
+    latest_row = equity_trend_rows[-1]
+    try:
+        equity = latest_row["account_equity_usdt"]
+    except Exception:
+        equity = getattr(latest_row, "account_equity_usdt", None)
+    return equity if equity not in (None, "") else DEFAULT_TRADING_EQUITY_USDT
 
 
 def _raw_response_contains_order_id(raw_response: object, order_id: object) -> bool:
@@ -710,9 +722,10 @@ def abnormal_wicks():
     })
     trading_position_snapshots = trading_experiment.latest_position_snapshots(limit=100)
     trading_used_margin_usdt = _trading_used_margin_text(trading_position_snapshots)
+    trading_equity_trend_rows = _experiment_equity_trend_rows(trading_records_since_ms)
+    trading_equity = _latest_trading_equity_usdt(trading_equity_trend_rows)
     trading_open_increase_blocked = _trading_open_increase_blocked(trading_equity, trading_position_snapshots)
     trading_error_records = trading_experiment.recent_error_records(limit=100, since_ms=trading_records_since_ms)
-    trading_equity_trend_rows = _experiment_equity_trend_rows(trading_records_since_ms)
     zombie_force_liquidation = ZombieForceLiquidationModule(db_path=DB_PATH)
     zombie_force_liquidation_records = zombie_force_liquidation.recent_records(limit=100, since_ms=trading_records_since_ms)
     holding_scoring = HoldingPositionScoringSystem(db_path=DB_PATH)
@@ -806,6 +819,7 @@ def abnormal_wicks():
         trading_position_snapshots=trading_position_snapshots,
         trading_used_margin_usdt=trading_used_margin_usdt,
         trading_open_increase_blocked=trading_open_increase_blocked,
+        trading_equity_usdt=trading_equity,
         trading_error_records=trading_error_records,
         trading_equity_trend_rows=trading_equity_trend_rows,
         zombie_force_liquidation_records=zombie_force_liquidation_records,

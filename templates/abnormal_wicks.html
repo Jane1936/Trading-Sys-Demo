@@ -1280,7 +1280,7 @@
             <div class="chips">
               <span class="chip">当前总风险：{{ holding_portfolio_risk.total_risk if holding_portfolio_risk else '0' }}</span>
               <span class="chip">持仓数：{{ holding_portfolio_risk.position_count if holding_portfolio_risk else 0 }}（不设数量上限）</span>
-              <span class="chip">实验组USDT净值：{{ holding_portfolio_risk.account_equity_usdt if holding_portfolio_risk else '0' }}</span>
+              <span class="chip">实验组USDT净值：{{ holding_portfolio_risk.account_equity_usdt if holding_portfolio_risk else trading_equity_usdt }}</span>
             </div>
           </div>
           <div class="tip">当前总风险 = Σ((第i个仓位的持仓数量 × latest_15m_close) / 当前实验组USDT净值 × 第i个仓位杠杆)。下表按当前全部持仓逐仓展示 risk_i 与最新 total_score；若当前总风险 > 18，会选择 total_score 最低的持仓并立即通过 reduceOnly MARKET 市价单全平。</div>
