@@ -642,7 +642,7 @@
 
       <div id="score-rule-12" class="score-rule-panel">
         {% if score_rule12_round_ts %}
-        <div class="tip">规则12轮次：{{ score_rule12_round_ts|fmt_ms_datetime }}</div>
+        <div class="tip">规则12轮次：{{ score_rule12_round_ts|fmt_ms_datetime }}。要求最近4条15m资金费率均在(0.01, 0.1)，满足则得{{ rule_score_weights[12] }}分。</div>
         {% endif %}
         <div class="table-wrap"><table>
           <thead><tr><th>symbol</th><th>score</th><th>funding_rate_latest</th><th>funding_rate_prev1</th><th>funding_rate_prev2</th><th>funding_rate_prev3</th><th>reason</th><th>updated_at</th></tr></thead>
