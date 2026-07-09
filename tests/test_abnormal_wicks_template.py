@@ -7,7 +7,12 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pre_safety_module import PreSafetyModule
-from web_app import _trading_open_increase_blocked, _trading_used_margin_text
+from web_app import (
+    DEFAULT_TRADING_EQUITY_USDT,
+    _latest_trading_equity_usdt,
+    _trading_open_increase_blocked,
+    _trading_used_margin_text,
+)
 
 
 def test_trading_position_snapshots_show_used_margin_summary():
@@ -20,6 +25,7 @@ def test_trading_position_snapshots_show_used_margin_summary():
 
     assert snapshot_index < used_margin_index < block_notice_index < table_index
     assert "trading_open_increase_blocked" in template
+    assert "trading_equity_usdt" in template
 
 
 def test_trading_used_margin_sums_abs_position_amt_times_mark_price_divided_by_leverage():
@@ -41,6 +47,16 @@ def test_trading_open_increase_blocked_when_used_margin_exceeds_equity():
 
     assert _trading_open_increase_blocked("199.99", snapshots) is True
     assert _trading_open_increase_blocked("200", snapshots) is False
+
+
+def test_latest_trading_equity_usdt_reads_last_trend_row_or_default():
+    rows = [
+        {"account_equity_usdt": 100.0},
+        {"account_equity_usdt": 125.5},
+    ]
+
+    assert _latest_trading_equity_usdt(rows) == 125.5
+    assert _latest_trading_equity_usdt([]) == DEFAULT_TRADING_EQUITY_USDT
 
 
 def test_zombie_force_liquidation_records_render_above_trade_records():
