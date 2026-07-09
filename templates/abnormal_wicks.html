@@ -76,6 +76,7 @@
     .reduction-tags { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
     .reduction-tag { display:inline-flex; align-items:center; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:800; border:1px solid transparent; white-space:nowrap; }
     .reduction-tag-rule2 { background:#ffedd5; color:#c2410c; border-color:#fdba74; }
+    .reduction-tag-rule2-cooldown { background:#f1f5f9; color:#64748b; border-color:#cbd5e1; }
     .reduction-tag-rule3 { background:#fef3c7; color:#92400e; border-color:#fbbf24; }
     .reduction-tag-rule4 { background:#ede9fe; color:#5b21b6; border-color:#c4b5fd; }
     .reduction-tag-rule5 { background:#dcfce7; color:#166534; border-color:#86efac; }
@@ -984,14 +985,14 @@
             {% if triggered_reduction_checks %}
               <div class="chips">
                 {% for row in triggered_reduction_checks %}
-                  <span class="reduction-tags" title="{{ row.reason }}"><span class="chip">{{ row.symbol }}</span>{% for tag in row.tag.split('、') %}{% if tag == '趋势走弱' or tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>{% elif tag == '绝对分数大幅回撤' %}<span class="reduction-tag reduction-tag-rule3">{{ tag }}</span>{% elif tag == '评分进入危险区' %}<span class="reduction-tag reduction-tag-rule4">{{ tag }}</span>{% elif tag == '中危险区+价格确认' or tag == '深度弱势' %}<span class="reduction-tag reduction-tag-rule5">{{ tag }}</span>{% else %}<span class="reduction-tag reduction-tag-default">{{ tag }}</span>{% endif %}{% endfor %}</span>
+                  <span class="reduction-tags" title="{{ row.reason }}"><span class="chip">{{ row.symbol }}</span>{% for tag in row.tag.split('、') %}{% if tag == '90分钟内已触发趋势走弱' %}<span class="reduction-tag reduction-tag-rule2-cooldown">{{ tag }}</span>{% elif tag == '趋势走弱' or tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>{% elif tag == '绝对分数大幅回撤' %}<span class="reduction-tag reduction-tag-rule3">{{ tag }}</span>{% elif tag == '评分进入危险区' %}<span class="reduction-tag reduction-tag-rule4">{{ tag }}</span>{% elif tag == '中危险区+价格确认' or tag == '深度弱势' %}<span class="reduction-tag reduction-tag-rule5">{{ tag }}</span>{% else %}<span class="reduction-tag reduction-tag-default">{{ tag }}</span>{% endif %}{% endfor %}</span>
                 {% endfor %}
               </div>
             {% else %}
               <div class="chips"><span class="chip">本轮无触发减仓条件symbol</span></div>
             {% endif %}
           </div>
-          <div class="tip">规则二：若当前价格 &lt; 15分钟EMA16，且当前未变现盈利 &lt; 2R；再查询最近3条MACD数据，若最近第3条MACD &gt; 最近第2条MACD &gt; 最近第1条MACD，则代表该 symbol 触发“趋势走弱”，tag 标记为“趋势走弱”。<br>规则三：对当前已持仓 symbol 查询最近3条15分钟K线 high 并取最高价 highest；若当前价从 highest 回撤 ≥ 3.5%，则检查当前未变现盈亏是否 &lt; 2R（2R = 实验组USDT净值 × 2%）；若满足，再查询最近3条总分数据。最新总分低于上一次总分、上一次总分低于上上次总分，并且最新总分相对上一轮总分回撤 ≥ 18分时，tag 标记为“绝对分数大幅回撤”。<br>规则五：对于当前已持仓的 symbol，查询15分钟EMA21、当前价格、“交易实验交易记录”中匹配到的开仓价，以及最近3条15分钟K线。若当前价格 &lt; 15分钟EMA21，且当前价格 ≤ 开仓价，并且最近3条15分钟K线中存在两条及以上满足收盘价低于开盘价，则说明该 symbol 已触发“深度弱势”，tag 标记为“深度弱势”，并将此条减仓记录数据库落表；每个新开仓的 symbol 在它的生命周期内只能触发一次规则五。<br>原规则四（最新总分 &lt; 40分即触发“评分进入危险区”）已删除，不再作为减仓触发条件。<br>减仓操作：若同时满足多个规则，按当前最高优先级规则执行；规则五减仓50%，规则三减仓30%，规则二减仓25%。触发减仓时会先取消原限价单，按剩余仓位数量重挂新的限价单，再调用市价单接口卖出对应减仓数量。</div>
+          <div class="tip">规则二：若最近90分钟内已触发过规则二，则本轮跳过规则二检查，并打灰色 tag“90分钟内已触发趋势走弱”；否则若当前价格 &lt; 15分钟EMA16，且当前未变现盈利 &lt; 2R；再查询最近3条MACD数据，若最近第3条MACD &gt; 最近第2条MACD &gt; 最近第1条MACD，则代表该 symbol 触发“趋势走弱”，tag 标记为“趋势走弱”。<br>规则三：对当前已持仓 symbol 查询最近3条15分钟K线 high 并取最高价 highest；若当前价从 highest 回撤 ≥ 3.5%，则检查当前未变现盈亏是否 &lt; 2R（2R = 实验组USDT净值 × 2%）；若满足，再查询最近3条总分数据。最新总分低于上一次总分、上一次总分低于上上次总分，并且最新总分相对上一轮总分回撤 ≥ 18分时，tag 标记为“绝对分数大幅回撤”。<br>规则五：对于当前已持仓的 symbol，查询15分钟EMA21、当前价格、“交易实验交易记录”中匹配到的开仓价，以及最近3条15分钟K线。若当前价格 &lt; 15分钟EMA21，且当前价格 ≤ 开仓价，并且最近3条15分钟K线中存在两条及以上满足收盘价低于开盘价，则说明该 symbol 已触发“深度弱势”，tag 标记为“深度弱势”，并将此条减仓记录数据库落表；每个新开仓的 symbol 在它的生命周期内只能触发一次规则五。<br>原规则四（最新总分 &lt; 40分即触发“评分进入危险区”）已删除，不再作为减仓触发条件。<br>减仓操作：若同时满足多个规则，按当前最高优先级规则执行；规则五减仓50%，规则三减仓30%，规则二减仓25%。触发减仓时会先取消原限价单，按剩余仓位数量重挂新的限价单，再调用市价单接口卖出对应减仓数量。</div>
           <div class="table-wrap">
             <table>
               <thead>
@@ -1027,7 +1028,7 @@
                   <td>{% if row.tag %}
                     <span class="reduction-tags">
                       {% for tag in row.tag.split('、') %}
-                        {% if tag == '趋势走弱' or tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>
+                        {% if tag == '90分钟内已触发趋势走弱' %}<span class="reduction-tag reduction-tag-rule2-cooldown">{{ tag }}</span>{% elif tag == '趋势走弱' or tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>
                         {% elif tag == '绝对分数大幅回撤' %}<span class="reduction-tag reduction-tag-rule3">{{ tag }}</span>
                         {% elif tag == '评分进入危险区' %}<span class="reduction-tag reduction-tag-rule4">{{ tag }}</span>
                         {% elif tag == '中危险区+价格确认' or tag == '深度弱势' %}<span class="reduction-tag reduction-tag-rule5">{{ tag }}</span>

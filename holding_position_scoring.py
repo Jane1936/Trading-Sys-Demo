@@ -193,6 +193,8 @@ class HoldingPositionScoringSystem:
     INCREASE_TAG_FIRST_COMPLETED = "已完成第一次加仓"
     REDUCTION_TAG_ABSOLUTE_SCORE_DRAWDOWN = "绝对分数大幅回撤"
     REDUCTION_TAG_TREND_WEAKENING = "趋势走弱"
+    REDUCTION_TAG_TREND_WEAKENING_COOLDOWN = "90分钟内已触发趋势走弱"
+    REDUCTION_RULE2_COOLDOWN_MS = 90 * 60 * 1000
     REDUCTION_TAG_SCORE_DANGER_ZONE = "评分进入危险区"
     REDUCTION_TAG_MEDIUM_DANGER_PRICE_CONFIRMATION = "中危险区+价格确认"
     REDUCTION_TAG_DEEP_WEAKNESS = "深度弱势"
@@ -672,7 +674,11 @@ class HoldingPositionScoringSystem:
         third_open = third_kline[0] if third_kline else Decimal("0")
         third_close = third_kline[1] if third_kline else Decimal("0")
         latest_ema16, latest_ema21 = self._latest_15m_emas(symbol, round_ts)
-        if current_price <= 0:
+        rule2_in_cooldown = self._has_recent_rule2_trigger(symbol, now_ms)
+        if rule2_in_cooldown:
+            tags.append(self.REDUCTION_TAG_TREND_WEAKENING_COOLDOWN)
+            reasons.append("rule2_skipped_recent_trend_weakening_within_90m")
+        elif current_price <= 0:
             reasons.append("rule2_missing_current_price")
         elif latest_ema16 <= 0:
             reasons.append("rule2_missing_15m_ema16")
@@ -1218,6 +1224,26 @@ class HoldingPositionScoringSystem:
                 f"SELECT 1 FROM {self.REDUCTION_RECORDS_TABLE} WHERE symbol = ? AND matched_rule LIKE ? AND created_at >= ? LIMIT 1",
                 (symbol, "%规则五%", lifecycle_started_at),
             ).fetchone()
+        return row is not None
+
+    def _has_recent_rule2_trigger(self, symbol: str, now_ms: int) -> bool:
+        cutoff = int(now_ms) - self.REDUCTION_RULE2_COOLDOWN_MS
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    f"""
+                    SELECT 1
+                    FROM {self.REDUCTION_CHECKS_TABLE}
+                    WHERE symbol = ?
+                      AND triggered = 1
+                      AND rule_name LIKE ?
+                      AND checked_at >= ?
+                    LIMIT 1
+                    """,
+                    (symbol, "%规则二%", cutoff),
+                ).fetchone()
+        except sqlite3.Error:
+            return False
         return row is not None
 
     def evaluate_increase_conditions(
