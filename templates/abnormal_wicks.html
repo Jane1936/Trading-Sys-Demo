@@ -73,6 +73,7 @@
     .section-title-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
     .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
     .chip { padding: 4px 10px; border-radius: 999px; background: #dbeafe; color: #1e3a8a; font-size: 12px; font-weight: 600; }
+    .chip.danger { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
     .reduction-tags { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
     .reduction-tag { display:inline-flex; align-items:center; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:800; border:1px solid transparent; white-space:nowrap; }
     .reduction-tag-rule2 { background:#ffedd5; color:#c2410c; border-color:#fdba74; }
@@ -1954,7 +1955,10 @@
           <div class="symbol-strip">
             <div><strong>交易实验持仓快照</strong></div>
             <div class="muted">展示最近一次由交易实验模块写入的 Futures 持仓快照。</div>
-            <div class="chips"><span class="chip">已用资金：{{ trading_used_margin_usdt }} USDT</span></div>
+            <div class="chips">
+              <span class="chip">已用资金：{{ trading_used_margin_usdt }} USDT</span>
+              {% if trading_open_increase_blocked %}<span class="chip danger">禁止任何新开仓/加仓</span>{% endif %}
+            </div>
           </div>
           <div class="table-wrap">
           <table>

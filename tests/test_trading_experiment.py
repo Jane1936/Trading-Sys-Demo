@@ -125,6 +125,15 @@ class ProfitableExperimentBudgetAccountManager(FakeAccountManager):
             return [{"symbol": "OLDUSDT", "positionAmt": "1100", "notional": "1100", "leverage": "1"}]
         return super()._signed_get(endpoint, params)
 
+
+class EquityBelowUsedMarginAccountManager(FakeAccountManager):
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/balance":
+            return [{"asset": "USDT", "balance": "4282"}]
+        if endpoint == "/fapi/v3/positionRisk" and not params:
+            return [{"symbol": "OLDUSDT", "positionAmt": "1204.75", "notional": "1204.75", "leverage": "1"}]
+        return super()._signed_get(endpoint, params)
+
 class CoarseLotAccountManager(FakeAccountManager):
     def _public_get(self, endpoint, params=None):
         if endpoint == "/fapi/v1/exchangeInfo":
@@ -774,6 +783,39 @@ class TradingExperimentSymbolTests(unittest.TestCase):
 
     def test_current_decision_round_ts_uses_15_minute_floor(self):
         self.assertEqual(TradingExperiment.current_decision_round_ts(now_ms=1_830_000), 1_800_000)
+
+
+    def test_run_round_blocks_new_entries_when_equity_below_used_margin(self):
+        fake_account = EquityBelowUsedMarginAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+            )
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=90,
+                score_band="确定性强趋势单",
+                stop_loss_distance_ratio=0.10,
+                distance_threshold=0.08,
+                stop_loss_distance_tier="A档",
+                opening_leverage="10x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            result = experiment.run_round([candidate])
+            with sqlite3.connect(experiment.db_path) as conn:
+                rows = conn.execute(
+                    f"SELECT status, reason FROM {TradingExperiment.TRADES_TABLE} ORDER BY id DESC"
+                ).fetchall()
+
+        self.assertEqual(result, {"opened": 0, "skipped": 1, "reason": "completed"})
+        self.assertEqual(rows[0], ("skipped", "experiment_equity_below_used_margin_open_increase_blocked"))
+        self.assertEqual(fake_account.signed_posts, [])
 
     def test_run_round_requires_qualified_candidate_and_positive_leverage(self):
         fake_account = FakeAccountManager()

@@ -1449,7 +1449,10 @@ class HoldingPositionScoringSystem:
             available_experiment_usdt = available_balance - helper.config.experiment_uninvested_usdt
             if available_experiment_usdt < 0:
                 available_experiment_usdt = Decimal("0")
-            if reserved_margin_budget + required_margin > account_equity:
+            if helper._equity_below_used_margin(account_equity, reserved_margin_budget):
+                status = "skipped"
+                reason_parts.append("禁止任何新开仓/加仓")
+            elif reserved_margin_budget + required_margin > account_equity:
                 status = "skipped"
                 reason_parts.append("实验组净值预算不足")
             elif required_margin > available_experiment_usdt:

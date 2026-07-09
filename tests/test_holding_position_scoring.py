@@ -1077,6 +1077,15 @@ class RefreshingMarkAccountManager(FakeAccountManager):
             return {"availableBalance": "5000"}
         return super()._signed_get(endpoint, params)
 
+
+class EquityBelowUsedMarginIncreaseAccountManager(RefreshingMarkAccountManager):
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/balance":
+            return [{"asset": "USDT", "balance": "4282"}]
+        if endpoint == "/fapi/v3/positionRisk":
+            return [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "10", "unRealizedProfit": "70", "leverage": "5", "entryPrice": "7", "notional": "2000"}]
+        return super()._signed_get(endpoint, params)
+
 class EquityBudgetExhaustedIncreaseAccountManager(RefreshingMarkAccountManager):
     def _signed_get(self, endpoint, params=None):
         if endpoint == "/fapi/v3/positionRisk":
@@ -1208,6 +1217,42 @@ def test_refresh_pretrigger_updates_mark_price_and_executes_first_add():
     assert checks[0]["tag"] == "第一次加仓"
     assert checks[0]["current_price"] == "10"
     assert records[0]["increased_quantity"] == "1"
+
+
+def test_increase_blocks_when_equity_below_used_margin():
+    fake_account = EquityBelowUsedMarginIncreaseAccountManager(mark_price="10")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
+        check = PositionIncreaseCheck(
+            symbol="BANK",
+            decision_round_ts=3000,
+            current_price="10",
+            account_equity_usdt="282",
+            one_r_usdt="2.82",
+            unrealized_pnl="70",
+            latest_total_score="70",
+            previous_total_score="72",
+            latest_reduction_price="",
+            open_trade_created_at="1000",
+            triggered=True,
+            tag="第一次加仓",
+            reason="first_increase_conditions_met",
+            checked_at=4000,
+        )
+
+        records_count = scoring._record_increase_actions(
+            [check],
+            positions=[{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "10", "unRealizedProfit": "70", "leverage": "5", "entryPrice": "7"}],
+            now_ms=4000,
+        )
+        records = scoring.recent_increase_records()
+
+    assert records_count == 1
+    assert records[0]["status"] == "skipped"
+    assert "禁止任何新开仓/加仓" in records[0]["reason"]
+    assert fake_account.signed_posts == []
 
 def test_increase_uses_current_experiment_equity_budget():
     fake_account = EquityBudgetExhaustedIncreaseAccountManager(mark_price="10")

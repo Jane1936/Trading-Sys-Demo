@@ -7,7 +7,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pre_safety_module import PreSafetyModule
-from web_app import _trading_used_margin_text
+from web_app import _trading_open_increase_blocked, _trading_used_margin_text
 
 
 def test_trading_position_snapshots_show_used_margin_summary():
@@ -15,9 +15,11 @@ def test_trading_position_snapshots_show_used_margin_summary():
 
     snapshot_index = template.index("<strong>交易实验持仓快照</strong>")
     used_margin_index = template.index("已用资金：{{ trading_used_margin_usdt }} USDT")
+    block_notice_index = template.index("禁止任何新开仓/加仓")
     table_index = template.index("<th>position_amt</th>", snapshot_index)
 
-    assert snapshot_index < used_margin_index < table_index
+    assert snapshot_index < used_margin_index < block_notice_index < table_index
+    assert "trading_open_increase_blocked" in template
 
 
 def test_trading_used_margin_sums_abs_position_amt_times_mark_price_divided_by_leverage():
@@ -30,6 +32,15 @@ def test_trading_used_margin_sums_abs_position_amt_times_mark_price_divided_by_l
     ]
 
     assert _trading_used_margin_text(snapshots) == "22"
+
+
+
+
+def test_trading_open_increase_blocked_when_used_margin_exceeds_equity():
+    snapshots = [SimpleNamespace(position_amt="2", mark_price="100", leverage="1")]
+
+    assert _trading_open_increase_blocked("199.99", snapshots) is True
+    assert _trading_open_increase_blocked("200", snapshots) is False
 
 
 def test_zombie_force_liquidation_records_render_above_trade_records():
