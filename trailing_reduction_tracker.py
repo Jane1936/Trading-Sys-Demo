@@ -312,12 +312,17 @@ class TrailingReductionTracker:
 
     def summary_payload(self) -> dict[str, Any]:
         round_ts, checks = self.get_latest_round_checks()
-        return {"round_ts": round_ts, "checks": [check.__dict__ for check in checks], "records": [dict(r) for r in self.recent_action_records()]}
+        return {"round_ts": round_ts, "checks": [check.__dict__ for check in checks], "records": [dict(r) for r in self.recent_action_records(decision_round_ts=round_ts)]}
 
-    def recent_action_records(self, limit: int = 100) -> list[sqlite3.Row]:
+    def recent_action_records(self, limit: int = 100, decision_round_ts: int | None = None) -> list[sqlite3.Row]:
         self.init_tables()
         with self._connect() as conn:
-            return conn.execute(f"SELECT * FROM {self.RECORDS_TABLE} ORDER BY checked_at DESC, id DESC LIMIT ?", (limit,)).fetchall()
+            if decision_round_ts is None:
+                return conn.execute(f"SELECT * FROM {self.RECORDS_TABLE} ORDER BY checked_at DESC, id DESC LIMIT ?", (limit,)).fetchall()
+            return conn.execute(
+                f"SELECT * FROM {self.RECORDS_TABLE} WHERE decision_round_ts = ? ORDER BY checked_at DESC, id DESC LIMIT ?",
+                (int(decision_round_ts), limit),
+            ).fetchall()
 
     def _has_structure_record(self, symbol: str, round_ts: int) -> bool:
         with self._connect() as conn:

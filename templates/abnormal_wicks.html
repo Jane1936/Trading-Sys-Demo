@@ -1559,7 +1559,7 @@
         <div id="holding-module-trailing-reduction" class="holding-module-panel" role="tabpanel">
         <div class="critical-section sky-theme-section" aria-label="移动追踪减仓结构破位追踪">
         <div class="symbol-strip">
-          <div><strong>移动追踪减仓模块：结构破位追踪</strong></div>
+          <div><strong>移动追踪减仓模块：15分钟扫描结果</strong></div>
           <button id="refresh-trailing-reduction" class="btn btn-primary btn-small" type="button">刷新</button>
           <span id="trailing-reduction-refresh-status" class="muted">针对本轮“预触发结构破位”symbol更新回撤幅度与开仓以来最高价</span>
           {% if trailing_reduction_round_ts %}
@@ -1597,7 +1597,7 @@
           </table>
         </div>
         <div class="table-wrap">
-          <div class="symbol-strip"><div><strong>移动追踪减仓记录</strong></div><div class="muted">记录结构破位触发后的市价减仓30%、止盈/止损重建订单与接口状态。</div></div>
+          <div class="symbol-strip"><div><strong>移动追踪减仓记录</strong></div><div class="muted">仅展示本轮结构破位触发后的市价减仓30%、止盈/止损重建订单与接口状态。</div></div>
           <table><thead><tr><th>checked_at</th><th>symbol</th><th>high/close</th><th>最高价/ATR/回撤</th><th>减仓比例</th><th>原/减/剩数量</th><th>市价单</th><th>止盈单</th><th>止损单</th><th>状态</th><th>reason</th></tr></thead>
           <tbody id="trailing-reduction-records-body">
           {% for row in trailing_reduction_records %}
