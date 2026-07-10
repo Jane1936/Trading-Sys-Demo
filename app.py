@@ -33,6 +33,7 @@ from openable_symbol_module import OpenableSymbol, OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
 from partial_take_profit import PartialTakeProfitStrategy
 from trailing_stop_tracker import TrailingStopTracker
+from trailing_reduction_tracker import TrailingReductionTracker
 from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
@@ -134,6 +135,8 @@ def run_scoring_round_worker(
     openable.init_table()
     holding_scoring = HoldingPositionScoringSystem(db_path=db_path)
     holding_scoring.init_tables()
+    trailing_reduction = TrailingReductionTracker(db_path=db_path)
+    trailing_reduction.init_tables()
 
     readiness = scoring.wait_for_15m_ma20_readiness_for_round(
         decision_round_ts=decision_round_ts,
@@ -179,6 +182,14 @@ def run_scoring_round_worker(
             f"records={holding_result.get('records', 0)} "
             f"reduction_checked={holding_result.get('reduction_checked', 0)} "
             f"reduction_triggered={holding_result.get('reduction_triggered', 0)}"
+        )
+        trailing_reduction_result = trailing_reduction.run_round(decision_round_ts=decision_round_ts)
+        print(
+            f"🧭 trailing reduction round={decision_round_ts} "
+            f"checked={trailing_reduction_result.get('checked', 0)} "
+            f"eligible={trailing_reduction_result.get('eligible', 0)} "
+            f"pretriggered={trailing_reduction_result.get('pretriggered', 0)} "
+            f"2R={trailing_reduction_result.get('trigger_r_usdt', '')}"
         )
     except Exception as exc:
         print(f"⚠️ holding scoring failed round={decision_round_ts}: {exc}")

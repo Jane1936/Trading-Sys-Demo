@@ -24,6 +24,7 @@ from openable_symbol_module import OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
 from partial_take_profit import PartialTakeProfitStrategy
 from trailing_stop_tracker import TrailingStopTracker
+from trailing_reduction_tracker import TrailingReductionTracker
 from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
@@ -743,6 +744,8 @@ def abnormal_wicks():
     partial_take_profit_strategy = PartialTakeProfitStrategy(db_path=DB_PATH)
     partial_take_profit_round_ts, partial_take_profit_checks = partial_take_profit_strategy.get_latest_round_checks()
     partial_take_profit_records = partial_take_profit_strategy.recent_records(limit=100)
+    trailing_reduction_tracker = TrailingReductionTracker(db_path=DB_PATH)
+    trailing_reduction_round_ts, trailing_reduction_checks = trailing_reduction_tracker.get_latest_round_checks()
     trailing_stop_tracker = TrailingStopTracker(db_path=DB_PATH)
     trailing_stop_round_ts, trailing_stop_checks = trailing_stop_tracker.get_latest_round_checks()
     trailing_stop_records = trailing_stop_tracker.recent_action_records(limit=100)
@@ -840,6 +843,8 @@ def abnormal_wicks():
         partial_take_profit_round_ts=partial_take_profit_round_ts,
         partial_take_profit_checks=partial_take_profit_checks,
         partial_take_profit_records=partial_take_profit_records,
+        trailing_reduction_round_ts=trailing_reduction_round_ts,
+        trailing_reduction_checks=trailing_reduction_checks,
         trailing_stop_round_ts=trailing_stop_round_ts,
         trailing_stop_checks=trailing_stop_checks,
         trailing_stop_records=trailing_stop_records,

@@ -879,6 +879,7 @@
           <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-portfolio-risk">组合风险约束</button>
           <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-break-even">保本止盈策略</button>
           <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-partial-take-profit">分批止盈规则</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-trailing-reduction">移动追踪减仓模块</button>
           <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-trailing-stop">移动追踪止盈规则</button>
         </div>
 
@@ -1554,6 +1555,74 @@
         </div>
         </div>
         </div>
+
+        <div id="holding-module-trailing-reduction" class="holding-module-panel" role="tabpanel">
+        <div class="critical-section sky-theme-section" aria-label="移动追踪减仓15分钟扫描结果">
+        <div class="symbol-strip">
+          <div><strong>移动追踪减仓模块：15分钟扫描结果</strong></div>
+          {% if trailing_reduction_round_ts %}
+            <div class="muted">最近判断轮次：{{ trailing_reduction_round_ts|fmt_ms_datetime }}。该15分钟模块在“减仓条件模块”之后、15分钟K线收敛并完成持仓评分后执行；若当前持仓symbol的未变现盈利 &gt; 2R，则查询最近两条15分钟K线，lowest = min(最近第1条low, 最近第2条low)，若当前标记价 &lt; lowest，则打上“预触发结构破位”tag。</div>
+          {% else %}
+            <div class="muted">暂无移动追踪减仓扫描结果。</div>
+          {% endif %}
+          {% set pretriggered_trailing_reduction_checks = trailing_reduction_checks|selectattr('pretriggered')|list %}
+          {% if pretriggered_trailing_reduction_checks %}
+            <div class="chips">
+              {% for row in pretriggered_trailing_reduction_checks %}
+                <span class="chip" title="{{ row.reason }}">{{ row.symbol }} · {{ row.tag }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="chips"><span class="chip">本轮无预触发结构破位symbol</span></div>
+          {% endif %}
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>实验组USDT净值</th>
+                <th>R / 2R</th>
+                <th>未变现盈亏</th>
+                <th>当前价</th>
+                <th>最近1/2条15m low</th>
+                <th>lowest</th>
+                <th>开仓价</th>
+                <th>持仓数量</th>
+                <th>满足&gt;2R</th>
+                <th>预触发</th>
+                <th>tag</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in trailing_reduction_checks %}
+              <tr>
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.account_equity_usdt }}</td>
+                <td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }}</td>
+                <td>{{ row.unrealized_pnl }}</td>
+                <td>{{ row.current_price }}</td>
+                <td>{{ row.latest_15m_low }} / {{ row.second_15m_low }}</td>
+                <td>{{ row.lowest_15m_low }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td>
+                <td><span class="status-badge {{ 'status-pass' if row.pretriggered else 'status-fail' }}">{{ '是' if row.pretriggered else '否' }}</span></td>
+                <td>{{ row.tag or '-' }}</td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="14">暂无移动追踪减仓扫描结果</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
+        </div>
+
 
         <div id="holding-module-trailing-stop" class="holding-module-panel" role="tabpanel">
         <div class="critical-section sky-theme-section" aria-label="移动追踪止盈1分钟扫描结果">
