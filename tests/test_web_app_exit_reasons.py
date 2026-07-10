@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import web_app
 from holding_position_scoring import HoldingPositionScoringSystem
 from partial_take_profit import PartialTakeProfitStrategy
+from trailing_reduction_tracker import TrailingReductionTracker
 from trailing_stop_tracker import TrailingStopTracker
 from zombie_force_liquidation import ZombieForceLiquidationModule
 
@@ -58,6 +59,19 @@ def _create_exit_reason_tables(db_path):
                 close_quantity TEXT NOT NULL,
                 trailing_stop_triggered INTEGER NOT NULL,
                 close_status TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            f"""
+            CREATE TABLE {TrailingReductionTracker.RECORDS_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                decision_round_ts INTEGER NOT NULL,
+                checked_at INTEGER NOT NULL,
+                reduced_quantity TEXT NOT NULL,
+                market_order_id TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL
             )
             """
         )
@@ -213,6 +227,24 @@ def test_filled_sell_order_exit_reason_uses_reduction_match(tmp_path, monkeypatc
     assert annotated["orders"][0]["exit_reason"] == "减仓"
     assert annotated["orders"][0]["exit_reason_matches"] == [{"type": "减仓", "matched_at": "1000"}]
     assert "reduction_percent" not in str(annotated["orders"][0])
+
+
+def test_filled_sell_order_exit_reason_uses_trailing_reduction_match(tmp_path, monkeypatch):
+    db_path = tmp_path / "orders.db"
+    _create_exit_reason_tables(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"INSERT INTO {TrailingReductionTracker.RECORDS_TABLE} (symbol, decision_round_ts, checked_at, reduced_quantity, market_order_id, status) VALUES (?, ?, ?, ?, ?, ?)",
+            ("BANK", 900, 1000, "2.5", "888001", "submitted"),
+        )
+    monkeypatch.setattr(web_app, "DB_PATH", str(db_path))
+
+    payload = {"orders": [{"symbol": "BANKUSDT", "side": "SELL", "time": 1000, "quantity": "2.500", "order_id": "888001", "realized_pnl": "3"}]}
+
+    annotated = web_app._annotate_filled_order_exit_reasons(payload)
+
+    assert annotated["orders"][0]["exit_reason"] == "移动追踪减仓"
+    assert annotated["orders"][0]["exit_reason_matches"] == [{"type": "移动追踪减仓", "matched_at": "1000"}]
 
 
 def test_filled_sell_order_exit_reason_uses_trailing_stop_match(tmp_path, monkeypatch):

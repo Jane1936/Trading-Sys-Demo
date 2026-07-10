@@ -1,7 +1,7 @@
 """15-minute trailing reduction pre-trigger tracker.
 
 After the normal position-reduction module runs for a closed 15m candle, this
-module scans active positions. If a position's unrealized profit is greater than
+module scans active positions. If a position's unrealized profit is less than
 2R, it compares the current mark price with the lower low of the latest two
 stored 15m candles. A price break below that level is recorded with the
 ``预触发结构破位`` tag for web display and downstream visibility.
@@ -172,10 +172,10 @@ class TrailingReductionTracker:
         unrealized_pnl = self._decimal_from(position.get("unRealizedProfit", position.get("unrealizedProfit")), Decimal("0"))
         current_price = self._decimal_from(position.get("markPrice"), Decimal("0"))
         latest_low = second_low = lowest = Decimal("0")
-        eligible = amount != 0 and entry_price > 0 and trigger_r > 0 and unrealized_pnl > trigger_r
+        eligible = amount != 0 and entry_price > 0 and trigger_r > 0 and unrealized_pnl < trigger_r
         pretriggered = False
         tag = ""
-        reason = "unrealized_pnl_lte_2r"
+        reason = "unrealized_pnl_gte_2r"
         if eligible:
             try:
                 latest_low, second_low = self._latest_two_15m_lows(symbol)
@@ -312,7 +312,26 @@ class TrailingReductionTracker:
 
     def summary_payload(self) -> dict[str, Any]:
         round_ts, checks = self.get_latest_round_checks()
-        return {"round_ts": round_ts, "checks": [check.__dict__ for check in checks], "records": [dict(r) for r in self.recent_action_records(decision_round_ts=round_ts)]}
+        latest_pretrigger_rounds = self.latest_pretrigger_rounds()
+        annotated_checks = []
+        for check in checks:
+            item = dict(check.__dict__)
+            item["latest_pretrigger_round_ts"] = latest_pretrigger_rounds.get(check.symbol)
+            annotated_checks.append(item)
+        return {"round_ts": round_ts, "checks": annotated_checks, "records": [dict(r) for r in self.recent_action_records(decision_round_ts=round_ts)]}
+
+    def latest_pretrigger_rounds(self) -> dict[str, int]:
+        self.init_tables()
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT symbol, MAX(decision_round_ts) AS latest_round
+                FROM {self.CHECKS_TABLE}
+                WHERE pretriggered = 1
+                GROUP BY symbol
+                """
+            ).fetchall()
+        return {str(row["symbol"]): int(row["latest_round"]) for row in rows if row["latest_round"] is not None}
 
     def recent_action_records(self, limit: int = 100, decision_round_ts: int | None = None) -> list[sqlite3.Row]:
         self.init_tables()

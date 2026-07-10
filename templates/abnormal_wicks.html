@@ -83,6 +83,7 @@
     .reduction-tag-rule5 { background:#dcfce7; color:#166534; border-color:#86efac; }
     .reduction-tag-default { background:#e0f2fe; color:#075985; border-color:#7dd3fc; }
     .reduction-tag-stale-pretrigger { background:#f1f5f9; color:#64748b; border-color:#cbd5e1; }
+    .reduction-tag-trailing-pretrigger { background:#f1f5f9; color:#64748b; border-color:#cbd5e1; }
     .reduction-tag-increase-completed { background:#dcfce7; color:#166534; border-color:#86efac; }
     .score-delta { display:inline-flex; align-items:center; justify-content:center; min-width:58px; padding:3px 8px; border-radius:999px; font-weight:900; border:1px solid transparent; }
     .score-delta-negative { color:#dc2626; background:#fee2e2; border-color:#fca5a5; }
@@ -1582,13 +1583,13 @@
           <table>
             <thead>
               <tr>
-                <th>checked_at</th><th>symbol</th><th>R / 2R</th><th>未变现盈亏</th><th>当前价</th><th>最近1/2条15m low</th><th>lowest</th><th>ATR(14)</th><th>最新1m high/close</th><th>开仓以来最高价</th><th>回撤幅度</th><th>开仓价</th><th>持仓数量</th><th>满足&gt;2R</th><th>预触发</th><th>结构破位</th><th>tag</th><th>reason</th>
+                <th>checked_at</th><th>symbol</th><th>tag</th><th>R / 2R</th><th>未变现盈亏</th><th>当前价</th><th>最近1/2条15m low</th><th>lowest</th><th>ATR(14)</th><th>最新1m high/close</th><th>开仓以来最高价</th><th>回撤幅度</th><th>开仓价</th><th>持仓数量</th><th>满足&lt;2R</th><th>预触发</th><th>结构破位</th><th>reason</th>
               </tr>
             </thead>
             <tbody>
               {% for row in trailing_reduction_checks %}
               <tr>
-                <td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }}</td><td>{{ row.unrealized_pnl }}</td><td>{{ row.current_price }}</td><td>{{ row.latest_15m_low }} / {{ row.second_15m_low }}</td><td>{{ row.lowest_15m_low }}</td><td>{{ row.atr14 or '-' }}</td><td>{{ (row.latest_1m_high or '-') ~ ' / ' ~ (row.latest_1m_close or '-') }}</td><td>{{ row.highest_since_open or '-' }}</td><td>{{ row.price_drawdown or '-' }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.pretriggered else 'status-fail' }}">{{ '是' if row.pretriggered else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.structure_break_triggered else 'status-fail' }}">{{ '是' if row.structure_break_triggered else '否' }}</span></td><td>{{ row.tag or '-' }}</td><td>{{ row.reason }}</td>
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{% if row.latest_pretrigger_round_ts %}<span class="reduction-tag reduction-tag-trailing-pretrigger">触发轮次 {{ row.latest_pretrigger_round_ts|fmt_ms_datetime }} 预触发结构破位</span>{% elif row.tag %}<span class="reduction-tag reduction-tag-trailing-pretrigger">{{ row.tag }}</span>{% else %}-{% endif %}</td><td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }}</td><td>{{ row.unrealized_pnl }}</td><td>{{ row.current_price }}</td><td>{{ row.latest_15m_low }} / {{ row.second_15m_low }}</td><td>{{ row.lowest_15m_low }}</td><td>{{ row.atr14 or '-' }}</td><td>{{ (row.latest_1m_high or '-') ~ ' / ' ~ (row.latest_1m_close or '-') }}</td><td>{{ row.highest_since_open or '-' }}</td><td>{{ row.price_drawdown or '-' }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.pretriggered else 'status-fail' }}">{{ '是' if row.pretriggered else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.structure_break_triggered else 'status-fail' }}">{{ '是' if row.structure_break_triggered else '否' }}</span></td><td>{{ row.reason }}</td>
               </tr>
               {% else %}
               <tr><td class="empty" colspan="18">暂无移动追踪减仓扫描结果</td></tr>
@@ -1784,7 +1785,7 @@
         </div>
         <div id="filled-sell-orders-error" class="account-error"></div>
         <div class="tip">数据来自 Binance USDⓈ-M Futures <code>userTrades</code> 成交明细；同一 symbol、同一 order_id、同一方向的多笔成交会合并为一行；成交价格为按成交额/成交数量计算的均价。开仓评分来自本地“交易实验交易记录”中同一 symbol 在成交时间前最近一次 opened 记录的 total_score，可按评分档位筛选并计算对应胜率。</div>
-        <div class="tip"><strong>止盈/止损原因显示规则：</strong>SELL 成交优先匹配本地策略记录；僵尸强平会优先使用 Binance order_id 匹配本地强平下单记录，无法使用 order_id 时再按 symbol、成交时间（±5分钟）和成交数量匹配。其他策略记录按 symbol、成交时间（±5分钟）和成交数量匹配，命中优先级依次为：僵尸强平（僵尸单强平操作记录）、结构止损（止损记录）、减仓（减仓操作记录）、移动追踪止盈、分批止盈；若没有匹配到策略记录，则按已实现盈亏判断：realized_pnl &gt; 0 显示“硬止盈”，否则显示“硬止损”。BUY 成交会按相同匹配条件查询“加仓操作记录”，命中则显示“加仓”，未命中则不显示原因。</div>
+        <div class="tip"><strong>止盈/止损原因显示规则：</strong>SELL 成交优先匹配本地策略记录；僵尸强平会优先使用 Binance order_id 匹配本地强平下单记录，无法使用 order_id 时再按 symbol、成交时间（±5分钟）和成交数量匹配。其他策略记录按 symbol、成交时间（±5分钟）和成交数量匹配，命中优先级依次为：僵尸强平（僵尸单强平操作记录）、结构止损（止损记录）、减仓（减仓操作记录）、移动追踪减仓（移动追踪减仓记录）、移动追踪止盈、分批止盈；若没有匹配到策略记录，则按已实现盈亏判断：realized_pnl &gt; 0 显示“硬止盈”，否则显示“硬止损”。BUY 成交会按相同匹配条件查询“加仓操作记录”，命中则显示“加仓”，未命中则不显示原因。</div>
         <div id="filled-orders-summary" class="filled-orders-summary" aria-label="已完成订单统计">
           <div class="account-metric">
             <div class="account-metric-label">已完成订单数量</div>
