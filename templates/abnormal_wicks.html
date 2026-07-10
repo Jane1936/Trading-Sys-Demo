@@ -1598,14 +1598,38 @@
             </tbody>
           </table>
         </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>移动追踪减仓记录</strong></div>
+              <div class="muted">展示近7天结构破位触发后的市价减仓30%、止盈/止损重建订单与接口状态。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
         <div class="table-wrap">
-          <div class="symbol-strip"><div><strong>移动追踪减仓记录</strong></div><div class="muted">展示近7天结构破位触发后的市价减仓30%、止盈/止损重建订单与接口状态。</div></div>
-          <table><thead><tr><th>checked_at</th><th>symbol</th><th>high/close</th><th>最高价/ATR/回撤</th><th>减仓比例</th><th>原/减/剩数量</th><th>市价单</th><th>止盈单</th><th>止损单</th><th>状态</th><th>reason</th></tr></thead>
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>high/close</th>
+                <th>最高价/ATR/回撤</th>
+                <th>减仓比例</th>
+                <th>原/减/剩数量</th>
+                <th>市价单</th>
+                <th>止盈单</th>
+                <th>止损单</th>
+                <th>状态</th>
+                <th>reason</th>
+              </tr>
+            </thead>
           <tbody id="trailing-reduction-records-body">
           {% for row in trailing_reduction_records %}
-            <tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.latest_1m_high }} / {{ row.latest_1m_close }}</td><td>{{ row.highest_since_open }} / {{ row.atr14 }} / {{ row.price_drawdown }}</td><td>{{ row.reduction_percent }}</td><td>{{ row.original_quantity }} / {{ row.reduced_quantity }} / {{ row.remaining_quantity }}</td><td>{{ row.market_order_id or '-' }}</td><td>{{ row.take_profit_order_id or '-' }}</td><td>{{ row.stop_loss_order_id or '-' }}</td><td>{{ row.status }}</td><td>{{ row.reason }}</td></tr>
+            <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}"><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.latest_1m_high }} / {{ row.latest_1m_close }}</td><td>{{ row.highest_since_open }} / {{ row.atr14 }} / {{ row.price_drawdown }}</td><td>{{ row.reduction_percent }}</td><td>{{ row.original_quantity }} / {{ row.reduced_quantity }} / {{ row.remaining_quantity }}</td><td>{{ row.market_order_id or '-' }}</td><td>{{ row.take_profit_order_id or '-' }}</td><td>{{ row.stop_loss_order_id or '-' }}</td><td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td><td>{{ row.reason }}</td></tr>
           {% else %}<tr><td class="empty" colspan="11">近7天暂无移动追踪减仓记录</td></tr>{% endfor %}
           </tbody></table>
+        </div>
         </div>
         </div>
         </div>
@@ -2647,8 +2671,8 @@
         rowsEl.innerHTML = '<tr><td class="empty" colspan="11">近7天暂无移动追踪减仓记录</td></tr>';
         return;
       }
-      rowsEl.innerHTML = rows.map(row => `
-        <tr>
+      rowsEl.innerHTML = rows.map((row, index) => `
+        <tr class="${index >= 10 ? 'collapsed-extra' : ''}">
           <td>${formatMsDatetime(row.checked_at)}</td>
           <td>${escapeHtml(row.symbol)}</td>
           <td>${escapeHtml(row.latest_1m_high)} / ${escapeHtml(row.latest_1m_close)}</td>
@@ -2658,7 +2682,7 @@
           <td>${escapeHtml(row.market_order_id || '-')}</td>
           <td>${escapeHtml(row.take_profit_order_id || '-')}</td>
           <td>${escapeHtml(row.stop_loss_order_id || '-')}</td>
-          <td>${escapeHtml(row.status)}</td>
+          <td><span class="status-badge ${row.status === 'submitted' ? 'status-pass' : 'status-fail'}">${escapeHtml(row.status)}</span></td>
           <td>${escapeHtml(row.reason)}</td>
         </tr>
       `).join('');
@@ -2725,7 +2749,7 @@
           const response = await fetch('/api/trailing-reduction/refresh-pretrigger', { method: 'POST', headers: { 'Accept': 'application/json' } });
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-          if (statusEl) statusEl.textContent = `刷新完成：更新 ${payload.refreshed || 0} 个，结构破位 ${payload.triggered || 0} 个，减仓记录 ${payload.records || 0} 条。`;
+          if (statusEl) statusEl.textContent = `刷新完成：更新 ${payload.refreshed || 0} 个，结构破位 ${payload.triggered || 0} 个，减仓记录 ${payload.created_records || 0} 条。`;
           renderTrailingReductionSummary(payload);
         } catch (error) {
           if (statusEl) statusEl.textContent = `刷新失败：${error.message}`;
