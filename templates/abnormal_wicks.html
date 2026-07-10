@@ -171,6 +171,12 @@
     .bookmark-tab.active::after { content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px; background:#ffffff; }
     .strategy-subpanel { display:none; }
     .strategy-subpanel.active { display:block; }
+    .holding-module-tabs { display:flex; gap:10px; flex-wrap:wrap; align-items:center; padding:14px 20px; background:#f8fdff; border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
+    .holding-module-tab { border:1px solid var(--line); background:#eff6ff; color:#1e3a8a; border-radius:999px; padding:9px 14px; cursor:pointer; font-size:13px; font-weight:800; box-shadow:0 3px 10px rgba(14, 116, 144, 0.08); }
+    .holding-module-tab:hover { transform:translateY(-1px); background:#dbeafe; }
+    .holding-module-tab.active { background:linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%); border-color:#2563eb; color:#fff; box-shadow:0 8px 18px rgba(37, 99, 235, 0.22); }
+    .holding-module-panel { display:none; padding-top:16px; }
+    .holding-module-panel.active { display:block; }
     .account-summary { display:flex; gap:12px; flex-wrap:wrap; padding:14px 20px; border-bottom:1px solid var(--line); background:#f8fdff; }
     .account-metric { min-width:180px; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:#fff; box-shadow:0 3px 12px rgba(14, 116, 144, 0.08); }
     .account-metric-highlight { border-color:#f59e0b; background:linear-gradient(135deg, #fffbeb 0%, #fff7ed 100%); box-shadow:0 8px 22px rgba(245, 158, 11, 0.20); position:relative; overflow:hidden; }
@@ -866,6 +872,17 @@
 
 
       <div id="strategy-holding-score" class="strategy-subpanel" role="tabpanel">
+        <div class="holding-module-tabs" role="tablist" aria-label="持仓评分系统模块">
+          <button class="holding-module-tab active" type="button" role="tab" aria-selected="true" data-holding-module-tab="holding-module-stop-loss">持仓评分系统：止损规则判断结果</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-reduction">减仓条件模块</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-increase">加仓条件模块</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-portfolio-risk">组合风险约束</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-break-even">保本止盈策略</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-partial-take-profit">分批止盈规则</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-trailing-stop">移动追踪止盈规则</button>
+        </div>
+
+        <div id="holding-module-stop-loss" class="holding-module-panel active" role="tabpanel">
         <div class="critical-section" aria-label="关键持仓止损规则判断结果">
         <div class="symbol-strip">
           <div><strong>持仓评分系统：止损规则判断结果</strong></div>
@@ -974,6 +991,9 @@
           </table>
         </div>
         </div>
+        </div>
+
+        <div id="holding-module-reduction" class="holding-module-panel" role="tabpanel">
         <div class="critical-section" aria-label="减仓条件模块">
           <div class="symbol-strip">
             <div><strong>减仓条件模块：本轮执行结果</strong></div>
@@ -1125,8 +1145,10 @@
             </table>
           </div>
         </div>
+        </div>
 
 
+        <div id="holding-module-increase" class="holding-module-panel" role="tabpanel">
         <div class="critical-section sky-theme-section" aria-label="加仓条件模块">
           <div class="symbol-strip">
             <div><strong>加仓条件模块：本轮判断结果</strong></div>
@@ -1253,8 +1275,10 @@
             </table>
           </div>
         </div>
+        </div>
 
 
+        <div id="holding-module-portfolio-risk" class="holding-module-panel" role="tabpanel">
         <div class="critical-section portfolio-risk-section" aria-label="组合风险约束">
           <div class="symbol-strip">
             <div><strong>组合风险约束</strong></div>
@@ -1309,7 +1333,9 @@
             </table>
           </div>
         </div>
+        </div>
 
+        <div id="holding-module-break-even" class="holding-module-panel" role="tabpanel">
         <div class="critical-section sky-theme-section" aria-label="关键保本止盈5分钟扫描结果">
         <div class="symbol-strip">
           <div><strong>保本止盈策略：5分钟扫描结果</strong></div>
@@ -1418,6 +1444,9 @@
           </table>
         </div>
         </div>
+        </div>
+
+        <div id="holding-module-partial-take-profit" class="holding-module-panel" role="tabpanel">
         <div class="critical-section sky-theme-section" aria-label="关键分批止盈5分钟扫描结果">
         <div class="symbol-strip">
           <div><strong>分批止盈规则：5分钟扫描结果</strong></div>
@@ -1524,6 +1553,9 @@
           </table>
         </div>
         </div>
+        </div>
+
+        <div id="holding-module-trailing-stop" class="holding-module-panel" role="tabpanel">
         <div class="critical-section sky-theme-section" aria-label="移动追踪止盈1分钟扫描结果">
         <div class="symbol-strip">
           <div class="section-title-row">
@@ -1642,6 +1674,7 @@
               {% endfor %}
             </tbody>
           </table>
+        </div>
         </div>
         </div>
       </div>
@@ -2169,6 +2202,25 @@
           if (b.dataset.strategyTab === 'strategy-account') {
             requestAnimationFrame(refreshExperimentEquityTrendChartLayout);
           }
+        });
+      });
+    })();
+
+
+    (function initHoldingModuleTabs() {
+      const btns = document.querySelectorAll('.holding-module-tab[data-holding-module-tab]');
+      const panels = document.querySelectorAll('.holding-module-panel');
+      btns.forEach((b) => {
+        b.addEventListener('click', () => {
+          btns.forEach(x => {
+            x.classList.remove('active');
+            x.setAttribute('aria-selected', 'false');
+          });
+          panels.forEach(x => x.classList.remove('active'));
+          b.classList.add('active');
+          b.setAttribute('aria-selected', 'true');
+          const panel = document.getElementById(b.dataset.holdingModuleTab);
+          if (panel) panel.classList.add('active');
         });
       });
     })();
