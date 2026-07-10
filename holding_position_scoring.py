@@ -1088,6 +1088,26 @@ class HoldingPositionScoringSystem:
         except sqlite3.Error:
             return
 
+    def _update_latest_open_trade_entry_price(self, symbol: str, entry_price: Decimal) -> None:
+        if entry_price <= 0:
+            return
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE trading_experiment_trades
+                    SET entry_price = ?, updated_at = ?
+                    WHERE id = (
+                        SELECT id FROM trading_experiment_trades
+                        WHERE symbol = ? AND status = 'opened'
+                        ORDER BY created_at DESC, id DESC LIMIT 1
+                    )
+                    """,
+                    (self._fmt_decimal(entry_price), int(time.time() * 1000), symbol),
+                )
+        except sqlite3.Error:
+            return
+
     @staticmethod
     def _replacement_stop_immediate_trigger_reason(side: str, stop_price: Decimal, current_mark_price: Decimal) -> str:
         if stop_price <= 0 or current_mark_price <= 0:
@@ -1476,6 +1496,8 @@ class HoldingPositionScoringSystem:
                             self._floor_to_step(original_quantity + increased_quantity, exchange_info["step_size"]),
                             position,
                         )
+                        if actual_entry_price > 0:
+                            self._update_latest_open_trade_entry_price(check.symbol, actual_entry_price)
                         close_side = "SELL" if amount > 0 else "BUY"
                         take_profit_order_id, take_profit_price, take_profit_reason = self._replace_hard_take_profit_for_position(
                             helper,
