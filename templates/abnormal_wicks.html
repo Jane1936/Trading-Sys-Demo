@@ -1557,11 +1557,13 @@
         </div>
 
         <div id="holding-module-trailing-reduction" class="holding-module-panel" role="tabpanel">
-        <div class="critical-section sky-theme-section" aria-label="移动追踪减仓15分钟扫描结果">
+        <div class="critical-section sky-theme-section" aria-label="移动追踪减仓结构破位追踪">
         <div class="symbol-strip">
-          <div><strong>移动追踪减仓模块：15分钟扫描结果</strong></div>
+          <div><strong>移动追踪减仓模块：结构破位追踪</strong></div>
+          <button id="refresh-trailing-reduction" class="btn btn-primary btn-small" type="button">刷新</button>
+          <span id="trailing-reduction-refresh-status" class="muted">针对本轮“预触发结构破位”symbol更新回撤幅度与开仓以来最高价</span>
           {% if trailing_reduction_round_ts %}
-            <div class="muted">最近判断轮次：{{ trailing_reduction_round_ts|fmt_ms_datetime }}。该15分钟模块在“减仓条件模块”之后、15分钟K线收敛并完成持仓评分后执行；若当前持仓symbol的未变现盈利 &gt; 2R，则查询最近两条15分钟K线，lowest = min(最近第1条low, 最近第2条low)，若当前标记价 &lt; lowest，则打上“预触发结构破位”tag。</div>
+            <div class="muted">最近判断轮次：{{ trailing_reduction_round_ts|fmt_ms_datetime }}。该模块在每轮 ATR(14) 计算完成后、减仓条件模块之后执行：15分钟扫描先识别“预触发结构破位”；随后后台每分钟读取数据库 klines_1m 最新 high/close，维护“开仓以来最高价”，当最新收盘价相对开仓以来最高价的回撤 &gt; 2 × ATR(14) 时打上“结构破位”tag，立即市价单结构减仓30%，并按减仓后的剩余仓位重建止盈单/止损单。</div>
           {% else %}
             <div class="muted">暂无移动追踪减仓扫描结果。</div>
           {% endif %}
@@ -1580,49 +1582,31 @@
           <table>
             <thead>
               <tr>
-                <th>checked_at</th>
-                <th>symbol</th>
-                <th>实验组USDT净值</th>
-                <th>R / 2R</th>
-                <th>未变现盈亏</th>
-                <th>当前价</th>
-                <th>最近1/2条15m low</th>
-                <th>lowest</th>
-                <th>开仓价</th>
-                <th>持仓数量</th>
-                <th>满足&gt;2R</th>
-                <th>预触发</th>
-                <th>tag</th>
-                <th>reason</th>
+                <th>checked_at</th><th>symbol</th><th>R / 2R</th><th>未变现盈亏</th><th>当前价</th><th>最近1/2条15m low</th><th>lowest</th><th>ATR(14)</th><th>最新1m high/close</th><th>开仓以来最高价</th><th>回撤幅度</th><th>开仓价</th><th>持仓数量</th><th>满足&gt;2R</th><th>预触发</th><th>结构破位</th><th>tag</th><th>reason</th>
               </tr>
             </thead>
             <tbody>
               {% for row in trailing_reduction_checks %}
               <tr>
-                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
-                <td>{{ row.symbol }}</td>
-                <td>{{ row.account_equity_usdt }}</td>
-                <td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }}</td>
-                <td>{{ row.unrealized_pnl }}</td>
-                <td>{{ row.current_price }}</td>
-                <td>{{ row.latest_15m_low }} / {{ row.second_15m_low }}</td>
-                <td>{{ row.lowest_15m_low }}</td>
-                <td>{{ row.entry_price }}</td>
-                <td>{{ row.position_amt }}</td>
-                <td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td>
-                <td><span class="status-badge {{ 'status-pass' if row.pretriggered else 'status-fail' }}">{{ '是' if row.pretriggered else '否' }}</span></td>
-                <td>{{ row.tag or '-' }}</td>
-                <td>{{ row.reason }}</td>
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }}</td><td>{{ row.unrealized_pnl }}</td><td>{{ row.current_price }}</td><td>{{ row.latest_15m_low }} / {{ row.second_15m_low }}</td><td>{{ row.lowest_15m_low }}</td><td>{{ row.atr14 or '-' }}</td><td>{{ (row.latest_1m_high or '-') ~ ' / ' ~ (row.latest_1m_close or '-') }}</td><td>{{ row.highest_since_open or '-' }}</td><td>{{ row.price_drawdown or '-' }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.pretriggered else 'status-fail' }}">{{ '是' if row.pretriggered else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.structure_break_triggered else 'status-fail' }}">{{ '是' if row.structure_break_triggered else '否' }}</span></td><td>{{ row.tag or '-' }}</td><td>{{ row.reason }}</td>
               </tr>
               {% else %}
-              <tr><td class="empty" colspan="14">暂无移动追踪减仓扫描结果</td></tr>
+              <tr><td class="empty" colspan="18">暂无移动追踪减仓扫描结果</td></tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
+        <div class="table-wrap">
+          <div class="symbol-strip"><div><strong>移动追踪减仓记录</strong></div><div class="muted">记录结构破位触发后的市价减仓30%、止盈/止损重建订单与接口状态。</div></div>
+          <table><thead><tr><th>checked_at</th><th>symbol</th><th>high/close</th><th>最高价/ATR/回撤</th><th>减仓比例</th><th>原/减/剩数量</th><th>市价单</th><th>止盈单</th><th>止损单</th><th>状态</th><th>reason</th></tr></thead>
+          <tbody id="trailing-reduction-records-body">
+          {% for row in trailing_reduction_records %}
+            <tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.latest_1m_high }} / {{ row.latest_1m_close }}</td><td>{{ row.highest_since_open }} / {{ row.atr14 }} / {{ row.price_drawdown }}</td><td>{{ row.reduction_percent }}</td><td>{{ row.original_quantity }} / {{ row.reduced_quantity }} / {{ row.remaining_quantity }}</td><td>{{ row.market_order_id or '-' }}</td><td>{{ row.take_profit_order_id or '-' }}</td><td>{{ row.stop_loss_order_id or '-' }}</td><td>{{ row.status }}</td><td>{{ row.reason }}</td></tr>
+          {% else %}<tr><td class="empty" colspan="11">暂无移动追踪减仓记录</td></tr>{% endfor %}
+          </tbody></table>
         </div>
         </div>
-
+        </div>
 
         <div id="holding-module-trailing-stop" class="holding-module-panel" role="tabpanel">
         <div class="critical-section sky-theme-section" aria-label="移动追踪止盈1分钟扫描结果">
@@ -2620,6 +2604,30 @@
             statusEl.textContent = `刷新完成：预触发刷新 ${payload.refreshed || 0} 个，触发 ${payload.triggered || 0} 个，加仓记录 ${payload.created_records || payload.records || 0} 条；已更新加仓模块。`;
           }
           renderHoldingIncreaseSummary(payload);
+        } catch (error) {
+          if (statusEl) statusEl.textContent = `刷新失败：${error.message}`;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '刷新';
+        }
+      });
+    })();
+
+
+    (function initTrailingReductionRefresh() {
+      const btn = document.getElementById('refresh-trailing-reduction');
+      const statusEl = document.getElementById('trailing-reduction-refresh-status');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.textContent = '刷新中...';
+        if (statusEl) statusEl.textContent = '正在更新“预触发结构破位”symbol的回撤幅度与开仓以来最高价...';
+        try {
+          const response = await fetch('/api/trailing-reduction/refresh-pretrigger', { method: 'POST', headers: { 'Accept': 'application/json' } });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          if (statusEl) statusEl.textContent = `刷新完成：更新 ${payload.refreshed || 0} 个，结构破位 ${payload.triggered || 0} 个，减仓记录 ${payload.records || 0} 条。`;
+          setTimeout(() => window.location.reload(), 500);
         } catch (error) {
           if (statusEl) statusEl.textContent = `刷新失败：${error.message}`;
         } finally {

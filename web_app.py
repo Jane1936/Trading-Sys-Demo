@@ -506,6 +506,28 @@ def account_filled_sell_orders_api():
         return jsonify({"error": str(exc)}), 502
 
 
+def _trailing_reduction_payload() -> dict:
+    return TrailingReductionTracker(db_path=DB_PATH).summary_payload()
+
+
+@app.get("/api/trailing-reduction/summary")
+def trailing_reduction_summary_api():
+    try:
+        return jsonify(_trailing_reduction_payload())
+    except sqlite3.Error as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
+@app.post("/api/trailing-reduction/refresh-pretrigger")
+def trailing_reduction_refresh_pretrigger_api():
+    try:
+        return jsonify(TrailingReductionTracker(db_path=DB_PATH).refresh_pretriggered_symbols())
+    except BinanceAccountConfigError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
 def _trailing_stop_payload() -> dict:
     trailing_stop_tracker = TrailingStopTracker(db_path=DB_PATH)
     round_ts, checks = trailing_stop_tracker.get_latest_round_checks()
@@ -744,8 +766,10 @@ def abnormal_wicks():
     partial_take_profit_strategy = PartialTakeProfitStrategy(db_path=DB_PATH)
     partial_take_profit_round_ts, partial_take_profit_checks = partial_take_profit_strategy.get_latest_round_checks()
     partial_take_profit_records = partial_take_profit_strategy.recent_records(limit=100)
-    trailing_reduction_tracker = TrailingReductionTracker(db_path=DB_PATH)
-    trailing_reduction_round_ts, trailing_reduction_checks = trailing_reduction_tracker.get_latest_round_checks()
+    trailing_reduction_payload = _trailing_reduction_payload()
+    trailing_reduction_round_ts = trailing_reduction_payload["round_ts"]
+    trailing_reduction_checks = trailing_reduction_payload["checks"]
+    trailing_reduction_records = trailing_reduction_payload["records"]
     trailing_stop_tracker = TrailingStopTracker(db_path=DB_PATH)
     trailing_stop_round_ts, trailing_stop_checks = trailing_stop_tracker.get_latest_round_checks()
     trailing_stop_records = trailing_stop_tracker.recent_action_records(limit=100)
@@ -845,6 +869,7 @@ def abnormal_wicks():
         partial_take_profit_records=partial_take_profit_records,
         trailing_reduction_round_ts=trailing_reduction_round_ts,
         trailing_reduction_checks=trailing_reduction_checks,
+        trailing_reduction_records=trailing_reduction_records,
         trailing_stop_round_ts=trailing_stop_round_ts,
         trailing_stop_checks=trailing_stop_checks,
         trailing_stop_records=trailing_stop_records,
