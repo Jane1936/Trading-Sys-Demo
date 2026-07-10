@@ -23,7 +23,7 @@ class FakeTradingExperiment:
                 "positionAmt": "1",
                 "entryPrice": "90",
                 "markPrice": "94",
-                "unRealizedProfit": "25",
+                "unRealizedProfit": "15",
             }
         ]
 
@@ -63,6 +63,7 @@ def test_trailing_reduction_marks_pretrigger_structure_break(tmp_path, monkeypat
     assert checks[0].lowest_15m_low == "95"
     assert checks[0].tag == "预触发结构破位"
     assert checks[0].pretriggered is True
+    assert tracker.summary_payload()["checks"][0]["latest_pretrigger_round_ts"] == 2000
 
 
 def test_summary_payload_only_includes_current_round_records(tmp_path, monkeypatch):

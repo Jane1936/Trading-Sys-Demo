@@ -304,6 +304,25 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
                 matches.append({"type": "减仓", "matched_at": str(row["matched_at"] or "")})
                 break
 
+    if _table_exists(conn, TrailingReductionTracker.RECORDS_TABLE):
+        rows = conn.execute(
+            f"""
+            SELECT checked_at AS matched_at, reduced_quantity, market_order_id
+            FROM {TrailingReductionTracker.RECORDS_TABLE}
+            WHERE symbol = ?
+              AND status = 'submitted'
+              AND checked_at BETWEEN ? AND ?
+            ORDER BY ABS(checked_at - ?) ASC, id DESC
+            """,
+            (symbol, order_time - time_tolerance_ms, order_time + time_tolerance_ms, order_time),
+        ).fetchall()
+        order_id = str(order.get("order_id", "") or "").strip()
+        for row in rows:
+            stored_order_id = str(row["market_order_id"] or "").strip()
+            if (stored_order_id and stored_order_id == order_id) or _decimal_text_equal(row["reduced_quantity"], quantity):
+                matches.append({"type": "移动追踪减仓", "matched_at": str(row["matched_at"] or "")})
+                break
+
     if _table_exists(conn, TrailingStopTracker.CHECKS_TABLE):
         rows = conn.execute(
             f"""
@@ -354,6 +373,8 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
         return "结构止损"
     if "减仓" in match_types:
         return "减仓"
+    if "移动追踪减仓" in match_types:
+        return "移动追踪减仓"
     if "移动追踪止盈" in match_types:
         return "移动追踪止盈"
     if "分批止盈" in match_types:
