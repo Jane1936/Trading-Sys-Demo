@@ -84,6 +84,7 @@
     .reduction-tag-default { background:#e0f2fe; color:#075985; border-color:#7dd3fc; }
     .reduction-tag-stale-pretrigger { background:#f1f5f9; color:#64748b; border-color:#cbd5e1; }
     .reduction-tag-trailing-pretrigger { background:#f1f5f9; color:#64748b; border-color:#cbd5e1; }
+    .reduction-tag-trailing-pretrigger-current { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
     .reduction-tag-increase-completed { background:#dcfce7; color:#166534; border-color:#86efac; }
     .score-delta { display:inline-flex; align-items:center; justify-content:center; min-width:58px; padding:3px 8px; border-radius:999px; font-weight:900; border:1px solid transparent; }
     .score-delta-negative { color:#dc2626; background:#fee2e2; border-color:#fca5a5; }
@@ -1589,7 +1590,7 @@
             <tbody id="trailing-reduction-checks-body">
               {% for row in trailing_reduction_checks %}
               <tr>
-                <td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{% if row.latest_pretrigger_round_ts %}<span class="reduction-tag reduction-tag-trailing-pretrigger">触发轮次 {{ row.latest_pretrigger_round_ts|fmt_ms_datetime }} 预触发结构破位</span>{% elif row.tag %}<span class="reduction-tag reduction-tag-trailing-pretrigger">{{ row.tag }}</span>{% else %}-{% endif %}</td><td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }}</td><td>{{ row.unrealized_pnl }}</td><td>{% set current_price_decimal = row.current_price|float %}{% set lowest_15m_low_decimal = row.lowest_15m_low|float %}<span class="{{ 'reduction-current-price-danger' if lowest_15m_low_decimal > 0 and current_price_decimal < lowest_15m_low_decimal else '' }}">{{ row.current_price }}</span></td><td>{{ row.latest_15m_low }} / {{ row.second_15m_low }}</td><td>{{ row.lowest_15m_low }}</td><td>{{ row.atr14 or '-' }}</td><td>{{ (row.latest_1m_high or '-') ~ ' / ' ~ (row.latest_1m_close or '-') }}</td><td>{{ row.highest_since_open or '-' }}</td><td>{{ row.price_drawdown or '-' }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.pretriggered else 'status-fail' }}">{{ '是' if row.pretriggered else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.structure_break_triggered else 'status-fail' }}">{{ '是' if row.structure_break_triggered else '否' }}</span></td><td>{{ row.reason }}</td>
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{% if row.latest_pretrigger_round_ts %}<span class="reduction-tag {{ 'reduction-tag-trailing-pretrigger-current' if row.latest_pretrigger_round_ts == row.decision_round_ts else 'reduction-tag-trailing-pretrigger' }}">触发轮次 {{ row.latest_pretrigger_round_ts|fmt_ms_datetime }} 预触发结构破位</span>{% elif row.tag %}<span class="reduction-tag reduction-tag-trailing-pretrigger">{{ row.tag }}</span>{% else %}-{% endif %}</td><td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }}</td><td>{{ row.unrealized_pnl }}</td><td>{% set current_price_decimal = row.current_price|float %}{% set lowest_15m_low_decimal = row.lowest_15m_low|float %}<span class="{{ 'reduction-current-price-danger' if lowest_15m_low_decimal > 0 and current_price_decimal < lowest_15m_low_decimal else '' }}">{{ row.current_price }}</span></td><td>{{ row.latest_15m_low }} / {{ row.second_15m_low }}</td><td>{{ row.lowest_15m_low }}</td><td>{{ row.atr14 or '-' }}</td><td>{{ (row.latest_1m_high or '-') ~ ' / ' ~ (row.latest_1m_close or '-') }}</td><td>{{ row.highest_since_open or '-' }}</td><td>{{ row.price_drawdown or '-' }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.pretriggered else 'status-fail' }}">{{ '是' if row.pretriggered else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.structure_break_triggered else 'status-fail' }}">{{ '是' if row.structure_break_triggered else '否' }}</span></td><td>{{ row.reason }}</td>
               </tr>
               {% else %}
               <tr><td class="empty" colspan="18">暂无移动追踪减仓扫描结果</td></tr>
@@ -1598,12 +1599,12 @@
           </table>
         </div>
         <div class="table-wrap">
-          <div class="symbol-strip"><div><strong>移动追踪减仓记录</strong></div><div class="muted">仅展示本轮结构破位触发后的市价减仓30%、止盈/止损重建订单与接口状态。</div></div>
+          <div class="symbol-strip"><div><strong>移动追踪减仓记录</strong></div><div class="muted">展示近7天结构破位触发后的市价减仓30%、止盈/止损重建订单与接口状态。</div></div>
           <table><thead><tr><th>checked_at</th><th>symbol</th><th>high/close</th><th>最高价/ATR/回撤</th><th>减仓比例</th><th>原/减/剩数量</th><th>市价单</th><th>止盈单</th><th>止损单</th><th>状态</th><th>reason</th></tr></thead>
           <tbody id="trailing-reduction-records-body">
           {% for row in trailing_reduction_records %}
             <tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.latest_1m_high }} / {{ row.latest_1m_close }}</td><td>{{ row.highest_since_open }} / {{ row.atr14 }} / {{ row.price_drawdown }}</td><td>{{ row.reduction_percent }}</td><td>{{ row.original_quantity }} / {{ row.reduced_quantity }} / {{ row.remaining_quantity }}</td><td>{{ row.market_order_id or '-' }}</td><td>{{ row.take_profit_order_id or '-' }}</td><td>{{ row.stop_loss_order_id or '-' }}</td><td>{{ row.status }}</td><td>{{ row.reason }}</td></tr>
-          {% else %}<tr><td class="empty" colspan="11">暂无移动追踪减仓记录</td></tr>{% endfor %}
+          {% else %}<tr><td class="empty" colspan="11">近7天暂无移动追踪减仓记录</td></tr>{% endfor %}
           </tbody></table>
         </div>
         </div>
@@ -2590,7 +2591,10 @@
 
     function trailingReductionTagCell(row) {
       if (row.latest_pretrigger_round_ts) {
-        return `<span class="reduction-tag reduction-tag-trailing-pretrigger">触发轮次 ${formatMsDatetime(row.latest_pretrigger_round_ts)} 预触发结构破位</span>`;
+        const tagClass = Number(row.latest_pretrigger_round_ts) === Number(row.decision_round_ts)
+          ? 'reduction-tag-trailing-pretrigger-current'
+          : 'reduction-tag-trailing-pretrigger';
+        return `<span class="reduction-tag ${tagClass}">触发轮次 ${formatMsDatetime(row.latest_pretrigger_round_ts)} 预触发结构破位</span>`;
       }
       if (row.tag) return `<span class="reduction-tag reduction-tag-trailing-pretrigger">${escapeHtml(row.tag)}</span>`;
       return '-';
@@ -2640,7 +2644,7 @@
       const rowsEl = document.getElementById('trailing-reduction-records-body');
       if (!rowsEl) return;
       if (!rows.length) {
-        rowsEl.innerHTML = '<tr><td class="empty" colspan="11">暂无移动追踪减仓记录</td></tr>';
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="11">近7天暂无移动追踪减仓记录</td></tr>';
         return;
       }
       rowsEl.innerHTML = rows.map(row => `

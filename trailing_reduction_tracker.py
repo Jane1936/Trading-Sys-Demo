@@ -318,7 +318,7 @@ class TrailingReductionTracker:
             item = dict(check.__dict__)
             item["latest_pretrigger_round_ts"] = latest_pretrigger_rounds.get(check.symbol)
             annotated_checks.append(item)
-        return {"round_ts": round_ts, "checks": annotated_checks, "records": [dict(r) for r in self.recent_action_records(decision_round_ts=round_ts)]}
+        return {"round_ts": round_ts, "checks": annotated_checks, "records": [dict(r) for r in self.recent_action_records(days=7)]}
 
     def latest_pretrigger_rounds(self) -> dict[str, int]:
         self.init_tables()
@@ -333,9 +333,20 @@ class TrailingReductionTracker:
             ).fetchall()
         return {str(row["symbol"]): int(row["latest_round"]) for row in rows if row["latest_round"] is not None}
 
-    def recent_action_records(self, limit: int = 100, decision_round_ts: int | None = None) -> list[sqlite3.Row]:
+    def recent_action_records(self, limit: int = 100, decision_round_ts: int | None = None, days: int | None = None) -> list[sqlite3.Row]:
         self.init_tables()
         with self._connect() as conn:
+            if days is not None:
+                since_ms = int(time.time() * 1000) - int(days) * 24 * 60 * 60 * 1000
+                if decision_round_ts is None:
+                    return conn.execute(
+                        f"SELECT * FROM {self.RECORDS_TABLE} WHERE checked_at >= ? ORDER BY checked_at DESC, id DESC LIMIT ?",
+                        (since_ms, limit),
+                    ).fetchall()
+                return conn.execute(
+                    f"SELECT * FROM {self.RECORDS_TABLE} WHERE decision_round_ts = ? AND checked_at >= ? ORDER BY checked_at DESC, id DESC LIMIT ?",
+                    (int(decision_round_ts), since_ms, limit),
+                ).fetchall()
             if decision_round_ts is None:
                 return conn.execute(f"SELECT * FROM {self.RECORDS_TABLE} ORDER BY checked_at DESC, id DESC LIMIT ?", (limit,)).fetchall()
             return conn.execute(

@@ -66,24 +66,29 @@ def test_trailing_reduction_marks_pretrigger_structure_break(tmp_path, monkeypat
     assert tracker.summary_payload()["checks"][0]["latest_pretrigger_round_ts"] == 2000
 
 
-def test_summary_payload_only_includes_current_round_records(tmp_path, monkeypatch):
+def test_summary_payload_includes_recent_7_day_records(tmp_path, monkeypatch):
     db_path = tmp_path / "klines.db"
     _create_klines(db_path)
     monkeypatch.setattr("trailing_reduction_tracker.TradingExperiment", FakeTradingExperiment)
 
+    now_ms = 1_700_000_000_000
+    monkeypatch.setattr("trailing_reduction_tracker.time.time", lambda: now_ms / 1000)
     tracker = TrailingReductionTracker(db_path=str(db_path), account_manager=FakeAccountManager())
     tracker.run_round(decision_round_ts=2000)
     tracker._insert_record(
-        "BTC", 1000, 1001, Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1"),
-        Decimal("1"), Decimal("0.3"), Decimal("0.7"), "old", "", "", "submitted", "old_round", ""
+        "BTC", 1000, now_ms - 3 * 24 * 60 * 60 * 1000, Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1"),
+        Decimal("1"), Decimal("0.3"), Decimal("0.7"), "recent_old_round", "", "", "submitted", "recent_old_round", ""
     )
     tracker._insert_record(
-        "BTC", 2000, 2001, Decimal("2"), Decimal("2"), Decimal("2"), Decimal("1"), Decimal("2"),
+        "BTC", 2000, now_ms - 1_000, Decimal("2"), Decimal("2"), Decimal("2"), Decimal("1"), Decimal("2"),
         Decimal("1"), Decimal("0.3"), Decimal("0.7"), "current", "", "", "submitted", "current_round", ""
+    )
+    tracker._insert_record(
+        "BTC", 3000, now_ms - 8 * 24 * 60 * 60 * 1000, Decimal("3"), Decimal("3"), Decimal("3"), Decimal("1"), Decimal("3"),
+        Decimal("1"), Decimal("0.3"), Decimal("0.7"), "expired", "", "", "submitted", "expired", ""
     )
 
     payload = tracker.summary_payload()
 
     assert payload["round_ts"] == 2000
-    assert [record["decision_round_ts"] for record in payload["records"]] == [2000]
-    assert payload["records"][0]["market_order_id"] == "current"
+    assert [record["market_order_id"] for record in payload["records"]] == ["current", "recent_old_round"]
