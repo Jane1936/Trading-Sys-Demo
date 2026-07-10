@@ -1564,19 +1564,19 @@
           <button id="refresh-trailing-reduction" class="btn btn-primary btn-small" type="button">刷新</button>
           <span id="trailing-reduction-refresh-status" class="muted">针对本轮“预触发结构破位”symbol更新回撤幅度与开仓以来最高价</span>
           {% if trailing_reduction_round_ts %}
-            <div class="muted">最近判断轮次：{{ trailing_reduction_round_ts|fmt_ms_datetime }}。该模块在每轮 ATR(14) 计算完成后、减仓条件模块之后执行：15分钟扫描先识别“预触发结构破位”；随后后台每分钟读取数据库 klines_1m 最新 high/close，维护“开仓以来最高价”，当最新收盘价相对开仓以来最高价的回撤 &gt; 2 × ATR(14) 时打上“结构破位”tag，立即市价单结构减仓30%，并按减仓后的剩余仓位重建止盈单/止损单。</div>
+            <div id="trailing-reduction-round-note" class="muted">最近判断轮次：{{ trailing_reduction_round_ts|fmt_ms_datetime }}。该模块在每轮 ATR(14) 计算完成后、减仓条件模块之后执行：15分钟扫描先识别“预触发结构破位”；随后后台每分钟读取数据库 klines_1m 最新 high/close，维护“开仓以来最高价”，当最新收盘价相对开仓以来最高价的回撤 &gt; 2 × ATR(14) 时打上“结构破位”tag，立即市价单结构减仓30%，并按减仓后的剩余仓位重建止盈单/止损单。</div>
           {% else %}
-            <div class="muted">暂无移动追踪减仓扫描结果。</div>
+            <div id="trailing-reduction-round-note" class="muted">暂无移动追踪减仓扫描结果。</div>
           {% endif %}
           {% set pretriggered_trailing_reduction_checks = trailing_reduction_checks|selectattr('pretriggered')|list %}
           {% if pretriggered_trailing_reduction_checks %}
-            <div class="chips">
+            <div id="trailing-reduction-pretrigger-chips" class="chips">
               {% for row in pretriggered_trailing_reduction_checks %}
                 <span class="chip" title="{{ row.reason }}">{{ row.symbol }} · {{ row.tag }}</span>
               {% endfor %}
             </div>
           {% else %}
-            <div class="chips"><span class="chip">本轮无预触发结构破位symbol</span></div>
+            <div id="trailing-reduction-pretrigger-chips" class="chips"><span class="chip">本轮无预触发结构破位symbol</span></div>
           {% endif %}
         </div>
         <div class="table-wrap">
@@ -1586,10 +1586,10 @@
                 <th>checked_at</th><th>symbol</th><th>tag</th><th>R / 2R</th><th>未变现盈亏</th><th>当前价</th><th>最近1/2条15m low</th><th>lowest</th><th>ATR(14)</th><th>最新1m high/close</th><th>开仓以来最高价</th><th>回撤幅度</th><th>开仓价</th><th>持仓数量</th><th>满足&lt;2R</th><th>预触发</th><th>结构破位</th><th>reason</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="trailing-reduction-checks-body">
               {% for row in trailing_reduction_checks %}
               <tr>
-                <td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{% if row.latest_pretrigger_round_ts %}<span class="reduction-tag reduction-tag-trailing-pretrigger">触发轮次 {{ row.latest_pretrigger_round_ts|fmt_ms_datetime }} 预触发结构破位</span>{% elif row.tag %}<span class="reduction-tag reduction-tag-trailing-pretrigger">{{ row.tag }}</span>{% else %}-{% endif %}</td><td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }}</td><td>{{ row.unrealized_pnl }}</td><td>{{ row.current_price }}</td><td>{{ row.latest_15m_low }} / {{ row.second_15m_low }}</td><td>{{ row.lowest_15m_low }}</td><td>{{ row.atr14 or '-' }}</td><td>{{ (row.latest_1m_high or '-') ~ ' / ' ~ (row.latest_1m_close or '-') }}</td><td>{{ row.highest_since_open or '-' }}</td><td>{{ row.price_drawdown or '-' }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.pretriggered else 'status-fail' }}">{{ '是' if row.pretriggered else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.structure_break_triggered else 'status-fail' }}">{{ '是' if row.structure_break_triggered else '否' }}</span></td><td>{{ row.reason }}</td>
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{% if row.latest_pretrigger_round_ts %}<span class="reduction-tag reduction-tag-trailing-pretrigger">触发轮次 {{ row.latest_pretrigger_round_ts|fmt_ms_datetime }} 预触发结构破位</span>{% elif row.tag %}<span class="reduction-tag reduction-tag-trailing-pretrigger">{{ row.tag }}</span>{% else %}-{% endif %}</td><td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }}</td><td>{{ row.unrealized_pnl }}</td><td>{% set current_price_decimal = row.current_price|float %}{% set lowest_15m_low_decimal = row.lowest_15m_low|float %}<span class="{{ 'reduction-current-price-danger' if lowest_15m_low_decimal > 0 and current_price_decimal < lowest_15m_low_decimal else '' }}">{{ row.current_price }}</span></td><td>{{ row.latest_15m_low }} / {{ row.second_15m_low }}</td><td>{{ row.lowest_15m_low }}</td><td>{{ row.atr14 or '-' }}</td><td>{{ (row.latest_1m_high or '-') ~ ' / ' ~ (row.latest_1m_close or '-') }}</td><td>{{ row.highest_since_open or '-' }}</td><td>{{ row.price_drawdown or '-' }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.pretriggered else 'status-fail' }}">{{ '是' if row.pretriggered else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.structure_break_triggered else 'status-fail' }}">{{ '是' if row.structure_break_triggered else '否' }}</span></td><td>{{ row.reason }}</td>
               </tr>
               {% else %}
               <tr><td class="empty" colspan="18">暂无移动追踪减仓扫描结果</td></tr>
@@ -2586,6 +2586,100 @@
       renderHoldingIncreaseRecords(records);
     }
 
+    const TRAILING_REDUCTION_RULE_NOTE = '该模块在每轮 ATR(14) 计算完成后、减仓条件模块之后执行：15分钟扫描先识别“预触发结构破位”；随后后台每分钟读取数据库 klines_1m 最新 high/close，维护“开仓以来最高价”，当最新收盘价相对开仓以来最高价的回撤 > 2 × ATR(14) 时打上“结构破位”tag，立即市价单结构减仓30%，并按减仓后的剩余仓位重建止盈单/止损单。';
+
+    function trailingReductionTagCell(row) {
+      if (row.latest_pretrigger_round_ts) {
+        return `<span class="reduction-tag reduction-tag-trailing-pretrigger">触发轮次 ${formatMsDatetime(row.latest_pretrigger_round_ts)} 预触发结构破位</span>`;
+      }
+      if (row.tag) return `<span class="reduction-tag reduction-tag-trailing-pretrigger">${escapeHtml(row.tag)}</span>`;
+      return '-';
+    }
+
+    function trailingReductionCurrentPriceCell(row) {
+      const currentPrice = Number(row.current_price);
+      const lowest = Number(row.lowest_15m_low);
+      const dangerClass = Number.isFinite(currentPrice) && Number.isFinite(lowest) && lowest > 0 && currentPrice < lowest
+        ? 'reduction-current-price-danger'
+        : '';
+      return `<span class="${dangerClass}">${escapeHtml(row.current_price)}</span>`;
+    }
+
+    function renderTrailingReductionChecks(rows) {
+      const rowsEl = document.getElementById('trailing-reduction-checks-body');
+      if (!rowsEl) return;
+      if (!rows.length) {
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="18">暂无移动追踪减仓扫描结果</td></tr>';
+        return;
+      }
+      rowsEl.innerHTML = rows.map(row => `
+        <tr>
+          <td>${formatMsDatetime(row.checked_at)}</td>
+          <td>${escapeHtml(row.symbol)}</td>
+          <td>${trailingReductionTagCell(row)}</td>
+          <td>${escapeHtml(row.r_usdt)} / ${escapeHtml(row.trigger_r_usdt)}</td>
+          <td>${escapeHtml(row.unrealized_pnl)}</td>
+          <td>${trailingReductionCurrentPriceCell(row)}</td>
+          <td>${escapeHtml(row.latest_15m_low)} / ${escapeHtml(row.second_15m_low)}</td>
+          <td>${escapeHtml(row.lowest_15m_low)}</td>
+          <td>${escapeHtml(row.atr14 || '-')}</td>
+          <td>${escapeHtml(row.latest_1m_high || '-')} / ${escapeHtml(row.latest_1m_close || '-')}</td>
+          <td>${escapeHtml(row.highest_since_open || '-')}</td>
+          <td>${escapeHtml(row.price_drawdown || '-')}</td>
+          <td>${escapeHtml(row.entry_price)}</td>
+          <td>${escapeHtml(row.position_amt)}</td>
+          <td>${statusBadge(row.eligible)}</td>
+          <td>${statusBadge(row.pretriggered)}</td>
+          <td>${statusBadge(row.structure_break_triggered)}</td>
+          <td>${escapeHtml(row.reason)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderTrailingReductionRecords(rows) {
+      const rowsEl = document.getElementById('trailing-reduction-records-body');
+      if (!rowsEl) return;
+      if (!rows.length) {
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="11">暂无移动追踪减仓记录</td></tr>';
+        return;
+      }
+      rowsEl.innerHTML = rows.map(row => `
+        <tr>
+          <td>${formatMsDatetime(row.checked_at)}</td>
+          <td>${escapeHtml(row.symbol)}</td>
+          <td>${escapeHtml(row.latest_1m_high)} / ${escapeHtml(row.latest_1m_close)}</td>
+          <td>${escapeHtml(row.highest_since_open)} / ${escapeHtml(row.atr14)} / ${escapeHtml(row.price_drawdown)}</td>
+          <td>${escapeHtml(row.reduction_percent)}</td>
+          <td>${escapeHtml(row.original_quantity)} / ${escapeHtml(row.reduced_quantity)} / ${escapeHtml(row.remaining_quantity)}</td>
+          <td>${escapeHtml(row.market_order_id || '-')}</td>
+          <td>${escapeHtml(row.take_profit_order_id || '-')}</td>
+          <td>${escapeHtml(row.stop_loss_order_id || '-')}</td>
+          <td>${escapeHtml(row.status)}</td>
+          <td>${escapeHtml(row.reason)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderTrailingReductionSummary(payload) {
+      const checks = payload.checks || [];
+      const records = payload.records || [];
+      const roundNoteEl = document.getElementById('trailing-reduction-round-note');
+      if (roundNoteEl) {
+        roundNoteEl.textContent = payload.round_ts
+          ? `最近判断轮次：${formatMsDatetime(payload.round_ts)}。${TRAILING_REDUCTION_RULE_NOTE}`
+          : '暂无移动追踪减仓扫描结果。';
+      }
+      const chipsEl = document.getElementById('trailing-reduction-pretrigger-chips');
+      if (chipsEl) {
+        const pretriggerRows = checks.filter(row => row.pretriggered);
+        chipsEl.innerHTML = pretriggerRows.length
+          ? pretriggerRows.map(row => `<span class="chip" title="${escapeHtml(row.reason)}">${escapeHtml(row.symbol)} · ${escapeHtml(row.tag || '预触发结构破位')}</span>`).join('')
+          : '<span class="chip">本轮无预触发结构破位symbol</span>';
+      }
+      renderTrailingReductionChecks(checks);
+      renderTrailingReductionRecords(records);
+    }
+
     (function initHoldingIncreaseRefresh() {
       const btn = document.getElementById('refresh-holding-increase');
       const statusEl = document.getElementById('holding-increase-refresh-status');
@@ -2628,7 +2722,7 @@
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
           if (statusEl) statusEl.textContent = `刷新完成：更新 ${payload.refreshed || 0} 个，结构破位 ${payload.triggered || 0} 个，减仓记录 ${payload.records || 0} 条。`;
-          setTimeout(() => window.location.reload(), 500);
+          renderTrailingReductionSummary(payload);
         } catch (error) {
           if (statusEl) statusEl.textContent = `刷新失败：${error.message}`;
         } finally {
