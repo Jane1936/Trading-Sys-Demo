@@ -92,3 +92,23 @@ def test_summary_payload_includes_recent_7_day_records(tmp_path, monkeypatch):
 
     assert payload["round_ts"] == 2000
     assert [record["market_order_id"] for record in payload["records"]] == ["current", "recent_old_round"]
+
+
+def test_refresh_pretriggered_symbols_preserves_recent_records_without_checks(tmp_path, monkeypatch):
+    db_path = tmp_path / "klines.db"
+    now_ms = 1_700_000_000_000
+    monkeypatch.setattr("trailing_reduction_tracker.time.time", lambda: now_ms / 1000)
+    tracker = TrailingReductionTracker(db_path=str(db_path), account_manager=FakeAccountManager())
+    tracker.init_tables()
+    tracker._insert_record(
+        "BTC", 1000, now_ms - 1_000, Decimal("2"), Decimal("1.5"), Decimal("2"), Decimal("0.1"), Decimal("0.5"),
+        Decimal("1"), Decimal("0.3"), Decimal("0.7"), "existing", "tp", "sl", "submitted", "existing_record", ""
+    )
+
+    payload = tracker.refresh_pretriggered_symbols()
+
+    assert payload["round_ts"] is None
+    assert payload["refreshed"] == 0
+    assert payload["triggered"] == 0
+    assert payload["created_records"] == 0
+    assert [record["market_order_id"] for record in payload["records"]] == ["existing"]

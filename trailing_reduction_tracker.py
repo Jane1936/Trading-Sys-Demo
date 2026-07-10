@@ -225,7 +225,7 @@ class TrailingReductionTracker:
         self.init_tables()
         round_ts, checks = self.get_latest_round_checks()
         if round_ts is None:
-            return {"round_ts": None, "refreshed": 0, "triggered": 0, "records": 0}
+            return {**self.summary_payload(), "refreshed": 0, "triggered": 0, "created_records": 0}
         positions = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)._fetch_and_store_positions()
         by_symbol = {self._base_symbol(p.get("symbol")): p for p in positions}
         refreshed = triggered = records = 0
@@ -239,7 +239,7 @@ class TrailingReductionTracker:
             did_trigger = self._refresh_one(check, position)
             triggered += int(did_trigger)
             records += int(did_trigger)
-        return {**self.summary_payload(), "refreshed": refreshed, "triggered": triggered, "records": records}
+        return {**self.summary_payload(), "refreshed": refreshed, "triggered": triggered, "created_records": records}
 
     def _refresh_one(self, check: TrailingReductionCheck, position: dict[str, Any]) -> bool:
         now = int(time.time() * 1000)
