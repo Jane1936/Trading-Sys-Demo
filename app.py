@@ -488,6 +488,14 @@ def start_atr_15m_task(symbols: List[str]) -> None:
     def _run_with_fresh_universe():
         ensure_universe()
         collector.atr_15m_job()
+        try:
+            result = TrailingReductionTracker(db_path=collector.DB_PATH).run_round(decision_round_ts=int(time.time() * 1000))
+            print(
+                f"🧭 trailing reduction after ATR checked={result.get('checked', 0)} "
+                f"eligible={result.get('eligible', 0)} pretriggered={result.get('pretriggered', 0)}"
+            )
+        except Exception as exc:
+            print(f"⚠️ trailing reduction after ATR failed: {exc}")
 
     scheduler = collector.BlockingScheduler()
     scheduler.add_job(ensure_universe, "interval", hours=12)
@@ -496,6 +504,26 @@ def start_atr_15m_task(symbols: List[str]) -> None:
     print("🚀 ATR 15m task started")
     scheduler.start()
 
+
+
+def start_trailing_reduction_refresh_task() -> None:
+    tracker = TrailingReductionTracker(db_path=collector.DB_PATH)
+    tracker.init_tables()
+    scheduler = collector.BlockingScheduler()
+
+    def _job():
+        try:
+            result = tracker.refresh_pretriggered_symbols()
+            print(
+                f"🧭 trailing reduction refresh refreshed={result.get('refreshed', 0)} "
+                f"triggered={result.get('triggered', 0)} records={result.get('records', 0)}"
+            )
+        except Exception as exc:
+            print(f"⚠️ trailing reduction refresh failed: {exc}")
+
+    scheduler.add_job(_job, "cron", second=45)
+    print("🚀 Trailing reduction pretrigger refresh task started")
+    scheduler.start()
 
 def start_processor_task(symbols: List[str]) -> None:
     init_ma20_table(db_path=collector.DB_PATH)
@@ -521,7 +549,7 @@ if __name__ == "__main__":
     # 预先构建一次 universe，并按12小时周期刷新
     symbols = ensure_universe()
 
-    # 六个独立 task：collector / ATR 15m / pre_safety（异常插针后立即执行冷却期symbol） / break_even_take_profit / 加仓预触发刷新 / data_processor
+    # 七个独立 task：collector / ATR 15m / pre_safety / break_even_take_profit / 加仓预触发刷新 / 移动追踪减仓刷新 / data_processor
     collector_thread = threading.Thread(
         target=start_collector_task, args=(symbols,), daemon=True
     )
@@ -544,6 +572,11 @@ if __name__ == "__main__":
         target=start_increase_pretrigger_refresh_task, daemon=True
     )
     increase_pretrigger_thread.start()
+
+    trailing_reduction_refresh_thread = threading.Thread(
+        target=start_trailing_reduction_refresh_task, daemon=True
+    )
+    trailing_reduction_refresh_thread.start()
 
     # 主线程跑 processor task
     start_processor_task(symbols)
