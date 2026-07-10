@@ -205,6 +205,28 @@ def test_holding_increase_refresh_updates_module_without_page_reload():
     assert "window.location.reload()" not in template[init_index:refresh_index + 500]
 
 
+def test_trailing_reduction_refresh_updates_module_without_page_reload():
+    template = Path("templates/abnormal_wicks.html").read_text()
+    init_index = template.index("function renderTrailingReductionSummary")
+    refresh_index = template.index("/api/trailing-reduction/refresh-pretrigger")
+
+    assert 'id="trailing-reduction-round-note"' in template
+    assert 'id="trailing-reduction-pretrigger-chips"' in template
+    assert 'id="trailing-reduction-checks-body"' in template
+    assert 'id="trailing-reduction-records-body"' in template
+    assert "renderTrailingReductionSummary(payload)" in template
+    assert "window.location.reload()" not in template[init_index:refresh_index + 500]
+
+
+def test_trailing_reduction_current_price_is_red_below_lowest():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    assert "lowest_15m_low_decimal > 0 and current_price_decimal < lowest_15m_low_decimal" in template
+    assert "function trailingReductionCurrentPriceCell" in template
+    assert "currentPrice < lowest" in template
+    assert "reduction-current-price-danger" in template
+
+
 def test_holding_increase_tags_have_requested_colors():
     template = Path("templates/abnormal_wicks.html").read_text()
 
