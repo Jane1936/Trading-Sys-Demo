@@ -820,7 +820,7 @@ def test_position_reduction_rule5_only_triggers_once_per_open_lifecycle():
     assert round_ts == 4000
     assert checks[0]["symbol"] == "BANK"
     assert checks[0]["triggered"] == 0
-    assert checks[0]["tag"] == ""
+    assert checks[0]["tag"] == "已触发深度弱势"
     assert checks[0]["rule_name"] == ""
     assert checks[0]["reason"].endswith("rule5_already_triggered_in_current_open_lifecycle")
 

@@ -237,6 +237,14 @@ def test_holding_increase_tags_have_requested_colors():
     assert "latest_pretrigger_round" in template
     assert 'reduction-tag-stale-pretrigger">触发轮次' in template
 
+
+def test_holding_reduction_rule5_lifecycle_tag_is_gray():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    assert ".reduction-tag-rule5-triggered" in template
+    assert "tag == '已触发深度弱势'" in template
+    assert 'reduction-tag-rule5-triggered">{{ tag }}' in template
+
 def test_score_page_includes_ma20_skip_warning_at_top():
     template = Path("templates/abnormal_wicks.html").read_text()
 
