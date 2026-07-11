@@ -135,23 +135,11 @@ def _format_decimal_display(value: Decimal) -> str:
 
 
 def _trading_used_margin(position_snapshots: list[object]) -> Decimal:
-    total = Decimal("0")
-    for row in position_snapshots:
-        try:
-            position_amt = Decimal(str(getattr(row, "position_amt")))
-            mark_price = Decimal(str(getattr(row, "mark_price")))
-            leverage = Decimal(str(getattr(row, "leverage")))
-        except Exception:
-            continue
-        if (
-            not position_amt.is_finite()
-            or not mark_price.is_finite()
-            or not leverage.is_finite()
-            or leverage <= 0
-        ):
-            continue
-        total += abs(position_amt) * mark_price / leverage
-    return total
+    return TradingExperiment()._reserved_margin_from_positions(position_snapshots)
+
+
+def _trading_unrealized_pnl(position_snapshots: list[object]) -> Decimal:
+    return TradingExperiment()._unrealized_pnl_from_positions(position_snapshots)
 
 
 def _trading_used_margin_text(position_snapshots: list[object]) -> str:
@@ -165,7 +153,7 @@ def _trading_open_increase_blocked(account_equity_usdt: object, position_snapsho
         return False
     if not account_equity.is_finite() or account_equity <= 0:
         return False
-    return _trading_used_margin(position_snapshots) > account_equity
+    return _trading_used_margin(position_snapshots) > account_equity + _trading_unrealized_pnl(position_snapshots)
 
 
 def _latest_trading_equity_usdt(equity_trend_rows: list[object]) -> object:

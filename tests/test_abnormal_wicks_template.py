@@ -28,13 +28,13 @@ def test_trading_position_snapshots_show_used_margin_summary():
     assert "trading_equity_usdt" in template
 
 
-def test_trading_used_margin_sums_abs_position_amt_times_mark_price_divided_by_leverage():
+def test_trading_used_margin_uses_reserved_margin_budget_from_notional_divided_by_leverage():
     snapshots = [
-        SimpleNamespace(position_amt="2", mark_price="10.5", leverage="3"),
-        SimpleNamespace(position_amt="-3", mark_price="20", leverage="4"),
-        SimpleNamespace(position_amt="1", mark_price="100", leverage="0"),
-        SimpleNamespace(position_amt="1", mark_price="100", leverage="bad"),
-        SimpleNamespace(position_amt="bad", mark_price="100", leverage="5"),
+        SimpleNamespace(position_amt="2", notional="21", mark_price="10.5", leverage="3"),
+        SimpleNamespace(position_amt="-3", notional="-60", mark_price="20", leverage="4"),
+        SimpleNamespace(position_amt="1", notional="100", mark_price="100", leverage="0"),
+        SimpleNamespace(position_amt="1", notional="100", mark_price="100", leverage="bad"),
+        SimpleNamespace(position_amt="bad", notional="100", mark_price="100", leverage="5"),
     ]
 
     assert _trading_used_margin_text(snapshots) == "22"
@@ -43,10 +43,17 @@ def test_trading_used_margin_sums_abs_position_amt_times_mark_price_divided_by_l
 
 
 def test_trading_open_increase_blocked_when_used_margin_exceeds_equity():
-    snapshots = [SimpleNamespace(position_amt="2", mark_price="100", leverage="1")]
+    snapshots = [SimpleNamespace(position_amt="2", notional="200", unrealized_pnl="0", mark_price="100", leverage="1")]
 
     assert _trading_open_increase_blocked("199.99", snapshots) is True
     assert _trading_open_increase_blocked("200", snapshots) is False
+
+
+def test_trading_open_increase_blocked_allows_unrealized_pnl_buffer():
+    snapshots = [SimpleNamespace(position_amt="2", notional="210", unrealized_pnl="15", mark_price="100", leverage="1")]
+
+    assert _trading_open_increase_blocked("200", snapshots) is False
+    assert _trading_open_increase_blocked("194.99", snapshots) is True
 
 
 def test_latest_trading_equity_usdt_reads_last_trend_row_or_default():
