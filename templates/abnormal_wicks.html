@@ -81,6 +81,7 @@
     .reduction-tag-rule3 { background:#fef3c7; color:#92400e; border-color:#fbbf24; }
     .reduction-tag-rule4 { background:#ede9fe; color:#5b21b6; border-color:#c4b5fd; }
     .reduction-tag-rule5 { background:#dcfce7; color:#166534; border-color:#86efac; }
+    .reduction-tag-rule5-triggered { background:#f1f5f9; color:#64748b; border-color:#cbd5e1; }
     .reduction-tag-default { background:#e0f2fe; color:#075985; border-color:#7dd3fc; }
     .reduction-tag-stale-pretrigger { background:#f1f5f9; color:#64748b; border-color:#cbd5e1; }
     .reduction-tag-trailing-pretrigger { background:#f1f5f9; color:#64748b; border-color:#cbd5e1; }
@@ -1009,7 +1010,7 @@
             {% if triggered_reduction_checks %}
               <div class="chips">
                 {% for row in triggered_reduction_checks %}
-                  <span class="reduction-tags" title="{{ row.reason }}"><span class="chip">{{ row.symbol }}</span>{% for tag in row.tag.split('、') %}{% if tag == '90分钟内已触发趋势走弱' %}<span class="reduction-tag reduction-tag-rule2-cooldown">{{ tag }}</span>{% elif tag == '趋势走弱' or tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>{% elif tag == '绝对分数大幅回撤' %}<span class="reduction-tag reduction-tag-rule3">{{ tag }}</span>{% elif tag == '评分进入危险区' %}<span class="reduction-tag reduction-tag-rule4">{{ tag }}</span>{% elif tag == '中危险区+价格确认' or tag == '深度弱势' %}<span class="reduction-tag reduction-tag-rule5">{{ tag }}</span>{% else %}<span class="reduction-tag reduction-tag-default">{{ tag }}</span>{% endif %}{% endfor %}</span>
+                  <span class="reduction-tags" title="{{ row.reason }}"><span class="chip">{{ row.symbol }}</span>{% for tag in row.tag.split('、') %}{% if tag == '已触发深度弱势' %}<span class="reduction-tag reduction-tag-rule5-triggered">{{ tag }}</span>{% elif tag == '90分钟内已触发趋势走弱' %}<span class="reduction-tag reduction-tag-rule2-cooldown">{{ tag }}</span>{% elif tag == '趋势走弱' or tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>{% elif tag == '绝对分数大幅回撤' %}<span class="reduction-tag reduction-tag-rule3">{{ tag }}</span>{% elif tag == '评分进入危险区' %}<span class="reduction-tag reduction-tag-rule4">{{ tag }}</span>{% elif tag == '中危险区+价格确认' or tag == '深度弱势' %}<span class="reduction-tag reduction-tag-rule5">{{ tag }}</span>{% else %}<span class="reduction-tag reduction-tag-default">{{ tag }}</span>{% endif %}{% endfor %}</span>
                 {% endfor %}
               </div>
             {% else %}
@@ -1049,7 +1050,7 @@
                   <td>{% if row.tag %}
                     <span class="reduction-tags">
                       {% for tag in row.tag.split('、') %}
-                        {% if tag == '90分钟内已触发趋势走弱' %}<span class="reduction-tag reduction-tag-rule2-cooldown">{{ tag }}</span>{% elif tag == '趋势走弱' or tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>
+                        {% if tag == '已触发深度弱势' %}<span class="reduction-tag reduction-tag-rule5-triggered">{{ tag }}</span>{% elif tag == '90分钟内已触发趋势走弱' %}<span class="reduction-tag reduction-tag-rule2-cooldown">{{ tag }}</span>{% elif tag == '趋势走弱' or tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>
                         {% elif tag == '绝对分数大幅回撤' %}<span class="reduction-tag reduction-tag-rule3">{{ tag }}</span>
                         {% elif tag == '评分进入危险区' %}<span class="reduction-tag reduction-tag-rule4">{{ tag }}</span>
                         {% elif tag == '中危险区+价格确认' or tag == '深度弱势' %}<span class="reduction-tag reduction-tag-rule5">{{ tag }}</span>

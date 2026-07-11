@@ -199,6 +199,7 @@ class HoldingPositionScoringSystem:
     REDUCTION_TAG_SCORE_DANGER_ZONE = "评分进入危险区"
     REDUCTION_TAG_MEDIUM_DANGER_PRICE_CONFIRMATION = "中危险区+价格确认"
     REDUCTION_TAG_DEEP_WEAKNESS = "深度弱势"
+    REDUCTION_TAG_DEEP_WEAKNESS_TRIGGERED = "已触发深度弱势"
 
     def __init__(
         self,
@@ -718,6 +719,7 @@ class HoldingPositionScoringSystem:
         elif open_trade_created_at == "":
             reasons.append("rule5_missing_open_trade_lifecycle")
         elif self._has_rule5_reduction_record_since(symbol, int(open_trade_created_at)):
+            tags.append(self.REDUCTION_TAG_DEEP_WEAKNESS_TRIGGERED)
             reasons.append("rule5_already_triggered_in_current_open_lifecycle")
         elif current_price <= 0:
             reasons.append("rule5_missing_current_price")
