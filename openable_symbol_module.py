@@ -171,6 +171,8 @@ class OpenableSymbolModule:
         distance_tier: str,
     ) -> str:
         """Return this-round opening leverage formatted as a multiplier string."""
+        if distance_ratio is None or distance_ratio <= 0:
+            return "NA"
         band = cls.score_band_config_for_total(total_score)
         if band:
             return band.tier_leverages.get(distance_tier, "NA")
@@ -240,12 +242,11 @@ class OpenableSymbolModule:
         threshold = self.distance_threshold_for_total(total_score)
         distance_tier = self.stop_loss_distance_tier_for_ratio(ratio)
         opening_leverage = self.opening_leverage_for_total_and_distance(total_score, ratio, distance_tier)
-        zero_distance_trend = total_score >= 81 and ratio == 0
+        zero_distance = ratio == 0
         distance_qualified = (
             ratio is not None
             and threshold is not None
-            and 0 <= ratio <= threshold
-            and not zero_distance_trend
+            and 0 < ratio <= threshold
         )
         qualified = distance_qualified
         if threshold is None:
@@ -254,8 +255,8 @@ class OpenableSymbolModule:
             reason = "rule18_distance_ratio_missing"
         elif ratio < 0:
             reason = "stop_loss_distance_negative"
-        elif zero_distance_trend:
-            reason = "trend_zero_distance_ratio_not_openable"
+        elif zero_distance:
+            reason = "zero_distance_ratio_not_openable"
         elif distance_qualified:
             reason = "total_score_not_cooldown_and_stop_loss_distance_qualified"
         else:
