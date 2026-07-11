@@ -1320,3 +1320,77 @@ def test_reconcile_missing_exit_orders_cancels_stale_take_profit_without_positio
     assert result["cancelled"] == 1
     assert ("/fapi/v1/algoOrder", {"symbol": "GONEUSDT", "algoId": "tp-stale"}) in account.signed_deletes
     assert ("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "sl-1"}) not in account.signed_deletes
+
+class MaxStopOrderLimitAccountManager(FakeAccountManager):
+    def _public_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v1/exchangeInfo":
+            return {
+                "symbols": [
+                    {
+                        "symbol": "BANKUSDT",
+                        "filters": [
+                            {"filterType": "LOT_SIZE", "stepSize": "1"},
+                            {"filterType": "PRICE_FILTER", "tickSize": "0.000001", "minPrice": "0.000001", "maxPrice": "999999"},
+                        ],
+                    }
+                ]
+            }
+        return super()._public_get(endpoint, params)
+
+    def _signed_post(self, endpoint, params=None):
+        self.signed_posts.append((endpoint, dict(params or {})))
+        if endpoint == "/fapi/v1/algoOrder":
+            raise RuntimeError('400 Client Error: Bad Request; response_body={"code":-4045,"msg":"Reach max stop order limit."}')
+        return {"orderId": len(self.signed_posts)}
+
+
+def test_place_exit_order_falls_back_to_exchange_price_limit_when_stop_order_limit_reached(tmp_path):
+    account = MaxStopOrderLimitAccountManager()
+    experiment = TradingExperiment(db_path=str(tmp_path / "klines.db"), account_manager=account)
+    candidate = OpenableSymbol(
+        symbol="BANK",
+        decision_round_ts=1,
+        total_score=80,
+        score_band="标准试错单",
+        stop_loss_distance_ratio=0.01,
+        distance_threshold=0.02,
+        stop_loss_distance_tier="A档",
+        opening_leverage="4x",
+        distance_qualified=True,
+        qualified=True,
+        reason="test",
+        evaluated_at=1,
+    )
+
+    response = experiment._place_exit_order(
+        candidate,
+        "BANKUSDT",
+        {
+            "symbol": "BANKUSDT",
+            "side": "SELL",
+            "type": "TAKE_PROFIT",
+            "quantity": "50",
+            "price": "2.1",
+            "stopPrice": "2.1",
+            "timeInForce": "GTC",
+            "reduceOnly": "true",
+            "workingType": "MARK_PRICE",
+        },
+        "place_hard_take_profit",
+    )
+
+    assert response == {"orderId": 2}
+    assert account.signed_posts[0][0] == "/fapi/v1/algoOrder"
+    assert account.signed_posts[1] == (
+        "/fapi/v1/order",
+        {
+            "symbol": "BANKUSDT",
+            "side": "SELL",
+            "type": "LIMIT",
+            "quantity": "50",
+            "price": "999999",
+            "timeInForce": "GTC",
+            "reduceOnly": "true",
+            "newOrderRespType": "RESULT",
+        },
+    )

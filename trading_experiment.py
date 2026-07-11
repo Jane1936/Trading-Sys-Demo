@@ -663,6 +663,43 @@ class TradingExperiment:
             and ("-4131" in message or "PERCENT_PRICE" in message)
         )
 
+    @staticmethod
+    def _is_max_stop_order_limit_error(exc: Exception) -> bool:
+        message = str(exc)
+        return "-4045" in message or "Reach max stop order limit" in message
+
+    def _price_limit_exit_order_params(self, params: dict[str, Any], trading_symbol: str) -> dict[str, Any]:
+        """Build a reduce-only LIMIT fallback using exchangeInfo price bounds.
+
+        Binance rejects additional conditional algo orders with -4045 when the
+        symbol/account has reached its stop-order cap.  As a last-resort hard
+        protection placeholder, place a regular reduce-only LIMIT order at the
+        allowed price boundary for the exit side/order type so the request does
+        not consume another stop-order slot.
+        """
+        symbol = str(trading_symbol or params.get("symbol") or "").upper()
+        side = str(params.get("side") or "").upper()
+        order_type = str(params.get("type") or "").upper()
+        info = self._exchange_symbol_info(symbol)
+        min_price = info.get("min_price", Decimal("0"))
+        max_price = info.get("max_price", Decimal("0"))
+        if order_type.startswith("TAKE_PROFIT"):
+            boundary_price = max_price if side == "SELL" else min_price
+        else:
+            boundary_price = min_price if side == "SELL" else max_price
+        if boundary_price <= 0:
+            raise RuntimeError(f"price_limit_fallback_unavailable: symbol={symbol}; min_price={min_price}; max_price={max_price}")
+        return {
+            "symbol": symbol,
+            "side": side,
+            "type": "LIMIT",
+            "quantity": params.get("quantity"),
+            "price": self._fmt_decimal(boundary_price),
+            "timeInForce": "GTC",
+            "reduceOnly": params.get("reduceOnly", "true"),
+            "newOrderRespType": params.get("newOrderRespType", "RESULT"),
+        }
+
     def _wait_for_open_position(self, candidate: OpenableSymbol, trading_symbol: str) -> tuple[Decimal, Decimal]:
         max_attempts = max(1, int(self.config.exit_order_missing_position_retries) + 1)
         last_exc: Exception | None = None
@@ -713,6 +750,15 @@ class TradingExperiment:
             try:
                 return self._signed_post_order_with_ioc_retry(endpoint, request_params, trading_symbol=trading_symbol)
             except Exception as exc:
+                if self._is_max_stop_order_limit_error(exc):
+                    try:
+                        fallback_params = self._price_limit_exit_order_params(request_params, trading_symbol)
+                        return self._signed_post_order_with_ioc_retry("/fapi/v1/order", fallback_params, trading_symbol=trading_symbol)
+                    except Exception as fallback_exc:
+                        last_exc = RuntimeError(
+                            f"price_limit_exit_order_fallback_failed: original={exc}; fallback={fallback_exc}"
+                        )
+                        break
                 last_exc = exc
                 if not self._is_missing_position_for_close_position_error(exc) or attempt >= max_attempts:
                     break
@@ -1299,6 +1345,8 @@ class TradingExperiment:
             return {
                 "step_size": Decimal(str(lot.get("stepSize", "1"))),
                 "tick_size": Decimal(str(price_filter.get("tickSize", "0.01"))),
+                "min_price": Decimal(str(price_filter.get("minPrice", "0"))),
+                "max_price": Decimal(str(price_filter.get("maxPrice", "0"))),
             }
         raise RuntimeError(f"Symbol {symbol} not found in exchangeInfo")
 
