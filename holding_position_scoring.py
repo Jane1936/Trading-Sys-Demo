@@ -1452,22 +1452,25 @@ class HoldingPositionScoringSystem:
             if leverage <= 0:
                 raise RuntimeError("increase_position_leverage_missing")
             required_margin = increased_quantity * current_price / leverage
-            account_equity = helper._fetch_experiment_usdt_equity()
-            reserved_margin_budget = helper._reserved_margin_from_positions(helper._fetch_and_store_positions())
             account = self.account_manager._signed_get("/fapi/v3/account")
             if not isinstance(account, dict):
                 raise RuntimeError("Unexpected Binance account response format")
             available_balance = self._decimal_from(account.get("availableBalance"), Decimal("0"))
-            available_experiment_usdt = available_balance - helper.config.experiment_uninvested_usdt
-            if available_experiment_usdt < 0:
-                available_experiment_usdt = Decimal("0")
-            if helper._equity_below_used_margin(account_equity, reserved_margin_budget):
+            account_equity = helper._fetch_experiment_usdt_equity()
+            latest_positions = helper._fetch_and_store_positions()
+            reserved_margin_budget = helper._reserved_margin_from_positions(latest_positions)
+            margin_budget_limit = helper._margin_budget_limit(account_equity, latest_positions)
+            available_experiment_usdt = available_balance
+            if available_balance < helper.config.experiment_uninvested_usdt:
+                status = "skipped"
+                reason_parts.append("可用金额低于4000")
+            elif helper._equity_below_used_margin(margin_budget_limit, reserved_margin_budget):
                 status = "skipped"
                 reason_parts.append("禁止任何新开仓/加仓")
-            elif reserved_margin_budget + required_margin > account_equity:
+            elif reserved_margin_budget + required_margin > margin_budget_limit:
                 status = "skipped"
                 reason_parts.append("实验组净值预算不足")
-            elif required_margin > available_experiment_usdt:
+            elif required_margin > available_balance:
                 status = "skipped"
                 reason_parts.append("可用金额不足")
             else:

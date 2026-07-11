@@ -119,7 +119,7 @@ class ExistingBankPositionAccountManager(FakeAccountManager):
 class LowAvailableReserveAccountManager(FakeAccountManager):
     def _signed_get(self, endpoint, params=None):
         if endpoint == "/fapi/v3/account":
-            return {"availableBalance": "4100", "totalMarginBalance": "1000"}
+            return {"availableBalance": "3999.99", "totalMarginBalance": "1000"}
         return super()._signed_get(endpoint, params)
 
 
@@ -792,7 +792,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
     def test_current_decision_round_ts_uses_15_minute_floor(self):
         self.assertEqual(TradingExperiment.current_decision_round_ts(now_ms=1_830_000), 1_800_000)
 
-    def test_run_round_preserves_available_balance_reserve_floor(self):
+    def test_run_round_blocks_before_open_when_available_balance_is_below_reserve_floor(self):
         fake_account = LowAvailableReserveAccountManager()
         with tempfile.TemporaryDirectory() as tmpdir:
             experiment = TradingExperiment(

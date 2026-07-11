@@ -1079,7 +1079,7 @@ class EquityBelowUsedMarginIncreaseAccountManager(RefreshingMarkAccountManager):
 class EquityBudgetExhaustedIncreaseAccountManager(RefreshingMarkAccountManager):
     def _signed_get(self, endpoint, params=None):
         if endpoint == "/fapi/v3/positionRisk":
-            return [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "10", "unRealizedProfit": "70", "leverage": "5", "entryPrice": "7", "notional": "5000"}]
+            return [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "10", "unRealizedProfit": "70", "leverage": "5", "entryPrice": "7", "notional": "5345"}]
         return super()._signed_get(endpoint, params)
 
 

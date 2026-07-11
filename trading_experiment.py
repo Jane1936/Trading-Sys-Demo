@@ -276,23 +276,24 @@ class TradingExperiment:
             available_balance = self._decimal_from(account.get("availableBalance"), Decimal("0"))
             account_equity = self._fetch_experiment_usdt_equity()
             max_loss = account_equity * self.config.risk_fraction
+            if available_balance < self.config.experiment_uninvested_usdt:
+                self._record_skip(candidate, account_equity, max_loss, "available_balance_reserve_floor_blocked")
+                skipped += 1
+                break
             reserved_margin_budget = self._reserved_margin_from_positions(positions)
-            if self._equity_below_used_margin(account_equity, reserved_margin_budget):
+            margin_budget_limit = self._margin_budget_limit(account_equity, positions)
+            if self._equity_below_used_margin(margin_budget_limit, reserved_margin_budget):
                 self._record_skip(candidate, account_equity, max_loss, "experiment_equity_below_used_margin_open_increase_blocked")
                 skipped += 1
                 break
             trade_plan = self._trade_plan(candidate, account_equity)
             required_margin = trade_plan.required_margin_usdt
-            if reserved_margin_budget + required_margin > account_equity:
+            if reserved_margin_budget + required_margin > margin_budget_limit:
                 self._record_skip(candidate, account_equity, max_loss, "experiment_equity_budget_exhausted", required_margin)
                 skipped += 1
                 break
             if available_balance < required_margin:
                 self._record_skip(candidate, account_equity, max_loss, "available_balance_lt_required_margin", required_margin)
-                skipped += 1
-                break
-            if available_balance - required_margin < self.config.experiment_uninvested_usdt:
-                self._record_skip(candidate, account_equity, max_loss, "available_balance_reserve_floor_blocked", required_margin)
                 skipped += 1
                 break
 
@@ -1296,17 +1297,44 @@ class TradingExperiment:
     def _equity_below_used_margin(account_equity: Decimal, used_margin: Decimal) -> bool:
         return account_equity > 0 and used_margin > account_equity
 
+    def _margin_budget_limit(self, account_equity: Decimal, positions: Iterable[dict[str, Any]]) -> Decimal:
+        unrealized_pnl = self._unrealized_pnl_from_positions(positions)
+        limit = account_equity + unrealized_pnl
+        return limit if limit > 0 else Decimal("0")
+
+    def _unrealized_pnl_from_positions(self, positions: Iterable[dict[str, Any]]) -> Decimal:
+        total = Decimal("0")
+        for row in positions:
+            amt = self._decimal_from(self._position_value(row, "positionAmt", "position_amt"), Decimal("0"))
+            if amt == 0:
+                continue
+            pnl = self._decimal_from(
+                self._position_value(row, "unRealizedProfit", "unrealizedProfit", "unrealized_pnl"),
+                Decimal("0"),
+            )
+            total += pnl
+        return total
+
     def _reserved_margin_from_positions(self, positions: Iterable[dict[str, Any]]) -> Decimal:
         reserved = Decimal("0")
         for row in positions:
-            amt = self._decimal_from(row.get("positionAmt"), Decimal("0"))
+            amt = self._decimal_from(self._position_value(row, "positionAmt", "position_amt"), Decimal("0"))
             if amt == 0:
                 continue
-            leverage = self._decimal_from(row.get("leverage"), Decimal("0"))
-            notional = abs(self._decimal_from(row.get("notional"), Decimal("0")))
+            leverage = self._decimal_from(self._position_value(row, "leverage"), Decimal("0"))
+            notional = abs(self._decimal_from(self._position_value(row, "notional"), Decimal("0")))
             if leverage > 0 and notional > 0:
                 reserved += notional / leverage
         return reserved
+
+    @staticmethod
+    def _position_value(row: Any, *keys: str) -> Any:
+        for key in keys:
+            if isinstance(row, dict) and key in row:
+                return row.get(key)
+            if hasattr(row, key):
+                return getattr(row, key)
+        return None
 
     def _current_total_risk(
         self,
