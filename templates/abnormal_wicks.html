@@ -829,7 +829,7 @@
             </div>
           {% endif %}
         </div>
-        <div class="tip">可开仓基础条件：本轮总分 ≥ {{ openable_min_total_score }}，且不在冷却期。止损距离筛查使用规则18的 distance_ratio：{{ score_distance_threshold_text }}；止损距离档位：0&lt;distance_ratio≤2% 为A档，2%&lt;distance_ratio≤3% 为B档，3%&lt;distance_ratio≤4% 为C档，distance_ratio&gt;4% 为D档。杠杆评定：趋势标准单及以上且 distance_ratio 为0时统一为NA且不开单；其他情况按总分区间和止损距离档位映射（{{ score_leverage_mapping_text }}）。下表展示基础条件命中的symbol及其止损距离筛查结果与本轮开仓杠杆倍数。</div>
+        <div class="tip">可开仓基础条件：本轮总分 ≥ {{ openable_min_total_score }}，且不在冷却期。止损距离筛查使用规则18的 distance_ratio：{{ score_distance_threshold_text }}；止损距离档位：0&lt;distance_ratio≤2% 为A档，2%&lt;distance_ratio≤3% 为B档，3%&lt;distance_ratio≤4% 为C档，distance_ratio&gt;4% 为D档。杠杆评定：所有单子 distance_ratio 为0时，杠杆统一为NA，且最终不可开仓；其他情况按总分区间和止损距离档位映射（{{ score_leverage_mapping_text }}）。下表展示基础条件命中的symbol及其止损距离筛查结果与本轮开仓杠杆倍数。</div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -1922,7 +1922,7 @@
             </tbody>
           </table>
         </div>
-        <div class="experiment-note">第一组交易实验：总保证金预算随当前实验组USDT净值动态调整，允许盈利后用更高净值扩大仓位；每次新开仓前查询当前“实验组USDT净值”，按 1% 风险、止损距离和杠杆动态计算保证金：保证金 = (实验组USDT净值 × 1%) ÷ (distance_ratio × 杠杆)，名义仓位 = 保证金 × 杠杆；distance_ratio 和杠杆来自“本轮可开仓symbol情况”，趋势标准单及以上且 distance_ratio 为 0 时不再设置默认止损距离或杠杆并且不开单；开多前查询当前持仓和当前总风险，若当前总风险 &gt; 18 且候选总分低于 81、可用余额不足本笔所需保证金或“当前已用保证金 + 本笔新开仓保证金”超出当前实验组USDT净值则不开仓；不再按持仓数量限制新开仓；候选按“最终可开仓=是”的总分降序遍历；若候选 symbol 当前已有持仓则跳过该 symbol 并继续遍历下一个可开仓 symbol；新开仓后会立即通过限价条件单接口设置硬止盈单，按“入场价 + 55USDT / 持仓数量”计算触发/委托价格，浮盈达到55USDT时 reduceOnly 平仓；同时设置止损单；若持仓期间触发“分批止盈规则”卖出30%仓位，或触发持仓评分模块的加仓/减仓导致仓位数量变化，系统会先取消原硬止盈单，再按变化后的实际仓位重新计算“入场价 + 55USDT / 最新持仓数量”，重新挂硬止盈单，仍以利润达到55USDT为目标；止损价格距离仍按 min(入场价 × 10%，实验组USDT净值 × 1% / 持仓数量) 控制。</div>
+        <div class="experiment-note">第一组交易实验：总保证金预算随当前实验组USDT净值动态调整，允许盈利后用更高净值扩大仓位；每次新开仓前查询当前“实验组USDT净值”，按 1% 风险、止损距离和杠杆动态计算保证金：保证金 = (实验组USDT净值 × 1%) ÷ (distance_ratio × 杠杆)，名义仓位 = 保证金 × 杠杆；distance_ratio 和杠杆来自“本轮可开仓symbol情况”，所有单子 distance_ratio 为 0 时杠杆统一为 NA，且最终不可开仓；开多前查询当前持仓和当前总风险，若当前总风险 &gt; 18 且候选总分低于 81、可用余额不足本笔所需保证金或“当前已用保证金 + 本笔新开仓保证金”超出当前实验组USDT净值则不开仓；不再按持仓数量限制新开仓；候选按“最终可开仓=是”的总分降序遍历；若候选 symbol 当前已有持仓则跳过该 symbol 并继续遍历下一个可开仓 symbol；新开仓后会立即通过限价条件单接口设置硬止盈单，按“入场价 + 55USDT / 持仓数量”计算触发/委托价格，浮盈达到55USDT时 reduceOnly 平仓；同时设置止损单；若持仓期间触发“分批止盈规则”卖出30%仓位，或触发持仓评分模块的加仓/减仓导致仓位数量变化，系统会先取消原硬止盈单，再按变化后的实际仓位重新计算“入场价 + 55USDT / 最新持仓数量”，重新挂硬止盈单，仍以利润达到55USDT为目标；止损价格距离仍按 min(入场价 × 10%，实验组USDT净值 × 1% / 持仓数量) 控制。</div>
         <div class="account-summary" aria-label="实验组USDT净值">
           <div class="account-metric account-metric-highlight">
             <div class="account-metric-label">实验组USDT净值</div>

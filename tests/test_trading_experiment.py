@@ -1068,7 +1068,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(plan.required_margin_usdt, Decimal("50"))
         self.assertEqual(plan.planned_notional_usdt, Decimal("500"))
 
-    def test_trade_plan_does_not_default_zero_distance_trend_candidate(self):
+    def test_trade_plan_does_not_default_zero_distance_candidate(self):
         fake_account = FakeAccountManager()
         with tempfile.TemporaryDirectory() as tmpdir:
             experiment = TradingExperiment(
@@ -1078,15 +1078,15 @@ class TradingExperimentSymbolTests(unittest.TestCase):
             candidate = OpenableSymbol(
                 symbol="BANK",
                 decision_round_ts=1,
-                total_score=81,
-                score_band="趋势标准单",
+                total_score=67,
+                score_band="低档试错单",
                 stop_loss_distance_ratio=0,
-                distance_threshold=0.07,
+                distance_threshold=0.05,
                 stop_loss_distance_tier="NA",
                 opening_leverage="NA",
                 distance_qualified=False,
                 qualified=False,
-                reason="trend_zero_distance_ratio_not_openable",
+                reason="zero_distance_ratio_not_openable",
                 evaluated_at=1,
             )
 
