@@ -48,7 +48,7 @@ class FakeAccountManager:
 
     def _signed_get(self, endpoint, params=None):
         if endpoint == "/fapi/v3/account":
-            return {"availableBalance": "1000", "totalMarginBalance": "1000"}
+            return {"availableBalance": "5000", "totalMarginBalance": "1000"}
         if endpoint == "/fapi/v3/balance":
             return [{"asset": "USDT", "balance": "5000"}]
         if endpoint == "/fapi/v3/positionRisk":
@@ -115,10 +115,18 @@ class ExistingBankPositionAccountManager(FakeAccountManager):
             return [{"symbol": "BANKUSDT", "positionAmt": "3", "leverage": "5"}]
         return super()._signed_get(endpoint, params)
 
+
+class LowAvailableReserveAccountManager(FakeAccountManager):
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/account":
+            return {"availableBalance": "4100", "totalMarginBalance": "1000"}
+        return super()._signed_get(endpoint, params)
+
+
 class ProfitableExperimentBudgetAccountManager(FakeAccountManager):
     def _signed_get(self, endpoint, params=None):
         if endpoint == "/fapi/v3/account":
-            return {"availableBalance": "1200", "totalMarginBalance": "1200"}
+            return {"availableBalance": "5200", "totalMarginBalance": "1200"}
         if endpoint == "/fapi/v3/balance":
             return [{"asset": "USDT", "balance": "5200"}]
         if endpoint == "/fapi/v3/positionRisk" and not params:
@@ -784,6 +792,37 @@ class TradingExperimentSymbolTests(unittest.TestCase):
     def test_current_decision_round_ts_uses_15_minute_floor(self):
         self.assertEqual(TradingExperiment.current_decision_round_ts(now_ms=1_830_000), 1_800_000)
 
+    def test_run_round_preserves_available_balance_reserve_floor(self):
+        fake_account = LowAvailableReserveAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+            )
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=90,
+                score_band="确定性强趋势单",
+                stop_loss_distance_ratio=0.01,
+                distance_threshold=0.08,
+                stop_loss_distance_tier="A档",
+                opening_leverage="4x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            result = experiment.run_round([candidate])
+            with sqlite3.connect(experiment.db_path) as conn:
+                row = conn.execute(
+                    f"SELECT status, reason, required_margin_usdt FROM {TradingExperiment.TRADES_TABLE} ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+
+        self.assertEqual(result, {"opened": 0, "skipped": 1, "reason": "completed"})
+        self.assertEqual(row, ("skipped", "available_balance_reserve_floor_blocked", "250"))
+        self.assertEqual(fake_account.signed_posts, [])
 
     def test_run_round_blocks_new_entries_when_equity_below_used_margin(self):
         fake_account = EquityBelowUsedMarginAccountManager()

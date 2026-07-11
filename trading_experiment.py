@@ -103,7 +103,8 @@ class TradingExperiment:
     Rules implemented:
     * experiment equity matches the web page "experiment USDT equity" metric;
     * open-position count is not capped; new entries are allowed as long as
-      available balance and the experiment margin budget can cover the order;
+      available balance can cover the order while preserving the configured
+      uninvested USDT floor, and the experiment margin budget can cover the order;
     * the experiment's total margin budget floats with current experiment USDT equity;
     * before each new entry, query the latest experiment USDT equity from Binance;
     * each candidate's base margin is sized from 1% equity risk, stop-loss distance,
@@ -288,6 +289,10 @@ class TradingExperiment:
                 break
             if available_balance < required_margin:
                 self._record_skip(candidate, account_equity, max_loss, "available_balance_lt_required_margin", required_margin)
+                skipped += 1
+                break
+            if available_balance - required_margin < self.config.experiment_uninvested_usdt:
+                self._record_skip(candidate, account_equity, max_loss, "available_balance_reserve_floor_blocked", required_margin)
                 skipped += 1
                 break
 
