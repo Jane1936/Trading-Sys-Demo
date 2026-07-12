@@ -9,7 +9,6 @@ from __future__ import annotations
 import ast
 import os
 import sqlite3
-from dataclasses import asdict
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 
@@ -538,14 +537,7 @@ def trailing_reduction_refresh_pretrigger_api():
 
 
 def _trailing_stop_payload() -> dict:
-    trailing_stop_tracker = TrailingStopTracker(db_path=DB_PATH)
-    round_ts, checks = trailing_stop_tracker.get_latest_round_checks()
-    records = trailing_stop_tracker.recent_action_records(limit=100)
-    return {
-        "round_ts": round_ts,
-        "checks": [asdict(row) for row in checks],
-        "records": [asdict(row) for row in records],
-    }
+    return TrailingStopTracker(db_path=DB_PATH).summary_payload()
 
 
 @app.get("/api/trailing-stop/summary")
@@ -553,6 +545,18 @@ def trailing_stop_summary_api():
     try:
         return jsonify(_trailing_stop_payload())
     except sqlite3.Error as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
+@app.post("/api/trailing-stop/refresh-pretrigger")
+def trailing_stop_refresh_pretrigger_api():
+    try:
+        return jsonify(TrailingStopTracker(db_path=DB_PATH).refresh_pretriggered_symbols())
+    except BinanceAccountConfigError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except sqlite3.Error as exc:
+        return jsonify({"error": str(exc)}), 502
+    except Exception as exc:
         return jsonify({"error": str(exc)}), 502
 
 

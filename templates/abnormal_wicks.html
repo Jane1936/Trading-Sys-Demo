@@ -1644,7 +1644,7 @@
             <span id="trailing-stop-refresh-status" class="muted">可单独刷新移动追踪止盈数据</span>
           </div>
           {% if trailing_stop_round_ts %}
-            <div id="trailing-stop-round-note" class="muted">最近判断轮次：{{ trailing_stop_round_ts|fmt_ms_datetime }}。仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；每分钟读取数据库 klines_1m 最新high，计算 持仓数量 × (high - 开仓价)，维护“最大未变现盈利”，并计算当前盈利回撤幅度 = (最大未变现盈利 - 当下未变现盈利) / 最大未变现盈利；若满足对应 total_score 分层阈值，且当前标记价格小于最近一条15分钟K线low，则取消原止盈单并 reduceOnly LIMIT IOC 全部止盈。</div>
+            <div id="trailing-stop-round-note" class="muted">最近判断轮次：{{ trailing_stop_round_ts|fmt_ms_datetime }}。仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；先用最近4条15分钟K线判断“预触发移动追踪止盈”（最近第1条close < 最近第2/3/4条low的最小值）；对本轮预触发symbol每分钟读取 klines_1m 最新 high/close，维护“开仓以来最高价”，当最新close相对开仓以来最高价回撤 > 2.5 × ATR(14) 时打上“移动追踪止盈”tag，并调用市价单接口全部平仓。</div>
           {% else %}
             <div id="trailing-stop-round-note" class="muted">暂无移动追踪止盈扫描结果。</div>
           {% endif %}
@@ -1668,12 +1668,12 @@
                 <th>开仓价</th>
                 <th>持仓数量</th>
                 <th>1m high</th>
-                <th>当下未变现盈利(high)</th>
-                <th>最大未变现盈利</th>
-                <th>当前盈利回撤幅度</th>
-                <th>total_score / 阈值</th>
-                <th>标记价 &lt; 15m low</th>
-                <th>触发移动止损</th>
+                <th>1m close</th>
+                <th>开仓以来最高价</th>
+                <th>价格回撤 / 2.5×ATR</th>
+                <th>ATR(14)</th>
+                <th>tag</th>
+                <th>触发移动追踪止盈</th>
                 <th>取消止盈单</th>
                 <th>全部止盈单</th>
                 <th>最大值时间</th>
@@ -1689,11 +1689,11 @@
                 <td>{{ row.entry_price }}</td>
                 <td>{{ row.position_amt }}</td>
                 <td>{{ row.kline_high }}</td>
-                <td>{{ row.unrealized_pnl_at_high }}</td>
-                <td>{{ row.max_unrealized_pnl }}</td>
-                <td>{{ row.current_profit_drawdown }}</td>
-                <td>{{ row.total_score if row.total_score is not none else '-' }} / {{ row.drawdown_threshold }}</td>
-                <td>{{ row.current_mark_price }} / {{ row.latest_15m_low }} <span class="status-badge {{ 'status-pass' if row.price_below_latest_15m_low else 'status-fail' }}">{{ '是' if row.price_below_latest_15m_low else '否' }}</span></td>
+                <td>{{ row.latest_1m_close }}</td>
+                <td>{{ row.highest_since_open }}</td>
+                <td>{{ row.price_drawdown }} / {{ row.drawdown_threshold }}</td>
+                <td>{{ row.atr14 }}</td>
+                <td>{{ row.tag or '-' }}</td>
                 <td><span class="status-badge {{ 'status-pass' if row.trailing_stop_triggered else 'status-fail' }}">{{ '是' if row.trailing_stop_triggered else '否' }}</span></td>
                 <td>{{ row.cancel_take_profit_order_id or '-' }} / {{ row.cancel_status }}</td>
                 <td>{{ row.close_quantity }} / {{ row.close_order_id or '-' }} / {{ row.close_status }}</td>
@@ -2206,7 +2206,7 @@
     let btcChart = null;
     let scoreTrendChart = null;
     let experimentEquityTrendChart = null;
-    const TRAILING_STOP_RULE_NOTE = '仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；每分钟读取数据库 klines_1m 最新high，计算 持仓数量 × (high - 开仓价)，维护“最大未变现盈利”，并计算当前盈利回撤幅度 = (最大未变现盈利 - 当下未变现盈利) / 最大未变现盈利；若满足对应 total_score 分层阈值，且当前标记价格小于最近一条15分钟K线low，则取消原止盈单并 reduceOnly LIMIT IOC 全部止盈。';
+    const TRAILING_STOP_RULE_NOTE = '仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；先用最近4条15分钟K线判断“预触发移动追踪止盈”（最近第1条close < 最近第2/3/4条low的最小值）；对本轮预触发symbol每分钟读取 klines_1m 最新 high/close，维护“开仓以来最高价”，当最新close相对开仓以来最高价回撤 > 2.5 × ATR(14) 时打上“移动追踪止盈”tag，并调用市价单接口全部平仓。';
 
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -2452,11 +2452,11 @@
           <td>${escapeHtml(row.entry_price)}</td>
           <td>${escapeHtml(row.position_amt)}</td>
           <td>${escapeHtml(row.kline_high)}</td>
-          <td>${escapeHtml(row.unrealized_pnl_at_high)}</td>
-          <td>${escapeHtml(row.max_unrealized_pnl)}</td>
-          <td>${escapeHtml(row.current_profit_drawdown)}</td>
-          <td>${row.total_score ?? '-'} / ${escapeHtml(row.drawdown_threshold)}</td>
-          <td>${escapeHtml(row.current_mark_price)} / ${escapeHtml(row.latest_15m_low)} ${statusBadge(row.price_below_latest_15m_low)}</td>
+          <td>${escapeHtml(row.latest_1m_close)}</td>
+          <td>${escapeHtml(row.highest_since_open)}</td>
+          <td>${escapeHtml(row.price_drawdown)} / ${escapeHtml(row.drawdown_threshold)}</td>
+          <td>${escapeHtml(row.atr14)}</td>
+          <td>${escapeHtml(row.tag || '-')}</td>
           <td>${statusBadge(row.trailing_stop_triggered)}</td>
           <td>${escapeHtml(row.cancel_take_profit_order_id || '-')} / ${escapeHtml(row.cancel_status)}</td>
           <td>${escapeHtml(row.close_quantity)} / ${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td>
@@ -2516,7 +2516,7 @@
         btn.disabled = isLoading;
         btn.textContent = isLoading ? '刷新中...' : '刷新';
       }
-      if (statusEl && isLoading) statusEl.textContent = '正在刷新移动追踪止盈数据...';
+      if (statusEl && isLoading) statusEl.textContent = '正在更新本轮“预触发移动追踪止盈”symbol的开仓以来最高价、最新close与回撤幅度...';
     }
 
     const HOLDING_INCREASE_RULE_NOTE = '该15分钟模块在“减仓条件模块”之后执行；若当前未变现盈利 ≥ 1.3R、最新总分 ≥ 上一轮总分 - 5、且最近一次本生命周期内减仓价为空或当前标记价格 ≥ 该减仓价，则触发“第一次加仓”，并立即调用市价单接口买入当前持仓数量的50%（杠杆沿用当前持仓）。每个 symbol 的单次开仓生命周期内最多触发一次；原规则四（最新总分 ≥ 69）已取消；若打上“预触发”tag，后台每1分钟查询一次最新标记价格；无减仓记录时刷新后满足条件1即可触发，有减仓记录时刷新后仍满足条件3且满足条件1才触发“第一次加仓”并买入当前持仓数量的50%；加仓前要求当前已用保证金 + 本次加仓保证金不超过当前实验组USDT净值。';
@@ -2768,13 +2768,14 @@
       btn.addEventListener('click', async () => {
         setTrailingStopRefreshLoading(true);
         try {
-          const response = await fetch('/api/trailing-stop/summary', {
+          const response = await fetch('/api/trailing-stop/refresh-pretrigger', {
+            method: 'POST',
             headers: { 'Accept': 'application/json' },
           });
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
           renderTrailingStopSummary(payload);
-          if (statusEl) statusEl.textContent = `刷新完成：${formatMsDatetime(Date.now())}`;
+          if (statusEl) statusEl.textContent = `刷新完成：更新 ${payload.refreshed || 0} 个预触发symbol，触发 ${payload.triggered || 0} 个，操作记录 ${payload.created_records || 0} 条。`;
         } catch (error) {
           if (statusEl) statusEl.textContent = `刷新失败：${error.message}`;
         } finally {
