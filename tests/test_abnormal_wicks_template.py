@@ -265,6 +265,14 @@ def test_score_page_includes_ma20_skip_warning_at_top():
     assert "避免卡住整个评分系统" in template
 
 
+def test_score_symbol_error_warning_uses_current_score_round_only():
+    web_app_source = Path("web_app.py").read_text()
+
+    assert "scoring_symbol_error_round_ts = score_total_round_ts" in web_app_source
+    assert "scoring_symbol_errors = scoring.get_symbol_errors_for_round(score_total_round_ts)" in web_app_source
+    assert "scoring_symbol_error_round_ts, scoring_symbol_errors = scoring.get_latest_symbol_error_round()" not in web_app_source
+
+
 def test_score_page_does_not_require_manual_rule_detail_refresh():
     template = Path("templates/abnormal_wicks.html").read_text()
 
