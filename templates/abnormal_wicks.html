@@ -1644,7 +1644,7 @@
             <span id="trailing-stop-refresh-status" class="muted">可单独刷新移动追踪止盈数据</span>
           </div>
           {% if trailing_stop_round_ts %}
-            <div id="trailing-stop-round-note" class="muted">最近判断轮次：{{ trailing_stop_round_ts|fmt_ms_datetime }}。仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；先用最近4条15分钟K线判断“预触发移动追踪止盈”（最近第1条close < 最近第2/3/4条low的最小值）；对本轮预触发symbol每分钟读取 klines_1m 最新 high/close，维护“开仓以来最高价”，当最新close相对开仓以来最高价回撤 > 2.5 × ATR(14) 时打上“移动追踪止盈”tag，并调用市价单接口全部平仓。</div>
+            <div id="trailing-stop-round-note" class="muted">最近判断轮次：{{ trailing_stop_round_ts|fmt_ms_datetime }}。仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；先用最近4条15分钟K线判断“预触发移动追踪止盈”（最近第1条close < 最近第2/3/4条low的最小值）；对本轮预触发symbol每分钟读取 klines_1m 最新 high/close，维护“开仓以来最高价”，计算“波动率”=最新 ATR(14) / 最近第2条15分钟K线 close；若波动率 &gt; 0.03，则当最新close相对开仓以来最高价回撤 &gt; 2 × ATR(14) 时打上“移动追踪止盈”tag，否则回撤 &gt; 2.5 × ATR(14) 时打上“移动追踪止盈”tag，并调用市价单接口全部平仓。</div>
           {% else %}
             <div id="trailing-stop-round-note" class="muted">暂无移动追踪止盈扫描结果。</div>
           {% endif %}
@@ -1670,8 +1670,9 @@
                 <th>1m high</th>
                 <th>1m close</th>
                 <th>开仓以来最高价</th>
-                <th>价格回撤 / 2.5×ATR</th>
+                <th>价格回撤 / 阈值</th>
                 <th>ATR(14)</th>
+                <th>波动率</th>
                 <th>tag</th>
                 <th>触发移动追踪止盈</th>
                 <th>取消止盈单</th>
@@ -1693,6 +1694,7 @@
                 <td>{{ row.highest_since_open }}</td>
                 <td>{{ row.price_drawdown }} / {{ row.drawdown_threshold }}</td>
                 <td>{{ row.atr14 }}</td>
+                <td>{{ row.volatility or '-' }}</td>
                 <td>{{ row.tag or '-' }}</td>
                 <td><span class="status-badge {{ 'status-pass' if row.trailing_stop_triggered else 'status-fail' }}">{{ '是' if row.trailing_stop_triggered else '否' }}</span></td>
                 <td>{{ row.cancel_take_profit_order_id or '-' }} / {{ row.cancel_status }}</td>
@@ -1702,7 +1704,7 @@
                 <td>{{ row.reason }}</td>
               </tr>
               {% else %}
-              <tr><td class="empty" colspan="16">暂无移动追踪止盈扫描结果</td></tr>
+              <tr><td class="empty" colspan="17">暂无移动追踪止盈扫描结果</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -2206,7 +2208,7 @@
     let btcChart = null;
     let scoreTrendChart = null;
     let experimentEquityTrendChart = null;
-    const TRAILING_STOP_RULE_NOTE = '仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；先用最近4条15分钟K线判断“预触发移动追踪止盈”（最近第1条close < 最近第2/3/4条low的最小值）；对本轮预触发symbol每分钟读取 klines_1m 最新 high/close，维护“开仓以来最高价”，当最新close相对开仓以来最高价回撤 > 2.5 × ATR(14) 时打上“移动追踪止盈”tag，并调用市价单接口全部平仓。';
+    const TRAILING_STOP_RULE_NOTE = '仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；先用最近4条15分钟K线判断“预触发移动追踪止盈”（最近第1条close < 最近第2/3/4条low的最小值）；对本轮预触发symbol每分钟读取 klines_1m 最新 high/close，维护“开仓以来最高价”，计算“波动率”=最新 ATR(14) / 最近第2条15分钟K线 close；若波动率 > 0.03，则当最新close相对开仓以来最高价回撤 > 2 × ATR(14) 时打上“移动追踪止盈”tag，否则回撤 > 2.5 × ATR(14) 时打上“移动追踪止盈”tag，并调用市价单接口全部平仓。';
 
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -2442,7 +2444,7 @@
       const rowsEl = document.getElementById('trailing-stop-checks-body');
       if (!rowsEl) return;
       if (!rows.length) {
-        rowsEl.innerHTML = '<tr><td class="empty" colspan="16">暂无移动追踪止盈扫描结果</td></tr>';
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="17">暂无移动追踪止盈扫描结果</td></tr>';
         return;
       }
       rowsEl.innerHTML = rows.map(row => `
@@ -2456,6 +2458,7 @@
           <td>${escapeHtml(row.highest_since_open)}</td>
           <td>${escapeHtml(row.price_drawdown)} / ${escapeHtml(row.drawdown_threshold)}</td>
           <td>${escapeHtml(row.atr14)}</td>
+          <td>${escapeHtml(row.volatility || '-')}</td>
           <td>${escapeHtml(row.tag || '-')}</td>
           <td>${statusBadge(row.trailing_stop_triggered)}</td>
           <td>${escapeHtml(row.cancel_take_profit_order_id || '-')} / ${escapeHtml(row.cancel_status)}</td>

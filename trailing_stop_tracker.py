@@ -4,7 +4,8 @@ The tracker runs once per minute. It only evaluates symbols with a successful
 partial take-profit record (meaning unrealized PnL has reached 2R before), reads
 the latest stored 1m kline high/close from SQLite, maintains the highest price
 since the position was opened, and closes the full position when the latest close
-draws down by more than 2.5 × ATR(14) after the 15m pre-trigger is present.
+draws down by more than a volatility-adjusted ATR(14) multiple after the 15m
+pre-trigger is present.
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ class TrailingStopCheck:
     latest_1m_close: str
     highest_since_open: str
     atr14: str
+    volatility: str
     price_drawdown: str
     pretriggered: bool
     tag: str
@@ -98,6 +100,7 @@ class TrailingStopTracker:
                     latest_1m_close TEXT NOT NULL DEFAULT '0',
                     highest_since_open TEXT NOT NULL DEFAULT '0',
                     atr14 TEXT NOT NULL DEFAULT '0',
+                    volatility TEXT NOT NULL DEFAULT '0',
                     price_drawdown TEXT NOT NULL DEFAULT '0',
                     pretriggered INTEGER NOT NULL DEFAULT 0,
                     tag TEXT NOT NULL DEFAULT '',
@@ -123,6 +126,7 @@ class TrailingStopTracker:
                 "latest_1m_close": "TEXT NOT NULL DEFAULT '0'",
                 "highest_since_open": "TEXT NOT NULL DEFAULT '0'",
                 "atr14": "TEXT NOT NULL DEFAULT '0'",
+                "volatility": "TEXT NOT NULL DEFAULT '0'",
                 "price_drawdown": "TEXT NOT NULL DEFAULT '0'",
                 "pretriggered": "INTEGER NOT NULL DEFAULT 0",
                 "tag": "TEXT NOT NULL DEFAULT ''",
@@ -163,7 +167,7 @@ class TrailingStopTracker:
         if amount == 0 or entry_price <= 0:
             return False
         if not self._has_partial_take_profit_record(symbol, entry_price):
-            self._insert_check(symbol, now, entry_price, amount, Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), now, None, Decimal("0"), Decimal("0"), Decimal("0"), False, False, "", "not_required", Decimal("0"), "", "not_required", False, "partial_take_profit_not_triggered", latest_1m_close=Decimal("0"), highest_since_open=Decimal("0"), atr14=Decimal("0"), price_drawdown=Decimal("0"), pretriggered=False, tag="")
+            self._insert_check(symbol, now, entry_price, amount, Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), now, None, Decimal("0"), Decimal("0"), Decimal("0"), False, False, "", "not_required", Decimal("0"), "", "not_required", False, "partial_take_profit_not_triggered", latest_1m_close=Decimal("0"), highest_since_open=Decimal("0"), atr14=Decimal("0"), volatility=Decimal("0"), price_drawdown=Decimal("0"), pretriggered=False, tag="")
             return False
         try:
             pretriggered, pretrigger_reason, latest_15m_low = self._is_pretriggered(symbol)
@@ -179,8 +183,10 @@ class TrailingStopTracker:
             open_time = self._latest_open_trade_created_at(symbol)
             highest_since_open = max(self._previous_highest_since_open(symbol, entry_price), self._highest_1m_high_since(symbol, open_time), high)
             atr14 = self._latest_atr14(symbol)
+            volatility = self._trailing_stop_volatility(symbol, atr14)
+            atr_multiple = self._atr_multiple_for_volatility(volatility)
             price_drawdown = highest_since_open - close if highest_since_open > 0 and close > 0 else Decimal("0")
-            threshold = atr14 * Decimal("2.5")
+            threshold = atr14 * atr_multiple
             should_trigger = pretriggered and atr14 > 0 and price_drawdown > threshold
             cancel_order_id = ""
             cancel_status = "not_required"
@@ -195,21 +201,21 @@ class TrailingStopTracker:
                     should_trigger = False
                 else:
                     cancel_order_id, cancel_status, close_quantity, close_order_id, close_status, action_reason = self._execute_trailing_stop_close(exchange_symbol, symbol, amount, entry_price)
-                    reason = f"{reason}; {pretrigger_reason}; drawdown_gt_2_5atr(drawdown={self._fmt_decimal(price_drawdown)}, threshold={self._fmt_decimal(threshold)}); tag={tag}; {action_reason}"
+                    reason = f"{reason}; {pretrigger_reason}; drawdown_gt_{self._fmt_atr_multiple(atr_multiple)}atr(drawdown={self._fmt_decimal(price_drawdown)}, threshold={self._fmt_decimal(threshold)}, volatility={self._fmt_decimal(volatility)}); tag={tag}; {action_reason}"
             elif not pretriggered:
                 reason = f"{reason}; {pretrigger_reason}"
             elif atr14 <= 0:
                 reason = f"{reason}; missing_or_invalid_atr14"
             else:
-                reason = f"{reason}; {pretrigger_reason}; drawdown_lte_2_5atr(drawdown={self._fmt_decimal(price_drawdown)}, threshold={self._fmt_decimal(threshold)})"
+                reason = f"{reason}; {pretrigger_reason}; drawdown_lte_{self._fmt_atr_multiple(atr_multiple)}atr(drawdown={self._fmt_decimal(price_drawdown)}, threshold={self._fmt_decimal(threshold)}, volatility={self._fmt_decimal(volatility)})"
             drawdown = self._current_profit_drawdown(pnl, max_pnl)
-            self._insert_check(symbol, now, entry_price, amount, high, pnl, max_pnl, drawdown, max_at, None, threshold, close, latest_15m_low, False, should_trigger, cancel_order_id, cancel_status, close_quantity, close_order_id, close_status, True, reason, latest_1m_close=close, highest_since_open=highest_since_open, atr14=atr14, price_drawdown=price_drawdown, pretriggered=pretriggered, tag=tag)
+            self._insert_check(symbol, now, entry_price, amount, high, pnl, max_pnl, drawdown, max_at, None, threshold, close, latest_15m_low, False, should_trigger, cancel_order_id, cancel_status, close_quantity, close_order_id, close_status, True, reason, latest_1m_close=close, highest_since_open=highest_since_open, atr14=atr14, volatility=volatility, price_drawdown=price_drawdown, pretriggered=pretriggered, tag=tag)
             return True
         except Exception as exc:
             previous = self._previous_max(symbol, entry_price)
             max_pnl, max_at = previous if previous else (Decimal("0"), now)
             drawdown = self._current_profit_drawdown(Decimal("0"), max_pnl)
-            self._insert_check(symbol, now, entry_price, amount, Decimal("0"), Decimal("0"), max_pnl, drawdown, max_at, None, Decimal("0"), Decimal("0"), Decimal("0"), False, False, "", "not_required", Decimal("0"), "", "not_required", True, f"trailing_stop_tracker_failed: {type(exc).__name__}: {exc}", latest_1m_close=Decimal("0"), highest_since_open=Decimal("0"), atr14=Decimal("0"), price_drawdown=Decimal("0"), pretriggered=False, tag="")
+            self._insert_check(symbol, now, entry_price, amount, Decimal("0"), Decimal("0"), max_pnl, drawdown, max_at, None, Decimal("0"), Decimal("0"), Decimal("0"), False, False, "", "not_required", Decimal("0"), "", "not_required", True, f"trailing_stop_tracker_failed: {type(exc).__name__}: {exc}", latest_1m_close=Decimal("0"), highest_since_open=Decimal("0"), atr14=Decimal("0"), volatility=Decimal("0"), price_drawdown=Decimal("0"), pretriggered=False, tag="")
             return False
 
     def _has_partial_take_profit_record(self, symbol: str, entry_price: Decimal) -> bool:
@@ -359,6 +365,24 @@ class TrailingStopTracker:
             return Decimal("0")
         return self._decimal_from(row["atr14"], Decimal("0")) if row else Decimal("0")
 
+    def _second_latest_15m_close(self, symbol: str) -> Decimal:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT close FROM klines_15m WHERE symbol = ? ORDER BY open_time DESC LIMIT 1 OFFSET 1",
+                (symbol,),
+            ).fetchone()
+        return self._decimal_from(row["close"], Decimal("0")) if row else Decimal("0")
+
+    def _trailing_stop_volatility(self, symbol: str, atr14: Decimal) -> Decimal:
+        second_latest_close = self._second_latest_15m_close(symbol)
+        if atr14 <= 0 or second_latest_close <= 0:
+            return Decimal("0")
+        return atr14 / second_latest_close
+
+    @staticmethod
+    def _atr_multiple_for_volatility(volatility: Decimal) -> Decimal:
+        return Decimal("2") if volatility > Decimal("0.03") else Decimal("2.5")
+
     def _highest_1m_high_since(self, symbol: str, since_ms: int) -> Decimal:
         with self._connect() as conn:
             row = conn.execute("SELECT MAX(high) AS high FROM klines_1m WHERE symbol = ? AND open_time >= ?", (symbol, int(since_ms))).fetchone()
@@ -407,9 +431,9 @@ class TrailingStopTracker:
             ).fetchone()
         return self._decimal_from(row["highest_since_open"], Decimal("0")) if row and "highest_since_open" in row.keys() else Decimal("0")
 
-    def _insert_check(self, symbol: str, checked_at: int, entry: Decimal, amount: Decimal, high: Decimal, pnl: Decimal, max_pnl: Decimal, drawdown: Decimal, max_at: int, total_score: int | None, threshold: Decimal, current_mark_price: Decimal, latest_15m_low: Decimal, price_below_latest_15m_low: bool, trailing_triggered: bool, cancel_order_id: str, cancel_status: str, close_quantity: Decimal, close_order_id: str, close_status: str, eligible: bool, reason: str, *, latest_1m_close: Decimal, highest_since_open: Decimal, atr14: Decimal, price_drawdown: Decimal, pretriggered: bool, tag: str) -> None:
+    def _insert_check(self, symbol: str, checked_at: int, entry: Decimal, amount: Decimal, high: Decimal, pnl: Decimal, max_pnl: Decimal, drawdown: Decimal, max_at: int, total_score: int | None, threshold: Decimal, current_mark_price: Decimal, latest_15m_low: Decimal, price_below_latest_15m_low: bool, trailing_triggered: bool, cancel_order_id: str, cancel_status: str, close_quantity: Decimal, close_order_id: str, close_status: str, eligible: bool, reason: str, *, latest_1m_close: Decimal, highest_since_open: Decimal, atr14: Decimal, volatility: Decimal, price_drawdown: Decimal, pretriggered: bool, tag: str) -> None:
         with self._connect() as conn:
-            conn.execute(f"INSERT INTO {self.CHECKS_TABLE} (symbol, checked_at, entry_price, position_amt, kline_high, unrealized_pnl_at_high, max_unrealized_pnl, current_profit_drawdown, max_unrealized_pnl_at, total_score, drawdown_threshold, current_mark_price, latest_15m_low, price_below_latest_15m_low, latest_1m_close, highest_since_open, atr14, price_drawdown, pretriggered, tag, trailing_stop_triggered, cancel_take_profit_order_id, cancel_status, close_quantity, close_order_id, close_status, eligible, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, self._fmt_decimal(entry), self._fmt_decimal(amount), self._fmt_decimal(high), self._fmt_decimal(pnl), self._fmt_decimal(max_pnl), self._fmt_decimal(drawdown), int(max_at), total_score, self._fmt_decimal(threshold), self._fmt_decimal(current_mark_price), self._fmt_decimal(latest_15m_low), int(price_below_latest_15m_low), self._fmt_decimal(latest_1m_close), self._fmt_decimal(highest_since_open), self._fmt_decimal(atr14), self._fmt_decimal(price_drawdown), int(pretriggered), tag, int(trailing_triggered), cancel_order_id, cancel_status, self._fmt_decimal(close_quantity), close_order_id, close_status, int(eligible), reason))
+            conn.execute(f"INSERT INTO {self.CHECKS_TABLE} (symbol, checked_at, entry_price, position_amt, kline_high, unrealized_pnl_at_high, max_unrealized_pnl, current_profit_drawdown, max_unrealized_pnl_at, total_score, drawdown_threshold, current_mark_price, latest_15m_low, price_below_latest_15m_low, latest_1m_close, highest_since_open, atr14, volatility, price_drawdown, pretriggered, tag, trailing_stop_triggered, cancel_take_profit_order_id, cancel_status, close_quantity, close_order_id, close_status, eligible, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, self._fmt_decimal(entry), self._fmt_decimal(amount), self._fmt_decimal(high), self._fmt_decimal(pnl), self._fmt_decimal(max_pnl), self._fmt_decimal(drawdown), int(max_at), total_score, self._fmt_decimal(threshold), self._fmt_decimal(current_mark_price), self._fmt_decimal(latest_15m_low), int(price_below_latest_15m_low), self._fmt_decimal(latest_1m_close), self._fmt_decimal(highest_since_open), self._fmt_decimal(atr14), self._fmt_decimal(volatility), self._fmt_decimal(price_drawdown), int(pretriggered), tag, int(trailing_triggered), cancel_order_id, cancel_status, self._fmt_decimal(close_quantity), close_order_id, close_status, int(eligible), reason))
 
 
     def refresh_pretriggered_symbols(self) -> dict[str, Any]:
@@ -444,8 +468,10 @@ class TrailingStopTracker:
         open_time = self._latest_open_trade_created_at(symbol)
         highest_since_open = max(self._decimal_from(check.highest_since_open, Decimal("0")), self._highest_1m_high_since(symbol, open_time), high)
         atr14 = self._latest_atr14(symbol)
+        volatility = self._trailing_stop_volatility(symbol, atr14)
+        atr_multiple = self._atr_multiple_for_volatility(volatility)
         price_drawdown = highest_since_open - close if highest_since_open > 0 and close > 0 else Decimal("0")
-        threshold = atr14 * Decimal("2.5")
+        threshold = atr14 * atr_multiple
         should_trigger = amount != 0 and entry_price > 0 and atr14 > 0 and price_drawdown > threshold
         tag = "移动追踪止盈" if should_trigger else "预触发移动追踪止盈"
         cancel_order_id = check.cancel_take_profit_order_id
@@ -453,7 +479,7 @@ class TrailingStopTracker:
         close_quantity = self._decimal_from(check.close_quantity, Decimal("0"))
         close_order_id = check.close_order_id
         close_status = check.close_status
-        reason = f"manual_refresh_pretriggered; latest_1m_high_close_refreshed; drawdown={self._fmt_decimal(price_drawdown)}; threshold_2_5atr={self._fmt_decimal(threshold)}"
+        reason = f"manual_refresh_pretriggered; latest_1m_high_close_refreshed; drawdown={self._fmt_decimal(price_drawdown)}; threshold_{self._fmt_atr_multiple(atr_multiple)}atr={self._fmt_decimal(threshold)}; volatility={self._fmt_decimal(volatility)}"
         if should_trigger:
             if self._has_trailing_stop_close_record(symbol, entry_price):
                 should_trigger = False
@@ -467,13 +493,13 @@ class TrailingStopTracker:
         elif amount == 0 or entry_price <= 0:
             reason = f"{reason}; missing_active_position_or_entry_price"
         else:
-            reason = f"{reason}; drawdown_lte_2_5atr"
+            reason = f"{reason}; drawdown_lte_{self._fmt_atr_multiple(atr_multiple)}atr"
         with self._connect() as conn:
             conn.execute(
                 f"""
                 UPDATE {self.CHECKS_TABLE}
                 SET checked_at = ?, kline_high = ?, current_mark_price = ?, latest_1m_close = ?,
-                    highest_since_open = ?, atr14 = ?, price_drawdown = ?, drawdown_threshold = ?,
+                    highest_since_open = ?, atr14 = ?, volatility = ?, price_drawdown = ?, drawdown_threshold = ?,
                     tag = ?, trailing_stop_triggered = ?, cancel_take_profit_order_id = ?, cancel_status = ?,
                     close_quantity = ?, close_order_id = ?, close_status = ?, reason = ?
                 WHERE id = ?
@@ -485,6 +511,7 @@ class TrailingStopTracker:
                     self._fmt_decimal(close),
                     self._fmt_decimal(highest_since_open),
                     self._fmt_decimal(atr14),
+                    self._fmt_decimal(volatility),
                     self._fmt_decimal(price_drawdown),
                     self._fmt_decimal(threshold),
                     tag,
@@ -552,3 +579,7 @@ class TrailingStopTracker:
     @staticmethod
     def _fmt_decimal(value: Decimal) -> str:
         return format(value.normalize(), "f")
+
+    @staticmethod
+    def _fmt_atr_multiple(value: Decimal) -> str:
+        return format(value.normalize(), "f").replace(".", "_")
