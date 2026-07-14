@@ -247,6 +247,7 @@ def test_trailing_stop_tracker_closes_position_when_drawdown_threshold_hit():
     assert checks[0].pretriggered is True
     assert checks[0].tag == "移动追踪止盈"
     assert checks[0].atr14 == "0.25"
+    assert checks[0].volatility == "0.02083333333333333333333333333"
     assert checks[0].price_drawdown == "0.7"
     assert checks[0].cancel_take_profit_order_id == "123"
     assert checks[0].cancel_status == "submitted"
@@ -330,3 +331,30 @@ def test_refresh_pretriggered_symbols_updates_latest_close_highest_and_drawdown(
     assert checks[0].price_drawdown == "0.6"
     assert checks[0].drawdown_threshold == "0.625"
     assert checks[0].trailing_stop_triggered is False
+
+
+def test_trailing_stop_tracker_uses_2atr_threshold_when_volatility_is_high():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        _insert_partial_take_profit_record(db_path)
+        _insert_open_trade(db_path)
+        _insert_atr14(db_path, atr14=0.5)
+        _insert_1m_kline(db_path, high=13, open_time=1000, close=13)
+        _insert_15m_kline(db_path, low=13, open_time=1000, close=13)
+        _insert_15m_kline(db_path, low=13, open_time=2000, close=13)
+        _insert_15m_kline(db_path, low=13, open_time=3000, close=13)
+        _insert_15m_kline(db_path, low=13, open_time=4000, close=12)
+        tracker = TrailingStopTracker(db_path=db_path, account_manager=fake_account)
+
+        tracker.run_round()
+        _insert_1m_kline(db_path, high=12.3, open_time=2000, close=11.9)
+        result = tracker.run_round()
+        _, checks = tracker.get_latest_round_checks()
+
+    assert result["eligible"] == 1
+    assert checks[0].volatility == "0.03846153846153846153846153846"
+    assert checks[0].drawdown_threshold == "1"
+    assert checks[0].price_drawdown == "1.1"
+    assert checks[0].trailing_stop_triggered is True
+    assert "drawdown_gt_2atr" in checks[0].reason
