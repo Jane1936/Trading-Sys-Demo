@@ -2,8 +2,9 @@
 
 Every run scans current Binance Futures positions and the current experiment USDT
 net equity.  R is defined as ``experiment_equity * 1%``.  When a position's
-unrealized profit reaches R, the module cancels the original stop-loss order and
-creates a new stop-loss order at the position entry price, so the remaining
+unrealized profit reaches R, the module first creates a new stop-loss order
+at the position entry price and only then cancels the original stop-loss
+order, so the remaining
 position is protected at break-even.  The replacement order is a conditional
 ``STOP_MARKET`` reduce-only order, so it does not sell immediately while price
 is still above the entry price; it only triggers if price falls back to the
@@ -204,19 +205,6 @@ class BreakEvenTakeProfitStrategy:
             self._insert_record(symbol, now, side, amount, entry_price, equity, r_value, unrealized_pnl, old_order_id, "", stop_loss_price or entry_price, "failed", "; ".join(reason_parts + [lock_reason]), "")
             return
         try:
-            for stale_order in stale_stop_losses:
-                stale_order_id = self._stop_loss_order_id(stale_order)
-                if stale_order_id:
-                    cancel_response = self._cancel_stop_loss_order(exchange_symbol, stale_order_id, stale_order)
-                    raw_parts.append(str({"cancel_stop_loss": cancel_response}))
-            if stale_stop_losses:
-                reason_parts.append("old_stop_loss_cancelled")
-            elif target_stop_loss:
-                reason_parts.append("current_stop_loss_already_at_target")
-            elif db_stop_loss_order_id:
-                reason_parts.append("db_stop_loss_order_id_not_open_skip_cancel")
-            else:
-                reason_parts.append("old_stop_loss_order_id_missing")
             stop_loss_price = stop_loss_price or self._break_even_stop_price(exchange_symbol, entry_price, side)
             helper = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)
             exchange_info = helper._exchange_symbol_info(exchange_symbol)
@@ -242,11 +230,32 @@ class BreakEvenTakeProfitStrategy:
             new_order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
             if not new_order_id:
                 raise RuntimeError(f"break_even_stop_loss_order_id_missing: response={response}")
+
+            cancel_failures: list[str] = []
+            for stale_order in stale_stop_losses:
+                stale_order_id = self._stop_loss_order_id(stale_order)
+                if not stale_order_id:
+                    continue
+                try:
+                    cancel_response = self._cancel_stop_loss_order(exchange_symbol, stale_order_id, stale_order)
+                    raw_parts.append(str({"cancel_stop_loss": cancel_response}))
+                except Exception as exc:
+                    cancel_failures.append(f"{stale_order_id}: {type(exc).__name__}: {exc}")
+            if cancel_failures:
+                reason_parts.append("old_stop_loss_cancel_failed_after_new_stop_loss_created: " + " | ".join(cancel_failures))
+            elif stale_stop_losses:
+                reason_parts.append("old_stop_loss_cancelled_after_new_stop_loss_created")
+            elif target_stop_loss:
+                reason_parts.append("current_stop_loss_already_at_target")
+            elif db_stop_loss_order_id:
+                reason_parts.append("db_stop_loss_order_id_not_open_skip_cancel")
+            else:
+                reason_parts.append("old_stop_loss_order_id_missing")
         except Exception as exc:
             status = "failed"
             stop_loss_price = entry_price
             new_order_id = ""
-            reason_parts.append(f"break_even_stop_loss_failed: {type(exc).__name__}: {exc}")
+            reason_parts.append(f"break_even_stop_loss_failed_before_old_stop_loss_cancel: {type(exc).__name__}: {exc}")
         finally:
             lock_manager.release(lock_handle)
         self._insert_record(symbol, now, side, amount, entry_price, equity, r_value, unrealized_pnl, old_order_id, new_order_id, stop_loss_price, status, "; ".join(reason_parts), " | ".join(raw_parts))
