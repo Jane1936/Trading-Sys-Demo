@@ -247,10 +247,24 @@ def test_break_even_strategy_does_not_retry_algo_stop_loss_cancel_as_regular_ord
         records = strategy.recent_records()
 
     assert result["triggered"] == 1
+    assert fake_account.signed_posts == [
+        (
+            "/fapi/v1/algoOrder",
+            {
+                "symbol": "BANKUSDT",
+                "side": "SELL",
+                "type": "STOP_MARKET",
+                "quantity": "2",
+                "triggerPrice": "10",
+                "reduceOnly": "true",
+                "algoType": "CONDITIONAL",
+            },
+        )
+    ]
     assert fake_account.signed_deletes == [("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "123"})]
-    assert fake_account.signed_posts == []
-    assert records[0].status == "failed"
-    assert "break_even_stop_loss_failed" in records[0].reason
+    assert records[0].status == "submitted"
+    assert records[0].new_stop_loss_order_id == "456"
+    assert "old_stop_loss_cancel_failed_after_new_stop_loss_created" in records[0].reason
 
 
 def test_break_even_strategy_skips_stale_db_only_stop_loss_cancel_and_creates_new_stop_loss():
@@ -411,11 +425,12 @@ def test_break_even_strategy_records_failure_when_new_stop_loss_response_has_no_
         records = strategy.recent_records()
 
     assert result["triggered"] == 1
-    assert fake_account.signed_deletes == [("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "123"})]
+    assert fake_account.signed_deletes == []
     assert len(fake_account.signed_posts) == 1
     assert records[0].status == "failed"
     assert records[0].new_stop_loss_order_id == ""
     assert "break_even_stop_loss_order_id_missing" in records[0].reason
+    assert "break_even_stop_loss_failed_before_old_stop_loss_cancel" in records[0].reason
     assert "new_stop_loss" in records[0].raw_response
 
 
@@ -478,3 +493,29 @@ def test_break_even_strategy_cancels_stale_limit_orders_and_creates_stop_market_
         )
     ]
     assert records[0].new_stop_loss_order_id == "456"
+
+
+def test_break_even_strategy_creates_new_stop_loss_before_canceling_old_one():
+    fake_account = FakeAccountManager()
+    calls = []
+
+    def signed_post(endpoint, params=None):
+        calls.append(("post", endpoint, dict(params or {})))
+        return FakeAccountManager._signed_post(fake_account, endpoint, params)
+
+    def signed_delete(endpoint, params=None):
+        calls.append(("delete", endpoint, dict(params or {})))
+        return FakeAccountManager._signed_delete(fake_account, endpoint, params)
+
+    fake_account._signed_post = signed_post
+    fake_account._signed_delete = signed_delete
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        result = strategy.run_round()
+
+    assert result["triggered"] == 1
+    assert [call[0] for call in calls] == ["post", "delete"]
+    assert calls[0][1] == "/fapi/v1/algoOrder"
+    assert calls[1] == ("delete", "/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "123"})
