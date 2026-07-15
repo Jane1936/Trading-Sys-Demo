@@ -267,6 +267,35 @@ def test_trailing_stop_tracker_closes_position_when_drawdown_threshold_hit():
     ]
 
 
+def test_trailing_stop_tracker_does_not_close_when_latest_close_is_below_long_entry():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        _insert_partial_take_profit_record(db_path)
+        _insert_open_trade(db_path)
+        _insert_atr14(db_path, atr14=0.25)
+        _insert_1m_kline(db_path, high=13, open_time=1000, close=13)
+        _insert_15m_kline(db_path, low=13, open_time=1000)
+        _insert_15m_kline(db_path, low=13, open_time=2000)
+        _insert_15m_kline(db_path, low=13, open_time=3000)
+        _insert_15m_kline(db_path, low=13, open_time=4000, close=12)
+        tracker = TrailingStopTracker(db_path=db_path, account_manager=fake_account)
+
+        tracker.run_round()
+        _insert_1m_kline(db_path, high=9.9, open_time=2000, close=9.9)
+        result = tracker.run_round()
+        _, checks = tracker.get_latest_round_checks()
+
+    assert result["eligible"] == 1
+    assert checks[0].pretriggered is True
+    assert checks[0].price_drawdown == "3.1"
+    assert checks[0].trailing_stop_triggered is False
+    assert checks[0].close_status == "not_required"
+    assert "latest_1m_close_not_in_profit" in checks[0].reason
+    assert fake_account.signed_deletes == []
+    assert fake_account.signed_posts == []
+
+
 def test_trailing_stop_tracker_requires_pretrigger_before_close():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:

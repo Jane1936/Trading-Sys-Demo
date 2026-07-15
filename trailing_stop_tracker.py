@@ -187,7 +187,8 @@ class TrailingStopTracker:
             atr_multiple = self._atr_multiple_for_volatility(volatility)
             price_drawdown = highest_since_open - close if highest_since_open > 0 and close > 0 else Decimal("0")
             threshold = atr14 * atr_multiple
-            should_trigger = pretriggered and atr14 > 0 and price_drawdown > threshold
+            in_profit_at_close = self._in_profit_at_price(amount, entry_price, close)
+            should_trigger = pretriggered and atr14 > 0 and price_drawdown > threshold and in_profit_at_close
             cancel_order_id = ""
             cancel_status = "not_required"
             close_quantity = Decimal("0")
@@ -206,6 +207,8 @@ class TrailingStopTracker:
                 reason = f"{reason}; {pretrigger_reason}"
             elif atr14 <= 0:
                 reason = f"{reason}; missing_or_invalid_atr14"
+            elif not in_profit_at_close:
+                reason = f"{reason}; {pretrigger_reason}; latest_1m_close_not_in_profit(close={self._fmt_decimal(close)}, entry={self._fmt_decimal(entry_price)})"
             else:
                 reason = f"{reason}; {pretrigger_reason}; drawdown_lte_{self._fmt_atr_multiple(atr_multiple)}atr(drawdown={self._fmt_decimal(price_drawdown)}, threshold={self._fmt_decimal(threshold)}, volatility={self._fmt_decimal(volatility)})"
             drawdown = self._current_profit_drawdown(pnl, max_pnl)
@@ -401,6 +404,14 @@ class TrailingStopTracker:
         return amount * (high - entry_price) if amount > 0 else abs(amount) * (entry_price - high)
 
     @staticmethod
+    def _in_profit_at_price(amount: Decimal, entry_price: Decimal, price: Decimal) -> bool:
+        if amount > 0:
+            return price > entry_price
+        if amount < 0:
+            return price < entry_price
+        return False
+
+    @staticmethod
     def _floor_to_step(value: Decimal, step: Decimal) -> Decimal:
         if step <= 0:
             return value
@@ -472,7 +483,8 @@ class TrailingStopTracker:
         atr_multiple = self._atr_multiple_for_volatility(volatility)
         price_drawdown = highest_since_open - close if highest_since_open > 0 and close > 0 else Decimal("0")
         threshold = atr14 * atr_multiple
-        should_trigger = amount != 0 and entry_price > 0 and atr14 > 0 and price_drawdown > threshold
+        in_profit_at_close = self._in_profit_at_price(amount, entry_price, close)
+        should_trigger = amount != 0 and entry_price > 0 and atr14 > 0 and price_drawdown > threshold and in_profit_at_close
         tag = "移动追踪止盈" if should_trigger else "预触发移动追踪止盈"
         cancel_order_id = check.cancel_take_profit_order_id
         cancel_status = check.cancel_status
@@ -492,6 +504,8 @@ class TrailingStopTracker:
             reason = f"{reason}; missing_or_invalid_atr14"
         elif amount == 0 or entry_price <= 0:
             reason = f"{reason}; missing_active_position_or_entry_price"
+        elif not in_profit_at_close:
+            reason = f"{reason}; latest_1m_close_not_in_profit(close={self._fmt_decimal(close)}, entry={self._fmt_decimal(entry_price)})"
         else:
             reason = f"{reason}; drawdown_lte_{self._fmt_atr_multiple(atr_multiple)}atr"
         with self._connect() as conn:
