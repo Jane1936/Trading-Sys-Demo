@@ -1344,20 +1344,24 @@
         <div class="critical-section sky-theme-section" aria-label="关键保本止盈1分钟扫描结果">
         <div class="symbol-strip">
           <div><strong>保本止盈策略：1分钟扫描结果</strong></div>
+          <div>
+            <button id="refresh-break-even" class="btn btn-primary btn-small" type="button">刷新</button>
+            <span id="break-even-refresh-status" class="muted">仅刷新保本止盈扫描结果与新建止损单记录</span>
+          </div>
           {% if break_even_round_ts %}
-            <div class="muted">最近判断轮次：{{ break_even_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每1分钟扫描当前持仓；若未变现盈亏 ≥ R，则取消原止损单并按开仓价新建 reduceOnly STOP_MARKET 条件止损单，等待价格回落到保本价时触发市价平仓。</div>
+            <div class="muted" id="break-even-round-note">最近判断轮次：{{ break_even_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每1分钟扫描当前持仓；若未变现盈亏 ≥ R，则取消原止损单并按开仓价新建 reduceOnly STOP_MARKET 条件止损单，等待价格回落到保本价时触发市价平仓。</div>
           {% else %}
-            <div class="muted">暂无保本止盈扫描结果。</div>
+            <div class="muted" id="break-even-round-note">暂无保本止盈扫描结果。</div>
           {% endif %}
           {% set triggered_break_even_checks = break_even_checks|selectattr('triggered')|list %}
           {% if triggered_break_even_checks %}
-            <div class="chips">
+            <div class="chips" id="break-even-triggered-chips">
               {% for row in triggered_break_even_checks %}
                 <span class="chip" title="{{ row.reason }}">{{ row.symbol }}</span>
               {% endfor %}
             </div>
           {% else %}
-            <div class="chips"><span class="chip">本轮无触发保本止盈symbol</span></div>
+            <div class="chips" id="break-even-triggered-chips"><span class="chip">本轮无触发保本止盈symbol</span></div>
           {% endif %}
         </div>
         <div class="table-wrap">
@@ -1375,7 +1379,7 @@
                 <th>reason</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="break-even-checks-body">
               {% for row in break_even_checks %}
               <tr>
                 <td>{{ row.checked_at|fmt_ms_datetime }}</td>
@@ -1427,7 +1431,7 @@
                 <th>reason</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="break-even-records-body">
               {% for row in break_even_records %}
               <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
                 <td>{{ row.checked_at|fmt_ms_datetime }}</td>
@@ -2486,6 +2490,103 @@
     function statusBadge(value, passText = '是', failText = '否') {
       return `<span class="status-badge ${value ? 'status-pass' : 'status-fail'}">${value ? passText : failText}</span>`;
     }
+
+
+    const BREAK_EVEN_RULE_NOTE = 'R = 实验组USDT净值 × 1%。每1分钟扫描当前持仓；若未变现盈亏 ≥ R，则取消原止损单并按开仓价新建 reduceOnly STOP_MARKET 条件止损单，等待价格回落到保本价时触发市价平仓。';
+
+    function breakEvenTriggeredCell(row) {
+      if (row.reason === 'break_even_already_completed') {
+        return '<span class="status-badge status-pass">已完成保本</span>';
+      }
+      return statusBadge(row.triggered);
+    }
+
+    function renderBreakEvenChecks(rows) {
+      const rowsEl = document.getElementById('break-even-checks-body');
+      if (!rowsEl) return;
+      if (!rows.length) {
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="9">暂无保本止盈扫描结果</td></tr>';
+        return;
+      }
+      rowsEl.innerHTML = rows.map(row => `
+        <tr>
+          <td>${formatMsDatetime(row.checked_at)}</td>
+          <td>${escapeHtml(row.symbol)}</td>
+          <td>${escapeHtml(row.account_equity_usdt)}</td>
+          <td>${escapeHtml(row.r_usdt)}</td>
+          <td>${escapeHtml(row.unrealized_pnl)}</td>
+          <td>${escapeHtml(row.entry_price)}</td>
+          <td>${escapeHtml(row.position_amt)}</td>
+          <td>${breakEvenTriggeredCell(row)}</td>
+          <td>${escapeHtml(row.reason)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderBreakEvenRecords(rows) {
+      const rowsEl = document.getElementById('break-even-records-body');
+      if (!rowsEl) return;
+      if (!rows.length) {
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="11">暂无保本止盈止损单记录</td></tr>';
+        return;
+      }
+      rowsEl.innerHTML = rows.map((row, index) => `
+        <tr class="${index >= 10 ? 'collapsed-extra' : ''}">
+          <td>${formatMsDatetime(row.checked_at)}</td>
+          <td>${escapeHtml(row.symbol)}</td>
+          <td>${escapeHtml(row.side)}</td>
+          <td>${escapeHtml(row.position_amt)}</td>
+          <td>${escapeHtml(row.entry_price)}</td>
+          <td>${escapeHtml(row.r_usdt)} / ${escapeHtml(row.unrealized_pnl)}</td>
+          <td>${escapeHtml(row.old_stop_loss_order_id || '-')}</td>
+          <td>${escapeHtml(row.new_stop_loss_order_id || '-')}</td>
+          <td>${escapeHtml(row.stop_loss_price)}</td>
+          <td><span class="status-badge ${row.status === 'submitted' ? 'status-pass' : 'status-fail'}">${escapeHtml(row.status)}</span></td>
+          <td>${escapeHtml(row.reason)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderBreakEvenSummary(payload) {
+      const checks = payload.checks || [];
+      const records = payload.records || [];
+      const roundNoteEl = document.getElementById('break-even-round-note');
+      if (roundNoteEl) {
+        roundNoteEl.textContent = payload.round_ts ? `最近判断轮次：${formatMsDatetime(payload.round_ts)}。${BREAK_EVEN_RULE_NOTE}` : '暂无保本止盈扫描结果。';
+      }
+      const chipsEl = document.getElementById('break-even-triggered-chips');
+      if (chipsEl) {
+        const triggeredRows = checks.filter(row => row.triggered);
+        chipsEl.innerHTML = triggeredRows.length
+          ? triggeredRows.map(row => `<span class="chip" title="${escapeHtml(row.reason)}">${escapeHtml(row.symbol)}</span>`).join('')
+          : '<span class="chip">本轮无触发保本止盈symbol</span>';
+      }
+      renderBreakEvenChecks(checks);
+      renderBreakEvenRecords(records);
+    }
+
+    (function initBreakEvenRefresh() {
+      const btn = document.getElementById('refresh-break-even');
+      const statusEl = document.getElementById('break-even-refresh-status');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.textContent = '刷新中...';
+        if (statusEl) statusEl.textContent = '正在获取保本止盈最新扫描结果与新建止损单记录...';
+        try {
+          const response = await fetch('/api/break-even/summary', { headers: { 'Accept': 'application/json' } });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          renderBreakEvenSummary(payload);
+          if (statusEl) statusEl.textContent = `刷新完成：扫描结果 ${payload.checks?.length || 0} 条，止损单记录 ${payload.records?.length || 0} 条。`;
+        } catch (error) {
+          if (statusEl) statusEl.textContent = `刷新失败：${error.message}`;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '刷新';
+        }
+      });
+    })();
 
 
     function renderDynamicProfitProtectionChecks(rows) {

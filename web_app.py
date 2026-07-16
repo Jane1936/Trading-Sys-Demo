@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import os
 import sqlite3
+from dataclasses import asdict
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 
@@ -536,6 +537,25 @@ def account_filled_sell_orders_api():
         return jsonify({"error": str(exc)}), 502
 
 
+def _break_even_payload() -> dict:
+    strategy = BreakEvenTakeProfitStrategy(db_path=DB_PATH)
+    round_ts, checks = strategy.get_latest_round_checks()
+    records = strategy.recent_records(limit=100)
+    return {
+        "round_ts": round_ts,
+        "checks": [asdict(row) for row in checks],
+        "records": [asdict(row) for row in records],
+    }
+
+
+@app.get("/api/break-even/summary")
+def break_even_summary_api():
+    try:
+        return jsonify(_break_even_payload())
+    except sqlite3.Error as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
 def _trailing_reduction_payload() -> dict:
     return TrailingReductionTracker(db_path=DB_PATH).summary_payload()
 
@@ -805,9 +825,10 @@ def abnormal_wicks():
     holding_stop_loss_records = holding_scoring.recent_stop_loss_records(limit=100)
     holding_reduction_records = holding_scoring.recent_reduction_records(limit=100)
     holding_increase_records = holding_scoring.recent_increase_records(limit=100, since_ms=trading_records_since_ms)
-    break_even_strategy = BreakEvenTakeProfitStrategy(db_path=DB_PATH)
-    break_even_round_ts, break_even_checks = break_even_strategy.get_latest_round_checks()
-    break_even_records = break_even_strategy.recent_records(limit=100)
+    break_even_payload = _break_even_payload()
+    break_even_round_ts = break_even_payload["round_ts"]
+    break_even_checks = break_even_payload["checks"]
+    break_even_records = break_even_payload["records"]
     partial_take_profit_strategy = PartialTakeProfitStrategy(db_path=DB_PATH)
     partial_take_profit_round_ts, partial_take_profit_checks = partial_take_profit_strategy.get_latest_round_checks()
     partial_take_profit_records = partial_take_profit_strategy.recent_records(limit=100)
