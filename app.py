@@ -228,36 +228,51 @@ def start_break_even_take_profit_task() -> None:
                 f"created={reconcile_result.get('created', 0)} "
                 f"errors={reconcile_result.get('errors', 0)}"
             )
+        except Exception as exc:
+            print(f"⚠️ exit-order reconcile failed: {exc}")
+
+        try:
             partial_result = partial_strategy.run_round()
             print(
                 f"🟢 partial take-profit checked={partial_result.get('checked', 0)} "
                 f"triggered={partial_result.get('triggered', 0)} "
                 f"records={partial_result.get('records', 0)} 2R={partial_result.get('trigger_r_usdt', '')}"
             )
-            for _ in range(5):
+        except Exception as exc:
+            print(f"⚠️ partial take-profit failed: {exc}")
+
+        for _ in range(5):
+            try:
                 result = strategy.run_round()
                 print(
                     f"🟢 break-even take-profit checked={result.get('checked', 0)} "
                     f"triggered={result.get('triggered', 0)} "
                     f"records={result.get('records', 0)} R={result.get('r_usdt', '')}"
                 )
+            except Exception as exc:
+                print(f"⚠️ break-even take-profit failed: {exc}")
+
+            try:
                 dynamic_result = dynamic_profit_protection.run_round()
                 print(
                     f"🟢 dynamic profit protection checked={dynamic_result.get('checked', 0)} "
                     f"eligible={dynamic_result.get('eligible', 0)} "
                     f"triggered={dynamic_result.get('triggered', 0)} R={dynamic_result.get('r_usdt', '')}"
                 )
+            except Exception as exc:
+                print(f"⚠️ dynamic profit protection failed: {exc}")
+
+            try:
                 trailing_result = trailing_stop_tracker.run_round()
                 print(
                     f"🟢 trailing stop tracker checked={trailing_result.get('checked', 0)} "
                     f"eligible={trailing_result.get('eligible', 0)} "
                     f"updated={trailing_result.get('updated', 0)}"
                 )
-                time.sleep(60)
-            continue
-        except Exception as exc:
-            print(f"⚠️ break-even take-profit failed: {exc}")
-        time.sleep(60)
+            except Exception as exc:
+                print(f"⚠️ trailing stop tracker failed: {exc}")
+
+            time.sleep(60)
 
 
 def start_pre_safety_task() -> None:
