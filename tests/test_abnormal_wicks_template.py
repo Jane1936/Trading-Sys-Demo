@@ -314,3 +314,18 @@ def test_trading_trade_records_highlight_current_round_new_open_symbols():
     assert trade_records_index < highlight_index
     assert "trading_new_open_symbols" in template
     assert "本轮新开仓 symbol 会用红色徽标高亮" in template
+
+
+def test_dynamic_profit_protection_has_scoped_refresh_button():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    section_index = template.index('<div id="holding-module-dynamic-profit-protection"')
+    button_index = template.index('id="refresh-dynamic-profit-protection"', section_index)
+    status_index = template.index('id="dynamic-profit-protection-refresh-status"', section_index)
+    endpoint_index = template.index("fetch('/api/dynamic-profit-protection/summary'")
+    trailing_index = template.index('<div id="holding-module-trailing-stop"')
+
+    assert section_index < button_index < status_index < trailing_index
+    assert "仅刷新动态利润保护板块与动态利润保护记录" in template
+    assert "renderDynamicProfitProtectionSummary(payload);" in template
+    assert endpoint_index > button_index

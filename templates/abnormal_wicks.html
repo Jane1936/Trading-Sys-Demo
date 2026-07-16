@@ -1646,8 +1646,10 @@
         <div class="symbol-strip">
           <div class="section-title-row">
             <strong>动态利润保护板块：1分钟扫描结果</strong>
-            <span class="muted">后台每分钟自动扫描，且执行顺序在“移动追踪止盈规则”之前。</span>
+            <button id="refresh-dynamic-profit-protection" class="btn btn-primary btn-small" type="button">刷新</button>
+            <span id="dynamic-profit-protection-refresh-status" class="muted">仅刷新动态利润保护板块与动态利润保护记录</span>
           </div>
+          <div class="muted">后台每分钟自动扫描，且执行顺序在“移动追踪止盈规则”之前。</div>
           {% if dynamic_profit_protection_round_ts %}
             <div id="dynamic-profit-protection-round-note" class="muted">最近判断轮次：{{ dynamic_profit_protection_round_ts|fmt_ms_datetime }}。每分钟读取最新1分钟K线 high/close，维护“开仓以来最高价”；按当下未变现盈利所处R区间动态保护：2R&lt;浮盈≤4R 回撤≥40%、4R&lt;浮盈≤7R 回撤≥30%、7R&lt;浮盈 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓。</div>
           {% else %}
@@ -2614,6 +2616,30 @@
       renderDynamicProfitProtectionChecks(payload.checks || []);
       renderDynamicProfitProtectionRecords(payload.records || []);
     }
+
+
+    (function initDynamicProfitProtectionRefresh() {
+      const btn = document.getElementById('refresh-dynamic-profit-protection');
+      const statusEl = document.getElementById('dynamic-profit-protection-refresh-status');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.textContent = '刷新中...';
+        if (statusEl) statusEl.textContent = '正在获取动态利润保护板块与动态利润保护记录最新信息...';
+        try {
+          const response = await fetch('/api/dynamic-profit-protection/summary', { headers: { 'Accept': 'application/json' } });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          renderDynamicProfitProtectionSummary(payload);
+          if (statusEl) statusEl.textContent = `刷新完成：扫描结果 ${payload.checks?.length || 0} 条，保护记录 ${payload.records?.length || 0} 条。`;
+        } catch (error) {
+          if (statusEl) statusEl.textContent = `刷新失败：${error.message}`;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '刷新';
+        }
+      });
+    })();
 
     function renderTrailingStopChecks(rows) {
       const rowsEl = document.getElementById('trailing-stop-checks-body');
