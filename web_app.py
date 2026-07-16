@@ -22,6 +22,7 @@ from cooldown_module import CooldownModule
 from openable_symbol_module import OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
 from partial_take_profit import PartialTakeProfitStrategy
+from dynamic_profit_protection import DynamicProfitProtection
 from trailing_stop_tracker import TrailingStopTracker
 from trailing_reduction_tracker import TrailingReductionTracker
 from holding_position_scoring import HoldingPositionScoringSystem
@@ -75,6 +76,7 @@ def _experiment_equity_trend_rows(since_ms: int) -> list[sqlite3.Row]:
         (TradingExperiment.TRADES_TABLE, "created_at"),
         (BreakEvenTakeProfitStrategy.CHECKS_TABLE, "checked_at"),
         (PartialTakeProfitStrategy.CHECKS_TABLE, "checked_at"),
+        (DynamicProfitProtection.CHECKS_TABLE, "checked_at"),
     ]
     try:
         with sqlite3.connect(DB_PATH, timeout=30) as conn:
@@ -310,6 +312,24 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
                 matches.append({"type": "移动追踪减仓", "matched_at": str(row["matched_at"] or "")})
                 break
 
+    if _table_exists(conn, DynamicProfitProtection.CHECKS_TABLE):
+        rows = conn.execute(
+            f"""
+            SELECT checked_at AS matched_at, close_quantity
+            FROM {DynamicProfitProtection.CHECKS_TABLE}
+            WHERE symbol = ?
+              AND triggered = 1
+              AND close_status = 'submitted'
+              AND checked_at BETWEEN ? AND ?
+            ORDER BY ABS(checked_at - ?) ASC, checked_at DESC
+            LIMIT 5
+            """,
+            (base_symbol, start_ms, end_ms, order_time),
+        ).fetchall()
+        for row in rows:
+            if _decimal_text_equal(row["close_quantity"], quantity):
+                matches.append({"type": "动态利润保护", "matched_at": str(row["matched_at"] or "")})
+
     if _table_exists(conn, TrailingStopTracker.CHECKS_TABLE):
         rows = conn.execute(
             f"""
@@ -362,6 +382,8 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
         return "减仓"
     if "移动追踪减仓" in match_types:
         return "移动追踪减仓"
+    if "动态利润保护" in match_types:
+        return "动态利润保护"
     if "移动追踪止盈" in match_types:
         return "移动追踪止盈"
     if "分批止盈" in match_types:
@@ -533,6 +555,18 @@ def trailing_reduction_refresh_pretrigger_api():
     except BinanceAccountConfigError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
+def _dynamic_profit_protection_payload() -> dict:
+    return DynamicProfitProtection(db_path=DB_PATH).summary_payload()
+
+
+@app.get("/api/dynamic-profit-protection/summary")
+def dynamic_profit_protection_summary_api():
+    try:
+        return jsonify(_dynamic_profit_protection_payload())
+    except sqlite3.Error as exc:
         return jsonify({"error": str(exc)}), 502
 
 
@@ -781,6 +815,10 @@ def abnormal_wicks():
     trailing_reduction_round_ts = trailing_reduction_payload["round_ts"]
     trailing_reduction_checks = trailing_reduction_payload["checks"]
     trailing_reduction_records = trailing_reduction_payload["records"]
+    dynamic_profit_protection_payload = _dynamic_profit_protection_payload()
+    dynamic_profit_protection_round_ts = dynamic_profit_protection_payload["round_ts"]
+    dynamic_profit_protection_checks = dynamic_profit_protection_payload["checks"]
+    dynamic_profit_protection_records = dynamic_profit_protection_payload["records"]
     trailing_stop_tracker = TrailingStopTracker(db_path=DB_PATH)
     trailing_stop_round_ts, trailing_stop_checks = trailing_stop_tracker.get_latest_round_checks()
     trailing_stop_records = trailing_stop_tracker.recent_action_records(limit=100)
@@ -881,6 +919,9 @@ def abnormal_wicks():
         trailing_reduction_round_ts=trailing_reduction_round_ts,
         trailing_reduction_checks=trailing_reduction_checks,
         trailing_reduction_records=trailing_reduction_records,
+        dynamic_profit_protection_round_ts=dynamic_profit_protection_round_ts,
+        dynamic_profit_protection_checks=dynamic_profit_protection_checks,
+        dynamic_profit_protection_records=dynamic_profit_protection_records,
         trailing_stop_round_ts=trailing_stop_round_ts,
         trailing_stop_checks=trailing_stop_checks,
         trailing_stop_records=trailing_stop_records,

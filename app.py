@@ -32,6 +32,7 @@ from cooldown_module import CooldownModule
 from openable_symbol_module import OpenableSymbol, OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
 from partial_take_profit import PartialTakeProfitStrategy
+from dynamic_profit_protection import DynamicProfitProtection
 from trailing_stop_tracker import TrailingStopTracker
 from trailing_reduction_tracker import TrailingReductionTracker
 from holding_position_scoring import HoldingPositionScoringSystem
@@ -210,11 +211,13 @@ def start_break_even_take_profit_task() -> None:
     """Run break-even and partial take-profit protection every 5 minutes."""
     strategy = BreakEvenTakeProfitStrategy(db_path=collector.DB_PATH)
     partial_strategy = PartialTakeProfitStrategy(db_path=collector.DB_PATH)
+    dynamic_profit_protection = DynamicProfitProtection(db_path=collector.DB_PATH)
     trailing_stop_tracker = TrailingStopTracker(db_path=collector.DB_PATH)
     strategy.init_tables()
     partial_strategy.init_tables()
+    dynamic_profit_protection.init_tables()
     trailing_stop_tracker.init_tables()
-    print("🟢 Break-even, partial take-profit and trailing stop tracker task started")
+    print("🟢 Break-even, partial take-profit, dynamic profit protection and trailing stop tracker task started")
     while True:
         try:
             reconcile_result = TradingExperiment(
@@ -238,6 +241,12 @@ def start_break_even_take_profit_task() -> None:
                 f"records={partial_result.get('records', 0)} 2R={partial_result.get('trigger_r_usdt', '')}"
             )
             for _ in range(5):
+                dynamic_result = dynamic_profit_protection.run_round()
+                print(
+                    f"🟢 dynamic profit protection checked={dynamic_result.get('checked', 0)} "
+                    f"eligible={dynamic_result.get('eligible', 0)} "
+                    f"triggered={dynamic_result.get('triggered', 0)} R={dynamic_result.get('r_usdt', '')}"
+                )
                 trailing_result = trailing_stop_tracker.run_round()
                 print(
                     f"🟢 trailing stop tracker checked={trailing_result.get('checked', 0)} "
