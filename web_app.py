@@ -36,6 +36,10 @@ app = Flask(__name__)
 
 DB_PATH = os.getenv("DB_PATH", collector.DB_PATH)
 DEFAULT_TRADING_EQUITY_USDT = Decimal("1000")
+WEB_SQLITE_QUICK_CHECK_ON_REQUEST = (
+    os.getenv("WEB_SQLITE_QUICK_CHECK_ON_REQUEST", "").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
 _db_recovery_checked_path: str | None = None
 
 
@@ -52,7 +56,8 @@ def _ensure_web_database_usable() -> None:
 
 @app.before_request
 def _recover_malformed_database_before_request() -> None:
-    _ensure_web_database_usable()
+    if WEB_SQLITE_QUICK_CHECK_ON_REQUEST:
+        _ensure_web_database_usable()
 
 
 @app.errorhandler(sqlite3.DatabaseError)

@@ -8,7 +8,11 @@ if [ "$MODE" = "worker" ]; then
 fi
 
 if [ "$MODE" = "web" ]; then
-  exec gunicorn -w 2 -b 0.0.0.0:5000 web_app:app
+  exec gunicorn \
+    -w "${WEB_WORKERS:-2}" \
+    --timeout "${WEB_TIMEOUT:-180}" \
+    -b 0.0.0.0:5000 \
+    web_app:app
 fi
 
 echo "Unknown mode: $MODE (expected: worker | web)" >&2
