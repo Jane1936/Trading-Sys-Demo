@@ -50,6 +50,9 @@
     .score-symbol-error { border-color:#fca5a5; background:#fef2f2; color:#991b1b; }
     .score-symbol-error strong { color:#b91c1c; }
     .score-symbol-error code { background:#fee2e2; }
+    .module-error-banner { margin: 0 0 16px; padding: 12px 14px; border: 1px solid #f59e0b; border-radius: 12px; background: #fffbeb; color: #92400e; font-size: 13px; line-height: 1.55; }
+    .module-error-banner strong { color: #b45309; }
+    .module-error-banner ul { margin: 8px 0 0 18px; padding: 0; }
     .table-wrap { overflow: auto; border-top: 1px solid var(--line); }
     table { border-collapse: collapse; width: 100%; min-width: 980px; }
     th, td { padding: 10px 9px; font-size: 13px; border-bottom: 1px solid #e6f6ff; text-align: left; white-space: nowrap; }
@@ -235,6 +238,17 @@
     <button class="tab-btn {{ 'active' if active_tab == 'tab-strategy' else '' }}" data-tab="tab-strategy">本轮交易策略</button>
   </aside>
   <main class="content container">
+  {% if module_errors %}
+  <div class="module-error-banner" role="status" aria-live="polite">
+    <strong>部分模块加载失败，页面已降级展示：</strong>
+    其余模块会继续显示，避免单个模块异常导致整页不可用。
+    <ul>
+      {% for item in module_errors %}
+        <li>{{ item.label }}：{{ item.error }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
   <section id="tab-abnormal" class="panel {{ 'active' if not active_tab or active_tab == 'tab-abnormal' else '' }}">
   <div class="card">
   <div class="header"><h2>异常插针记录</h2></div>
