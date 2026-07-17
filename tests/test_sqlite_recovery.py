@@ -44,12 +44,28 @@ def test_web_before_request_recovers_malformed_database(tmp_path, monkeypatch):
     monkeypatch.setattr(collector, "DB_PATH", str(db_path))
     monkeypatch.setattr(collector, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(web_app, "_db_recovery_checked_path", None)
+    monkeypatch.setattr(web_app, "WEB_SQLITE_QUICK_CHECK_ON_REQUEST", True)
 
     response = web_app.app.test_client().get("/")
 
     assert response.status_code == 200
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+
+
+def test_web_before_request_skips_quick_check_by_default(tmp_path, monkeypatch):
+    db_path = tmp_path / "klines.db"
+    db_path.write_bytes(b"not a sqlite database")
+    monkeypatch.setattr(web_app, "DB_PATH", str(db_path))
+    monkeypatch.setattr(collector, "DB_PATH", str(db_path))
+    monkeypatch.setattr(collector, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(web_app, "_db_recovery_checked_path", None)
+    monkeypatch.setattr(web_app, "WEB_SQLITE_QUICK_CHECK_ON_REQUEST", False)
+
+    response = web_app.app.test_client().get("/")
+
+    assert response.status_code == 200
+    assert db_path.read_bytes() == b"not a sqlite database"
 
 
 def test_is_malformed_database_error_matches_sqlite_message():
