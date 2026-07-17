@@ -1341,15 +1341,15 @@
         </div>
 
         <div id="holding-module-break-even" class="holding-module-panel" role="tabpanel">
-        <div class="critical-section sky-theme-section" aria-label="关键保本止盈1分钟扫描结果">
+        <div class="critical-section sky-theme-section" aria-label="关键保本止盈5分钟扫描结果">
         <div class="symbol-strip">
-          <div><strong>保本止盈策略：1分钟扫描结果</strong></div>
+          <div><strong>保本止盈策略：5分钟扫描结果</strong></div>
           <div>
             <button id="refresh-break-even" class="btn btn-primary btn-small" type="button">刷新</button>
             <span id="break-even-refresh-status" class="muted">仅刷新保本止盈扫描结果与新建止损单记录</span>
           </div>
           {% if break_even_round_ts %}
-            <div class="muted" id="break-even-round-note">最近判断轮次：{{ break_even_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每1分钟扫描当前持仓；若未变现盈亏 ≥ R，则取消原止损单并按开仓价新建 reduceOnly STOP_MARKET 条件止损单，等待价格回落到保本价时触发市价平仓。</div>
+            <div class="muted" id="break-even-round-note">最近判断轮次：{{ break_even_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；若未变现盈亏 ≥ R，则取消原止损单并按开仓价新建 reduceOnly STOP_MARKET 条件止损单，等待价格回落到保本价时触发市价平仓。</div>
           {% else %}
             <div class="muted" id="break-even-round-note">暂无保本止盈扫描结果。</div>
           {% endif %}
@@ -2494,7 +2494,7 @@
     }
 
 
-    const BREAK_EVEN_RULE_NOTE = 'R = 实验组USDT净值 × 1%。每1分钟扫描当前持仓；若未变现盈亏 ≥ R，则取消原止损单并按开仓价新建 reduceOnly STOP_MARKET 条件止损单，等待价格回落到保本价时触发市价平仓。';
+    const BREAK_EVEN_RULE_NOTE = 'R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；若未变现盈亏 ≥ R，则取消原止损单并按开仓价新建 reduceOnly STOP_MARKET 条件止损单，等待价格回落到保本价时触发市价平仓。';
 
     function breakEvenTriggeredCell(row) {
       if (row.reason === 'break_even_already_completed') {
