@@ -2,6 +2,8 @@ import os
 import re
 import sqlite3
 import threading
+
+from sqlite_recovery import ensure_sqlite_database_usable
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -79,6 +81,7 @@ def get_db_conn():
 # ================= SQLite 初始化 =================
 def init_db():
     os.makedirs(DATA_DIR, exist_ok=True)
+    ensure_sqlite_database_usable(DB_PATH)
 
     with sqlite3.connect(DB_PATH, timeout=30) as conn:
         conn.execute("PRAGMA journal_mode=WAL;")

@@ -30,11 +30,39 @@ from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
 from zombie_force_liquidation import ZombieForceLiquidationModule
+from sqlite_recovery import ensure_sqlite_database_usable, is_malformed_database_error
 
 app = Flask(__name__)
 
 DB_PATH = os.getenv("DB_PATH", collector.DB_PATH)
 DEFAULT_TRADING_EQUITY_USDT = Decimal("1000")
+_db_recovery_checked_path: str | None = None
+
+
+def _ensure_web_database_usable() -> None:
+    global _db_recovery_checked_path
+    if _db_recovery_checked_path == DB_PATH:
+        return
+    quarantined = ensure_sqlite_database_usable(DB_PATH)
+    if quarantined:
+        app.logger.error("Malformed SQLite database was quarantined before web request: %s", ", ".join(quarantined))
+        collector.init_db()
+    _db_recovery_checked_path = DB_PATH
+
+
+@app.before_request
+def _recover_malformed_database_before_request() -> None:
+    _ensure_web_database_usable()
+
+
+@app.errorhandler(sqlite3.DatabaseError)
+def _handle_sqlite_database_error(exc: sqlite3.DatabaseError):
+    if not is_malformed_database_error(exc):
+        return jsonify({"error": str(exc)}), 502
+    quarantined = ensure_sqlite_database_usable(DB_PATH)
+    collector.init_db()
+    app.logger.error("Malformed SQLite database was quarantined after query failure: %s", ", ".join(quarantined) or DB_PATH)
+    return jsonify({"error": "SQLite database was malformed and has been quarantined. Please retry the request."}), 503
 
 
 def _score_band_context() -> tuple[list[dict], str, str, int]:
@@ -469,7 +497,7 @@ def _annotate_filled_order_exit_reasons(payload: dict) -> dict:
                 order["open_total_score"] = open_score
                 order["open_score_band"] = _score_band_label(open_score)
                 order["open_score_matched_at"] = matched_at
-    except sqlite3.OperationalError:
+    except sqlite3.DatabaseError:
         for order in orders:
             if isinstance(order, dict):
                 matches = []
