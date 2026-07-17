@@ -129,8 +129,8 @@ class MarketFilterModule:
             if all_delta is None or btc_delta is None:
                 btc_siphon = False
                 market_crash = False
-                allow = False
-                reason = "insufficient_market_data"
+                allow = True
+                reason = "insufficient_market_data_allow_open"
             else:
                 btc_siphon = (btc_delta - all_delta) > self.BTC_SIPHON_THRESHOLD
                 market_crash = all_delta < self.MARKET_CRASH_THRESHOLD
