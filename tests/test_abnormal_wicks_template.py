@@ -329,3 +329,34 @@ def test_dynamic_profit_protection_has_scoped_refresh_button():
     assert "仅刷新动态利润保护板块与动态利润保护记录" in template
     assert "renderDynamicProfitProtectionSummary(payload);" in template
     assert endpoint_index > button_index
+
+
+def test_web_page_creates_missing_db_parent_directory():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "nested" / "missing" / "klines.db"
+        import web_app
+
+        original_db_path = web_app.DB_PATH
+        web_app.DB_PATH = str(db_path)
+        try:
+            response = web_app.app.test_client().get("/safety/abnormal-wicks")
+        finally:
+            web_app.DB_PATH = original_db_path
+
+    assert response.status_code == 200
+
+
+def test_experiment_equity_trend_rows_returns_empty_for_malformed_database():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "klines.db"
+        db_path.write_bytes(b"not a sqlite database")
+        import web_app
+
+        original_db_path = web_app.DB_PATH
+        web_app.DB_PATH = str(db_path)
+        try:
+            rows = web_app._experiment_equity_trend_rows(0)
+        finally:
+            web_app.DB_PATH = original_db_path
+
+    assert rows == []

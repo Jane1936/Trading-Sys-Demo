@@ -111,7 +111,8 @@ def _experiment_equity_trend_rows(since_ms: int) -> list[sqlite3.Row]:
                 tuple(params),
             ).fetchall()
             return rows
-    except sqlite3.OperationalError:
+    except sqlite3.DatabaseError as exc:
+        app.logger.warning("Skipping experiment equity trend query due to SQLite error: %s", exc)
         return []
 
 
