@@ -13,14 +13,19 @@ from binance.client import Client
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+import allusdt_hourly_ma20
+
 
 # ================= 配置 =================
 BASE_URL = "https://fapi.binance.com/fapi/v1/klines"
 FUNDING_RATE_URL = "https://fapi.binance.com/fapi/v1/premiumIndex"
 OPEN_INTEREST_URL = "https://fapi.binance.com/fapi/v1/openInterest"
 BTC_5M_TABLE = "btc_usdt_5m_klines"
+BTC_1H_TABLE = "btc_usdt_1h_klines"
 BTC_5M_INTERVAL = "5m"
+BTC_1H_INTERVAL = "1h"
 BTC_5M_LIMIT = 1500
+BTC_1H_LIMIT = 1500
 
 BASE_INTERVAL = "1m"
 AGG_INTERVALS = ["5m", "15m", "30m", "1h", "4h", "1d"]
@@ -36,11 +41,15 @@ kline_job_running = False
 oi_job_running = False
 funding_job_running = False
 btc_5m_job_running = False
+btc_1h_job_running = False
+allusdt_1h_ma20_job_running = False
 atr_15m_job_running = False
 kline_job_lock = threading.Lock()
 oi_job_lock = threading.Lock()
 funding_job_lock = threading.Lock()
 btc_5m_job_lock = threading.Lock()
+btc_1h_job_lock = threading.Lock()
+allusdt_1h_ma20_job_lock = threading.Lock()
 atr_15m_job_lock = threading.Lock()
 db_write_lock = threading.Lock()
 last_funding_update_hour = None
@@ -87,6 +96,8 @@ def init_db():
         conn.execute("PRAGMA journal_mode=WAL;")
 
         init_btc_5m_table(conn)
+        init_btc_1h_table(conn)
+        allusdt_hourly_ma20.init_db(conn)
         init_atr_15m_table(conn)
 
         for interval in ALL_INTERVALS:
@@ -156,6 +167,25 @@ def init_btc_5m_table(conn):
     )
 
 
+def init_btc_1h_table(conn):
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {BTC_1H_TABLE} (
+            open_time INTEGER NOT NULL PRIMARY KEY,
+            open REAL NOT NULL,
+            high REAL NOT NULL,
+            low REAL NOT NULL,
+            close REAL NOT NULL,
+            volume REAL NOT NULL,
+            close_time INTEGER NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        f"CREATE INDEX IF NOT EXISTS idx_{BTC_1H_TABLE}_open_time ON {BTC_1H_TABLE}(open_time)"
+    )
+
+
 def init_atr_15m_table(conn):
     conn.execute(
         """
@@ -183,10 +213,24 @@ def get_last_btc_5m_close_time():
     return int(row[0]) if row else None
 
 
-def fetch_btc_5m_klines(start_time=None, limit=BTC_5M_LIMIT):
+def get_last_btc_1h_close_time():
+    with get_db_conn() as conn:
+        row = conn.execute(
+            f"SELECT close_time FROM {BTC_1H_TABLE} ORDER BY close_time DESC LIMIT 1"
+        ).fetchone()
+    return int(row[0]) if row else None
+
+
+def fetch_btc_1h_klines(start_time=None, limit=BTC_1H_LIMIT):
+    return fetch_btc_interval_klines(
+        BTC_1H_INTERVAL, start_time=start_time, limit=limit
+    )
+
+
+def fetch_btc_interval_klines(interval, start_time=None, limit=BTC_5M_LIMIT):
     params = {
         "symbol": "BTCUSDT",
-        "interval": BTC_5M_INTERVAL,
+        "interval": interval,
         "limit": limit,
     }
     if start_time is not None:
@@ -199,15 +243,22 @@ def fetch_btc_5m_klines(start_time=None, limit=BTC_5M_LIMIT):
             data = res.json()
 
             if isinstance(data, dict):
-                print(f"⚠️ BTC 5m API error code={data.get('code')} msg={data.get('msg')}")
+                print(
+                    f"⚠️ BTC {interval} API error "
+                    f"code={data.get('code')} msg={data.get('msg')}"
+                )
                 return []
             return data
         except Exception as e:
             if attempt == 0:
                 time.sleep(0.2)
                 continue
-            print(f"⚠️ BTC 5m request failed: {e}")
+            print(f"⚠️ BTC {interval} request failed: {e}")
             return []
+
+
+def fetch_btc_5m_klines(start_time=None, limit=BTC_5M_LIMIT):
+    return fetch_btc_interval_klines(BTC_5M_INTERVAL, start_time=start_time, limit=limit)
 
 
 def save_btc_5m_klines(klines):
@@ -233,6 +284,41 @@ def save_btc_5m_klines(klines):
             conn.executemany(
                 f"""
                 INSERT OR IGNORE INTO {BTC_5M_TABLE}
+                (open_time, open, high, low, close, volume, close_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            return conn.total_changes - before
+
+
+def save_btc_1h_klines(klines):
+    return save_btc_interval_klines(BTC_1H_TABLE, klines)
+
+
+def save_btc_interval_klines(table, klines):
+    if not klines:
+        return 0
+
+    rows = [
+        (
+            int(k[0]),
+            float(k[1]),
+            float(k[2]),
+            float(k[3]),
+            float(k[4]),
+            float(k[5]),
+            int(k[6]),
+        )
+        for k in klines
+    ]
+
+    with db_write_lock:
+        with get_db_conn() as conn:
+            before = conn.total_changes
+            conn.executemany(
+                f"""
+                INSERT OR IGNORE INTO {table}
                 (open_time, open, high, low, close, volume, close_time)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -269,6 +355,37 @@ def run_btc_5m_main():
 
     inserted = save_btc_5m_klines(all_klines)
     print(f"✅ BTC 5m fetched={len(all_klines)}, inserted={inserted}")
+
+
+def run_btc_1h_main():
+    interval_ms = interval_to_ms(BTC_1H_INTERVAL)
+    now_ms = int(time.time() * 1000)
+    latest_closed_close_time = get_latest_closed_close_time(now_ms, interval_ms)
+    last_close_time = get_last_btc_1h_close_time()
+
+    if last_close_time is not None and last_close_time >= latest_closed_close_time:
+        print("✅ BTC 1h up-to-date")
+        return
+
+    start_time = last_close_time + 1 if last_close_time is not None else None
+    all_klines = []
+
+    while True:
+        klines = fetch_btc_1h_klines(start_time=start_time, limit=BTC_1H_LIMIT)
+        if not klines:
+            break
+
+        closed_klines = filter_closed_klines(klines)
+        all_klines.extend(closed_klines)
+        start_time = klines[-1][0] + 1
+
+        if len(klines) < BTC_1H_LIMIT:
+            break
+        time.sleep(0.05)
+
+    inserted = save_btc_1h_klines(all_klines)
+    print(f"✅ BTC 1h fetched={len(all_klines)}, inserted={inserted}")
+
 
 # ================= 1. U本位合约 =================
 def get_um_symbols():
@@ -1068,6 +1185,52 @@ def btc_5m_job():
     btc_5m_job_running = False
 
 
+def btc_1h_job():
+    global btc_1h_job_running
+
+    if btc_1h_job_running:
+        print("⚠️ Skip BTC 1h job (still running)")
+        return
+
+    with btc_1h_job_lock:
+        btc_1h_job_running = True
+
+    print("\n🟤 BTC 1h job start:", time.strftime("%Y-%m-%d %H:%M:%S"))
+    start = time.time()
+
+    try:
+        run_btc_1h_main()
+    except Exception as e:
+        print("❌ BTC 1h error:", e)
+
+    print(f"⏱ BTC 1h cost: {round(time.time() - start, 2)}s")
+
+    btc_1h_job_running = False
+
+
+def allusdt_1h_ma20_job():
+    global allusdt_1h_ma20_job_running
+
+    if allusdt_1h_ma20_job_running:
+        print("⚠️ Skip ALLUSDT 1h MA20 job (still running)")
+        return
+
+    with allusdt_1h_ma20_job_lock:
+        allusdt_1h_ma20_job_running = True
+
+    print("\n🟢 ALLUSDT 1h MA20 job start:", time.strftime("%Y-%m-%d %H:%M:%S"))
+    start = time.time()
+
+    try:
+        allusdt_hourly_ma20.run(DB_PATH, db_write_lock=db_write_lock)
+    except Exception as e:
+        print("❌ ALLUSDT 1h MA20 error:", e)
+
+    print(f"⏱ ALLUSDT 1h MA20 cost: {round(time.time() - start, 2)}s")
+
+    allusdt_1h_ma20_job_running = False
+
+
 def atr_15m_job():
     global atr_15m_job_running
 
@@ -1109,6 +1272,8 @@ if __name__ == "__main__":
     scheduler.add_job(oi_job, "cron", second=20)
     scheduler.add_job(funding_job, "cron", minute=1, second=40)
     scheduler.add_job(btc_5m_job, "cron", minute="*/5", second=10)
+    scheduler.add_job(btc_1h_job, "cron", minute=2, second=10)
+    scheduler.add_job(allusdt_1h_ma20_job, "cron", minute=3, second=10)
     scheduler.add_job(atr_15m_job, "cron", minute="*/15", second=30)
 
     print(
