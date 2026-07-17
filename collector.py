@@ -3,7 +3,11 @@ import re
 import sqlite3
 import threading
 
-from sqlite_recovery import ensure_sqlite_database_usable
+from sqlite_recovery import (
+    ensure_sqlite_database_usable,
+    is_malformed_database_error,
+    quarantine_sqlite_database,
+)
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -100,6 +104,20 @@ def init_db():
     os.makedirs(DATA_DIR, exist_ok=True)
     ensure_sqlite_database_usable(DB_PATH)
 
+    try:
+        _init_db_schema()
+    except sqlite3.DatabaseError as exc:
+        if not is_malformed_database_error(exc):
+            raise
+        quarantined = quarantine_sqlite_database(DB_PATH)
+        print(
+            "⚠️ malformed SQLite database quarantined during init: "
+            f"{', '.join(quarantined) or DB_PATH}"
+        )
+        _init_db_schema()
+
+
+def _init_db_schema():
     with sqlite3.connect(DB_PATH, timeout=30) as conn:
         conn.execute("PRAGMA journal_mode=WAL;")
 

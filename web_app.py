@@ -47,7 +47,7 @@ def _ensure_web_database_usable() -> None:
     global _db_recovery_checked_path
     if _db_recovery_checked_path == DB_PATH:
         return
-    quarantined = ensure_sqlite_database_usable(DB_PATH)
+    quarantined = ensure_sqlite_database_usable(DB_PATH, quick_check=True)
     if quarantined:
         app.logger.error("Malformed SQLite database was quarantined before web request: %s", ", ".join(quarantined))
         collector.init_db()
@@ -64,7 +64,7 @@ def _recover_malformed_database_before_request() -> None:
 def _handle_sqlite_database_error(exc: sqlite3.DatabaseError):
     if not is_malformed_database_error(exc):
         return jsonify({"error": str(exc)}), 502
-    quarantined = ensure_sqlite_database_usable(DB_PATH)
+    quarantined = ensure_sqlite_database_usable(DB_PATH, quick_check=True, once_per_process=False)
     collector.init_db()
     app.logger.error("Malformed SQLite database was quarantined after query failure: %s", ", ".join(quarantined) or DB_PATH)
     return jsonify({"error": "SQLite database was malformed and has been quarantined. Please retry the request."}), 503

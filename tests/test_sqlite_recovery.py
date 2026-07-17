@@ -15,13 +15,36 @@ def test_ensure_sqlite_database_usable_quarantines_malformed_database(tmp_path):
     wal_path = tmp_path / "klines.db-wal"
     wal_path.write_text("wal")
 
-    quarantined = ensure_sqlite_database_usable(str(db_path))
+    quarantined = ensure_sqlite_database_usable(str(db_path), quick_check=True, once_per_process=False)
 
     assert not db_path.exists()
     assert not wal_path.exists()
     assert len(quarantined) >= 2
     assert any(path.endswith("klines.db" + path[path.index(".corrupt-"):]) for path in quarantined)
     assert all(".corrupt-" in path for path in quarantined)
+
+
+def test_ensure_sqlite_database_usable_skips_quick_check_by_default(tmp_path):
+    db_path = tmp_path / "klines.db"
+    db_path.write_bytes(b"not a sqlite database")
+
+    quarantined = ensure_sqlite_database_usable(str(db_path))
+
+    assert quarantined == []
+    assert db_path.read_bytes() == b"not a sqlite database"
+
+
+def test_ensure_sqlite_database_usable_checks_path_once_per_process(tmp_path):
+    db_path = tmp_path / "klines.db"
+    db_path.write_bytes(b"not a sqlite database")
+
+    first_quarantined = ensure_sqlite_database_usable(str(db_path), quick_check=True)
+    db_path.write_bytes(b"not a sqlite database")
+    second_quarantined = ensure_sqlite_database_usable(str(db_path), quick_check=True)
+
+    assert first_quarantined
+    assert second_quarantined == []
+    assert db_path.read_bytes() == b"not a sqlite database"
 
 
 def test_collector_init_db_recreates_after_quarantining_malformed_database(tmp_path, monkeypatch):
