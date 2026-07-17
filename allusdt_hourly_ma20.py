@@ -242,3 +242,70 @@ def run(db_path: str, db_write_lock=None) -> tuple[int, int]:
         f"inserted={inserted}, ma20_changed={ma20_changed}"
     )
     return inserted, ma20_changed
+
+def run_recent_backfill(db_path: str, hours: int = 4, db_write_lock=None) -> tuple[int, int]:
+    lock = db_write_lock
+    now_ms = int(time.time() * 1000)
+    latest_closed_close_time = get_latest_closed_close_time(now_ms)
+    earliest_open_time = ((now_ms - hours * 60 * 60_000) // INTERVAL_MS) * INTERVAL_MS
+
+    with sqlite3.connect(db_path, timeout=30) as conn:
+        conn.execute("PRAGMA busy_timeout=30000;")
+        init_db(conn)
+        existing_open_times = {
+            int(row[0])
+            for row in conn.execute(
+                f"""
+                SELECT open_time
+                FROM {KLINE_TABLE}
+                WHERE open_time >= ? AND close_time <= ?
+                """,
+                (earliest_open_time, latest_closed_close_time),
+            ).fetchall()
+        }
+
+    expected_open_times = set(range(earliest_open_time, latest_closed_close_time + 1, INTERVAL_MS))
+    missing_open_times = expected_open_times - existing_open_times
+    if not missing_open_times:
+        writer = sqlite3.connect(db_path, timeout=30)
+        try:
+            writer.execute("PRAGMA busy_timeout=30000;")
+            if lock is None:
+                ma20_changed = save_ma20(writer)
+            else:
+                writer.close()
+                with lock:
+                    with sqlite3.connect(db_path, timeout=30) as conn:
+                        conn.execute("PRAGMA busy_timeout=30000;")
+                        ma20_changed = save_ma20(conn)
+                writer = None
+        finally:
+            if writer is not None:
+                writer.close()
+        print(f"✅ {SYMBOL} {INTERVAL} recent {hours}h backfill up-to-date, ma20_changed={ma20_changed}")
+        return 0, ma20_changed
+
+    klines = fetch_klines(start_time=min(missing_open_times), limit=len(expected_open_times) + 2)
+    target_klines = [
+        k for k in filter_closed_klines(klines)
+        if earliest_open_time <= int(k[0]) <= latest_closed_close_time
+    ]
+
+    if lock is None:
+        with sqlite3.connect(db_path, timeout=30) as conn:
+            conn.execute("PRAGMA busy_timeout=30000;")
+            inserted = save_klines(conn, target_klines)
+            ma20_changed = save_ma20(conn)
+    else:
+        with lock:
+            with sqlite3.connect(db_path, timeout=30) as conn:
+                conn.execute("PRAGMA busy_timeout=30000;")
+                inserted = save_klines(conn, target_klines)
+                ma20_changed = save_ma20(conn)
+
+    print(
+        f"✅ {SYMBOL} {INTERVAL} recent {hours}h backfill "
+        f"missing={len(missing_open_times)}, fetched={len(target_klines)}, "
+        f"inserted={inserted}, ma20_changed={ma20_changed}"
+    )
+    return inserted, ma20_changed
