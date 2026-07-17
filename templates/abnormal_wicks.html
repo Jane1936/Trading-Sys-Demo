@@ -235,6 +235,7 @@
     <button class="tab-btn {{ 'active' if active_tab == 'tab-btc' else '' }}" data-tab="tab-btc">BTC数据</button>
     <button class="tab-btn {{ 'active' if active_tab == 'tab-score' else '' }}" data-tab="tab-score">评分系统</button>
     <button class="tab-btn {{ 'active' if active_tab == 'tab-score-trend' else '' }}" data-tab="tab-score-trend">评分变化趋势</button>
+    <button class="tab-btn {{ 'active' if active_tab == 'tab-market-filter' else '' }}" data-tab="tab-market-filter">市场行情过滤</button>
     <button class="tab-btn {{ 'active' if active_tab == 'tab-strategy' else '' }}" data-tab="tab-strategy">本轮交易策略</button>
   </aside>
   <main class="content container">
@@ -810,6 +811,51 @@
           <span>时间范围：最近3天。</span>
         </div>
         <div id="score-trend-chart"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-market-filter" class="panel {{ 'active' if active_tab == 'tab-market-filter' else '' }}">
+    <div class="card">
+      <div class="header"><h2>市场行情过滤</h2></div>
+      <div class="symbol-strip">
+        <div><strong>独立市场过滤模块（每15分钟执行）</strong></div>
+        <div class="tip">规则：分别读取 ALLUSDT 与 BTC 最近4条15分钟K线，使用最近第1条 close 和最近第4条 open 计算最近1小时涨幅 delta=(close-open)/open。若 BTC吸血：(BTC delta - ALLUSDT delta)&gt;5%，或大盘暴跌：ALLUSDT delta&lt;-3%，则本轮不允许新开仓。</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>决策轮次</th><th>执行时间</th><th>是否允许新开仓</th><th>触发原因</th>
+              <th>ALLUSDT第4条open时间</th><th>ALLUSDT最近K线时间</th><th>ALLUSDT open/close</th><th>ALLUSDT delta</th>
+              <th>BTC第4条open时间</th><th>BTC最近K线时间</th><th>BTC open/close</th><th>BTC delta</th><th>BTC-ALLUSDT差值</th>
+              <th>BTC吸血</th><th>大盘暴跌</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in market_filter_results %}
+              <tr>
+                <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
+                <td><span class="chip">{{ '允许' if row.allow_new_positions else '禁止' }}</span></td>
+                <td>{{ row.reason }}</td>
+                <td>{{ row.allusdt_first_open_time|fmt_ms_datetime if row.allusdt_first_open_time else '-' }}</td>
+                <td>{{ row.allusdt_latest_open_time|fmt_ms_datetime if row.allusdt_latest_open_time else '-' }}</td>
+                <td>{{ '%.8f / %.8f'|format(row.allusdt_open, row.allusdt_close) if row.allusdt_open is not none and row.allusdt_close is not none else '-' }}</td>
+                <td>{{ '%.4f%%'|format(row.allusdt_delta * 100) if row.allusdt_delta is not none else '-' }}</td>
+                <td>{{ row.btc_first_open_time|fmt_ms_datetime if row.btc_first_open_time else '-' }}</td>
+                <td>{{ row.btc_latest_open_time|fmt_ms_datetime if row.btc_latest_open_time else '-' }}</td>
+                <td>{{ '%.8f / %.8f'|format(row.btc_open, row.btc_close) if row.btc_open is not none and row.btc_close is not none else '-' }}</td>
+                <td>{{ '%.4f%%'|format(row.btc_delta * 100) if row.btc_delta is not none else '-' }}</td>
+                <td>{{ '%.4f%%'|format((row.btc_delta - row.allusdt_delta) * 100) if row.btc_delta is not none and row.allusdt_delta is not none else '-' }}</td>
+                <td>{{ '是' if row.btc_siphon else '否' }}</td>
+                <td>{{ '是' if row.market_crash else '否' }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="15" class="muted">暂无市场行情过滤执行结果。</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
   </section>

@@ -29,6 +29,7 @@ from trailing_reduction_tracker import TrailingReductionTracker
 from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
+from market_filter_module import MarketFilterModule
 from zombie_force_liquidation import ZombieForceLiquidationModule
 from sqlite_recovery import ensure_sqlite_database_usable, is_malformed_database_error
 
@@ -847,6 +848,8 @@ def abnormal_wicks():
     load_module("可开仓表初始化", openable.init_table, None)
     openable_round_ts = score_total_round_ts
     openable_symbols = load_module("可开仓模块", lambda: openable.run_round(decision_round_ts=openable_round_ts) if openable_round_ts else [], [])
+    market_filter = MarketFilterModule(db_path=DB_PATH)
+    market_filter_results = load_module("市场行情过滤", lambda: market_filter.recent_results(limit=100), [])
     score_trend_symbols = load_module("评分趋势 Symbol 列表", scoring.get_total_score_symbols, [])
     requested_score_trend_symbol = request.args.get("score_trend_symbol", default="", type=str).strip()
     default_score_trend_symbol = round_scores_total[0].symbol if round_scores_total else ""
@@ -965,6 +968,7 @@ def abnormal_wicks():
         score_distance_threshold_text=score_distance_threshold_text,
         score_leverage_mapping_text=score_leverage_mapping_text,
         openable_min_total_score=openable_min_total_score,
+        market_filter_results=market_filter_results,
         trading_trade_records=trading_trade_records,
         trading_new_open_symbols=trading_new_open_symbols,
         trading_position_snapshots=trading_position_snapshots,

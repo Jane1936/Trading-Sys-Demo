@@ -38,6 +38,7 @@ from trailing_reduction_tracker import TrailingReductionTracker
 from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
+from market_filter_module import MarketFilterModule
 from zombie_force_liquidation import ZombieForceLiquidationModule
 
 _universe_lock = threading.Lock()
@@ -89,6 +90,14 @@ def run_first_experiment_after_openable_round(
     qualified_openable_count = sum(1 for row in openable_rows if row.qualified)
 
     try:
+        market_filter = MarketFilterModule(db_path=collector.DB_PATH)
+        market_result = market_filter.run_round(decision_round_ts=round_ts)
+        print(
+            f"🌐 market filter round={round_ts} allow={market_result.allow_new_positions} "
+            f"allusdt_delta={market_result.allusdt_delta} btc_delta={market_result.btc_delta} "
+            f"reason={market_result.reason}"
+        )
+
         zombie_result = ZombieForceLiquidationModule(
             db_path=collector.DB_PATH
         ).run_round(checked_at=round_ts)
@@ -102,6 +111,9 @@ def run_first_experiment_after_openable_round(
             print(
                 f"🧪 first trading experiment round={round_ts} skipped after zombie force liquidation: no qualified symbols"
             )
+            return
+        if not market_result.allow_new_positions:
+            print(f"🧪 first trading experiment round={round_ts} skipped by market filter: {market_result.reason}")
             return
         experiment_result = TradingExperiment(db_path=collector.DB_PATH).run_round(
             openable_rows
@@ -288,6 +300,8 @@ def start_pre_safety_task() -> None:
     ScoringSystem(db_path=collector.DB_PATH).init_table()
     OpenableSymbolModule(db_path=collector.DB_PATH).init_table()
     HoldingPositionScoringSystem(db_path=collector.DB_PATH).init_tables()
+    market_filter = MarketFilterModule(db_path=collector.DB_PATH)
+    market_filter.init_table()
 
     last_pre_safety_round_ts = None
     last_scoring_started_round_ts = None
@@ -318,6 +332,16 @@ def start_pre_safety_task() -> None:
                         )
                 except Exception as exc:  # keep this side-task isolated
                     print(f"⚠️ pre-safety detect failed symbol={symbol}: {exc}")
+
+            try:
+                market_result = market_filter.run_round(decision_round_ts=round_ts, evaluated_at=now_ms)
+                print(
+                    f"🌐 market filter round={round_ts} allow={market_result.allow_new_positions} "
+                    f"allusdt_delta={market_result.allusdt_delta} btc_delta={market_result.btc_delta} "
+                    f"reason={market_result.reason}"
+                )
+            except Exception as exc:
+                print(f"⚠️ market filter failed round={round_ts}: {exc}")
 
             try:
                 cooldown_symbols = cooldown.run_round(
