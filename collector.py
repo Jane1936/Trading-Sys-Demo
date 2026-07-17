@@ -18,7 +18,6 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 import allusdt_15m_ma20
-import allusdt_hourly_ma20
 
 
 # ================= 配置 =================
@@ -27,13 +26,10 @@ FUNDING_RATE_URL = "https://fapi.binance.com/fapi/v1/premiumIndex"
 OPEN_INTEREST_URL = "https://fapi.binance.com/fapi/v1/openInterest"
 BTC_5M_TABLE = "btc_usdt_5m_klines"
 BTC_15M_TABLE = "btc_usdt_15m_klines"
-BTC_1H_TABLE = "btc_usdt_1h_klines"
 BTC_5M_INTERVAL = "5m"
 BTC_15M_INTERVAL = "15m"
-BTC_1H_INTERVAL = "1h"
 BTC_5M_LIMIT = 1500
 BTC_15M_LIMIT = 1500
-BTC_1H_LIMIT = 1500
 STARTUP_RECENT_BACKFILL_HOURS = 4
 
 BASE_INTERVAL = "1m"
@@ -51,8 +47,6 @@ oi_job_running = False
 funding_job_running = False
 btc_5m_job_running = False
 btc_15m_job_running = False
-btc_1h_job_running = False
-allusdt_1h_ma20_job_running = False
 allusdt_15m_ma20_job_running = False
 atr_15m_job_running = False
 kline_job_lock = threading.Lock()
@@ -60,8 +54,6 @@ oi_job_lock = threading.Lock()
 funding_job_lock = threading.Lock()
 btc_5m_job_lock = threading.Lock()
 btc_15m_job_lock = threading.Lock()
-btc_1h_job_lock = threading.Lock()
-allusdt_1h_ma20_job_lock = threading.Lock()
 allusdt_15m_ma20_job_lock = threading.Lock()
 atr_15m_job_lock = threading.Lock()
 db_write_lock = threading.Lock()
@@ -124,9 +116,7 @@ def _init_db_schema():
 
         init_btc_5m_table(conn)
         init_btc_15m_table(conn)
-        init_btc_1h_table(conn)
         allusdt_15m_ma20.init_db(conn)
-        allusdt_hourly_ma20.init_db(conn)
         init_atr_15m_table(conn)
 
         for interval in ALL_INTERVALS:
@@ -204,9 +194,6 @@ def init_btc_15m_table(conn):
     init_btc_interval_table(conn, BTC_15M_TABLE)
 
 
-def init_btc_1h_table(conn):
-    init_btc_interval_table(conn, BTC_1H_TABLE)
-
 
 def init_atr_15m_table(conn):
     conn.execute(
@@ -243,18 +230,10 @@ def get_last_btc_15m_close_time():
     return get_last_btc_interval_close_time(BTC_15M_TABLE)
 
 
-def get_last_btc_1h_close_time():
-    return get_last_btc_interval_close_time(BTC_1H_TABLE)
-
 
 def fetch_btc_15m_klines(start_time=None, limit=BTC_15M_LIMIT):
     return fetch_btc_interval_klines(BTC_15M_INTERVAL, start_time=start_time, limit=limit)
 
-
-def fetch_btc_1h_klines(start_time=None, limit=BTC_1H_LIMIT):
-    return fetch_btc_interval_klines(
-        BTC_1H_INTERVAL, start_time=start_time, limit=limit
-    )
 
 
 def fetch_btc_interval_klines(interval, start_time=None, limit=BTC_5M_LIMIT):
@@ -325,9 +304,6 @@ def save_btc_5m_klines(klines):
 def save_btc_15m_klines(klines):
     return save_btc_interval_klines(BTC_15M_TABLE, klines)
 
-
-def save_btc_1h_klines(klines):
-    return save_btc_interval_klines(BTC_1H_TABLE, klines)
 
 
 def save_btc_interval_klines(table, klines):
@@ -425,35 +401,6 @@ def run_btc_15m_main():
     run_btc_interval_main("15m", BTC_15M_INTERVAL, BTC_15M_LIMIT, get_last_btc_15m_close_time, fetch_btc_15m_klines, save_btc_15m_klines)
 
 
-def run_btc_1h_main():
-    interval_ms = interval_to_ms(BTC_1H_INTERVAL)
-    now_ms = int(time.time() * 1000)
-    latest_closed_close_time = get_latest_closed_close_time(now_ms, interval_ms)
-    last_close_time = get_last_btc_1h_close_time()
-
-    if last_close_time is not None and last_close_time >= latest_closed_close_time:
-        print("✅ BTC 1h up-to-date")
-        return
-
-    start_time = last_close_time + 1 if last_close_time is not None else None
-    all_klines = []
-
-    while True:
-        klines = fetch_btc_1h_klines(start_time=start_time, limit=BTC_1H_LIMIT)
-        if not klines:
-            break
-
-        closed_klines = filter_closed_klines(klines)
-        all_klines.extend(closed_klines)
-        start_time = klines[-1][0] + 1
-
-        if len(klines) < BTC_1H_LIMIT:
-            break
-        time.sleep(0.05)
-
-    inserted = save_btc_1h_klines(all_klines)
-    print(f"✅ BTC 1h fetched={len(all_klines)}, inserted={inserted}")
-
 
 def run_btc_recent_backfill(interval, table, fetch_klines_func, save_klines_func, hours=STARTUP_RECENT_BACKFILL_HOURS):
     interval_ms = interval_to_ms(interval)
@@ -498,8 +445,6 @@ def startup_recent_backfill(hours=STARTUP_RECENT_BACKFILL_HOURS):
     start = time.time()
     run_btc_recent_backfill(BTC_5M_INTERVAL, BTC_5M_TABLE, fetch_btc_5m_klines, save_btc_5m_klines, hours=hours)
     run_btc_recent_backfill(BTC_15M_INTERVAL, BTC_15M_TABLE, fetch_btc_15m_klines, save_btc_15m_klines, hours=hours)
-    run_btc_recent_backfill(BTC_1H_INTERVAL, BTC_1H_TABLE, fetch_btc_1h_klines, save_btc_1h_klines, hours=hours)
-    allusdt_hourly_ma20.run_recent_backfill(DB_PATH, hours=hours, db_write_lock=db_write_lock)
     allusdt_15m_ma20.run_recent_backfill(DB_PATH, hours=hours, db_write_lock=db_write_lock)
     print(f"⏱ startup recent backfill cost: {round(time.time() - start, 2)}s")
 
@@ -1350,52 +1295,6 @@ def allusdt_15m_ma20_job():
 
     allusdt_15m_ma20_job_running = False
 
-def btc_1h_job():
-    global btc_1h_job_running
-
-    if btc_1h_job_running:
-        print("⚠️ Skip BTC 1h job (still running)")
-        return
-
-    with btc_1h_job_lock:
-        btc_1h_job_running = True
-
-    print("\n🟤 BTC 1h job start:", time.strftime("%Y-%m-%d %H:%M:%S"))
-    start = time.time()
-
-    try:
-        run_btc_1h_main()
-    except Exception as e:
-        print("❌ BTC 1h error:", e)
-
-    print(f"⏱ BTC 1h cost: {round(time.time() - start, 2)}s")
-
-    btc_1h_job_running = False
-
-
-def allusdt_1h_ma20_job():
-    global allusdt_1h_ma20_job_running
-
-    if allusdt_1h_ma20_job_running:
-        print("⚠️ Skip ALLUSDT 1h MA20 job (still running)")
-        return
-
-    with allusdt_1h_ma20_job_lock:
-        allusdt_1h_ma20_job_running = True
-
-    print("\n🟢 ALLUSDT 1h MA20 job start:", time.strftime("%Y-%m-%d %H:%M:%S"))
-    start = time.time()
-
-    try:
-        allusdt_hourly_ma20.run(DB_PATH, db_write_lock=db_write_lock)
-    except Exception as e:
-        print("❌ ALLUSDT 1h MA20 error:", e)
-
-    print(f"⏱ ALLUSDT 1h MA20 cost: {round(time.time() - start, 2)}s")
-
-    allusdt_1h_ma20_job_running = False
-
-
 def atr_15m_job():
     global atr_15m_job_running
 
@@ -1438,8 +1337,6 @@ if __name__ == "__main__":
     scheduler.add_job(oi_job, "cron", second=20)
     scheduler.add_job(funding_job, "cron", minute=1, second=40)
     scheduler.add_job(btc_5m_job, "cron", minute="*/5", second=10)
-    scheduler.add_job(btc_1h_job, "cron", minute=2, second=10)
-    scheduler.add_job(allusdt_1h_ma20_job, "cron", minute=3, second=10)
     scheduler.add_job(atr_15m_job, "cron", minute="*/15", second=30)
 
     print(
