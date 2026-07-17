@@ -208,7 +208,7 @@ def run_scoring_round_worker(
 
 
 def start_break_even_take_profit_task() -> None:
-    """Run break-even protection every minute and partial take-profit every 5 minutes."""
+    """Run break-even protection and partial take-profit every 5 minutes."""
     strategy = BreakEvenTakeProfitStrategy(db_path=collector.DB_PATH)
     partial_strategy = PartialTakeProfitStrategy(db_path=collector.DB_PATH)
     dynamic_profit_protection = DynamicProfitProtection(db_path=collector.DB_PATH)
@@ -241,17 +241,17 @@ def start_break_even_take_profit_task() -> None:
         except Exception as exc:
             print(f"⚠️ partial take-profit failed: {exc}")
 
-        for _ in range(5):
-            try:
-                result = strategy.run_round()
-                print(
-                    f"🟢 break-even take-profit checked={result.get('checked', 0)} "
-                    f"triggered={result.get('triggered', 0)} "
-                    f"records={result.get('records', 0)} R={result.get('r_usdt', '')}"
-                )
-            except Exception as exc:
-                print(f"⚠️ break-even take-profit failed: {exc}")
+        try:
+            result = strategy.run_round()
+            print(
+                f"🟢 break-even take-profit checked={result.get('checked', 0)} "
+                f"triggered={result.get('triggered', 0)} "
+                f"records={result.get('records', 0)} R={result.get('r_usdt', '')}"
+            )
+        except Exception as exc:
+            print(f"⚠️ break-even take-profit failed: {exc}")
 
+        for _ in range(5):
             try:
                 dynamic_result = dynamic_profit_protection.run_round()
                 print(
