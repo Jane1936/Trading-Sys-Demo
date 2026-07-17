@@ -1210,6 +1210,8 @@ def kline_job():
             UNIVERSE = build_universe()
 
         run_kline_main(UNIVERSE)
+        run_btc_15m_main()
+        allusdt_15m_ma20.run(DB_PATH, db_write_lock=db_write_lock)
 
     except Exception as e:
         print("❌ error:", e)
@@ -1436,10 +1438,8 @@ if __name__ == "__main__":
     scheduler.add_job(oi_job, "cron", second=20)
     scheduler.add_job(funding_job, "cron", minute=1, second=40)
     scheduler.add_job(btc_5m_job, "cron", minute="*/5", second=10)
-    scheduler.add_job(btc_15m_job, "cron", minute="*/15", second=15)
     scheduler.add_job(btc_1h_job, "cron", minute=2, second=10)
     scheduler.add_job(allusdt_1h_ma20_job, "cron", minute=3, second=10)
-    scheduler.add_job(allusdt_15m_ma20_job, "cron", minute="*/15", second=20)
     scheduler.add_job(atr_15m_job, "cron", minute="*/15", second=30)
 
     print(
