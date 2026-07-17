@@ -34,6 +34,7 @@ BTC_1H_INTERVAL = "1h"
 BTC_5M_LIMIT = 1500
 BTC_15M_LIMIT = 1500
 BTC_1H_LIMIT = 1500
+STARTUP_RECENT_BACKFILL_HOURS = 4
 
 BASE_INTERVAL = "1m"
 AGG_INTERVALS = ["5m", "15m", "30m", "1h", "4h", "1d"]
@@ -452,6 +453,55 @@ def run_btc_1h_main():
 
     inserted = save_btc_1h_klines(all_klines)
     print(f"✅ BTC 1h fetched={len(all_klines)}, inserted={inserted}")
+
+
+def run_btc_recent_backfill(interval, table, fetch_klines_func, save_klines_func, hours=STARTUP_RECENT_BACKFILL_HOURS):
+    interval_ms = interval_to_ms(interval)
+    now_ms = int(time.time() * 1000)
+    latest_closed_close_time = get_latest_closed_close_time(now_ms, interval_ms)
+    earliest_open_time = ((now_ms - hours * interval_to_ms("1h")) // interval_ms) * interval_ms
+
+    with get_db_conn() as conn:
+        existing_open_times = {
+            int(row[0])
+            for row in conn.execute(
+                f"""
+                SELECT open_time
+                FROM {table}
+                WHERE open_time >= ? AND close_time <= ?
+                """,
+                (earliest_open_time, latest_closed_close_time),
+            ).fetchall()
+        }
+
+    expected_open_times = set(range(earliest_open_time, latest_closed_close_time + 1, interval_ms))
+    missing_open_times = expected_open_times - existing_open_times
+    if not missing_open_times:
+        print(f"✅ BTC {interval} recent {hours}h backfill up-to-date")
+        return 0
+
+    klines = fetch_klines_func(start_time=min(missing_open_times), limit=len(expected_open_times) + 2)
+    target_klines = [
+        k for k in filter_closed_klines(klines)
+        if earliest_open_time <= int(k[0]) <= latest_closed_close_time
+    ]
+    inserted = save_klines_func(target_klines)
+    print(
+        f"✅ BTC {interval} recent {hours}h backfill "
+        f"missing={len(missing_open_times)}, fetched={len(target_klines)}, inserted={inserted}"
+    )
+    return inserted
+
+
+def startup_recent_backfill(hours=STARTUP_RECENT_BACKFILL_HOURS):
+    print(f"\n🧩 Startup recent backfill start: last {hours}h BTC + ALLUSDT")
+    start = time.time()
+    run_btc_recent_backfill(BTC_5M_INTERVAL, BTC_5M_TABLE, fetch_btc_5m_klines, save_btc_5m_klines, hours=hours)
+    run_btc_recent_backfill(BTC_15M_INTERVAL, BTC_15M_TABLE, fetch_btc_15m_klines, save_btc_15m_klines, hours=hours)
+    run_btc_recent_backfill(BTC_1H_INTERVAL, BTC_1H_TABLE, fetch_btc_1h_klines, save_btc_1h_klines, hours=hours)
+    allusdt_hourly_ma20.run_recent_backfill(DB_PATH, hours=hours, db_write_lock=db_write_lock)
+    allusdt_15m_ma20.run_recent_backfill(DB_PATH, hours=hours, db_write_lock=db_write_lock)
+    print(f"⏱ startup recent backfill cost: {round(time.time() - start, 2)}s")
 
 
 # ================= 1. U本位合约 =================
@@ -1378,6 +1428,7 @@ UNIVERSE = None
 # ================= 启动 =================
 if __name__ == "__main__":
     init_db()
+    startup_recent_backfill()
 
     scheduler = BlockingScheduler()
 
