@@ -182,9 +182,17 @@ class OpenableSymbolModule:
         self,
         decision_round_ts: int,
         evaluated_at: int | None = None,
+        min_total_score: int | None = None,
+        allow_new_positions: bool = True,
+        threshold_reason: str | None = None,
     ) -> List[OpenableSymbol]:
         """Evaluate total-score candidates after scoring has completed."""
         evaluated_at = int(time.time() * 1000) if evaluated_at is None else int(evaluated_at)
+        effective_min_total_score = (
+            max(self.MIN_TOTAL_SCORE, int(min_total_score))
+            if min_total_score is not None
+            else self.MIN_TOTAL_SCORE
+        )
         with self._connect() as conn:
             total_round = conn.execute(
                 "SELECT 1 FROM symbol_total_scores WHERE decision_round_ts = ? LIMIT 1",
@@ -212,8 +220,8 @@ class OpenableSymbolModule:
                   AND c.symbol IS NULL
                 ORDER BY t.total_score DESC, t.symbol ASC
                 """,
-                (int(decision_round_ts), self.MIN_TOTAL_SCORE),
-            ).fetchall()
+                (int(decision_round_ts), effective_min_total_score),
+            ).fetchall() if allow_new_positions else []
 
             symbols_in_scope = [str(row["symbol"]) for row in rows]
             if symbols_in_scope:
@@ -232,11 +240,19 @@ class OpenableSymbolModule:
                     (int(decision_round_ts),),
                 )
 
-            results = [self._row_to_openable(row, evaluated_at) for row in rows]
+            results = [
+                self._row_to_openable(row, evaluated_at, threshold_reason=threshold_reason)
+                for row in rows
+            ]
             self._save_rows(conn, results)
             return results
 
-    def _row_to_openable(self, row: sqlite3.Row, evaluated_at: int) -> OpenableSymbol:
+    def _row_to_openable(
+        self,
+        row: sqlite3.Row,
+        evaluated_at: int,
+        threshold_reason: str | None = None,
+    ) -> OpenableSymbol:
         total_score = int(row["total_score"])
         ratio = float(row["stop_loss_distance_ratio"]) if row["stop_loss_distance_ratio"] is not None else None
         threshold = self.distance_threshold_for_total(total_score)
@@ -258,7 +274,7 @@ class OpenableSymbolModule:
         elif zero_distance:
             reason = "zero_distance_ratio_not_openable"
         elif distance_qualified:
-            reason = "total_score_not_cooldown_and_stop_loss_distance_qualified"
+            reason = threshold_reason or "total_score_not_cooldown_and_stop_loss_distance_qualified"
         else:
             reason = "stop_loss_distance_not_qualified"
 

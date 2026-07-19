@@ -822,6 +822,45 @@
       <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
         <div class="symbol-strip collapsible-header">
           <div>
+            <div><strong>动态开仓门槛（每15分钟执行，评分完成后）</strong></div>
+            <div class="muted">只显示最近7天内记录。维护最近12小时内评分系统最高总分，并按最高分动态限制本轮新开仓门槛；默认折叠，仅展示最新 10 条。</div>
+          </div>
+          <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+        </div>
+        <div class="collapse-hint">规则：最近12小时最高总分≥85：本轮无额外最低开仓门槛；73-84：仅允许趋势标准单及以上（81分及以上）的 symbol 新开仓；低于73或无评分记录：本轮不允许任何新开仓。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>决策轮次</th><th>执行时间</th><th>统计窗口</th><th>12小时最高总分</th><th>最高分symbol</th>
+                <th>最高分轮次</th><th>是否允许新开仓</th><th>本轮最低开仓分</th><th>策略</th><th>原因</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in dynamic_open_threshold_results %}
+                <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                  <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
+                  <td>{{ row.window_start_ts|fmt_ms_datetime }} ~ {{ row.window_end_ts|fmt_ms_datetime }}</td>
+                  <td>{{ row.highest_total_score if row.highest_total_score is not none else '-' }}</td>
+                  <td>{{ row.highest_symbol or '-' }}</td>
+                  <td>{{ row.highest_score_round_ts|fmt_ms_datetime if row.highest_score_round_ts else '-' }}</td>
+                  <td><span class="chip">{{ '允许' if row.allow_new_positions else '禁止' }}</span></td>
+                  <td>{{ row.min_open_total_score if row.min_open_total_score is not none else '无额外门槛' if row.allow_new_positions else '-' }}</td>
+                  <td>{{ row.policy }}</td>
+                  <td>{{ row.reason }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="10" class="muted">暂无动态开仓门槛执行结果。</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+        <div class="symbol-strip collapsible-header">
+          <div>
             <div><strong>独立市场过滤模块（每15分钟执行）</strong></div>
             <div class="muted">只显示最近7天内记录。规则触发后会记录禁止开仓截止时间；默认折叠，仅展示最新 10 条。</div>
           </div>
