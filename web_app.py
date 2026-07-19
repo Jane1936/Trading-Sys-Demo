@@ -30,6 +30,7 @@ from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
 from market_filter_module import MarketFilterModule
+from dynamic_open_threshold import DynamicOpenThresholdModule
 from zombie_force_liquidation import ZombieForceLiquidationModule
 from sqlite_recovery import ensure_sqlite_database_usable, is_malformed_database_error
 
@@ -847,9 +848,17 @@ def abnormal_wicks():
     openable = OpenableSymbolModule(db_path=DB_PATH)
     load_module("可开仓表初始化", openable.init_table, None)
     openable_round_ts = score_total_round_ts
-    openable_symbols = load_module("可开仓模块", lambda: openable.run_round(decision_round_ts=openable_round_ts) if openable_round_ts else [], [])
+    _, openable_symbols = load_module(
+        "可开仓模块",
+        lambda: openable.get_latest_round_symbols(decision_round_ts=openable_round_ts)
+        if openable_round_ts
+        else (None, []),
+        (None, []),
+    )
     market_filter = MarketFilterModule(db_path=DB_PATH)
     market_filter_results = load_module("市场行情过滤", lambda: market_filter.recent_results(limit=100, days=7), [])
+    dynamic_open_threshold = DynamicOpenThresholdModule(db_path=DB_PATH)
+    dynamic_open_threshold_results = load_module("动态开仓门槛", lambda: dynamic_open_threshold.recent_results(limit=100, days=7), [])
     score_trend_symbols = load_module("评分趋势 Symbol 列表", scoring.get_total_score_symbols, [])
     requested_score_trend_symbol = request.args.get("score_trend_symbol", default="", type=str).strip()
     default_score_trend_symbol = round_scores_total[0].symbol if round_scores_total else ""
@@ -969,6 +978,7 @@ def abnormal_wicks():
         score_leverage_mapping_text=score_leverage_mapping_text,
         openable_min_total_score=openable_min_total_score,
         market_filter_results=market_filter_results,
+        dynamic_open_threshold_results=dynamic_open_threshold_results,
         trading_trade_records=trading_trade_records,
         trading_new_open_symbols=trading_new_open_symbols,
         trading_position_snapshots=trading_position_snapshots,

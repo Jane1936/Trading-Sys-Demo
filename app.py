@@ -39,6 +39,7 @@ from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
 from market_filter_module import MarketFilterModule
+from dynamic_open_threshold import DynamicOpenThresholdModule
 from zombie_force_liquidation import ZombieForceLiquidationModule
 
 _universe_lock = threading.Lock()
@@ -146,6 +147,8 @@ def run_scoring_round_worker(
     scoring.init_table()
     openable = OpenableSymbolModule(db_path=db_path)
     openable.init_table()
+    dynamic_open_threshold = DynamicOpenThresholdModule(db_path=db_path)
+    dynamic_open_threshold.init_table()
     holding_scoring = HoldingPositionScoringSystem(db_path=db_path)
     holding_scoring.init_tables()
     trailing_reduction = TrailingReductionTracker(db_path=db_path)
@@ -207,8 +210,23 @@ def run_scoring_round_worker(
     except Exception as exc:
         print(f"⚠️ holding scoring failed round={decision_round_ts}: {exc}")
 
-    openable_symbols = openable.run_round(
+    dynamic_threshold_result = dynamic_open_threshold.run_round(
         decision_round_ts=decision_round_ts, evaluated_at=evaluated_at
+    )
+    print(
+        f"🚦 dynamic open threshold round={decision_round_ts} "
+        f"highest={dynamic_threshold_result.highest_total_score} "
+        f"min_open={dynamic_threshold_result.min_open_total_score} "
+        f"allow={dynamic_threshold_result.allow_new_positions} "
+        f"policy={dynamic_threshold_result.policy}"
+    )
+
+    openable_symbols = openable.run_round(
+        decision_round_ts=decision_round_ts,
+        evaluated_at=evaluated_at,
+        min_total_score=dynamic_threshold_result.min_open_total_score,
+        allow_new_positions=dynamic_threshold_result.allow_new_positions,
+        threshold_reason=dynamic_threshold_result.reason,
     )
     qualified_openable_count = sum(1 for row in openable_symbols if row.qualified)
     print(
@@ -302,6 +320,7 @@ def start_pre_safety_task() -> None:
     HoldingPositionScoringSystem(db_path=collector.DB_PATH).init_tables()
     market_filter = MarketFilterModule(db_path=collector.DB_PATH)
     market_filter.init_table()
+    DynamicOpenThresholdModule(db_path=collector.DB_PATH).init_table()
 
     last_pre_safety_round_ts = None
     last_scoring_started_round_ts = None
