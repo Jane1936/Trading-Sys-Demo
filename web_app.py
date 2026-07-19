@@ -849,7 +849,7 @@ def abnormal_wicks():
     openable_round_ts = score_total_round_ts
     openable_symbols = load_module("可开仓模块", lambda: openable.run_round(decision_round_ts=openable_round_ts) if openable_round_ts else [], [])
     market_filter = MarketFilterModule(db_path=DB_PATH)
-    market_filter_results = load_module("市场行情过滤", lambda: market_filter.recent_results(limit=100), [])
+    market_filter_results = load_module("市场行情过滤", lambda: market_filter.recent_results(limit=100, days=7), [])
     score_trend_symbols = load_module("评分趋势 Symbol 列表", scoring.get_total_score_symbols, [])
     requested_score_trend_symbol = request.args.get("score_trend_symbol", default="", type=str).strip()
     default_score_trend_symbol = round_scores_total[0].symbol if round_scores_total else ""

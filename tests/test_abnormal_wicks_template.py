@@ -360,3 +360,17 @@ def test_experiment_equity_trend_rows_returns_empty_for_malformed_database():
             web_app.DB_PATH = original_db_path
 
     assert rows == []
+
+
+def test_market_filter_uses_collapsible_recent_records_ui():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    section_index = template.index('<section id="tab-market-filter"')
+    module_index = template.index("独立市场过滤模块（每15分钟执行）", section_index)
+    collapsible_index = template.index('class="collapsible-section is-collapsed"', section_index)
+    button_index = template.index('class="collapsible-toggle"', module_index)
+    table_index = template.index("market_filter_results", button_index)
+
+    assert collapsible_index < module_index < button_index < table_index
+    assert "只显示最近7天内记录" in template[section_index:table_index]
+    assert 'class="{% if loop.index > 10 %}collapsed-extra{% endif %}"' in template[section_index:template.index('</section>', section_index)]
