@@ -35,6 +35,7 @@ class MarketFilterResult:
     allow_new_positions: bool
     reason: str
     evaluated_at: int
+    block_until: Optional[int]
 
 
 class MarketFilterModule:
@@ -42,6 +43,7 @@ class MarketFilterModule:
     BTC_SIPHON_THRESHOLD = 0.05
     MARKET_CRASH_THRESHOLD = -0.03
     ROUND_MS = 15 * 60_000
+    BLOCK_MS = 60 * 60_000
 
     def __init__(self, db_path: str = "data/klines.db") -> None:
         self.db_path = db_path
@@ -75,14 +77,25 @@ class MarketFilterModule:
                     market_crash INTEGER NOT NULL,
                     allow_new_positions INTEGER NOT NULL,
                     reason TEXT NOT NULL,
-                    evaluated_at INTEGER NOT NULL
+                    evaluated_at INTEGER NOT NULL,
+                    block_until INTEGER
                 )
                 """
             )
+            self._ensure_column(conn, "block_until", "INTEGER")
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_evaluated "
                 f"ON {self.TABLE_NAME}(evaluated_at DESC)"
             )
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_block_until "
+                f"ON {self.TABLE_NAME}(block_until DESC)"
+            )
+
+    def _ensure_column(self, conn: sqlite3.Connection, name: str, definition: str) -> None:
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.TABLE_NAME})").fetchall()}
+        if name not in columns:
+            conn.execute(f"ALTER TABLE {self.TABLE_NAME} ADD COLUMN {name} {definition}")
 
     @staticmethod
     def decision_round_ts(now_ms: int | None = None) -> int:
@@ -129,21 +142,39 @@ class MarketFilterModule:
             if all_delta is None or btc_delta is None:
                 btc_siphon = False
                 market_crash = False
-                allow = True
-                reason = "insufficient_market_data_allow_open"
+                block_until = self._active_block_until(conn, evaluated_ms)
+                allow = block_until is None
+                reason = "insufficient_market_data_allow_open" if allow else f"market_filter_cooldown_until_{block_until}"
             else:
                 btc_siphon = (btc_delta - all_delta) > self.BTC_SIPHON_THRESHOLD
                 market_crash = all_delta < self.MARKET_CRASH_THRESHOLD
-                allow = not (btc_siphon or market_crash)
+                triggered = btc_siphon or market_crash
+                block_until = evaluated_ms + self.BLOCK_MS if triggered else self._active_block_until(conn, evaluated_ms)
+                allow = block_until is None
                 reasons = []
                 if btc_siphon:
                     reasons.append("btc_siphon")
                 if market_crash:
                     reasons.append("market_crash")
+                if not triggered and block_until is not None:
+                    reasons.append(f"market_filter_cooldown_until_{block_until}")
                 reason = ",".join(reasons) if reasons else "market_filter_passed"
-            result = MarketFilterResult(round_ts, all_first, all_latest, all_open, all_close, all_delta, btc_first, btc_latest, btc_open, btc_close, btc_delta, btc_siphon, market_crash, allow, reason, evaluated_ms)
+            result = MarketFilterResult(round_ts, all_first, all_latest, all_open, all_close, all_delta, btc_first, btc_latest, btc_open, btc_close, btc_delta, btc_siphon, market_crash, allow, reason, evaluated_ms, block_until)
             self._save(conn, result)
             return result
+
+    def _active_block_until(self, conn: sqlite3.Connection, evaluated_ms: int) -> Optional[int]:
+        row = conn.execute(
+            f"""
+            SELECT MAX(block_until) AS block_until
+            FROM {self.TABLE_NAME}
+            WHERE (btc_siphon = 1 OR market_crash = 1)
+              AND block_until > ?
+            """,
+            (int(evaluated_ms),),
+        ).fetchone()
+        block_until = row["block_until"] if row is not None else None
+        return int(block_until) if block_until is not None else None
 
     def _save(self, conn: sqlite3.Connection, r: MarketFilterResult) -> None:
         conn.execute(
@@ -151,8 +182,8 @@ class MarketFilterModule:
             INSERT INTO {self.TABLE_NAME}
             (decision_round_ts, allusdt_first_open_time, allusdt_latest_open_time, allusdt_open, allusdt_close, allusdt_delta,
              btc_first_open_time, btc_latest_open_time, btc_open, btc_close, btc_delta, btc_siphon, market_crash,
-             allow_new_positions, reason, evaluated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             allow_new_positions, reason, evaluated_at, block_until)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(decision_round_ts) DO UPDATE SET
                 allusdt_first_open_time=excluded.allusdt_first_open_time,
                 allusdt_latest_open_time=excluded.allusdt_latest_open_time,
@@ -168,16 +199,28 @@ class MarketFilterModule:
                 market_crash=excluded.market_crash,
                 allow_new_positions=excluded.allow_new_positions,
                 reason=excluded.reason,
-                evaluated_at=excluded.evaluated_at
+                evaluated_at=excluded.evaluated_at,
+                block_until=excluded.block_until
             """,
             (r.decision_round_ts, r.allusdt_first_open_time, r.allusdt_latest_open_time, r.allusdt_open, r.allusdt_close, r.allusdt_delta,
-             r.btc_first_open_time, r.btc_latest_open_time, r.btc_open, r.btc_close, r.btc_delta, int(r.btc_siphon), int(r.market_crash), int(r.allow_new_positions), r.reason, r.evaluated_at),
+             r.btc_first_open_time, r.btc_latest_open_time, r.btc_open, r.btc_close, r.btc_delta, int(r.btc_siphon), int(r.market_crash), int(r.allow_new_positions), r.reason, r.evaluated_at, r.block_until),
         )
 
-    def recent_results(self, limit: int = 100) -> list[MarketFilterResult]:
+    def recent_results(self, limit: int = 100, days: int | None = None, now_ms: int | None = None) -> list[MarketFilterResult]:
         self.init_table()
         with self._connect() as conn:
-            rows = conn.execute(f"SELECT * FROM {self.TABLE_NAME} ORDER BY decision_round_ts DESC LIMIT ?", (int(limit),)).fetchall()
+            params: list[int] = []
+            where_clause = ""
+            if days is not None:
+                current_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
+                cutoff_ms = current_ms - int(days) * 24 * 60 * 60_000
+                where_clause = "WHERE evaluated_at >= ?"
+                params.append(cutoff_ms)
+            params.append(int(limit))
+            rows = conn.execute(
+                f"SELECT * FROM {self.TABLE_NAME} {where_clause} ORDER BY decision_round_ts DESC LIMIT ?",
+                tuple(params),
+            ).fetchall()
             return [self._from_row(row) for row in rows]
 
     @classmethod
@@ -190,4 +233,5 @@ class MarketFilterModule:
             btc_open=row["btc_open"], btc_close=row["btc_close"], btc_delta=row["btc_delta"],
             btc_siphon=bool(row["btc_siphon"]), market_crash=bool(row["market_crash"]),
             allow_new_positions=bool(row["allow_new_positions"]), reason=str(row["reason"]), evaluated_at=int(row["evaluated_at"]),
+            block_until=row["block_until"] if row["block_until"] is None else int(row["block_until"]),
         )
