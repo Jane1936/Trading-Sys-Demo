@@ -1719,7 +1719,7 @@
           </div>
           <div class="muted">后台每分钟自动扫描，且执行顺序在“移动追踪止盈规则”之前。</div>
           {% if dynamic_profit_protection_round_ts %}
-            <div id="dynamic-profit-protection-round-note" class="muted">最近判断轮次：{{ dynamic_profit_protection_round_ts|fmt_ms_datetime }}。每分钟读取最新1分钟K线 high/close，维护“开仓以来最高价”；按当下未变现盈利所处R区间动态保护：2R&lt;浮盈≤4R 回撤≥40%、4R&lt;浮盈≤7R 回撤≥30%、7R&lt;浮盈 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓。</div>
+            <div id="dynamic-profit-protection-round-note" class="muted">最近判断轮次：{{ dynamic_profit_protection_round_ts|fmt_ms_datetime }}。每分钟读取最新1分钟K线 high/close，维护“开仓以来最高价”；按浮盈历史最高到达档位动态保护：浮盈到达过(2R, 4R] 回撤≥40%、浮盈到达过(4R, 7R] 回撤≥30%、浮盈到达过7R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓；三档按优先级递增，仅触发最高命中的一个条件。</div>
           {% else %}
             <div id="dynamic-profit-protection-round-note" class="muted">暂无动态利润保护扫描结果。</div>
           {% endif %}
@@ -1736,11 +1736,11 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>checked_at</th><th>symbol</th><th>entry</th><th>position</th><th>浮盈/R</th><th>最新 high/close</th><th>开仓以来最高价</th><th>回撤/阈值</th><th>触发</th><th>全部平仓单</th><th>满足前提</th><th>reason</th></tr></thead>
+            <thead><tr><th>checked_at</th><th>symbol</th><th>entry</th><th>position</th><th>浮盈/R</th><th>最新 high/close</th><th>开仓以来最高价</th><th>当前档位</th><th>回撤/阈值</th><th>触发</th><th>全部平仓单</th><th>满足前提</th><th>reason</th></tr></thead>
             <tbody id="dynamic-profit-protection-checks-body">
               {% for row in dynamic_profit_protection_checks %}
-              <tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td>{{ row.unrealized_pnl }} / {{ row.profit_r_multiple }}R</td><td>{{ row.latest_1m_high }} / {{ row.latest_1m_close }}</td><td>{{ row.highest_since_open }}</td><td>{{ row.profit_drawdown_ratio }} / {{ row.drawdown_threshold }}</td><td><span class="status-badge {{ 'status-pass' if row.triggered else 'status-fail' }}">{{ '是' if row.triggered else '否' }}</span></td><td>{{ row.close_quantity }} / {{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td><td>{{ row.reason }}</td></tr>
-              {% else %}<tr><td class="empty" colspan="12">暂无动态利润保护扫描结果</td></tr>{% endfor %}
+              <tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td>{{ row.unrealized_pnl }} / {{ row.profit_r_multiple }}R</td><td>{{ row.latest_1m_high }} / {{ row.latest_1m_close }}</td><td>{{ row.highest_since_open }}</td><td>{{ row.current_tier }}</td><td>{{ row.profit_drawdown_ratio }} / {{ row.drawdown_threshold }}</td><td><span class="status-badge {{ 'status-pass' if row.triggered else 'status-fail' }}">{{ '是' if row.triggered else '否' }}</span></td><td>{{ row.close_quantity }} / {{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td><td>{{ row.reason }}</td></tr>
+              {% else %}<tr><td class="empty" colspan="13">暂无动态利润保护扫描结果</td></tr>{% endfor %}
             </tbody>
           </table>
         </div>
@@ -1748,9 +1748,9 @@
         <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
           <div class="symbol-strip collapsible-header"><div><div><strong>动态利润保护记录</strong></div><div class="muted">记录动态利润保护触发后的全部平仓数量、订单ID、接口状态与触发原因。</div></div><button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button></div>
           <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
-          <div class="table-wrap"><table><thead><tr><th>checked_at</th><th>symbol</th><th>position_amt</th><th>entry_price</th><th>R值/浮盈倍数</th><th>close/最高价</th><th>回撤/阈值</th><th>close_quantity</th><th>close_order_id / status</th><th>reason</th></tr></thead><tbody id="dynamic-profit-protection-records-body">
-            {% for row in dynamic_profit_protection_records %}<tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}"><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.position_amt }}</td><td>{{ row.entry_price }}</td><td>{{ row.r_usdt }} / {{ row.profit_r_multiple }}R</td><td>{{ row.latest_1m_close }} / {{ row.highest_since_open }}</td><td>{{ row.profit_drawdown_ratio }} / {{ row.drawdown_threshold }}</td><td>{{ row.close_quantity }}</td><td>{{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td>{{ row.reason }}</td></tr>
-            {% else %}<tr><td class="empty" colspan="10">暂无动态利润保护记录</td></tr>{% endfor %}
+          <div class="table-wrap"><table><thead><tr><th>checked_at</th><th>symbol</th><th>position_amt</th><th>entry_price</th><th>R值/浮盈倍数</th><th>close/最高价</th><th>当前档位</th><th>回撤/阈值</th><th>close_quantity</th><th>close_order_id / status</th><th>reason</th></tr></thead><tbody id="dynamic-profit-protection-records-body">
+            {% for row in dynamic_profit_protection_records %}<tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}"><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.position_amt }}</td><td>{{ row.entry_price }}</td><td>{{ row.r_usdt }} / {{ row.profit_r_multiple }}R</td><td>{{ row.latest_1m_close }} / {{ row.highest_since_open }}</td><td>{{ row.current_tier }}</td><td>{{ row.profit_drawdown_ratio }} / {{ row.drawdown_threshold }}</td><td>{{ row.close_quantity }}</td><td>{{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td>{{ row.reason }}</td></tr>
+            {% else %}<tr><td class="empty" colspan="11">暂无动态利润保护记录</td></tr>{% endfor %}
           </tbody></table></div>
         </div>
         </div>
@@ -2328,7 +2328,7 @@
     let btcChart = null;
     let scoreTrendChart = null;
     let experimentEquityTrendChart = null;
-    const DYNAMIC_PROFIT_PROTECTION_RULE_NOTE = '每分钟读取最新1分钟K线 high/close，维护“开仓以来最高价”；按当下未变现盈利所处R区间动态保护：2R<浮盈≤4R 回撤≥40%、4R<浮盈≤7R 回撤≥30%、7R<浮盈 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓。';
+    const DYNAMIC_PROFIT_PROTECTION_RULE_NOTE = '每分钟读取最新1分钟K线 high/close，维护“开仓以来最高价”；按浮盈历史最高到达档位动态保护：浮盈到达过(2R, 4R] 回撤≥40%、浮盈到达过(4R, 7R] 回撤≥30%、浮盈到达过7R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓；三档按优先级递增，仅触发最高命中的一个条件。';
     const TRAILING_STOP_RULE_NOTE = '仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；先用最近4条15分钟K线判断“预触发移动追踪止盈”（最近第1条close < 最近第2/3/4条low的最小值）；对本轮预触发symbol每分钟读取 klines_1m 最新 high/close，维护“开仓以来最高价”，计算“波动率”=最新 ATR(14) / 最近第2条15分钟K线 close；若波动率 > 0.03，则当最新close相对开仓以来最高价回撤 > 2 × ATR(14) 时打上“移动追踪止盈”tag，否则回撤 > 2.5 × ATR(14) 时打上“移动追踪止盈”tag，并调用市价单接口全部平仓。';
 
     function escapeHtml(value) {
@@ -2662,15 +2662,15 @@
     function renderDynamicProfitProtectionChecks(rows) {
       const rowsEl = document.getElementById('dynamic-profit-protection-checks-body');
       if (!rowsEl) return;
-      if (!rows.length) { rowsEl.innerHTML = '<tr><td class="empty" colspan="12">暂无动态利润保护扫描结果</td></tr>'; return; }
-      rowsEl.innerHTML = rows.map(row => `<tr><td>${formatMsDatetime(row.checked_at)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.entry_price)}</td><td>${escapeHtml(row.position_amt)}</td><td>${escapeHtml(row.unrealized_pnl)} / ${escapeHtml(row.profit_r_multiple)}R</td><td>${escapeHtml(row.latest_1m_high)} / ${escapeHtml(row.latest_1m_close)}</td><td>${escapeHtml(row.highest_since_open)}</td><td>${escapeHtml(row.profit_drawdown_ratio)} / ${escapeHtml(row.drawdown_threshold)}</td><td>${statusBadge(row.triggered)}</td><td>${escapeHtml(row.close_quantity)} / ${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td><td>${statusBadge(row.eligible)}</td><td>${escapeHtml(row.reason)}</td></tr>`).join('');
+      if (!rows.length) { rowsEl.innerHTML = '<tr><td class="empty" colspan="13">暂无动态利润保护扫描结果</td></tr>'; return; }
+      rowsEl.innerHTML = rows.map(row => `<tr><td>${formatMsDatetime(row.checked_at)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.entry_price)}</td><td>${escapeHtml(row.position_amt)}</td><td>${escapeHtml(row.unrealized_pnl)} / ${escapeHtml(row.profit_r_multiple)}R</td><td>${escapeHtml(row.latest_1m_high)} / ${escapeHtml(row.latest_1m_close)}</td><td>${escapeHtml(row.highest_since_open)}</td><td>${escapeHtml(row.current_tier || '未达档')}</td><td>${escapeHtml(row.profit_drawdown_ratio)} / ${escapeHtml(row.drawdown_threshold)}</td><td>${statusBadge(row.triggered)}</td><td>${escapeHtml(row.close_quantity)} / ${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td><td>${statusBadge(row.eligible)}</td><td>${escapeHtml(row.reason)}</td></tr>`).join('');
     }
 
     function renderDynamicProfitProtectionRecords(rows) {
       const rowsEl = document.getElementById('dynamic-profit-protection-records-body');
       if (!rowsEl) return;
-      if (!rows.length) { rowsEl.innerHTML = '<tr><td class="empty" colspan="10">暂无动态利润保护记录</td></tr>'; return; }
-      rowsEl.innerHTML = rows.map((row, index) => `<tr class="${index >= 10 ? 'collapsed-extra' : ''}"><td>${formatMsDatetime(row.checked_at)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.position_amt)}</td><td>${escapeHtml(row.entry_price)}</td><td>${escapeHtml(row.r_usdt)} / ${escapeHtml(row.profit_r_multiple)}R</td><td>${escapeHtml(row.latest_1m_close)} / ${escapeHtml(row.highest_since_open)}</td><td>${escapeHtml(row.profit_drawdown_ratio)} / ${escapeHtml(row.drawdown_threshold)}</td><td>${escapeHtml(row.close_quantity)}</td><td>${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td><td>${escapeHtml(row.reason)}</td></tr>`).join('');
+      if (!rows.length) { rowsEl.innerHTML = '<tr><td class="empty" colspan="11">暂无动态利润保护记录</td></tr>'; return; }
+      rowsEl.innerHTML = rows.map((row, index) => `<tr class="${index >= 10 ? 'collapsed-extra' : ''}"><td>${formatMsDatetime(row.checked_at)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.position_amt)}</td><td>${escapeHtml(row.entry_price)}</td><td>${escapeHtml(row.r_usdt)} / ${escapeHtml(row.profit_r_multiple)}R</td><td>${escapeHtml(row.latest_1m_close)} / ${escapeHtml(row.highest_since_open)}</td><td>${escapeHtml(row.current_tier || '未达档')}</td><td>${escapeHtml(row.profit_drawdown_ratio)} / ${escapeHtml(row.drawdown_threshold)}</td><td>${escapeHtml(row.close_quantity)}</td><td>${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td><td>${escapeHtml(row.reason)}</td></tr>`).join('');
     }
 
     function renderDynamicProfitProtectionSummary(payload) {
