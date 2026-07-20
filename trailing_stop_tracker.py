@@ -64,7 +64,7 @@ class TrailingStopTracker:
 
     CHECKS_TABLE = "trailing_stop_profit_checks"
 
-    def __init__(self, db_path: str = "data/klines.db", account_manager: BinanceAccountManager | None = None) -> None:
+    def __init__(self, db_path: str = db_config.TRADING_DB_PATH, account_manager: BinanceAccountManager | None = None) -> None:
         self.db_path = db_path
         self.account_manager = account_manager or BinanceAccountManager()
 

@@ -23,7 +23,7 @@ class TradeActionLockManager:
 
     TABLE = "trade_action_locks"
 
-    def __init__(self, db_path: str = "data/klines.db", ttl_ms: int = 120_000) -> None:
+    def __init__(self, db_path: str = db_config.TRADING_DB_PATH, ttl_ms: int = 120_000) -> None:
         self.db_path = db_path
         self.ttl_ms = ttl_ms
 
