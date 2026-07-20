@@ -16,6 +16,7 @@ from typing import Iterable, List
 
 import collector
 import db_config
+import feature_flags
 from data_processor import (
     MA20Processor,
     MA20Scheduler,
@@ -92,13 +93,17 @@ def run_first_experiment_after_openable_round(
     qualified_openable_count = sum(1 for row in openable_rows if row.qualified)
 
     try:
-        market_filter = MarketFilterModule(db_path=db_config.MARKET_DB_PATH)
-        market_result = market_filter.run_round(decision_round_ts=round_ts)
-        print(
-            f"🌐 market filter round={round_ts} allow={market_result.allow_new_positions} "
-            f"allusdt_delta={market_result.allusdt_delta} btc_delta={market_result.btc_delta} "
-            f"reason={market_result.reason}"
-        )
+        market_result = None
+        if feature_flags.is_feature_enabled(feature_flags.MARKET_FILTER):
+            market_filter = MarketFilterModule(db_path=db_config.MARKET_DB_PATH)
+            market_result = market_filter.run_round(decision_round_ts=round_ts)
+            print(
+                f"🌐 market filter round={round_ts} allow={market_result.allow_new_positions} "
+                f"allusdt_delta={market_result.allusdt_delta} btc_delta={market_result.btc_delta} "
+                f"reason={market_result.reason}"
+            )
+        else:
+            print(f"⏸️ market filter disabled before trading round={round_ts}; skipping market block check")
 
         zombie_result = ZombieForceLiquidationModule(
             db_path=db_config.TRADING_DB_PATH
@@ -114,8 +119,11 @@ def run_first_experiment_after_openable_round(
                 f"🧪 first trading experiment round={round_ts} skipped after zombie force liquidation: no qualified symbols"
             )
             return
-        if not market_result.allow_new_positions:
+        if market_result is not None and not market_result.allow_new_positions:
             print(f"🧪 first trading experiment round={round_ts} skipped by market filter: {market_result.reason}")
+            return
+        if not feature_flags.is_feature_enabled(feature_flags.TRADING_SYSTEM):
+            print(f"⏸️ trading system disabled round={round_ts}; skipping new positions")
             return
         experiment_result = TradingExperiment(db_path=db_config.TRADING_DB_PATH).run_round(
             openable_rows
@@ -337,42 +345,51 @@ def start_pre_safety_task() -> None:
         round_ts = (now_ms // round_ms) * round_ms
 
         scoring_execute_ts = round_ts + 30_000
+        scoring_enabled = feature_flags.is_feature_enabled(feature_flags.SCORING_SYSTEM)
+        market_filter_enabled = feature_flags.is_feature_enabled(feature_flags.MARKET_FILTER)
 
         if round_ts != last_pre_safety_round_ts:
-            for symbol in symbols:
+            if scoring_enabled:
+                for symbol in symbols:
+                    try:
+                        events = module.detect_for_symbol(symbol, now_ms=now_ms)
+                        for event in events:
+                            print(
+                                f"🚨 abnormal wick {event.symbol} "
+                                f"round={event.decision_round_ts} "
+                                f"candle_index={event.candle_index} "
+                                f"first_open={event.first_candle_open_time} "
+                                f"cond1={event.cond1_ratio:.6f} cond2={event.cond2_ratio:.6f}"
+                            )
+                    except Exception as exc:  # keep this side-task isolated
+                        print(f"⚠️ pre-safety detect failed symbol={symbol}: {exc}")
+            else:
+                print(f"⏸️ scoring system disabled round={round_ts}; skipping pre-safety, cooldown and scoring")
+
+            if market_filter_enabled:
                 try:
-                    events = module.detect_for_symbol(symbol, now_ms=now_ms)
-                    for event in events:
-                        print(
-                            f"🚨 abnormal wick {event.symbol} "
-                            f"round={event.decision_round_ts} "
-                            f"candle_index={event.candle_index} "
-                            f"first_open={event.first_candle_open_time} "
-                            f"cond1={event.cond1_ratio:.6f} cond2={event.cond2_ratio:.6f}"
-                        )
-                except Exception as exc:  # keep this side-task isolated
-                    print(f"⚠️ pre-safety detect failed symbol={symbol}: {exc}")
+                    market_result = market_filter.run_round(decision_round_ts=round_ts, evaluated_at=now_ms)
+                    print(
+                        f"🌐 market filter round={round_ts} allow={market_result.allow_new_positions} "
+                        f"allusdt_delta={market_result.allusdt_delta} btc_delta={market_result.btc_delta} "
+                        f"reason={market_result.reason}"
+                    )
+                except Exception as exc:
+                    print(f"⚠️ market filter failed round={round_ts}: {exc}")
+            else:
+                print(f"⏸️ market filter disabled round={round_ts}; skipping market filter")
 
-            try:
-                market_result = market_filter.run_round(decision_round_ts=round_ts, evaluated_at=now_ms)
-                print(
-                    f"🌐 market filter round={round_ts} allow={market_result.allow_new_positions} "
-                    f"allusdt_delta={market_result.allusdt_delta} btc_delta={market_result.btc_delta} "
-                    f"reason={market_result.reason}"
-                )
-            except Exception as exc:
-                print(f"⚠️ market filter failed round={round_ts}: {exc}")
-
-            try:
-                cooldown_symbols = cooldown.run_round(
-                    symbols=symbols, decision_round_ts=round_ts, now_ms=now_ms
-                )
-                print(
-                    f"🧊 cooldown round={round_ts} universe={len(symbols)} "
-                    f"cooldown={len(cooldown_symbols)}"
-                )
-            except Exception as exc:
-                print(f"⚠️ cooldown failed round={round_ts}: {exc}")
+            if scoring_enabled:
+                try:
+                    cooldown_symbols = cooldown.run_round(
+                        symbols=symbols, decision_round_ts=round_ts, now_ms=now_ms
+                    )
+                    print(
+                        f"🧊 cooldown round={round_ts} universe={len(symbols)} "
+                        f"cooldown={len(cooldown_symbols)}"
+                    )
+                except Exception as exc:
+                    print(f"⚠️ cooldown failed round={round_ts}: {exc}")
 
             last_pre_safety_round_ts = round_ts
 
@@ -412,6 +429,10 @@ def start_pre_safety_task() -> None:
             and round_ts != last_scoring_started_round_ts
             and now_ms >= scoring_execute_ts
         ):
+            if not scoring_enabled:
+                last_scoring_started_round_ts = round_ts
+                time.sleep(5)
+                continue
             try:
                 _, abnormal_symbols = module.get_latest_round_abnormal_symbols(
                     decision_round_ts=round_ts
@@ -516,6 +537,9 @@ def start_collector_task(symbols: List[str]) -> None:
     collector.UNIVERSE = list(symbols)
 
     def _run_with_fresh_universe(job_func):
+        if not feature_flags.is_feature_enabled(feature_flags.BASE_DATA_COLLECTION):
+            print(f"⏸️ base data collection disabled; skipping {job_func.__name__}")
+            return
         ensure_universe()
         job_func()
 
@@ -554,6 +578,9 @@ def start_atr_15m_task(symbols: List[str]) -> None:
     collector.UNIVERSE = list(symbols)
 
     def _run_with_fresh_universe():
+        if not feature_flags.is_feature_enabled(feature_flags.BASE_DATA_COLLECTION):
+            print("⏸️ base data collection disabled; skipping atr_15m_job")
+            return
         ensure_universe()
         collector.atr_15m_job()
         try:
@@ -606,7 +633,9 @@ def start_processor_task(symbols: List[str]) -> None:
         processor=processor,
         scheduler=scheduler,
         on_result=on_ma20_result,
-        symbol_provider=ensure_universe,
+        symbol_provider=lambda: ensure_universe()
+        if feature_flags.is_feature_enabled(feature_flags.BASE_DATA_COLLECTION)
+        else [],
         poll_seconds=20,
         on_interval_complete=on_indicator_interval_complete,
     )
@@ -614,6 +643,7 @@ def start_processor_task(symbols: List[str]) -> None:
 
 if __name__ == "__main__":
     verify_db_writable(db_config.BASE_DB_PATH)
+    feature_flags.init_feature_flags(db_config.BASE_DB_PATH)
     # 预先构建一次 universe，并按12小时周期刷新
     symbols = ensure_universe()
 

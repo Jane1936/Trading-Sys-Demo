@@ -42,6 +42,8 @@
     .btn-small { padding: 6px 10px; font-size: 12px; }
     .btn-primary { background: var(--sky); color: var(--white); }
     .btn-secondary { background: var(--black); color: var(--white); text-decoration: none; display: inline-flex; align-items: center; }
+    .btn-danger { background: #dc2626; color: var(--white); }
+    .btn-success { background: #16a34a; color: var(--white); }
     .tip { padding: 0 20px 12px; color: #4b5563; font-size: 12px; }
     .score-ma20-warning { margin: 0 20px 14px; padding: 12px 14px; border: 1px solid #f59e0b; border-radius: 12px; background: #fffbeb; color: #92400e; font-size: 13px; line-height: 1.55; }
     .score-ma20-warning strong { color: #b45309; }
@@ -77,6 +79,12 @@
     .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
     .chip { padding: 4px 10px; border-radius: 999px; background: #dbeafe; color: #1e3a8a; font-size: 12px; font-weight: 600; }
     .chip.danger { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
+    .chip.success { background:#dcfce7; color:#166534; border:1px solid #86efac; }
+    .feature-flag-status { display:inline-flex; align-items:center; min-width:52px; justify-content:center; padding:4px 10px; border-radius:999px; font-weight:800; font-size:12px; border:1px solid transparent; }
+    .feature-flag-status.enabled { background:#dcfce7; color:#166534; border-color:#86efac; }
+    .feature-flag-status.disabled { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+    .feature-flag-message { padding:0 20px 14px; color:#4b5563; font-size:13px; }
+    .feature-flag-message.error { color:#991b1b; }
     .reduction-tags { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
     .reduction-tag { display:inline-flex; align-items:center; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:800; border:1px solid transparent; white-space:nowrap; }
     .reduction-tag-rule2 { background:#ffedd5; color:#c2410c; border-color:#fdba74; }
@@ -237,6 +245,7 @@
     <button class="tab-btn {{ 'active' if active_tab == 'tab-score-trend' else '' }}" data-tab="tab-score-trend">评分变化趋势</button>
     <button class="tab-btn {{ 'active' if active_tab == 'tab-market-filter' else '' }}" data-tab="tab-market-filter">市场行情过滤</button>
     <button class="tab-btn {{ 'active' if active_tab == 'tab-strategy' else '' }}" data-tab="tab-strategy">本轮交易策略</button>
+    <button class="tab-btn {{ 'active' if active_tab == 'tab-feature-flags' else '' }}" data-tab="tab-feature-flags">功能开关</button>
   </aside>
   <main class="content container">
   {% if module_errors %}
@@ -2360,6 +2369,56 @@
       </div>
     </div>
   </section>
+  <section id="tab-feature-flags" class="panel {{ 'active' if active_tab == 'tab-feature-flags' else '' }}">
+    <div class="card">
+      <div class="header">
+        <h2>功能开关</h2>
+      </div>
+      <div class="tip">
+        所有开关默认开启，状态持久化在基础数据库 <code>base_data.db</code>。点击开启/关闭后，worker 会在对应模块下一次 job 执行前重新读取并生效；关闭交易系统只会阻止新开仓，已有仓位的止损、止盈、风控保护默认继续运行。
+      </div>
+      <div id="feature-flag-message" class="feature-flag-message" role="status" aria-live="polite"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>模块</th>
+              <th>当前状态</th>
+              <th>影响范围</th>
+              <th>最后一次操作时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="feature-flag-rows">
+            {% for flag in feature_flags %}
+            <tr data-feature-key="{{ flag.key }}">
+              <td><strong>{{ flag.name }}</strong></td>
+              <td>
+                <span class="feature-flag-status {{ 'enabled' if flag.enabled else 'disabled' }}">
+                  {{ '开启' if flag.enabled else '关闭' }}
+                </span>
+              </td>
+              <td class="mono-cell">{{ flag.description }}</td>
+              <td data-feature-updated-at="{{ flag.updated_at }}">{{ flag.updated_at|fmt_ms_datetime }}</td>
+              <td>
+                <button
+                  class="btn btn-small {{ 'btn-danger' if flag.enabled else 'btn-success' }} feature-flag-toggle"
+                  type="button"
+                  data-feature-key="{{ flag.key }}"
+                  data-feature-enabled="{{ '1' if flag.enabled else '0' }}"
+                >
+                  {{ '关闭' if flag.enabled else '开启' }}
+                </button>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td class="empty" colspan="5">暂无功能开关配置。</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
   </main>
   </div>
   <script>
@@ -2372,6 +2431,72 @@
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
     }
+
+    function formatMsDatetime(tsMs) {
+      const ts = Number(tsMs);
+      if (!Number.isFinite(ts) || ts <= 0) return '-';
+      const d = new Date(ts);
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`;
+    }
+
+    function setFeatureFlagMessage(message, isError = false) {
+      const el = document.getElementById('feature-flag-message');
+      if (!el) return;
+      el.textContent = message || '';
+      el.classList.toggle('error', Boolean(isError));
+    }
+
+    function renderFeatureFlagRow(flag) {
+      const row = document.querySelector(`tr[data-feature-key="${CSS.escape(flag.key)}"]`);
+      if (!row) return;
+      const status = row.querySelector('.feature-flag-status');
+      if (status) {
+        status.textContent = flag.enabled ? '开启' : '关闭';
+        status.classList.toggle('enabled', Boolean(flag.enabled));
+        status.classList.toggle('disabled', !flag.enabled);
+      }
+      const updatedAt = row.querySelector('[data-feature-updated-at]');
+      if (updatedAt) {
+        updatedAt.dataset.featureUpdatedAt = String(flag.updated_at || 0);
+        updatedAt.textContent = formatMsDatetime(flag.updated_at);
+      }
+      const button = row.querySelector('.feature-flag-toggle');
+      if (button) {
+        button.dataset.featureEnabled = flag.enabled ? '1' : '0';
+        button.textContent = flag.enabled ? '关闭' : '开启';
+        button.classList.toggle('btn-danger', Boolean(flag.enabled));
+        button.classList.toggle('btn-success', !flag.enabled);
+      }
+    }
+
+    (function initFeatureFlagToggles() {
+      const buttons = document.querySelectorAll('.feature-flag-toggle');
+      buttons.forEach((button) => {
+        button.addEventListener('click', async () => {
+          const key = button.dataset.featureKey;
+          const currentlyEnabled = button.dataset.featureEnabled === '1';
+          const nextEnabled = !currentlyEnabled;
+          button.disabled = true;
+          setFeatureFlagMessage(`正在${nextEnabled ? '开启' : '关闭'}功能开关...`);
+          try {
+            const response = await fetch(`/api/feature-flags/${encodeURIComponent(key)}`, {
+              method: 'POST',
+              headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+              body: JSON.stringify({ enabled: nextEnabled }),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+            renderFeatureFlagRow(payload.flag);
+            setFeatureFlagMessage(`${payload.flag.name}已${payload.flag.enabled ? '开启' : '关闭'}，将在对应模块下一次 job 执行前生效。`);
+          } catch (err) {
+            setFeatureFlagMessage(`功能开关更新失败：${err.message || err}`, true);
+          } finally {
+            button.disabled = false;
+          }
+        });
+      });
+    })();
 
     function refreshBtcChartLayout() {
       if (btcChart) btcChart.resize();

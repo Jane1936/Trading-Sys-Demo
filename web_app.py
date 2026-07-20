@@ -20,6 +20,7 @@ from binance_account_manager import BinanceAccountConfigError, BinanceAccountMan
 from break_even_take_profit import BreakEvenTakeProfitStrategy
 import collector
 import db_config
+import feature_flags
 from cooldown_module import CooldownModule
 from openable_symbol_module import OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
@@ -784,10 +785,41 @@ def btc_5m_api():
         return jsonify({"error": str(exc)}), 502
 
 
+@app.get("/api/feature-flags")
+def feature_flags_api():
+    flags = feature_flags.list_feature_flags(BASE_DB_PATH)
+    return jsonify({"flags": feature_flags.flags_to_dict(flags)})
+
+
+@app.post("/api/feature-flags/<key>")
+def update_feature_flag_api(key: str):
+    payload = request.get_json(silent=True) or {}
+    if "enabled" not in payload:
+        return jsonify({"error": "enabled is required"}), 400
+    try:
+        flag = feature_flags.set_feature_flag(
+            key=key,
+            enabled=bool(payload["enabled"]),
+            db_path=BASE_DB_PATH,
+        )
+    except KeyError:
+        return jsonify({"error": f"Unknown feature flag: {key}"}), 404
+    return jsonify({"flag": feature_flags.flags_to_dict([flag])[0]})
+
+
 @app.post("/api/trading-experiment/run")
 def trading_experiment_run_api():
     try:
         zombie_result = ZombieForceLiquidationModule(db_path=_trading_db_path()).run_round()
+        if not feature_flags.is_feature_enabled(feature_flags.TRADING_SYSTEM, BASE_DB_PATH):
+            return jsonify(
+                {
+                    "opened": 0,
+                    "skipped": 0,
+                    "reason": "交易系统功能开关已关闭，不再开新仓；已有仓位风控保护继续运行。",
+                    "zombie_force_liquidation": zombie_result,
+                }
+            )
         result = TradingExperiment(db_path=_trading_db_path()).run_latest_round()
         result["zombie_force_liquidation"] = zombie_result
         return jsonify(result)
@@ -801,6 +833,7 @@ def trading_experiment_run_api():
 
 @app.get("/safety/abnormal-wicks")
 def abnormal_wicks():
+    feature_flags.init_feature_flags(BASE_DB_PATH)
     limit = request.args.get("limit", default=100, type=int)
     symbol = request.args.get("symbol", default="", type=str).strip()
     btc_page = request.args.get("btc_page", default=1, type=int)
@@ -1046,6 +1079,7 @@ def abnormal_wicks():
         btc_total_rows=btc_total_rows,
         should_load_abnormal_events=should_load_abnormal_events,
         btc_total_pages=btc_total_pages,
+        feature_flags=feature_flags.list_feature_flags(BASE_DB_PATH),
     )
 
 
