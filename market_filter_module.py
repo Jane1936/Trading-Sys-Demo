@@ -53,46 +53,46 @@ class MarketFilterModule:
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
-        conn = sqlite3.connect(self.db_path, timeout=30)
-        conn.row_factory = sqlite3.Row
+        conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
         db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH)])
         conn.execute("PRAGMA busy_timeout=30000;")
         return conn
 
     def init_table(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
-                    decision_round_ts INTEGER PRIMARY KEY,
-                    allusdt_first_open_time INTEGER,
-                    allusdt_latest_open_time INTEGER,
-                    allusdt_open REAL,
-                    allusdt_close REAL,
-                    allusdt_delta REAL,
-                    btc_first_open_time INTEGER,
-                    btc_latest_open_time INTEGER,
-                    btc_open REAL,
-                    btc_close REAL,
-                    btc_delta REAL,
-                    btc_siphon INTEGER NOT NULL,
-                    market_crash INTEGER NOT NULL,
-                    allow_new_positions INTEGER NOT NULL,
-                    reason TEXT NOT NULL,
-                    evaluated_at INTEGER NOT NULL,
-                    block_until INTEGER
+        with db_config.sqlite_schema_lock(self.db_path):
+            with self._connect() as conn:
+                conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
+                        decision_round_ts INTEGER PRIMARY KEY,
+                        allusdt_first_open_time INTEGER,
+                        allusdt_latest_open_time INTEGER,
+                        allusdt_open REAL,
+                        allusdt_close REAL,
+                        allusdt_delta REAL,
+                        btc_first_open_time INTEGER,
+                        btc_latest_open_time INTEGER,
+                        btc_open REAL,
+                        btc_close REAL,
+                        btc_delta REAL,
+                        btc_siphon INTEGER NOT NULL,
+                        market_crash INTEGER NOT NULL,
+                        allow_new_positions INTEGER NOT NULL,
+                        reason TEXT NOT NULL,
+                        evaluated_at INTEGER NOT NULL,
+                        block_until INTEGER
+                    )
+                    """
                 )
-                """
-            )
-            self._ensure_column(conn, "block_until", "INTEGER")
-            conn.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_evaluated "
-                f"ON {self.TABLE_NAME}(evaluated_at DESC)"
-            )
-            conn.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_block_until "
-                f"ON {self.TABLE_NAME}(block_until DESC)"
-            )
+                self._ensure_column(conn, "block_until", "INTEGER")
+                conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_evaluated "
+                    f"ON {self.TABLE_NAME}(evaluated_at DESC)"
+                )
+                conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_block_until "
+                    f"ON {self.TABLE_NAME}(block_until DESC)"
+                )
 
     def _ensure_column(self, conn: sqlite3.Connection, name: str, definition: str) -> None:
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.TABLE_NAME})").fetchall()}

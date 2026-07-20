@@ -94,47 +94,47 @@ class OpenableSymbolModule:
         self.db_path = db_path
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=30)
-        conn.row_factory = sqlite3.Row
+        conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
         db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("trading", db_config.TRADING_DB_PATH)])
         return conn
 
     def init_table(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
-                    symbol TEXT NOT NULL,
-                    decision_round_ts INTEGER NOT NULL,
-                    total_score INTEGER NOT NULL,
-                    score_band TEXT NOT NULL,
-                    stop_loss_distance_ratio REAL,
-                    distance_threshold REAL,
-                    stop_loss_distance_tier TEXT NOT NULL DEFAULT 'NA',
-                    opening_leverage TEXT NOT NULL DEFAULT 'NA',
-                    distance_qualified INTEGER NOT NULL,
-                    qualified INTEGER NOT NULL,
-                    reason TEXT NOT NULL,
-                    evaluated_at INTEGER NOT NULL,
-                    PRIMARY KEY (symbol, decision_round_ts)
-                )
-                """
-            )
-            columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.TABLE_NAME})").fetchall()}
-            if "stop_loss_distance_tier" not in columns:
+        with db_config.sqlite_schema_lock(self.db_path):
+            with self._connect() as conn:
                 conn.execute(
-                    f"ALTER TABLE {self.TABLE_NAME} "
-                    "ADD COLUMN stop_loss_distance_tier TEXT NOT NULL DEFAULT 'NA'"
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
+                        symbol TEXT NOT NULL,
+                        decision_round_ts INTEGER NOT NULL,
+                        total_score INTEGER NOT NULL,
+                        score_band TEXT NOT NULL,
+                        stop_loss_distance_ratio REAL,
+                        distance_threshold REAL,
+                        stop_loss_distance_tier TEXT NOT NULL DEFAULT 'NA',
+                        opening_leverage TEXT NOT NULL DEFAULT 'NA',
+                        distance_qualified INTEGER NOT NULL,
+                        qualified INTEGER NOT NULL,
+                        reason TEXT NOT NULL,
+                        evaluated_at INTEGER NOT NULL,
+                        PRIMARY KEY (symbol, decision_round_ts)
+                    )
+                    """
                 )
-            if "opening_leverage" not in columns:
+                columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.TABLE_NAME})").fetchall()}
+                if "stop_loss_distance_tier" not in columns:
+                    conn.execute(
+                        f"ALTER TABLE {self.TABLE_NAME} "
+                        "ADD COLUMN stop_loss_distance_tier TEXT NOT NULL DEFAULT 'NA'"
+                    )
+                if "opening_leverage" not in columns:
+                    conn.execute(
+                        f"ALTER TABLE {self.TABLE_NAME} "
+                        "ADD COLUMN opening_leverage TEXT NOT NULL DEFAULT 'NA'"
+                    )
                 conn.execute(
-                    f"ALTER TABLE {self.TABLE_NAME} "
-                    "ADD COLUMN opening_leverage TEXT NOT NULL DEFAULT 'NA'"
+                    f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_round "
+                    f"ON {self.TABLE_NAME}(decision_round_ts DESC, qualified DESC, total_score DESC, symbol ASC)"
                 )
-            conn.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_round "
-                f"ON {self.TABLE_NAME}(decision_round_ts DESC, qualified DESC, total_score DESC, symbol ASC)"
-            )
 
     @classmethod
     def score_band_config_for_total(cls, total_score: int) -> ScoreBandConfig | None:

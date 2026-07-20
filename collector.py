@@ -87,10 +87,7 @@ def table_name(interval):
 
 
 def get_db_conn():
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.execute("PRAGMA busy_timeout=30000;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
-    return conn
+    return db_config.connect_sqlite(DB_PATH)
 
 
 # ================= SQLite 初始化 =================
@@ -112,59 +109,57 @@ def init_db():
 
 
 def _init_db_schema():
-    with sqlite3.connect(DB_PATH, timeout=30) as conn:
-        conn.execute("PRAGMA journal_mode=WAL;")
+    with db_config.sqlite_schema_lock(DB_PATH):
+        with db_config.connect_sqlite(DB_PATH) as conn:
+            init_btc_5m_table(conn)
+            init_btc_15m_table(conn)
+            allusdt_15m_ma20.init_db(conn)
+            init_atr_15m_table(conn)
 
-        init_btc_5m_table(conn)
-        init_btc_15m_table(conn)
-        allusdt_15m_ma20.init_db(conn)
-        init_atr_15m_table(conn)
+            for interval in ALL_INTERVALS:
+                tbl = table_name(interval)
+                conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {tbl} (
+                        symbol TEXT NOT NULL,
+                        open_time INTEGER NOT NULL,
+                        open REAL NOT NULL,
+                        high REAL NOT NULL,
+                        low REAL NOT NULL,
+                        close REAL NOT NULL,
+                        volume REAL NOT NULL,
+                        close_time INTEGER NOT NULL,
+                        funding_rate REAL,
+                        PRIMARY KEY (symbol, open_time)
+                    )
+                    """
+                )
+                conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{tbl}_symbol_time "
+                    f"ON {tbl}(symbol, open_time)"
+                )
 
-        for interval in ALL_INTERVALS:
-            tbl = table_name(interval)
+            for funding_interval in ("15m", "1h"):
+                tbl = table_name(funding_interval)
+                columns = conn.execute(f"PRAGMA table_info({tbl})").fetchall()
+                column_names = {col[1] for col in columns}
+                if "funding_rate" not in column_names:
+                    conn.execute(f"ALTER TABLE {tbl} ADD COLUMN funding_rate REAL")
+
             conn.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {tbl} (
+                """
+                CREATE TABLE IF NOT EXISTS open_interest_1m (
                     symbol TEXT NOT NULL,
-                    open_time INTEGER NOT NULL,
-                    open REAL NOT NULL,
-                    high REAL NOT NULL,
-                    low REAL NOT NULL,
-                    close REAL NOT NULL,
-                    volume REAL NOT NULL,
-                    close_time INTEGER NOT NULL,
-                    funding_rate REAL,
-                    PRIMARY KEY (symbol, open_time)
+                    snapshot_time INTEGER NOT NULL,
+                    open_interest REAL NOT NULL,
+                    PRIMARY KEY (symbol, snapshot_time)
                 )
                 """
             )
             conn.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_{tbl}_symbol_time "
-                f"ON {tbl}(symbol, open_time)"
+                "CREATE INDEX IF NOT EXISTS idx_open_interest_1m_symbol_time "
+                "ON open_interest_1m(symbol, snapshot_time)"
             )
-
-        for funding_interval in ("15m", "1h"):
-            tbl = table_name(funding_interval)
-            columns = conn.execute(f"PRAGMA table_info({tbl})").fetchall()
-            column_names = {col[1] for col in columns}
-            if "funding_rate" not in column_names:
-                conn.execute(f"ALTER TABLE {tbl} ADD COLUMN funding_rate REAL")
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS open_interest_1m (
-                symbol TEXT NOT NULL,
-                snapshot_time INTEGER NOT NULL,
-                open_interest REAL NOT NULL,
-                PRIMARY KEY (symbol, snapshot_time)
-            )
-            """
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_open_interest_1m_symbol_time "
-            "ON open_interest_1m(symbol, snapshot_time)"
-        )
-
 
 
 

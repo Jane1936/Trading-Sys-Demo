@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
 
+import db_config
+
 
 @dataclass
 class MACalcResult:
@@ -63,8 +65,7 @@ class MA20Processor:
         self.db_path = db_path
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+        conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
         return conn
 
     @staticmethod
@@ -276,55 +277,57 @@ def run_loop(
 
 def init_ma20_table(db_path: str = "data/klines.db") -> None:
     """Create table for persisted MA20 values."""
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS ma20_indicators (
-                symbol TEXT NOT NULL,
-                interval TEXT NOT NULL,
-                open_time INTEGER NOT NULL,
-                close_time INTEGER NOT NULL,
-                close REAL NOT NULL,
-                ma20 REAL NOT NULL,
-                updated_at INTEGER NOT NULL,
-                PRIMARY KEY (symbol, interval, open_time)
-            )
+    with db_config.sqlite_schema_lock(db_path):
+        with db_config.connect_sqlite(db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS ma20_indicators (
+                    symbol TEXT NOT NULL,
+                    interval TEXT NOT NULL,
+                    open_time INTEGER NOT NULL,
+                    close_time INTEGER NOT NULL,
+                    close REAL NOT NULL,
+                    ma20 REAL NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (symbol, interval, open_time)
+                )
             """)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_ma20_symbol_interval_time "
-            "ON ma20_indicators(symbol, interval, open_time)"
-        )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ma20_symbol_interval_time "
+                "ON ma20_indicators(symbol, interval, open_time)"
+            )
 
 
 def init_ema_table(db_path: str = "data/klines.db") -> None:
     """Create table for persisted EMA12/EMA16/EMA21/EMA26 15m values."""
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS ema_indicators (
-                symbol TEXT NOT NULL,
-                interval TEXT NOT NULL,
-                open_time INTEGER NOT NULL,
-                close_time INTEGER NOT NULL,
-                close REAL NOT NULL,
-                ema12 REAL,
-                ema16 REAL NOT NULL,
-                ema21 REAL NOT NULL,
-                ema26 REAL,
-                updated_at INTEGER NOT NULL,
-                PRIMARY KEY (symbol, interval, open_time)
-            )
+    with db_config.sqlite_schema_lock(db_path):
+        with db_config.connect_sqlite(db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS ema_indicators (
+                    symbol TEXT NOT NULL,
+                    interval TEXT NOT NULL,
+                    open_time INTEGER NOT NULL,
+                    close_time INTEGER NOT NULL,
+                    close REAL NOT NULL,
+                    ema12 REAL,
+                    ema16 REAL NOT NULL,
+                    ema21 REAL NOT NULL,
+                    ema26 REAL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (symbol, interval, open_time)
+                )
             """)
-        columns = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(ema_indicators)").fetchall()
-        }
-        if "ema12" not in columns:
-            conn.execute("ALTER TABLE ema_indicators ADD COLUMN ema12 REAL")
-        if "ema26" not in columns:
-            conn.execute("ALTER TABLE ema_indicators ADD COLUMN ema26 REAL")
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_ema_symbol_interval_time "
-            "ON ema_indicators(symbol, interval, open_time)"
-        )
+            columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(ema_indicators)").fetchall()
+            }
+            if "ema12" not in columns:
+                conn.execute("ALTER TABLE ema_indicators ADD COLUMN ema12 REAL")
+            if "ema26" not in columns:
+                conn.execute("ALTER TABLE ema_indicators ADD COLUMN ema26 REAL")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ema_symbol_interval_time "
+                "ON ema_indicators(symbol, interval, open_time)"
+            )
 
 
 def save_ma20_result(db_path: str, result: MACalcResult) -> None:
@@ -333,7 +336,7 @@ def save_ma20_result(db_path: str, result: MACalcResult) -> None:
         return
 
     now_ms = int(time.time() * 1000)
-    with sqlite3.connect(db_path) as conn:
+    with db_config.connect_sqlite(db_path) as conn:
         conn.execute(
             """
             INSERT INTO ma20_indicators
@@ -369,7 +372,7 @@ def save_ema_result(db_path: str, result: MACalcResult) -> None:
         return
 
     now_ms = int(time.time() * 1000)
-    with sqlite3.connect(db_path) as conn:
+    with db_config.connect_sqlite(db_path) as conn:
         conn.execute(
             """
             INSERT INTO ema_indicators
@@ -401,25 +404,26 @@ def save_ema_result(db_path: str, result: MACalcResult) -> None:
 
 def init_macd_table(db_path: str = "data/klines.db") -> None:
     """Create table for persisted MACD 15m values."""
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS macd_indicators (
-                symbol TEXT NOT NULL,
-                interval TEXT NOT NULL,
-                open_time INTEGER NOT NULL,
-                close_time INTEGER NOT NULL,
-                close REAL NOT NULL,
-                dif REAL NOT NULL,
-                dea REAL NOT NULL,
-                macd REAL NOT NULL,
-                updated_at INTEGER NOT NULL,
-                PRIMARY KEY (symbol, interval, open_time)
-            )
+    with db_config.sqlite_schema_lock(db_path):
+        with db_config.connect_sqlite(db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS macd_indicators (
+                    symbol TEXT NOT NULL,
+                    interval TEXT NOT NULL,
+                    open_time INTEGER NOT NULL,
+                    close_time INTEGER NOT NULL,
+                    close REAL NOT NULL,
+                    dif REAL NOT NULL,
+                    dea REAL NOT NULL,
+                    macd REAL NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (symbol, interval, open_time)
+                )
             """)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_macd_symbol_interval_time "
-            "ON macd_indicators(symbol, interval, open_time)"
-        )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_macd_symbol_interval_time "
+                "ON macd_indicators(symbol, interval, open_time)"
+            )
 
 
 def save_macd_result(db_path: str, result: MACalcResult) -> None:
@@ -433,7 +437,7 @@ def save_macd_result(db_path: str, result: MACalcResult) -> None:
         return
 
     now_ms = int(time.time() * 1000)
-    with sqlite3.connect(db_path) as conn:
+    with db_config.connect_sqlite(db_path) as conn:
         conn.execute(
             """
             INSERT INTO macd_indicators

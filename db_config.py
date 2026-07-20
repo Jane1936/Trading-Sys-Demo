@@ -54,3 +54,55 @@ def attach_databases(conn: sqlite3.Connection, attachments: Iterable[tuple[str, 
             pass
         conn.execute(f"ATTACH DATABASE ? AS {quote_identifier(schema)}", (path,))
         seen.add(schema)
+
+
+class sqlite_schema_lock:
+    """Cross-process guard for SQLite schema migrations.
+
+    SQLite serializes writers, but concurrent process startup can still race on
+    check-then-ALTER migration code.  This file lock ensures only one process
+    performs DDL for a database at a time, preventing duplicate-column failures
+    and avoiding interrupted competing schema writes.
+    """
+
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self._fh = None
+
+    def __enter__(self):
+        ensure_parent_dir(self.db_path)
+        lock_path = f"{self.db_path}.schema.lock"
+        self._fh = open(lock_path, "a+")
+        if os.name == "posix":
+            import fcntl
+
+            fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self._fh is None:
+            return False
+        if os.name == "posix":
+            import fcntl
+
+            fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+        self._fh.close()
+        self._fh = None
+        return False
+
+
+def configure_sqlite_connection(conn: sqlite3.Connection, *, wal: bool = True) -> sqlite3.Connection:
+    """Apply SQLite settings used by concurrent workers."""
+    conn.execute("PRAGMA busy_timeout=30000;")
+    if wal:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+    return conn
+
+
+def connect_sqlite(db_path: str, *, timeout: int = 30, row_factory=None, wal: bool = True) -> sqlite3.Connection:
+    ensure_parent_dir(db_path)
+    conn = sqlite3.connect(db_path, timeout=timeout)
+    if row_factory is not None:
+        conn.row_factory = row_factory
+    return configure_sqlite_connection(conn, wal=wal)

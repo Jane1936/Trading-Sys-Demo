@@ -67,38 +67,38 @@ class PreSafetyModule:
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+        conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
         db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH)])
         return conn
 
     def init_table(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS abnormal_wick_events (
-                    symbol TEXT NOT NULL,
-                    decision_round_ts INTEGER NOT NULL,
-                    candle_index INTEGER NOT NULL,
-                    first_candle_open_time INTEGER NOT NULL,
-                    first_candle_close_time INTEGER NOT NULL,
-                    open REAL NOT NULL,
-                    high REAL NOT NULL,
-                    low REAL NOT NULL,
-                    close REAL NOT NULL,
-                    cond1_ratio REAL NOT NULL,
-                    cond2_ratio REAL NOT NULL,
-                    cond3_ratio REAL NOT NULL DEFAULT 0,
-                    detected_at INTEGER NOT NULL,
-                    PRIMARY KEY (symbol, decision_round_ts, candle_index)
+        with db_config.sqlite_schema_lock(self.db_path):
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS abnormal_wick_events (
+                        symbol TEXT NOT NULL,
+                        decision_round_ts INTEGER NOT NULL,
+                        candle_index INTEGER NOT NULL,
+                        first_candle_open_time INTEGER NOT NULL,
+                        first_candle_close_time INTEGER NOT NULL,
+                        open REAL NOT NULL,
+                        high REAL NOT NULL,
+                        low REAL NOT NULL,
+                        close REAL NOT NULL,
+                        cond1_ratio REAL NOT NULL,
+                        cond2_ratio REAL NOT NULL,
+                        cond3_ratio REAL NOT NULL DEFAULT 0,
+                        detected_at INTEGER NOT NULL,
+                        PRIMARY KEY (symbol, decision_round_ts, candle_index)
+                    )
+                    """
                 )
-                """
-            )
-            self._migrate_table_if_needed(conn)
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_abnormal_wick_detected_at "
-                "ON abnormal_wick_events(detected_at DESC)"
-            )
+                self._migrate_table_if_needed(conn)
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_abnormal_wick_detected_at "
+                    "ON abnormal_wick_events(detected_at DESC)"
+                )
 
     @staticmethod
     def _migrate_table_if_needed(conn: sqlite3.Connection) -> None:
