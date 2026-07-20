@@ -34,7 +34,53 @@ sudo chmod -R u+rwX ./data ./logs
 ---
 
 
-## 3) 评分权重配置
+
+## 3) 数据库配置（服务器没有旧库时直接用默认值）
+
+项目现在会在挂载的 `./data` 目录下自动创建 4 个相互独立的 SQLite 数据库，不再依赖旧的 `klines.db`：
+
+| 数据库 | 默认文件 | 对应模块 |
+| --- | --- | --- |
+| 基础数据库 | `data/base_data.db` | 数据收集、K线、OI、funding、MA/EMA/MACD、ATR 等基础行情数据 |
+| 评分系统数据库 | `data/scoring.db` | 评分系统、异常插针记录、本轮可开仓 symbol、冷却 symbol、动态开仓门槛 |
+| 交易数据库 | `data/trading.db` | 交易实验、持仓评分、账户/权益记录、止盈止损、移动追踪、僵尸强平 |
+| 市场行情数据库 | `data/market.db` | 市场行情过滤模块 |
+
+如果你的服务器已经删除了旧数据库文件，**不需要手动创建这些 `.db` 文件**；只要 `./data` 目录可写，`worker` 和 `web` 会在启动/首次访问时自动建表。
+
+> 注意：如果服务器 shell、旧 `.env` 或云平台环境变量里还保留 `DB_PATH=/app/data/klines.db` / `data/klines.db`，请删除它，或明确设置下面 4 个新变量。`docker-compose.yml` 已默认注入 4 个新路径，不需要旧 `DB_PATH`。
+
+推荐复制 `.env.example` 后按需修改：
+
+```bash
+cp .env.example .env
+# 按需编辑 .env 里的 API key、HOST_DATA_DIR、HOST_LOGS_DIR
+```
+
+默认数据库路径如下，通常保持不变即可：
+
+```bash
+BASE_DB_PATH=data/base_data.db
+SCORING_DB_PATH=data/scoring.db
+TRADING_DB_PATH=data/trading.db
+MARKET_DB_PATH=data/market.db
+```
+
+`sqlite-web` 默认打开基础数据库。如需查看其他库，启动前设置：
+
+```bash
+# 查看评分库
+export SQLITE_WEB_DB_PATH=/data/scoring.db
+# 查看交易库
+# export SQLITE_WEB_DB_PATH=/data/trading.db
+# 查看市场行情库
+# export SQLITE_WEB_DB_PATH=/data/market.db
+docker compose up -d sqlite-web
+```
+
+---
+
+## 4) 评分权重配置
 
 本项目的评分规则权重现在由仓库根目录的 `scoring_rule_weights.json` 管理，Docker 镜像构建时会把该文件复制到 `/app/scoring_rule_weights.json`。
 
@@ -47,7 +93,7 @@ docker compose up -d --build
 ```
 
 
-## 4) Binance Demo/Testnet 账户配置
+## 5) Binance Demo/Testnet 账户配置
 
 账户余额查询功能默认使用 Binance USDⓈ-M Futures Demo/Testnet：
 
@@ -104,7 +150,7 @@ docker compose up -d --build
 - `user: "${PUID:-1000}:${PGID:-1000}"`：让 `worker/web` 进程直接使用宿主机当前用户 UID/GID，避免挂载数据目录时出现只读权限问题。
 - `HOST_DATA_DIR` / `HOST_LOGS_DIR`：可切换宿主机挂载目录；不设置时默认使用仓库当前目录的 `./data`、`./logs`。
 - `worker` 和 `web` 都声明同一个 `build: .` / `image: trading-sys-demo:latest`，避免新增 Python 文件后只启动 web 时仍使用旧镜像。
-- `worker` 和 `web` 都注入 Binance 环境变量；第一组交易实验现在由 `worker` 在每轮可开仓 symbol 计算完成后自动触发。
+- `worker` 和 `web` 都注入 Binance 环境变量和 4 个数据库路径；第一组交易实验现在由 `worker` 在每轮可开仓 symbol 计算完成后自动触发。
 - 健康检查只配置在 `web` 服务上，避免 `worker` 因不提供 HTTP 服务而在云平台部署时被误判。
 
 ### 查看状态与日志
@@ -141,6 +187,10 @@ docker run -d \
   -e BINANCE_TESTNET_SECRET_KEY="${BINANCE_TESTNET_SECRET_KEY}" \
   -e BINANCE_REAL_API_KEY="${BINANCE_REAL_API_KEY:-YOUR_REAL_API_KEY}" \
   -e BINANCE_REAL_API_SECRET="${BINANCE_REAL_API_SECRET:-YOUR_REAL_API_SECRET}" \
+  -e BASE_DB_PATH="${BASE_DB_PATH:-data/base_data.db}" \
+  -e SCORING_DB_PATH="${SCORING_DB_PATH:-data/scoring.db}" \
+  -e TRADING_DB_PATH="${TRADING_DB_PATH:-data/trading.db}" \
+  -e MARKET_DB_PATH="${MARKET_DB_PATH:-data/market.db}" \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/logs:/app/logs" \
   --restart=always \
@@ -156,7 +206,7 @@ docker run -d \
   -v "$(pwd)/data:/data" \
   --restart=always \
   coleifer/sqlite-web:latest \
-  sqlite_web /data/klines.db --host 0.0.0.0
+  sqlite_web "${SQLITE_WEB_DB_PATH:-/data/base_data.db}" --host 0.0.0.0
 ```
 
 ### 3) 运行交易数据 web 平台（trade-web）
@@ -169,6 +219,10 @@ docker run -d \
   -e BINANCE_TESTNET_SECRET_KEY="${BINANCE_TESTNET_SECRET_KEY}" \
   -e BINANCE_REAL_API_KEY="${BINANCE_REAL_API_KEY:-YOUR_REAL_API_KEY}" \
   -e BINANCE_REAL_API_SECRET="${BINANCE_REAL_API_SECRET:-YOUR_REAL_API_SECRET}" \
+  -e BASE_DB_PATH="${BASE_DB_PATH:-data/base_data.db}" \
+  -e SCORING_DB_PATH="${SCORING_DB_PATH:-data/scoring.db}" \
+  -e TRADING_DB_PATH="${TRADING_DB_PATH:-data/trading.db}" \
+  -e MARKET_DB_PATH="${MARKET_DB_PATH:-data/market.db}" \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/logs:/app/logs" \
   -p 5000:5000 \

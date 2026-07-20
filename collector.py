@@ -18,6 +18,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 import allusdt_15m_ma20
+import db_config
 
 
 # ================= 配置 =================
@@ -39,8 +40,8 @@ LIMIT = 1000
 MAX_WORKERS = 10
 OI_MAX_WORKERS = 4
 
-DATA_DIR = os.getenv("DATA_DIR", "data")
-DB_PATH = os.getenv("DB_PATH", f"{DATA_DIR}/klines.db")
+DATA_DIR = db_config.DATA_DIR
+DB_PATH = db_config.BASE_DB_PATH
 
 kline_job_running = False
 oi_job_running = False
