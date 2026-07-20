@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 import sqlite3
+import db_config
 import time
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
@@ -46,6 +47,7 @@ class CooldownModule:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
+        db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH)])
         return conn
 
     def init_table(self) -> None:

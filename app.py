@@ -15,6 +15,7 @@ import time
 from typing import Iterable, List
 
 import collector
+import db_config
 from data_processor import (
     MA20Processor,
     MA20Scheduler,
@@ -91,7 +92,7 @@ def run_first_experiment_after_openable_round(
     qualified_openable_count = sum(1 for row in openable_rows if row.qualified)
 
     try:
-        market_filter = MarketFilterModule(db_path=collector.DB_PATH)
+        market_filter = MarketFilterModule(db_path=db_config.MARKET_DB_PATH)
         market_result = market_filter.run_round(decision_round_ts=round_ts)
         print(
             f"🌐 market filter round={round_ts} allow={market_result.allow_new_positions} "
@@ -100,7 +101,7 @@ def run_first_experiment_after_openable_round(
         )
 
         zombie_result = ZombieForceLiquidationModule(
-            db_path=collector.DB_PATH
+            db_path=db_config.TRADING_DB_PATH
         ).run_round(checked_at=round_ts)
         print(
             f"🧟 zombie force liquidation before open round={round_ts} "
@@ -116,7 +117,7 @@ def run_first_experiment_after_openable_round(
         if not market_result.allow_new_positions:
             print(f"🧪 first trading experiment round={round_ts} skipped by market filter: {market_result.reason}")
             return
-        experiment_result = TradingExperiment(db_path=collector.DB_PATH).run_round(
+        experiment_result = TradingExperiment(db_path=db_config.TRADING_DB_PATH).run_round(
             openable_rows
         )
         print(
@@ -239,10 +240,10 @@ def run_scoring_round_worker(
 
 def start_break_even_take_profit_task() -> None:
     """Run break-even protection and partial take-profit every 5 minutes."""
-    strategy = BreakEvenTakeProfitStrategy(db_path=collector.DB_PATH)
-    partial_strategy = PartialTakeProfitStrategy(db_path=collector.DB_PATH)
-    dynamic_profit_protection = DynamicProfitProtection(db_path=collector.DB_PATH)
-    trailing_stop_tracker = TrailingStopTracker(db_path=collector.DB_PATH)
+    strategy = BreakEvenTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH)
+    partial_strategy = PartialTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH)
+    dynamic_profit_protection = DynamicProfitProtection(db_path=db_config.TRADING_DB_PATH)
+    trailing_stop_tracker = TrailingStopTracker(db_path=db_config.TRADING_DB_PATH)
     strategy.init_tables()
     partial_strategy.init_tables()
     dynamic_profit_protection.init_tables()
@@ -251,7 +252,7 @@ def start_break_even_take_profit_task() -> None:
     while True:
         try:
             reconcile_result = TradingExperiment(
-                db_path=collector.DB_PATH
+                db_path=db_config.TRADING_DB_PATH
             ).reconcile_missing_exit_orders()
             print(
                 f"🧩 exit-order reconcile checked={reconcile_result.get('checked', 0)} "
@@ -311,16 +312,16 @@ def start_pre_safety_task() -> None:
     This task only reads existing 5m candle data and writes its own event table,
     so it will not interfere with collector/MA20 pipelines.
     """
-    module = PreSafetyModule(db_path=collector.DB_PATH)
+    module = PreSafetyModule(db_path=db_config.SCORING_DB_PATH)
     module.init_table()
-    cooldown = CooldownModule(db_path=collector.DB_PATH)
+    cooldown = CooldownModule(db_path=db_config.SCORING_DB_PATH)
     cooldown.init_table()
-    ScoringSystem(db_path=collector.DB_PATH).init_table()
-    OpenableSymbolModule(db_path=collector.DB_PATH).init_table()
-    HoldingPositionScoringSystem(db_path=collector.DB_PATH).init_tables()
-    market_filter = MarketFilterModule(db_path=collector.DB_PATH)
+    ScoringSystem(db_path=db_config.SCORING_DB_PATH).init_table()
+    OpenableSymbolModule(db_path=db_config.SCORING_DB_PATH).init_table()
+    HoldingPositionScoringSystem(db_path=db_config.TRADING_DB_PATH).init_tables()
+    market_filter = MarketFilterModule(db_path=db_config.MARKET_DB_PATH)
     market_filter.init_table()
-    DynamicOpenThresholdModule(db_path=collector.DB_PATH).init_table()
+    DynamicOpenThresholdModule(db_path=db_config.SCORING_DB_PATH).init_table()
 
     last_pre_safety_round_ts = None
     last_scoring_started_round_ts = None
@@ -420,7 +421,7 @@ def start_pre_safety_task() -> None:
                 active_scoring_process = multiprocessing.Process(
                     target=run_scoring_round_worker,
                     args=(
-                        collector.DB_PATH,
+                        db_config.SCORING_DB_PATH,
                         round_ts,
                         list(symbols),
                         list(abnormal_symbols),
@@ -445,7 +446,7 @@ def start_pre_safety_task() -> None:
 
 def start_increase_pretrigger_refresh_task() -> None:
     """Refresh pre-triggered first-add symbols once per minute."""
-    holding_scoring = HoldingPositionScoringSystem(db_path=collector.DB_PATH)
+    holding_scoring = HoldingPositionScoringSystem(db_path=db_config.TRADING_DB_PATH)
     holding_scoring.init_tables()
     print("🟣 Increase pre-trigger refresh task started")
     while True:
@@ -464,8 +465,8 @@ def start_increase_pretrigger_refresh_task() -> None:
 
 
 def on_ma20_result(result: MACalcResult) -> None:
-    save_ma20_result(collector.DB_PATH, result)
-    save_ema_result(collector.DB_PATH, result)
+    save_ma20_result(db_config.BASE_DB_PATH, result)
+    save_ema_result(db_config.BASE_DB_PATH, result)
     print(
         f"📈 MA20 {result.symbol} {result.interval} "
         f"open_time={result.open_time} close={result.close:.6f} ma20={result.ma20:.6f}"
@@ -498,7 +499,7 @@ def on_indicator_interval_complete(interval: str, results: List[MACalcResult]) -
             or result.macd_histogram is None
         ):
             continue
-        save_macd_result(collector.DB_PATH, result)
+        save_macd_result(db_config.BASE_DB_PATH, result)
         macd_saved += 1
         print(
             f"📈 MACD {result.symbol} {result.interval} "
@@ -556,7 +557,7 @@ def start_atr_15m_task(symbols: List[str]) -> None:
         ensure_universe()
         collector.atr_15m_job()
         try:
-            result = TrailingReductionTracker(db_path=collector.DB_PATH).run_round(decision_round_ts=int(time.time() * 1000))
+            result = TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH).run_round(decision_round_ts=int(time.time() * 1000))
             print(
                 f"🧭 trailing reduction after ATR checked={result.get('checked', 0)} "
                 f"eligible={result.get('eligible', 0)} pretriggered={result.get('pretriggered', 0)}"
@@ -574,7 +575,7 @@ def start_atr_15m_task(symbols: List[str]) -> None:
 
 
 def start_trailing_reduction_refresh_task() -> None:
-    tracker = TrailingReductionTracker(db_path=collector.DB_PATH)
+    tracker = TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH)
     tracker.init_tables()
     scheduler = collector.BlockingScheduler()
 
@@ -593,10 +594,10 @@ def start_trailing_reduction_refresh_task() -> None:
     scheduler.start()
 
 def start_processor_task(symbols: List[str]) -> None:
-    init_ma20_table(db_path=collector.DB_PATH)
-    init_ema_table(db_path=collector.DB_PATH)
-    init_macd_table(db_path=collector.DB_PATH)
-    processor = MA20Processor(db_path=collector.DB_PATH)
+    init_ma20_table(db_path=db_config.BASE_DB_PATH)
+    init_ema_table(db_path=db_config.BASE_DB_PATH)
+    init_macd_table(db_path=db_config.BASE_DB_PATH)
+    processor = MA20Processor(db_path=db_config.BASE_DB_PATH)
     scheduler = MA20Scheduler(grace_seconds=5)
 
     print(f"🚀 MA20/MACD processor task started, symbols={len(symbols)}")
@@ -612,7 +613,7 @@ def start_processor_task(symbols: List[str]) -> None:
 
 
 if __name__ == "__main__":
-    verify_db_writable(collector.DB_PATH)
+    verify_db_writable(db_config.BASE_DB_PATH)
     # 预先构建一次 universe，并按12小时周期刷新
     symbols = ensure_universe()
 

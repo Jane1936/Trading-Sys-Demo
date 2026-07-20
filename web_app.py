@@ -19,6 +19,7 @@ import requests
 from binance_account_manager import BinanceAccountConfigError, BinanceAccountManager
 from break_even_take_profit import BreakEvenTakeProfitStrategy
 import collector
+import db_config
 from cooldown_module import CooldownModule
 from openable_symbol_module import OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
@@ -36,13 +37,30 @@ from sqlite_recovery import ensure_sqlite_database_usable, is_malformed_database
 
 app = Flask(__name__)
 
-DB_PATH = os.getenv("DB_PATH", collector.DB_PATH)
+DB_PATH = db_config.BASE_DB_PATH
+BASE_DB_PATH = db_config.BASE_DB_PATH
+SCORING_DB_PATH = db_config.SCORING_DB_PATH
+TRADING_DB_PATH = db_config.TRADING_DB_PATH
+MARKET_DB_PATH = db_config.MARKET_DB_PATH
 DEFAULT_TRADING_EQUITY_USDT = Decimal("1000")
 WEB_SQLITE_QUICK_CHECK_ON_REQUEST = (
     os.getenv("WEB_SQLITE_QUICK_CHECK_ON_REQUEST", "").strip().lower()
     in {"1", "true", "yes", "on"}
 )
 _db_recovery_checked_path: str | None = None
+
+
+def _base_db_path() -> str:
+    return DB_PATH
+
+def _scoring_db_path() -> str:
+    return DB_PATH if DB_PATH != BASE_DB_PATH else SCORING_DB_PATH
+
+def _trading_db_path() -> str:
+    return DB_PATH if DB_PATH != BASE_DB_PATH else TRADING_DB_PATH
+
+def _market_db_path() -> str:
+    return DB_PATH if DB_PATH != BASE_DB_PATH else MARKET_DB_PATH
 
 
 def _ensure_web_database_usable() -> None:
@@ -124,7 +142,7 @@ def _experiment_equity_trend_rows(since_ms: int) -> list[sqlite3.Row]:
         (DynamicProfitProtection.CHECKS_TABLE, "checked_at"),
     ]
     try:
-        with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        with sqlite3.connect(_trading_db_path(), timeout=30) as conn:
             conn.row_factory = sqlite3.Row
             union_queries = []
             params: list[int] = []
@@ -501,7 +519,7 @@ def _annotate_filled_order_exit_reasons(payload: dict) -> dict:
     if not isinstance(orders, list) or not orders:
         return payload
     try:
-        with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        with sqlite3.connect(_trading_db_path(), timeout=30) as conn:
             conn.row_factory = sqlite3.Row
             for order in orders:
                 if not isinstance(order, dict):
@@ -535,7 +553,7 @@ def score_trend_api():
     days = request.args.get("days", default=3, type=int)
     days = max(1, min(days, 30))
 
-    scoring = ScoringSystem(db_path=DB_PATH)
+    scoring = ScoringSystem(db_path=_scoring_db_path())
     scoring.init_table()
     rows = scoring.get_total_score_trend(symbol, days=days) if symbol else []
     return jsonify(
@@ -583,7 +601,7 @@ def account_filled_sell_orders_api():
 
 
 def _break_even_payload() -> dict:
-    strategy = BreakEvenTakeProfitStrategy(db_path=DB_PATH)
+    strategy = BreakEvenTakeProfitStrategy(db_path=_trading_db_path())
     round_ts, checks = strategy.get_latest_round_checks()
     records = strategy.recent_records(limit=100)
     return {
@@ -602,7 +620,7 @@ def break_even_summary_api():
 
 
 def _trailing_reduction_payload() -> dict:
-    return TrailingReductionTracker(db_path=DB_PATH).summary_payload()
+    return TrailingReductionTracker(db_path=_trading_db_path()).summary_payload()
 
 
 @app.get("/api/trailing-reduction/summary")
@@ -616,7 +634,7 @@ def trailing_reduction_summary_api():
 @app.post("/api/trailing-reduction/refresh-pretrigger")
 def trailing_reduction_refresh_pretrigger_api():
     try:
-        return jsonify(TrailingReductionTracker(db_path=DB_PATH).refresh_pretriggered_symbols())
+        return jsonify(TrailingReductionTracker(db_path=_trading_db_path()).refresh_pretriggered_symbols())
     except BinanceAccountConfigError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:
@@ -624,7 +642,7 @@ def trailing_reduction_refresh_pretrigger_api():
 
 
 def _dynamic_profit_protection_payload() -> dict:
-    return DynamicProfitProtection(db_path=DB_PATH).summary_payload()
+    return DynamicProfitProtection(db_path=_trading_db_path()).summary_payload()
 
 
 @app.get("/api/dynamic-profit-protection/summary")
@@ -636,7 +654,7 @@ def dynamic_profit_protection_summary_api():
 
 
 def _trailing_stop_payload() -> dict:
-    return TrailingStopTracker(db_path=DB_PATH).summary_payload()
+    return TrailingStopTracker(db_path=_trading_db_path()).summary_payload()
 
 
 @app.get("/api/trailing-stop/summary")
@@ -650,7 +668,7 @@ def trailing_stop_summary_api():
 @app.post("/api/trailing-stop/refresh-pretrigger")
 def trailing_stop_refresh_pretrigger_api():
     try:
-        return jsonify(TrailingStopTracker(db_path=DB_PATH).refresh_pretriggered_symbols())
+        return jsonify(TrailingStopTracker(db_path=_trading_db_path()).refresh_pretriggered_symbols())
     except BinanceAccountConfigError as exc:
         return jsonify({"error": str(exc)}), 400
     except sqlite3.Error as exc:
@@ -660,7 +678,7 @@ def trailing_stop_refresh_pretrigger_api():
 
 
 def _holding_increase_payload() -> dict:
-    holding_scoring = HoldingPositionScoringSystem(db_path=DB_PATH)
+    holding_scoring = HoldingPositionScoringSystem(db_path=_trading_db_path())
     round_ts, checks = holding_scoring.get_latest_increase_checks()
     latest_pretrigger_rounds = holding_scoring.latest_pretrigger_increase_rounds()
     annotated_checks = []
@@ -680,7 +698,7 @@ def _holding_increase_payload() -> dict:
 @app.post("/api/holding-increase/refresh-pretrigger")
 def holding_increase_refresh_pretrigger_api():
     try:
-        holding_scoring = HoldingPositionScoringSystem(db_path=DB_PATH)
+        holding_scoring = HoldingPositionScoringSystem(db_path=_trading_db_path())
         result = holding_scoring.refresh_pretrigger_increase_checks()
         payload = _holding_increase_payload()
         payload["action_records"] = payload["records"]
@@ -700,7 +718,7 @@ def _btc_5m_payload(page: int = 1) -> dict:
     page = max(1, page)
     page_size = 24
     since_ms = int((datetime.now(timezone.utc) - timedelta(days=3)).timestamp() * 1000)
-    with sqlite3.connect(DB_PATH, timeout=30) as conn:
+    with sqlite3.connect(_trading_db_path(), timeout=30) as conn:
         total_rows = conn.execute(
             f"""
             SELECT COUNT(1)
@@ -769,8 +787,8 @@ def btc_5m_api():
 @app.post("/api/trading-experiment/run")
 def trading_experiment_run_api():
     try:
-        zombie_result = ZombieForceLiquidationModule(db_path=DB_PATH).run_round()
-        result = TradingExperiment(db_path=DB_PATH).run_latest_round()
+        zombie_result = ZombieForceLiquidationModule(db_path=_trading_db_path()).run_round()
+        result = TradingExperiment(db_path=_trading_db_path()).run_latest_round()
         result["zombie_force_liquidation"] = zombie_result
         return jsonify(result)
     except BinanceAccountConfigError as exc:
@@ -797,10 +815,10 @@ def abnormal_wicks():
             module_errors.append(error)
         return value
 
-    module = PreSafetyModule(db_path=DB_PATH)
+    module = PreSafetyModule(db_path=_scoring_db_path())
     load_module("异常插针表初始化", module.init_table, None)
     abnormal_events_since_ms = int((datetime.now(timezone.utc) - timedelta(days=3)).timestamp() * 1000)
-    cooldown = CooldownModule(db_path=DB_PATH)
+    cooldown = CooldownModule(db_path=_scoring_db_path())
     load_module("冷却表初始化", cooldown.init_table, None)
     should_load_abnormal_events = request.args.get("wick_refresh") == "1"
     if should_load_abnormal_events:
@@ -817,7 +835,7 @@ def abnormal_wicks():
     current_round_ts = load_module("当前决策轮次", module._decision_round_ts_ms, 0)
     latest_round_ts, latest_round_symbols = load_module("最新异常插针轮次", lambda: module.get_latest_round_abnormal_symbols(decision_round_ts=current_round_ts), (0, []))
     cooldown_round_ts, cooldown_symbols = load_module("冷却 Symbol 轮次", lambda: cooldown.get_latest_round_symbols(decision_round_ts=current_round_ts), (0, []))
-    scoring = ScoringSystem(db_path=DB_PATH)
+    scoring = ScoringSystem(db_path=_scoring_db_path())
     load_module("评分表初始化", scoring.init_table, None)
     score_round_ts, round_scores = load_module("评分规则1", scoring.get_latest_round_scores, (0, []))
     score_rule2_round_ts, round_scores_rule2 = load_module("评分规则2 rule2", scoring.get_latest_round_scores_close_gt_ma20, (0, []))
@@ -845,7 +863,7 @@ def abnormal_wicks():
     # scoring_symbol_errors = scoring.get_symbol_errors_for_round(score_total_round_ts)
     scoring_symbol_errors = load_module("评分 Symbol 错误", lambda: scoring.get_symbol_errors_for_round(score_total_round_ts), [])
     score_band_configs, score_distance_threshold_text, score_leverage_mapping_text, openable_min_total_score = _score_band_context()
-    openable = OpenableSymbolModule(db_path=DB_PATH)
+    openable = OpenableSymbolModule(db_path=_scoring_db_path())
     load_module("可开仓表初始化", openable.init_table, None)
     openable_round_ts = score_total_round_ts
     _, openable_symbols = load_module(
@@ -855,9 +873,9 @@ def abnormal_wicks():
         else (None, []),
         (None, []),
     )
-    market_filter = MarketFilterModule(db_path=DB_PATH)
+    market_filter = MarketFilterModule(db_path=_market_db_path())
     market_filter_results = load_module("市场行情过滤", lambda: market_filter.recent_results(limit=100, days=7), [])
-    dynamic_open_threshold = DynamicOpenThresholdModule(db_path=DB_PATH)
+    dynamic_open_threshold = DynamicOpenThresholdModule(db_path=_scoring_db_path())
     dynamic_open_threshold_results = load_module("动态开仓门槛", lambda: dynamic_open_threshold.recent_results(limit=100, days=7), [])
     score_trend_symbols = load_module("评分趋势 Symbol 列表", scoring.get_total_score_symbols, [])
     requested_score_trend_symbol = request.args.get("score_trend_symbol", default="", type=str).strip()
@@ -866,7 +884,7 @@ def abnormal_wicks():
     if score_trend_symbol and score_trend_symbol not in score_trend_symbols:
         score_trend_symbols = sorted(set(score_trend_symbols) | {score_trend_symbol})
     score_trend_rows = []
-    trading_experiment = TradingExperiment(db_path=DB_PATH)
+    trading_experiment = TradingExperiment(db_path=_trading_db_path())
     trading_records_since_ms = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp() * 1000)
     trading_trade_records = load_module("交易实验记录", lambda: trading_experiment.recent_trade_records(limit=100, since_ms=trading_records_since_ms), [])
     trading_new_open_symbols = sorted({
@@ -880,9 +898,9 @@ def abnormal_wicks():
     trading_equity = _latest_trading_equity_usdt(trading_equity_trend_rows)
     trading_open_increase_blocked = _trading_open_increase_blocked(trading_equity, trading_position_snapshots)
     trading_error_records = load_module("交易错误记录", lambda: trading_experiment.recent_error_records(limit=100, since_ms=trading_records_since_ms), [])
-    zombie_force_liquidation = ZombieForceLiquidationModule(db_path=DB_PATH)
+    zombie_force_liquidation = ZombieForceLiquidationModule(db_path=_trading_db_path())
     zombie_force_liquidation_records = load_module("僵尸强平记录", lambda: zombie_force_liquidation.recent_records(limit=100, since_ms=trading_records_since_ms), [])
-    holding_scoring = HoldingPositionScoringSystem(db_path=DB_PATH)
+    holding_scoring = HoldingPositionScoringSystem(db_path=_trading_db_path())
     holding_stop_loss_round_ts, holding_stop_loss_checks = load_module("持仓结构止损检查", holding_scoring.get_latest_round_checks, (0, []))
     holding_portfolio_risk = load_module("持仓组合风险", holding_scoring.get_latest_portfolio_risk, None)
     holding_reduction_round_ts, holding_reduction_checks = load_module("持仓减仓检查", holding_scoring.get_latest_reduction_checks, (0, []))
@@ -895,7 +913,7 @@ def abnormal_wicks():
     break_even_round_ts = break_even_payload["round_ts"]
     break_even_checks = break_even_payload["checks"]
     break_even_records = break_even_payload["records"]
-    partial_take_profit_strategy = PartialTakeProfitStrategy(db_path=DB_PATH)
+    partial_take_profit_strategy = PartialTakeProfitStrategy(db_path=_trading_db_path())
     partial_take_profit_round_ts, partial_take_profit_checks = load_module("分批止盈检查", partial_take_profit_strategy.get_latest_round_checks, (0, []))
     partial_take_profit_records = load_module("分批止盈记录", lambda: partial_take_profit_strategy.recent_records(limit=100), [])
     trailing_reduction_payload = load_module("移动追踪减仓", _trailing_reduction_payload, {"round_ts": 0, "checks": [], "records": []})
@@ -906,7 +924,7 @@ def abnormal_wicks():
     dynamic_profit_protection_round_ts = dynamic_profit_protection_payload["round_ts"]
     dynamic_profit_protection_checks = dynamic_profit_protection_payload["checks"]
     dynamic_profit_protection_records = dynamic_profit_protection_payload["records"]
-    trailing_stop_tracker = TrailingStopTracker(db_path=DB_PATH)
+    trailing_stop_tracker = TrailingStopTracker(db_path=_trading_db_path())
     trailing_stop_round_ts, trailing_stop_checks = load_module("移动追踪止盈检查", trailing_stop_tracker.get_latest_round_checks, (0, []))
     trailing_stop_records = load_module("移动追踪止盈记录", lambda: trailing_stop_tracker.recent_action_records(limit=100), [])
 

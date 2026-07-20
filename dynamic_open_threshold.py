@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import db_config
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -45,6 +46,7 @@ class DynamicOpenThresholdModule:
             os.makedirs(db_dir, exist_ok=True)
         conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
+        db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("trading", db_config.TRADING_DB_PATH)])
         conn.execute("PRAGMA busy_timeout=30000;")
         return conn
 

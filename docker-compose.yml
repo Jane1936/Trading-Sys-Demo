@@ -1,4 +1,9 @@
-x-binance-env: &binance-env
+x-app-env: &app-env
+  DATA_DIR: "${DATA_DIR:-data}"
+  BASE_DB_PATH: "${BASE_DB_PATH:-data/base_data.db}"
+  SCORING_DB_PATH: "${SCORING_DB_PATH:-data/scoring.db}"
+  TRADING_DB_PATH: "${TRADING_DB_PATH:-data/trading.db}"
+  MARKET_DB_PATH: "${MARKET_DB_PATH:-data/market.db}"
   BINANCE_TESTNET: "${BINANCE_TESTNET:-true}"
   BINANCE_TESTNET_API_KEY: "${BINANCE_TESTNET_API_KEY:-YOUR_TESTNET_API_KEY}"
   BINANCE_TESTNET_SECRET_KEY: "${BINANCE_TESTNET_SECRET_KEY:-YOUR_TESTNET_SECRET_KEY}"
@@ -14,7 +19,7 @@ services:
     user: "${PUID:-1000}:${PGID:-1000}"
     restart: always
     environment:
-      <<: *binance-env
+      <<: *app-env
     volumes:
       - ${HOST_DATA_DIR:-./data}:/app/data
       - ${HOST_LOGS_DIR:-./logs}:/app/logs
@@ -29,7 +34,7 @@ services:
     ports:
       - "5000:5000"
     environment:
-      <<: *binance-env
+      <<: *app-env
     volumes:
       - ${HOST_DATA_DIR:-./data}:/app/data
       - ${HOST_LOGS_DIR:-./logs}:/app/logs
@@ -49,6 +54,6 @@ services:
       - "8080:8080"
     volumes:
       - ${HOST_DATA_DIR:-./data}:/data
-    command: ["sqlite_web", "/data/klines.db", "--host", "0.0.0.0"]
+    command: ["sqlite_web", "${SQLITE_WEB_DB_PATH:-/data/base_data.db}", "--host", "0.0.0.0"]
     depends_on:
       - worker
