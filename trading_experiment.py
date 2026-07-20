@@ -133,99 +133,97 @@ class TradingExperiment:
         self.config = config or ExperimentConfig()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=30)
-        conn.row_factory = sqlite3.Row
+        conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
         db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
         return conn
 
     def init_tables(self) -> None:
-        db_dir = os.path.dirname(self.db_path)
-        if db_dir:
-            os.makedirs(db_dir, exist_ok=True)
-        with self._connect() as conn:
-            conn.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.TRADES_TABLE} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    symbol TEXT NOT NULL,
-                    decision_round_ts INTEGER,
-                    side TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    total_score INTEGER,
-                    leverage INTEGER,
-                    allocated_usdt TEXT NOT NULL,
-                    required_margin_usdt TEXT NOT NULL DEFAULT '0',
-                    account_equity_usdt TEXT NOT NULL,
-                    max_loss_usdt TEXT NOT NULL,
-                    entry_price TEXT NOT NULL,
-                    quantity TEXT NOT NULL,
-                    notional_usdt TEXT NOT NULL,
-                    take_profit_price TEXT NOT NULL,
-                    stop_loss_price TEXT NOT NULL,
-                    stop_loss_calculation TEXT NOT NULL DEFAULT '',
-                    take_profit_order_id TEXT NOT NULL DEFAULT '',
-                    stop_loss_order_id TEXT NOT NULL DEFAULT '',
-                    reason TEXT NOT NULL,
-                    raw_response TEXT NOT NULL DEFAULT '',
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                )
-                """
-            )
-            conn.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.POSITIONS_TABLE} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    symbol TEXT NOT NULL,
-                    position_amt TEXT NOT NULL,
-                    entry_price TEXT NOT NULL,
-                    mark_price TEXT NOT NULL,
-                    unrealized_pnl TEXT NOT NULL,
-                    leverage TEXT NOT NULL,
-                    notional TEXT NOT NULL,
-                    liquidation_price TEXT NOT NULL,
-                    updated_at INTEGER NOT NULL
-                )
-                """
-            )
-            conn.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.ERRORS_TABLE} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    symbol TEXT NOT NULL,
-                    decision_round_ts INTEGER,
-                    total_score INTEGER,
-                    leverage INTEGER,
-                    operation TEXT NOT NULL,
-                    error_type TEXT NOT NULL,
-                    error_message TEXT NOT NULL,
-                    created_at INTEGER NOT NULL
-                )
-                """
-            )
-            columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.TRADES_TABLE})").fetchall()}
-            if "required_margin_usdt" not in columns:
+        db_config.ensure_parent_dir(self.db_path)
+        with db_config.sqlite_schema_lock(self.db_path):
+            with self._connect() as conn:
                 conn.execute(
-                    f"ALTER TABLE {self.TRADES_TABLE} "
-                    "ADD COLUMN required_margin_usdt TEXT NOT NULL DEFAULT '0'"
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self.TRADES_TABLE} (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        symbol TEXT NOT NULL,
+                        decision_round_ts INTEGER,
+                        side TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        total_score INTEGER,
+                        leverage INTEGER,
+                        allocated_usdt TEXT NOT NULL,
+                        required_margin_usdt TEXT NOT NULL DEFAULT '0',
+                        account_equity_usdt TEXT NOT NULL,
+                        max_loss_usdt TEXT NOT NULL,
+                        entry_price TEXT NOT NULL,
+                        quantity TEXT NOT NULL,
+                        notional_usdt TEXT NOT NULL,
+                        take_profit_price TEXT NOT NULL,
+                        stop_loss_price TEXT NOT NULL,
+                        stop_loss_calculation TEXT NOT NULL DEFAULT '',
+                        take_profit_order_id TEXT NOT NULL DEFAULT '',
+                        stop_loss_order_id TEXT NOT NULL DEFAULT '',
+                        reason TEXT NOT NULL,
+                        raw_response TEXT NOT NULL DEFAULT '',
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """
                 )
-            if "stop_loss_calculation" not in columns:
                 conn.execute(
-                    f"ALTER TABLE {self.TRADES_TABLE} "
-                    "ADD COLUMN stop_loss_calculation TEXT NOT NULL DEFAULT ''"
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self.POSITIONS_TABLE} (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        symbol TEXT NOT NULL,
+                        position_amt TEXT NOT NULL,
+                        entry_price TEXT NOT NULL,
+                        mark_price TEXT NOT NULL,
+                        unrealized_pnl TEXT NOT NULL,
+                        leverage TEXT NOT NULL,
+                        notional TEXT NOT NULL,
+                        liquidation_price TEXT NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """
                 )
-            conn.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_{self.TRADES_TABLE}_created "
-                f"ON {self.TRADES_TABLE}(created_at DESC, symbol ASC)"
-            )
-            conn.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_{self.POSITIONS_TABLE}_updated "
-                f"ON {self.POSITIONS_TABLE}(updated_at DESC, symbol ASC)"
-            )
-            conn.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_{self.ERRORS_TABLE}_created "
-                f"ON {self.ERRORS_TABLE}(created_at DESC, symbol ASC)"
-            )
+                conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self.ERRORS_TABLE} (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        symbol TEXT NOT NULL,
+                        decision_round_ts INTEGER,
+                        total_score INTEGER,
+                        leverage INTEGER,
+                        operation TEXT NOT NULL,
+                        error_type TEXT NOT NULL,
+                        error_message TEXT NOT NULL,
+                        created_at INTEGER NOT NULL
+                    )
+                    """
+                )
+                columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.TRADES_TABLE})").fetchall()}
+                if "required_margin_usdt" not in columns:
+                    conn.execute(
+                        f"ALTER TABLE {self.TRADES_TABLE} "
+                        "ADD COLUMN required_margin_usdt TEXT NOT NULL DEFAULT '0'"
+                    )
+                if "stop_loss_calculation" not in columns:
+                    conn.execute(
+                        f"ALTER TABLE {self.TRADES_TABLE} "
+                        "ADD COLUMN stop_loss_calculation TEXT NOT NULL DEFAULT ''"
+                    )
+                conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{self.TRADES_TABLE}_created "
+                    f"ON {self.TRADES_TABLE}(created_at DESC, symbol ASC)"
+                )
+                conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{self.POSITIONS_TABLE}_updated "
+                    f"ON {self.POSITIONS_TABLE}(updated_at DESC, symbol ASC)"
+                )
+                conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{self.ERRORS_TABLE}_created "
+                    f"ON {self.ERRORS_TABLE}(created_at DESC, symbol ASC)"
+                )
 
     @staticmethod
     def current_decision_round_ts(now_ms: int | None = None) -> int:

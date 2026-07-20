@@ -73,79 +73,77 @@ class TrailingReductionTracker:
         self.config = config or ExperimentConfig()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=30)
-        conn.row_factory = sqlite3.Row
+        conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
         db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
         return conn
 
     def init_tables(self) -> None:
-        db_dir = os.path.dirname(self.db_path)
-        if db_dir:
-            os.makedirs(db_dir, exist_ok=True)
-        with self._connect() as conn:
-            conn.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.CHECKS_TABLE} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    symbol TEXT NOT NULL,
-                    decision_round_ts INTEGER NOT NULL,
-                    checked_at INTEGER NOT NULL,
-                    account_equity_usdt TEXT NOT NULL,
-                    r_usdt TEXT NOT NULL,
-                    trigger_r_usdt TEXT NOT NULL,
-                    unrealized_pnl TEXT NOT NULL,
-                    current_price TEXT NOT NULL,
-                    latest_15m_low TEXT NOT NULL,
-                    second_15m_low TEXT NOT NULL,
-                    lowest_15m_low TEXT NOT NULL,
-                    entry_price TEXT NOT NULL,
-                    position_amt TEXT NOT NULL,
-                    eligible INTEGER NOT NULL,
-                    pretriggered INTEGER NOT NULL,
-                    tag TEXT NOT NULL DEFAULT '',
-                    reason TEXT NOT NULL
+        db_config.ensure_parent_dir(self.db_path)
+        with db_config.sqlite_schema_lock(self.db_path):
+            with self._connect() as conn:
+                conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self.CHECKS_TABLE} (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        symbol TEXT NOT NULL,
+                        decision_round_ts INTEGER NOT NULL,
+                        checked_at INTEGER NOT NULL,
+                        account_equity_usdt TEXT NOT NULL,
+                        r_usdt TEXT NOT NULL,
+                        trigger_r_usdt TEXT NOT NULL,
+                        unrealized_pnl TEXT NOT NULL,
+                        current_price TEXT NOT NULL,
+                        latest_15m_low TEXT NOT NULL,
+                        second_15m_low TEXT NOT NULL,
+                        lowest_15m_low TEXT NOT NULL,
+                        entry_price TEXT NOT NULL,
+                        position_amt TEXT NOT NULL,
+                        eligible INTEGER NOT NULL,
+                        pretriggered INTEGER NOT NULL,
+                        tag TEXT NOT NULL DEFAULT '',
+                        reason TEXT NOT NULL
+                    )
+                    """
                 )
-                """
-            )
-            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_round ON {self.CHECKS_TABLE}(decision_round_ts DESC, symbol ASC)")
-            columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.CHECKS_TABLE})").fetchall()}
-            for column, ddl in {
-                "atr14": "TEXT NOT NULL DEFAULT ''",
-                "latest_1m_high": "TEXT NOT NULL DEFAULT ''",
-                "latest_1m_close": "TEXT NOT NULL DEFAULT ''",
-                "highest_since_open": "TEXT NOT NULL DEFAULT ''",
-                "price_drawdown": "TEXT NOT NULL DEFAULT ''",
-                "structure_break_triggered": "INTEGER NOT NULL DEFAULT 0",
-            }.items():
-                if column not in columns:
-                    conn.execute(f"ALTER TABLE {self.CHECKS_TABLE} ADD COLUMN {column} {ddl}")
-            conn.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.RECORDS_TABLE} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    symbol TEXT NOT NULL,
-                    decision_round_ts INTEGER NOT NULL,
-                    checked_at INTEGER NOT NULL,
-                    latest_1m_high TEXT NOT NULL,
-                    latest_1m_close TEXT NOT NULL,
-                    highest_since_open TEXT NOT NULL,
-                    atr14 TEXT NOT NULL,
-                    price_drawdown TEXT NOT NULL,
-                    reduction_percent TEXT NOT NULL,
-                    original_quantity TEXT NOT NULL,
-                    reduced_quantity TEXT NOT NULL,
-                    remaining_quantity TEXT NOT NULL,
-                    market_order_id TEXT NOT NULL DEFAULT '',
-                    take_profit_order_id TEXT NOT NULL DEFAULT '',
-                    stop_loss_order_id TEXT NOT NULL DEFAULT '',
-                    status TEXT NOT NULL,
-                    reason TEXT NOT NULL,
-                    raw_response TEXT NOT NULL DEFAULT ''
+                conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_round ON {self.CHECKS_TABLE}(decision_round_ts DESC, symbol ASC)")
+                columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.CHECKS_TABLE})").fetchall()}
+                for column, ddl in {
+                    "atr14": "TEXT NOT NULL DEFAULT ''",
+                    "latest_1m_high": "TEXT NOT NULL DEFAULT ''",
+                    "latest_1m_close": "TEXT NOT NULL DEFAULT ''",
+                    "highest_since_open": "TEXT NOT NULL DEFAULT ''",
+                    "price_drawdown": "TEXT NOT NULL DEFAULT ''",
+                    "structure_break_triggered": "INTEGER NOT NULL DEFAULT 0",
+                }.items():
+                    if column not in columns:
+                        conn.execute(f"ALTER TABLE {self.CHECKS_TABLE} ADD COLUMN {column} {ddl}")
+                conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self.RECORDS_TABLE} (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        symbol TEXT NOT NULL,
+                        decision_round_ts INTEGER NOT NULL,
+                        checked_at INTEGER NOT NULL,
+                        latest_1m_high TEXT NOT NULL,
+                        latest_1m_close TEXT NOT NULL,
+                        highest_since_open TEXT NOT NULL,
+                        atr14 TEXT NOT NULL,
+                        price_drawdown TEXT NOT NULL,
+                        reduction_percent TEXT NOT NULL,
+                        original_quantity TEXT NOT NULL,
+                        reduced_quantity TEXT NOT NULL,
+                        remaining_quantity TEXT NOT NULL,
+                        market_order_id TEXT NOT NULL DEFAULT '',
+                        take_profit_order_id TEXT NOT NULL DEFAULT '',
+                        stop_loss_order_id TEXT NOT NULL DEFAULT '',
+                        status TEXT NOT NULL,
+                        reason TEXT NOT NULL,
+                        raw_response TEXT NOT NULL DEFAULT ''
+                    )
+                    """
                 )
-                """
-            )
-            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
-            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_created ON {self.RECORDS_TABLE}(checked_at DESC, symbol ASC)")
+                conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
+                conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_created ON {self.RECORDS_TABLE}(checked_at DESC, symbol ASC)")
 
     def run_round(self, decision_round_ts: int | None = None) -> dict[str, Any]:
         self.account_manager.validate_config()
