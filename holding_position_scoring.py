@@ -204,7 +204,7 @@ class HoldingPositionScoringSystem:
 
     def __init__(
         self,
-        db_path: str = "data/klines.db",
+        db_path: str = db_config.TRADING_DB_PATH,
         account_manager: BinanceAccountManager | None = None,
         realized_pnl_retry_delays: Iterable[float] = (1, 3, 5),
     ) -> None:

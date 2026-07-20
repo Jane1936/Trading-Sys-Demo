@@ -63,7 +63,7 @@ class ZombieForceLiquidationModule:
 
     def __init__(
         self,
-        db_path: str = "data/klines.db",
+        db_path: str = db_config.TRADING_DB_PATH,
         account_manager: BinanceAccountManager | None = None,
         config: ExperimentConfig | None = None,
     ) -> None:

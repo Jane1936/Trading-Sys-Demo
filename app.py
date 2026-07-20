@@ -150,9 +150,9 @@ def run_scoring_round_worker(
     openable.init_table()
     dynamic_open_threshold = DynamicOpenThresholdModule(db_path=db_path)
     dynamic_open_threshold.init_table()
-    holding_scoring = HoldingPositionScoringSystem(db_path=db_path)
+    holding_scoring = HoldingPositionScoringSystem(db_path=db_config.TRADING_DB_PATH)
     holding_scoring.init_tables()
-    trailing_reduction = TrailingReductionTracker(db_path=db_path)
+    trailing_reduction = TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH)
     trailing_reduction.init_tables()
 
     readiness = scoring.wait_for_15m_ma20_readiness_for_round(
