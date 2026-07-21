@@ -936,6 +936,42 @@ def test_position_increase_triggers_first_add_once_per_open_lifecycle():
     assert second_checks[0].reason == "first_increase_already_triggered_in_current_lifecycle"
 
 
+def test_position_increase_skipped_record_does_not_complete_first_add_lifecycle():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.execute("CREATE TABLE trading_experiment_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, status TEXT, created_at INTEGER, total_score TEXT, entry_price TEXT, stop_loss_order_id TEXT, stop_loss_price TEXT)")
+            conn.executemany(
+                "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
+                [("BANK", 3000, 70), ("BANK", 2000, 73)],
+            )
+            conn.execute(
+                "INSERT INTO trading_experiment_trades (symbol, status, created_at, total_score, entry_price, stop_loss_order_id, stop_loss_price) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("BANK", "opened", 1000, "72", "7", "", ""),
+            )
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {scoring.INCREASE_RECORDS_TABLE}
+                (symbol, decision_round_ts, action_name, current_price, unrealized_pnl, one_r_usdt,
+                 latest_total_score, previous_total_score, latest_reduction_price, status, reason, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("BANK", 2500, "第一次加仓", "8", "70", "50", "70", "73", "", "skipped", "可用金额不足", 4000),
+            )
+        positions = [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "8", "unRealizedProfit": "70"}]
+
+        checks = scoring.evaluate_increase_conditions(positions=positions, decision_round_ts=3000, checked_at=5000)
+
+    assert checks[0].triggered is True
+    assert checks[0].tag == "第一次加仓"
+    assert checks[0].reason == "first_increase_conditions_met"
+
+
 def test_position_increase_requires_current_price_not_below_lifecycle_reduction_price():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
