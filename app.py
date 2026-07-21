@@ -231,12 +231,32 @@ def run_scoring_round_worker(
         f"policy={dynamic_threshold_result.policy}"
     )
 
+    market_filter_result = None
+    if feature_flags.is_feature_enabled(feature_flags.MARKET_FILTER):
+        try:
+            market_filter_result = MarketFilterModule(
+                db_path=db_config.MARKET_DB_PATH
+            ).get_result_for_round(decision_round_ts)
+        except Exception as exc:
+            print(f"⚠️ market filter lookup failed round={decision_round_ts}: {exc}")
+
+    allow_new_positions = dynamic_threshold_result.allow_new_positions
+    openable_reason = dynamic_threshold_result.reason
+    if market_filter_result is not None and not market_filter_result.allow_new_positions:
+        allow_new_positions = False
+        openable_reason = f"market_filter_blocked:{market_filter_result.reason}"
+        print(
+            f"🚫 openable round={decision_round_ts} blocked by independent market filter "
+            f"despite dynamic_threshold_allow={dynamic_threshold_result.allow_new_positions}: "
+            f"{market_filter_result.reason}"
+        )
+
     openable_symbols = openable.run_round(
         decision_round_ts=decision_round_ts,
         evaluated_at=evaluated_at,
         min_total_score=dynamic_threshold_result.min_open_total_score,
-        allow_new_positions=dynamic_threshold_result.allow_new_positions,
-        threshold_reason=dynamic_threshold_result.reason,
+        allow_new_positions=allow_new_positions,
+        threshold_reason=openable_reason,
     )
     qualified_openable_count = sum(1 for row in openable_symbols if row.qualified)
     print(

@@ -208,6 +208,17 @@ class MarketFilterModule:
              r.btc_first_open_time, r.btc_latest_open_time, r.btc_open, r.btc_close, r.btc_delta, int(r.btc_siphon), int(r.market_crash), int(r.allow_new_positions), r.reason, r.evaluated_at, r.block_until),
         )
 
+
+    def get_result_for_round(self, decision_round_ts: int) -> Optional[MarketFilterResult]:
+        """Return the stored independent market-filter decision for one round."""
+        self.init_table()
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT * FROM {self.TABLE_NAME} WHERE decision_round_ts = ?",
+                (int(decision_round_ts),),
+            ).fetchone()
+            return self._from_row(row) if row is not None else None
+
     def recent_results(self, limit: int = 100, days: int | None = None, now_ms: int | None = None) -> list[MarketFilterResult]:
         self.init_table()
         with self._connect() as conn:

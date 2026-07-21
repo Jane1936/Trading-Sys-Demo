@@ -65,6 +65,28 @@ def _market_db_path() -> str:
     return DB_PATH if DB_PATH != BASE_DB_PATH else MARKET_DB_PATH
 
 
+
+def _current_open_block_notice(openable_round_ts, market_filter_results, dynamic_open_threshold_results):
+    """Build the current-round no-new-position notice shown above openable symbols."""
+    if not openable_round_ts:
+        return None
+    market_result = next(
+        (row for row in market_filter_results if row.decision_round_ts == openable_round_ts),
+        None,
+    )
+    dynamic_result = next(
+        (row for row in dynamic_open_threshold_results if row.decision_round_ts == openable_round_ts),
+        None,
+    )
+    reasons = []
+    if market_result is not None and not market_result.allow_new_positions:
+        reasons.append(f"独立市场过滤模块：{market_result.reason}")
+    if dynamic_result is not None and not dynamic_result.allow_new_positions:
+        reasons.append(f"动态开仓门槛：{dynamic_result.reason}")
+    if not reasons:
+        return None
+    return "；".join(reasons)
+
 def _ensure_web_database_usable() -> None:
     global _db_recovery_checked_path
     if _db_recovery_checked_path == DB_PATH:
@@ -913,6 +935,9 @@ def abnormal_wicks():
     add_position_permission_results = load_module("加仓权限", lambda: add_position_permission.recent_results(limit=100, days=7), [])
     dynamic_open_threshold = DynamicOpenThresholdModule(db_path=_scoring_db_path())
     dynamic_open_threshold_results = load_module("动态开仓门槛", lambda: dynamic_open_threshold.recent_results(limit=100, days=7), [])
+    open_block_notice = _current_open_block_notice(
+        openable_round_ts, market_filter_results, dynamic_open_threshold_results
+    )
     score_trend_symbols = load_module("评分趋势 Symbol 列表", scoring.get_total_score_symbols, [])
     requested_score_trend_symbol = request.args.get("score_trend_symbol", default="", type=str).strip()
     default_score_trend_symbol = round_scores_total[0].symbol if round_scores_total else ""
@@ -1034,6 +1059,7 @@ def abnormal_wicks():
         market_filter_results=market_filter_results,
         add_position_permission_results=add_position_permission_results,
         dynamic_open_threshold_results=dynamic_open_threshold_results,
+        open_block_notice=open_block_notice,
         trading_trade_records=trading_trade_records,
         trading_new_open_symbols=trading_new_open_symbols,
         trading_position_snapshots=trading_position_snapshots,
