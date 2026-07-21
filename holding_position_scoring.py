@@ -1403,8 +1403,8 @@ class HoldingPositionScoringSystem:
     def _has_first_increase_record_since(self, symbol: str, lifecycle_started_at: int) -> bool:
         with self._connect() as conn:
             row = conn.execute(
-                f"SELECT 1 FROM {self.INCREASE_RECORDS_TABLE} WHERE symbol = ? AND action_name = ? AND created_at >= ? LIMIT 1",
-                (symbol, self.INCREASE_TAG_FIRST, lifecycle_started_at),
+                f"SELECT 1 FROM {self.INCREASE_RECORDS_TABLE} WHERE symbol = ? AND action_name = ? AND status != ? AND created_at >= ? LIMIT 1",
+                (symbol, self.INCREASE_TAG_FIRST, "skipped", lifecycle_started_at),
             ).fetchone()
         return row is not None
 
