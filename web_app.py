@@ -35,7 +35,11 @@ from market_filter_module import MarketFilterModule
 from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import DynamicOpenThresholdModule
 from zombie_force_liquidation import ZombieForceLiquidationModule
-from sqlite_recovery import ensure_sqlite_database_usable, is_malformed_database_error
+from sqlite_recovery import (
+    ensure_sqlite_database_usable,
+    is_malformed_database_error,
+    quarantine_malformed_sqlite_databases,
+)
 
 app = Flask(__name__)
 
@@ -120,8 +124,24 @@ def _safe_page_module(label: str, loader, default):
     try:
         return loader(), None
     except Exception as exc:
+        error_text = str(exc)
+        if is_malformed_database_error(exc):
+            quarantined = quarantine_malformed_sqlite_databases(db_config.DB_LABELS.values())
+            if quarantined:
+                details = "; ".join(
+                    f"{path} -> {', '.join(targets) or 'no sidecar files'}"
+                    for path, targets in quarantined.items()
+                )
+                error_text = f"{error_text}; 已隔离损坏数据库：{details}；请刷新页面等待模块重新初始化"
+                app.logger.error(
+                    "Dashboard module hit malformed SQLite and quarantined DB(s): %s: %s",
+                    label,
+                    details,
+                )
+            else:
+                error_text = f"{error_text}; 未定位到可隔离的损坏库，请检查宿主机 data 目录和 SQLite sidecar 文件"
         app.logger.exception("Dashboard module failed: %s", label)
-        return default, {"label": label, "error": str(exc)}
+        return default, {"label": label, "error": error_text}
 
 def _score_band_context() -> tuple[list[dict], str, str, int]:
     bands = [
