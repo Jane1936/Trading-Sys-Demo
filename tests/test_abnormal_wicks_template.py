@@ -374,3 +374,14 @@ def test_market_filter_uses_collapsible_recent_records_ui():
     assert collapsible_index < module_index < button_index < table_index
     assert "只显示最近7天内记录" in template[section_index:table_index]
     assert 'class="{% if loop.index > 10 %}collapsed-extra{% endif %}"' in template[section_index:template.index('</section>', section_index)]
+
+
+def test_openable_section_highlights_current_round_open_block_notice():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    openable_index = template.index("本轮可开仓symbol情况")
+    notice_index = template.index("open_block_notice", openable_index)
+    text_index = template.index("本轮禁止新开仓", notice_index)
+    table_index = template.index("openable_symbols", text_index)
+
+    assert notice_index < text_index < table_index

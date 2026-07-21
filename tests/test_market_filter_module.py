@@ -104,3 +104,20 @@ def test_market_filter_recent_results_can_filter_to_recent_days(tmp_path):
     results = module.recent_results(days=7, now_ms=9 * 24 * 60 * 60_000)
 
     assert [row.reason for row in results] == ["recent"]
+
+
+def test_market_filter_can_load_saved_round_result(tmp_path):
+    db_path = tmp_path / "klines.db"
+    module = MarketFilterModule(db_path=str(db_path))
+    with sqlite3.connect(db_path) as conn:
+        _init_source_tables(conn)
+        _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100, 100, 100, 100])
+        _insert_rows(conn, collector.BTC_15M_TABLE, [100, 100, 100, 100.6])
+
+    module.run_round(decision_round_ts=900_000, evaluated_at=900_001)
+    result = module.get_result_for_round(900_000)
+
+    assert result is not None
+    assert result.allow_new_positions is False
+    assert result.reason == "btc_siphon"
+    assert module.get_result_for_round(1_800_000) is None

@@ -69,3 +69,16 @@ def test_openable_respects_dynamic_threshold(tmp_path):
     assert rows[0].reason == "highest_score_73_to_84"
 
     assert module.run_round(decision_round_ts=900_000, allow_new_positions=False) == []
+
+
+def test_current_open_block_notice_prefers_independent_market_filter_reason():
+    from types import SimpleNamespace
+    import web_app
+
+    notice = web_app._current_open_block_notice(
+        900_000,
+        [SimpleNamespace(decision_round_ts=900_000, allow_new_positions=False, reason="btc_siphon")],
+        [SimpleNamespace(decision_round_ts=900_000, allow_new_positions=True, reason="highest_score_gte_85")],
+    )
+
+    assert notice == "独立市场过滤模块：btc_siphon"

@@ -52,6 +52,8 @@
     .score-symbol-error { border-color:#fca5a5; background:#fef2f2; color:#991b1b; }
     .score-symbol-error strong { color:#b91c1c; }
     .score-symbol-error code { background:#fee2e2; }
+    .open-block-notice { margin: 0 20px 14px; padding: 14px 16px; border: 2px solid #ef4444; border-radius: 12px; background: #fef2f2; color: #991b1b; font-size: 14px; font-weight: 800; line-height: 1.55; box-shadow: 0 8px 20px rgba(239, 68, 68, 0.12); }
+    .open-block-notice span { font-weight: 600; }
     .module-error-banner { margin: 0 0 16px; padding: 12px 14px; border: 1px solid #f59e0b; border-radius: 12px; background: #fffbeb; color: #92400e; font-size: 13px; line-height: 1.55; }
     .module-error-banner strong { color: #b45309; }
     .module-error-banner ul { margin: 8px 0 0 18px; padding: 0; }
@@ -991,6 +993,9 @@
             </div>
           {% endif %}
         </div>
+        {% if open_block_notice %}
+          <div class="open-block-notice">本轮禁止新开仓：<span>{{ open_block_notice }}</span></div>
+        {% endif %}
         <div class="tip">可开仓基础条件：本轮总分 ≥ {{ openable_min_total_score }}，且不在冷却期。止损距离筛查使用规则18的 distance_ratio：{{ score_distance_threshold_text }}；止损距离档位：0&lt;distance_ratio≤2% 为A档，2%&lt;distance_ratio≤3% 为B档，3%&lt;distance_ratio≤4% 为C档，distance_ratio&gt;4% 为D档。杠杆评定：所有单子 distance_ratio 为0时，杠杆统一为NA，且最终不可开仓；其他情况按总分区间和止损距离档位映射（{{ score_leverage_mapping_text }}）。下表展示基础条件命中的symbol及其止损距离筛查结果与本轮开仓杠杆倍数。</div>
         <div class="table-wrap">
           <table>
