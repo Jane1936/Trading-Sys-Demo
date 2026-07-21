@@ -866,6 +866,52 @@
         </div>
       </div>
 
+
+      <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+        <div class="symbol-strip collapsible-header">
+          <div>
+            <div><strong>加仓权限（每15分钟执行）</strong></div>
+            <div class="muted">只显示最近7天内记录。加仓条件模块执行前会先读取本轮加仓权限；默认折叠，仅展示最新 10 条。</div>
+          </div>
+          <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+        </div>
+        <div class="collapse-hint">规则：分别读取 ALLUSDT 与 BTC 最近4条15分钟K线，使用最近第1条 close 和最近第4条 open 计算最近1小时涨幅 delta=(close-open)/open。若山寨跑赢BTC：(BTC delta - ALLUSDT delta)&lt;-0.3%，则允许加仓，否则不允许任何加仓。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>决策轮次</th><th>执行时间</th><th>是否允许加仓</th><th>触发原因</th>
+                <th>ALLUSDT第4条open时间</th><th>ALLUSDT最近K线时间</th><th>ALLUSDT open/close</th><th>ALLUSDT delta</th>
+                <th>BTC第4条open时间</th><th>BTC最近K线时间</th><th>BTC open/close</th><th>BTC delta</th><th>BTC-ALLUSDT差值</th>
+                <th>山寨跑赢BTC</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in add_position_permission_results %}
+                <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                  <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
+                  <td><span class="chip">{{ '允许' if row.allow_add_positions else '禁止' }}</span></td>
+                  <td>{{ row.reason }}</td>
+                  <td>{{ row.allusdt_first_open_time|fmt_ms_datetime if row.allusdt_first_open_time else '-' }}</td>
+                  <td>{{ row.allusdt_latest_open_time|fmt_ms_datetime if row.allusdt_latest_open_time else '-' }}</td>
+                  <td>{{ '%.8f / %.8f'|format(row.allusdt_open, row.allusdt_close) if row.allusdt_open is not none and row.allusdt_close is not none else '-' }}</td>
+                  <td>{{ '%.4f%%'|format(row.allusdt_delta * 100) if row.allusdt_delta is not none else '-' }}</td>
+                  <td>{{ row.btc_first_open_time|fmt_ms_datetime if row.btc_first_open_time else '-' }}</td>
+                  <td>{{ row.btc_latest_open_time|fmt_ms_datetime if row.btc_latest_open_time else '-' }}</td>
+                  <td>{{ '%.8f / %.8f'|format(row.btc_open, row.btc_close) if row.btc_open is not none and row.btc_close is not none else '-' }}</td>
+                  <td>{{ '%.4f%%'|format(row.btc_delta * 100) if row.btc_delta is not none else '-' }}</td>
+                  <td>{{ '%.4f%%'|format((row.btc_delta - row.allusdt_delta) * 100) if row.btc_delta is not none and row.allusdt_delta is not none else '-' }}</td>
+                  <td>{{ '是' if row.alt_outperform_btc else '否' }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="14" class="muted">暂无加仓权限执行结果。</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
         <div class="symbol-strip collapsible-header">
           <div>

@@ -21,6 +21,7 @@ from binance_account_manager import BinanceAccountManager
 from openable_symbol_module import OpenableSymbol
 from trading_experiment import TradingExperiment
 from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
+from add_position_permission_module import AddPositionPermissionModule
 
 
 @dataclass(frozen=True)
@@ -1271,6 +1272,7 @@ class HoldingPositionScoringSystem:
         if not self._has_total_scores_for_round(round_ts):
             return []
         now_ms = checked_at if checked_at is not None else int(time.time() * 1000)
+        add_permission = AddPositionPermissionModule(db_path=db_config.MARKET_DB_PATH).ensure_round_result(round_ts, evaluated_at=now_ms)
         active_positions = positions if positions is not None else self._active_positions()
         equity = TradingExperiment(self.db_path, account_manager=self.account_manager)._fetch_experiment_usdt_equity()
         one_r = equity * Decimal("0.01")
@@ -1281,6 +1283,13 @@ class HoldingPositionScoringSystem:
             if not symbol or amount == 0:
                 continue
             check = self._evaluate_increase_rules(position, symbol, round_ts, equity, one_r, now_ms)
+            if not add_permission.allow_add_positions and check.triggered:
+                check = PositionIncreaseCheck(
+                    check.symbol, check.decision_round_ts, check.current_price, check.account_equity_usdt,
+                    check.one_r_usdt, check.unrealized_pnl, check.latest_total_score, check.previous_total_score,
+                    check.latest_reduction_price, check.open_trade_created_at, False, "",
+                    f"add_position_permission_blocked: {add_permission.reason}", check.checked_at,
+                )
             self._save_increase_check(check)
             checks.append(check)
         return checks

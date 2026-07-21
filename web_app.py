@@ -32,6 +32,7 @@ from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
 from market_filter_module import MarketFilterModule
+from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import DynamicOpenThresholdModule
 from zombie_force_liquidation import ZombieForceLiquidationModule
 from sqlite_recovery import ensure_sqlite_database_usable, is_malformed_database_error
@@ -908,6 +909,8 @@ def abnormal_wicks():
     )
     market_filter = MarketFilterModule(db_path=_market_db_path())
     market_filter_results = load_module("市场行情过滤", lambda: market_filter.recent_results(limit=100, days=7), [])
+    add_position_permission = AddPositionPermissionModule(db_path=_market_db_path())
+    add_position_permission_results = load_module("加仓权限", lambda: add_position_permission.recent_results(limit=100, days=7), [])
     dynamic_open_threshold = DynamicOpenThresholdModule(db_path=_scoring_db_path())
     dynamic_open_threshold_results = load_module("动态开仓门槛", lambda: dynamic_open_threshold.recent_results(limit=100, days=7), [])
     score_trend_symbols = load_module("评分趋势 Symbol 列表", scoring.get_total_score_symbols, [])
@@ -1029,6 +1032,7 @@ def abnormal_wicks():
         score_leverage_mapping_text=score_leverage_mapping_text,
         openable_min_total_score=openable_min_total_score,
         market_filter_results=market_filter_results,
+        add_position_permission_results=add_position_permission_results,
         dynamic_open_threshold_results=dynamic_open_threshold_results,
         trading_trade_records=trading_trade_records,
         trading_new_open_symbols=trading_new_open_symbols,
