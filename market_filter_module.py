@@ -41,7 +41,7 @@ class MarketFilterResult:
 
 class MarketFilterModule:
     TABLE_NAME = "market_filter_rounds"
-    BTC_SIPHON_THRESHOLD = 0.05
+    BTC_SIPHON_THRESHOLD = 0.005
     MARKET_CRASH_THRESHOLD = -0.03
     ROUND_MS = 15 * 60_000
     BLOCK_MS = 60 * 60_000
