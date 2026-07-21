@@ -22,6 +22,16 @@ KLINE_TABLE = "allusdt_15m_klines"
 MA20_TABLE = "allusdt_15m_ma20_indicators"
 INTERVAL_MS = 15 * 60_000
 
+H1_INTERVAL = "1h"
+H1_KLINE_TABLE = "allusdt_1h_klines"
+H1_MA20_TABLE = "allusdt_1h_ma20_indicators"
+H1_INTERVAL_MS = 60 * 60_000
+
+INTERVAL_CONFIGS = (
+    (INTERVAL, KLINE_TABLE, MA20_TABLE, INTERVAL_MS),
+    (H1_INTERVAL, H1_KLINE_TABLE, H1_MA20_TABLE, H1_INTERVAL_MS),
+)
+
 
 def build_http_session(total_retries: int = 2) -> requests.Session:
     session = requests.Session()
@@ -45,9 +55,14 @@ HTTP_SESSION = build_http_session()
 
 
 def init_db(conn: sqlite3.Connection) -> None:
+    for _interval, kline_table, ma20_table, _interval_ms in INTERVAL_CONFIGS:
+        init_interval_db(conn, kline_table, ma20_table)
+
+
+def init_interval_db(conn: sqlite3.Connection, kline_table: str, ma20_table: str) -> None:
     conn.execute(
         f"""
-        CREATE TABLE IF NOT EXISTS {KLINE_TABLE} (
+        CREATE TABLE IF NOT EXISTS {kline_table} (
             open_time INTEGER NOT NULL PRIMARY KEY,
             open REAL NOT NULL,
             high REAL NOT NULL,
@@ -59,11 +74,11 @@ def init_db(conn: sqlite3.Connection) -> None:
         """
     )
     conn.execute(
-        f"CREATE INDEX IF NOT EXISTS idx_{KLINE_TABLE}_open_time ON {KLINE_TABLE}(open_time)"
+        f"CREATE INDEX IF NOT EXISTS idx_{kline_table}_open_time ON {kline_table}(open_time)"
     )
     conn.execute(
         f"""
-        CREATE TABLE IF NOT EXISTS {MA20_TABLE} (
+        CREATE TABLE IF NOT EXISTS {ma20_table} (
             open_time INTEGER NOT NULL PRIMARY KEY,
             close_time INTEGER NOT NULL,
             close REAL NOT NULL,
@@ -73,23 +88,27 @@ def init_db(conn: sqlite3.Connection) -> None:
         """
     )
     conn.execute(
-        f"CREATE INDEX IF NOT EXISTS idx_{MA20_TABLE}_open_time ON {MA20_TABLE}(open_time)"
+        f"CREATE INDEX IF NOT EXISTS idx_{ma20_table}_open_time ON {ma20_table}(open_time)"
     )
 
 
-def get_last_close_time(conn: sqlite3.Connection) -> Optional[int]:
+def get_last_close_time(conn: sqlite3.Connection, kline_table: str = KLINE_TABLE) -> Optional[int]:
     row = conn.execute(
-        f"SELECT close_time FROM {KLINE_TABLE} ORDER BY close_time DESC LIMIT 1"
+        f"SELECT close_time FROM {kline_table} ORDER BY close_time DESC LIMIT 1"
     ).fetchone()
     return int(row[0]) if row else None
 
 
-def get_latest_closed_close_time(now_ms: int) -> int:
-    return (now_ms // INTERVAL_MS) * INTERVAL_MS - 1
+def get_latest_closed_close_time(now_ms: int, interval_ms: int = INTERVAL_MS) -> int:
+    return (now_ms // interval_ms) * interval_ms - 1
 
 
-def fetch_klines(start_time: Optional[int] = None, limit: int = LIMIT) -> list:
-    params = {"symbol": SYMBOL, "interval": INTERVAL, "limit": limit}
+def fetch_klines(
+    start_time: Optional[int] = None,
+    limit: int = LIMIT,
+    interval: str = INTERVAL,
+) -> list:
+    params = {"symbol": SYMBOL, "interval": interval, "limit": limit}
     if start_time is not None:
         params["startTime"] = start_time
 
@@ -100,7 +119,7 @@ def fetch_klines(start_time: Optional[int] = None, limit: int = LIMIT) -> list:
             data = res.json()
             if isinstance(data, dict):
                 print(
-                    f"⚠️ {SYMBOL} 15m API error "
+                    f"⚠️ {SYMBOL} {interval} API error "
                     f"code={data.get('code')} msg={data.get('msg')}"
                 )
                 return []
@@ -109,7 +128,7 @@ def fetch_klines(start_time: Optional[int] = None, limit: int = LIMIT) -> list:
             if attempt == 0:
                 time.sleep(0.2)
                 continue
-            print(f"⚠️ {SYMBOL} 15m request failed: {exc}")
+            print(f"⚠️ {SYMBOL} {interval} request failed: {exc}")
             return []
 
 
@@ -118,7 +137,11 @@ def filter_closed_klines(klines: Iterable[list]) -> list:
     return [k for k in klines if int(k[6]) <= now_ms]
 
 
-def save_klines(conn: sqlite3.Connection, klines: Iterable[list]) -> int:
+def save_klines(
+    conn: sqlite3.Connection,
+    klines: Iterable[list],
+    kline_table: str = KLINE_TABLE,
+) -> int:
     rows = [
         (int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5]), int(k[6]))
         for k in klines
@@ -129,7 +152,7 @@ def save_klines(conn: sqlite3.Connection, klines: Iterable[list]) -> int:
     before = conn.total_changes
     conn.executemany(
         f"""
-        INSERT OR IGNORE INTO {KLINE_TABLE}
+        INSERT OR IGNORE INTO {kline_table}
         (open_time, open, high, low, close, volume, close_time)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
@@ -138,11 +161,15 @@ def save_klines(conn: sqlite3.Connection, klines: Iterable[list]) -> int:
     return conn.total_changes - before
 
 
-def save_ma20(conn: sqlite3.Connection) -> int:
+def save_ma20(
+    conn: sqlite3.Connection,
+    kline_table: str = KLINE_TABLE,
+    ma20_table: str = MA20_TABLE,
+) -> int:
     rows = conn.execute(
         f"""
         SELECT open_time, close_time, close
-        FROM {KLINE_TABLE}
+        FROM {kline_table}
         ORDER BY open_time ASC
         """
     ).fetchall()
@@ -161,7 +188,7 @@ def save_ma20(conn: sqlite3.Connection) -> int:
     before = conn.total_changes
     conn.executemany(
         f"""
-        INSERT INTO {MA20_TABLE}
+        INSERT INTO {ma20_table}
         (open_time, close_time, close, ma20, updated_at)
         VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(open_time) DO UPDATE SET
@@ -175,32 +202,39 @@ def save_ma20(conn: sqlite3.Connection) -> int:
     return conn.total_changes - before
 
 
-def run(db_path: str, db_write_lock=None) -> tuple[int, int]:
+def run_interval(
+    db_path: str,
+    interval: str,
+    kline_table: str,
+    ma20_table: str,
+    interval_ms: int,
+    db_write_lock=None,
+) -> tuple[int, int]:
     lock = db_write_lock
     with sqlite3.connect(db_path, timeout=30) as conn:
         conn.execute("PRAGMA busy_timeout=30000;")
-        init_db(conn)
-        last_close_time = get_last_close_time(conn)
+        init_interval_db(conn, kline_table, ma20_table)
+        last_close_time = get_last_close_time(conn, kline_table)
 
     now_ms = int(time.time() * 1000)
-    latest_closed_close_time = get_latest_closed_close_time(now_ms)
+    latest_closed_close_time = get_latest_closed_close_time(now_ms, interval_ms)
     if last_close_time is not None and last_close_time >= latest_closed_close_time:
         if lock is None:
             with sqlite3.connect(db_path, timeout=30) as conn:
                 conn.execute("PRAGMA busy_timeout=30000;")
-                changed_ma20 = save_ma20(conn)
+                changed_ma20 = save_ma20(conn, kline_table, ma20_table)
         else:
             with lock:
                 with sqlite3.connect(db_path, timeout=30) as conn:
                     conn.execute("PRAGMA busy_timeout=30000;")
-                    changed_ma20 = save_ma20(conn)
-        print(f"✅ {SYMBOL} 15m up-to-date, ma20_changed={changed_ma20}")
+                    changed_ma20 = save_ma20(conn, kline_table, ma20_table)
+        print(f"✅ {SYMBOL} {interval} up-to-date, ma20_changed={changed_ma20}")
         return 0, changed_ma20
 
     start_time = last_close_time + 1 if last_close_time is not None else None
     all_klines = []
     while True:
-        klines = fetch_klines(start_time=start_time, limit=LIMIT)
+        klines = fetch_klines(start_time=start_time, limit=LIMIT, interval=interval)
         if not klines:
             break
         all_klines.extend(filter_closed_klines(klines))
@@ -212,61 +246,81 @@ def run(db_path: str, db_write_lock=None) -> tuple[int, int]:
     if lock is None:
         with sqlite3.connect(db_path, timeout=30) as conn:
             conn.execute("PRAGMA busy_timeout=30000;")
-            inserted = save_klines(conn, all_klines)
-            ma20_changed = save_ma20(conn)
+            inserted = save_klines(conn, all_klines, kline_table)
+            ma20_changed = save_ma20(conn, kline_table, ma20_table)
     else:
         with lock:
             with sqlite3.connect(db_path, timeout=30) as conn:
                 conn.execute("PRAGMA busy_timeout=30000;")
-                inserted = save_klines(conn, all_klines)
-                ma20_changed = save_ma20(conn)
+                inserted = save_klines(conn, all_klines, kline_table)
+                ma20_changed = save_ma20(conn, kline_table, ma20_table)
 
-    print(f"✅ {SYMBOL} 15m fetched={len(all_klines)}, inserted={inserted}, ma20_changed={ma20_changed}")
+    print(f"✅ {SYMBOL} {interval} fetched={len(all_klines)}, inserted={inserted}, ma20_changed={ma20_changed}")
     return inserted, ma20_changed
 
-def run_recent_backfill(db_path: str, hours: int = 4, db_write_lock=None) -> tuple[int, int]:
+
+def run(db_path: str, db_write_lock=None) -> tuple[int, int]:
+    total_inserted = 0
+    total_ma20_changed = 0
+    for interval, kline_table, ma20_table, interval_ms in INTERVAL_CONFIGS:
+        inserted, ma20_changed = run_interval(
+            db_path,
+            interval,
+            kline_table,
+            ma20_table,
+            interval_ms,
+            db_write_lock=db_write_lock,
+        )
+        total_inserted += inserted
+        total_ma20_changed += ma20_changed
+    return total_inserted, total_ma20_changed
+
+
+def run_recent_backfill_interval(
+    db_path: str,
+    interval: str,
+    kline_table: str,
+    ma20_table: str,
+    interval_ms: int,
+    hours: int = 4,
+    db_write_lock=None,
+) -> tuple[int, int]:
     lock = db_write_lock
     now_ms = int(time.time() * 1000)
-    latest_closed_close_time = get_latest_closed_close_time(now_ms)
-    earliest_open_time = ((now_ms - hours * 60 * 60_000) // INTERVAL_MS) * INTERVAL_MS
+    latest_closed_close_time = get_latest_closed_close_time(now_ms, interval_ms)
+    earliest_open_time = ((now_ms - hours * 60 * 60_000) // interval_ms) * interval_ms
 
     with sqlite3.connect(db_path, timeout=30) as conn:
         conn.execute("PRAGMA busy_timeout=30000;")
-        init_db(conn)
+        init_interval_db(conn, kline_table, ma20_table)
         existing_open_times = {
             int(row[0])
             for row in conn.execute(
                 f"""
                 SELECT open_time
-                FROM {KLINE_TABLE}
+                FROM {kline_table}
                 WHERE open_time >= ? AND close_time <= ?
                 """,
                 (earliest_open_time, latest_closed_close_time),
             ).fetchall()
         }
 
-    expected_open_times = set(range(earliest_open_time, latest_closed_close_time + 1, INTERVAL_MS))
+    expected_open_times = set(range(earliest_open_time, latest_closed_close_time + 1, interval_ms))
     missing_open_times = expected_open_times - existing_open_times
     if not missing_open_times:
-        writer = sqlite3.connect(db_path, timeout=30)
-        try:
-            writer.execute("PRAGMA busy_timeout=30000;")
-            if lock is None:
-                ma20_changed = save_ma20(writer)
-            else:
-                writer.close()
-                with lock:
-                    with sqlite3.connect(db_path, timeout=30) as conn:
-                        conn.execute("PRAGMA busy_timeout=30000;")
-                        ma20_changed = save_ma20(conn)
-                writer = None
-        finally:
-            if writer is not None:
-                writer.close()
-        print(f"✅ {SYMBOL} {INTERVAL} recent {hours}h backfill up-to-date, ma20_changed={ma20_changed}")
+        if lock is None:
+            with sqlite3.connect(db_path, timeout=30) as conn:
+                conn.execute("PRAGMA busy_timeout=30000;")
+                ma20_changed = save_ma20(conn, kline_table, ma20_table)
+        else:
+            with lock:
+                with sqlite3.connect(db_path, timeout=30) as conn:
+                    conn.execute("PRAGMA busy_timeout=30000;")
+                    ma20_changed = save_ma20(conn, kline_table, ma20_table)
+        print(f"✅ {SYMBOL} {interval} recent {hours}h backfill up-to-date, ma20_changed={ma20_changed}")
         return 0, ma20_changed
 
-    klines = fetch_klines(start_time=min(missing_open_times), limit=len(expected_open_times) + 2)
+    klines = fetch_klines(start_time=min(missing_open_times), limit=len(expected_open_times) + 2, interval=interval)
     target_klines = [
         k for k in filter_closed_klines(klines)
         if earliest_open_time <= int(k[0]) <= latest_closed_close_time
@@ -275,18 +329,36 @@ def run_recent_backfill(db_path: str, hours: int = 4, db_write_lock=None) -> tup
     if lock is None:
         with sqlite3.connect(db_path, timeout=30) as conn:
             conn.execute("PRAGMA busy_timeout=30000;")
-            inserted = save_klines(conn, target_klines)
-            ma20_changed = save_ma20(conn)
+            inserted = save_klines(conn, target_klines, kline_table)
+            ma20_changed = save_ma20(conn, kline_table, ma20_table)
     else:
         with lock:
             with sqlite3.connect(db_path, timeout=30) as conn:
                 conn.execute("PRAGMA busy_timeout=30000;")
-                inserted = save_klines(conn, target_klines)
-                ma20_changed = save_ma20(conn)
+                inserted = save_klines(conn, target_klines, kline_table)
+                ma20_changed = save_ma20(conn, kline_table, ma20_table)
 
     print(
-        f"✅ {SYMBOL} {INTERVAL} recent {hours}h backfill "
+        f"✅ {SYMBOL} {interval} recent {hours}h backfill "
         f"missing={len(missing_open_times)}, fetched={len(target_klines)}, "
         f"inserted={inserted}, ma20_changed={ma20_changed}"
     )
     return inserted, ma20_changed
+
+
+def run_recent_backfill(db_path: str, hours: int = 4, db_write_lock=None) -> tuple[int, int]:
+    total_inserted = 0
+    total_ma20_changed = 0
+    for interval, kline_table, ma20_table, interval_ms in INTERVAL_CONFIGS:
+        inserted, ma20_changed = run_recent_backfill_interval(
+            db_path,
+            interval,
+            kline_table,
+            ma20_table,
+            interval_ms,
+            hours=hours,
+            db_write_lock=db_write_lock,
+        )
+        total_inserted += inserted
+        total_ma20_changed += ma20_changed
+    return total_inserted, total_ma20_changed
