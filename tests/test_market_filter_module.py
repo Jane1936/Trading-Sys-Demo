@@ -42,12 +42,12 @@ def test_market_filter_allows_when_market_data_missing(tmp_path):
     assert saved == (1, "insufficient_market_data_allow_open")
 
 
-def test_market_filter_still_blocks_btc_siphon_with_valid_data(tmp_path):
+def test_market_filter_blocks_btc_siphon_above_half_percent_delta_gap(tmp_path):
     db_path = tmp_path / "klines.db"
     with sqlite3.connect(db_path) as conn:
         _init_source_tables(conn)
         _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100, 100, 100, 100])
-        _insert_rows(conn, collector.BTC_15M_TABLE, [100, 100, 100, 106])
+        _insert_rows(conn, collector.BTC_15M_TABLE, [100, 100, 100, 100.6])
 
     result = MarketFilterModule(db_path=str(db_path)).run_round(decision_round_ts=900_000, evaluated_at=900_001)
 
@@ -64,7 +64,7 @@ def test_market_filter_blocks_for_one_hour_after_trigger(tmp_path):
     with sqlite3.connect(db_path) as conn:
         _init_source_tables(conn)
         _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100, 100, 100, 100])
-        _insert_rows(conn, collector.BTC_15M_TABLE, [100, 100, 100, 106])
+        _insert_rows(conn, collector.BTC_15M_TABLE, [100, 100, 100, 100.6])
 
     triggered = module.run_round(decision_round_ts=900_000, evaluated_at=900_001)
 

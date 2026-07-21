@@ -874,7 +874,7 @@
           </div>
           <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
         </div>
-        <div class="collapse-hint">规则：分别读取 ALLUSDT 与 BTC 最近4条15分钟K线，使用最近第1条 close 和最近第4条 open 计算最近1小时涨幅 delta=(close-open)/open。若 BTC吸血：(BTC delta - ALLUSDT delta)&gt;5%，或大盘暴跌：ALLUSDT delta&lt;-3%，则从触发时刻起接下来1小时不允许新开仓。点击“展开全部”查看最近7天完整记录。</div>
+        <div class="collapse-hint">规则：分别读取 ALLUSDT 与 BTC 最近4条15分钟K线，使用最近第1条 close 和最近第4条 open 计算最近1小时涨幅 delta=(close-open)/open。若 BTC吸血：(BTC delta - ALLUSDT delta)&gt;0.5%，或大盘暴跌：ALLUSDT delta&lt;-3%，则从触发时刻起接下来1小时不允许新开仓。点击“展开全部”查看最近7天完整记录。</div>
       <div class="table-wrap">
         <table>
           <thead>
