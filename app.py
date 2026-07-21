@@ -41,6 +41,7 @@ from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
 from market_filter_module import MarketFilterModule
+from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import DynamicOpenThresholdModule
 from zombie_force_liquidation import ZombieForceLiquidationModule
 
@@ -329,6 +330,8 @@ def start_pre_safety_task() -> None:
     HoldingPositionScoringSystem(db_path=db_config.TRADING_DB_PATH).init_tables()
     market_filter = MarketFilterModule(db_path=db_config.MARKET_DB_PATH)
     market_filter.init_table()
+    add_permission = AddPositionPermissionModule(db_path=db_config.MARKET_DB_PATH)
+    add_permission.init_table()
     DynamicOpenThresholdModule(db_path=db_config.SCORING_DB_PATH).init_table()
 
     last_pre_safety_round_ts = None
@@ -376,8 +379,17 @@ def start_pre_safety_task() -> None:
                     )
                 except Exception as exc:
                     print(f"⚠️ market filter failed round={round_ts}: {exc}")
+                try:
+                    add_permission_result = add_permission.run_round(decision_round_ts=round_ts, evaluated_at=now_ms)
+                    print(
+                        f"➕ add-position permission round={round_ts} allow={add_permission_result.allow_add_positions} "
+                        f"allusdt_delta={add_permission_result.allusdt_delta} btc_delta={add_permission_result.btc_delta} "
+                        f"reason={add_permission_result.reason}"
+                    )
+                except Exception as exc:
+                    print(f"⚠️ add-position permission failed round={round_ts}: {exc}")
             else:
-                print(f"⏸️ market filter disabled round={round_ts}; skipping market filter")
+                print(f"⏸️ market filter disabled round={round_ts}; skipping market filter and add-position permission")
 
             if scoring_enabled:
                 try:
