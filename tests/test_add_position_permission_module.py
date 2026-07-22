@@ -150,3 +150,23 @@ def test_add_position_permission_non_hour_round_does_not_wait_for_1h_ma20_conver
 
     assert ready is True
     assert reason == "data_converged"
+
+
+def test_add_position_permission_hour_round_uses_data_closed_at_round_boundary(tmp_path):
+    db_path = tmp_path / "market.db"
+    with sqlite3.connect(db_path) as conn:
+        _init_source_tables(conn)
+        _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100, 100, 100, 100])
+        _insert_rows(conn, collector.BTC_15M_TABLE, [100, 100, 100, 100])
+        conn.execute(
+            f"""
+            INSERT INTO {allusdt_15m_ma20.H1_MA20_TABLE} (open_time, close_time, close, ma20, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (0, 3_599_999, 100, 100, 3_600_000),
+        )
+
+    ready, reason = AddPositionPermissionModule(db_path=str(db_path)).is_data_converged_for_round(3_600_000)
+
+    assert ready is True
+    assert reason == "data_converged"
