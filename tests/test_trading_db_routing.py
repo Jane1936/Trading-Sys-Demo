@@ -104,3 +104,22 @@ def test_scoring_worker_keeps_scoring_tables_in_scoring_db_and_holding_tables_in
     assert FakeOpenableSymbolModule.seen_paths == [scoring_db]
     assert FakeDynamicOpenThresholdModule.seen_paths == [scoring_db]
     assert FakeTradingOwnedModule.seen_paths == [trading_db, trading_db]
+
+
+def test_scoring_worker_deadline_is_ten_minutes():
+    assert app.SCORING_WORKER_DEADLINE_MS == 10 * 60_000
+
+
+def test_scoring_worker_should_stop_after_deadline():
+    assert app._scoring_worker_should_stop(
+        decision_round_ts=1,
+        deadline_ts=1_000,
+        stage="test",
+        now_ms=lambda: 1_000,
+    )
+    assert not app._scoring_worker_should_stop(
+        decision_round_ts=1,
+        deadline_ts=1_000,
+        stage="test",
+        now_ms=lambda: 999,
+    )
