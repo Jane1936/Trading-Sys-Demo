@@ -435,6 +435,7 @@ def start_pre_safety_task() -> None:
 
     last_pre_safety_round_ts = None
     last_scoring_started_round_ts = None
+    last_add_permission_round_ts = None
     active_scoring_process: multiprocessing.Process | None = None
     active_scoring_round_ts: int | None = None
     active_scoring_deadline_ts: int | None = None
@@ -478,15 +479,6 @@ def start_pre_safety_task() -> None:
                     )
                 except Exception as exc:
                     print(f"⚠️ market filter failed round={round_ts}: {exc}")
-                try:
-                    add_permission_result = add_permission.run_round(decision_round_ts=round_ts, evaluated_at=now_ms)
-                    print(
-                        f"➕ add-position permission round={round_ts} allow={add_permission_result.allow_add_positions} "
-                        f"allusdt_delta={add_permission_result.allusdt_delta} btc_delta={add_permission_result.btc_delta} "
-                        f"reason={add_permission_result.reason}"
-                    )
-                except Exception as exc:
-                    print(f"⚠️ add-position permission failed round={round_ts}: {exc}")
             else:
                 print(f"⏸️ market filter disabled round={round_ts}; skipping market filter and add-position permission")
 
@@ -503,6 +495,25 @@ def start_pre_safety_task() -> None:
                     print(f"⚠️ cooldown failed round={round_ts}: {exc}")
 
             last_pre_safety_round_ts = round_ts
+
+        if market_filter_enabled and last_add_permission_round_ts != round_ts:
+            try:
+                data_converged, convergence_reason = add_permission.is_data_converged_for_round(round_ts)
+                if data_converged:
+                    add_permission_result = add_permission.run_round(decision_round_ts=round_ts, evaluated_at=now_ms)
+                    last_add_permission_round_ts = round_ts
+                    print(
+                        f"➕ add-position permission round={round_ts} allow={add_permission_result.allow_add_positions} "
+                        f"allusdt_delta={add_permission_result.allusdt_delta} btc_delta={add_permission_result.btc_delta} "
+                        f"reason={add_permission_result.reason}"
+                    )
+                else:
+                    print(
+                        f"⏳ add-position permission round={round_ts} waiting for data convergence: "
+                        f"{convergence_reason}"
+                    )
+            except Exception as exc:
+                print(f"⚠️ add-position permission failed round={round_ts}: {exc}")
 
         if active_scoring_process is not None:
             if active_scoring_process.is_alive():

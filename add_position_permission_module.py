@@ -108,6 +108,41 @@ class AddPositionPermissionModule:
             """
         ).fetchall()
 
+    @staticmethod
+    def _is_hour_round(decision_round_ts: int) -> bool:
+        return int(decision_round_ts) % (60 * 60_000) == 0
+
+    @staticmethod
+    def _expected_closed_close_time(decision_round_ts: int) -> int:
+        return int(decision_round_ts) - 1
+
+    def _latest_close_time(self, conn: sqlite3.Connection, table_name: str) -> int | None:
+        row = conn.execute(
+            f"SELECT close_time FROM {table_name} ORDER BY close_time DESC LIMIT 1"
+        ).fetchone()
+        return int(row["close_time"]) if row else None
+
+    def is_data_converged_for_round(self, decision_round_ts: int) -> tuple[bool, str]:
+        """Return whether the market data required by an add-position round is ready."""
+        self.init_table()
+        round_ts = int(decision_round_ts)
+        expected_close_time = self._expected_closed_close_time(round_ts)
+        with self._connect() as conn:
+            allusdt_latest_close_time = self._latest_close_time(conn, allusdt_15m_ma20.KLINE_TABLE)
+            if allusdt_latest_close_time is None or allusdt_latest_close_time < expected_close_time:
+                return False, "waiting_allusdt_15m_convergence"
+
+            btc_latest_close_time = self._latest_close_time(conn, collector.BTC_15M_TABLE)
+            if btc_latest_close_time is None or btc_latest_close_time < expected_close_time:
+                return False, "waiting_btc_15m_convergence"
+
+            if self._is_hour_round(round_ts):
+                h1_ma20_latest_close_time = self._latest_close_time(conn, allusdt_15m_ma20.H1_MA20_TABLE)
+                if h1_ma20_latest_close_time is None or h1_ma20_latest_close_time < expected_close_time:
+                    return False, "waiting_allusdt_1h_ma20_convergence"
+
+        return True, "data_converged"
+
     def _latest_1h_ma20(self, conn: sqlite3.Connection) -> sqlite3.Row | None:
         return conn.execute(
             f"""
