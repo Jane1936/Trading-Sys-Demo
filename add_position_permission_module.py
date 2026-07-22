@@ -28,6 +28,9 @@ class AddPositionPermissionResult:
     btc_close: Optional[float]
     btc_delta: Optional[float]
     alt_outperform_btc: bool
+    allusdt_above_1h_ma20: bool
+    allusdt_1h_ma20_open_time: Optional[int]
+    allusdt_1h_ma20: Optional[float]
     allow_add_positions: bool
     reason: str
     evaluated_at: int
@@ -68,12 +71,18 @@ class AddPositionPermissionModule:
                         btc_close REAL,
                         btc_delta REAL,
                         alt_outperform_btc INTEGER NOT NULL,
+                        allusdt_above_1h_ma20 INTEGER NOT NULL DEFAULT 0,
+                        allusdt_1h_ma20_open_time INTEGER,
+                        allusdt_1h_ma20 REAL,
                         allow_add_positions INTEGER NOT NULL,
                         reason TEXT NOT NULL,
                         evaluated_at INTEGER NOT NULL
                     )
                     """
                 )
+                self._ensure_column(conn, "allusdt_above_1h_ma20", "INTEGER NOT NULL DEFAULT 0")
+                self._ensure_column(conn, "allusdt_1h_ma20_open_time", "INTEGER")
+                self._ensure_column(conn, "allusdt_1h_ma20", "REAL")
                 conn.execute(
                     f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_evaluated "
                     f"ON {self.TABLE_NAME}(evaluated_at DESC)"
@@ -82,6 +91,12 @@ class AddPositionPermissionModule:
     @staticmethod
     def decision_round_ts(now_ms: int | None = None) -> int:
         return MarketFilterModule.decision_round_ts(now_ms)
+
+    @classmethod
+    def _ensure_column(cls, conn: sqlite3.Connection, column_name: str, column_def: str) -> None:
+        existing_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({cls.TABLE_NAME})")}
+        if column_name not in existing_columns:
+            conn.execute(f"ALTER TABLE {cls.TABLE_NAME} ADD COLUMN {column_name} {column_def}")
 
     def _latest_four(self, conn: sqlite3.Connection, table_name: str) -> list[sqlite3.Row]:
         return conn.execute(
@@ -93,6 +108,16 @@ class AddPositionPermissionModule:
             """
         ).fetchall()
 
+    def _latest_1h_ma20(self, conn: sqlite3.Connection) -> sqlite3.Row | None:
+        return conn.execute(
+            f"""
+            SELECT open_time, ma20
+            FROM {allusdt_15m_ma20.H1_MA20_TABLE}
+            ORDER BY open_time DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
     def run_round(self, decision_round_ts: int | None = None, evaluated_at: int | None = None) -> AddPositionPermissionResult:
         self.init_table()
         round_ts = self.decision_round_ts() if decision_round_ts is None else int(decision_round_ts)
@@ -102,16 +127,29 @@ class AddPositionPermissionModule:
             btc_rows = self._latest_four(conn, collector.BTC_15M_TABLE)
             all_first, all_latest, all_open, all_close, all_delta = MarketFilterModule._delta(all_rows)
             btc_first, btc_latest, btc_open, btc_close, btc_delta = MarketFilterModule._delta(btc_rows)
-            if all_delta is None or btc_delta is None:
+            h1_ma20_row = self._latest_1h_ma20(conn)
+            h1_ma20_open_time = int(h1_ma20_row["open_time"]) if h1_ma20_row else None
+            h1_ma20 = float(h1_ma20_row["ma20"]) if h1_ma20_row else None
+            allusdt_above_1h_ma20 = all_close is not None and h1_ma20 is not None and all_close > h1_ma20
+            if all_delta is None or btc_delta is None or all_close is None:
                 alt_outperform = False
                 allow = False
                 reason = "insufficient_market_data_block_add_position"
+            elif h1_ma20 is None:
+                alt_outperform = False
+                allow = False
+                reason = "insufficient_allusdt_1h_ma20_block_add_position"
             else:
                 diff = btc_delta - all_delta
                 alt_outperform = diff < self.ALT_OUTPERFORM_THRESHOLD
-                allow = alt_outperform
-                reason = "alt_outperform_btc_allow_add_position" if allow else "alt_not_outperform_btc_block_add_position"
-            result = AddPositionPermissionResult(round_ts, all_first, all_latest, all_open, all_close, all_delta, btc_first, btc_latest, btc_open, btc_close, btc_delta, alt_outperform, allow, reason, evaluated_ms)
+                allow = alt_outperform and allusdt_above_1h_ma20
+                if allow:
+                    reason = "alt_outperform_btc_and_above_1h_ma20_allow_add_position"
+                elif not alt_outperform:
+                    reason = "alt_not_outperform_btc_block_add_position"
+                else:
+                    reason = "allusdt_not_above_1h_ma20_block_add_position"
+            result = AddPositionPermissionResult(round_ts, all_first, all_latest, all_open, all_close, all_delta, btc_first, btc_latest, btc_open, btc_close, btc_delta, alt_outperform, allusdt_above_1h_ma20, h1_ma20_open_time, h1_ma20, allow, reason, evaluated_ms)
             self._save(conn, result)
             return result
 
@@ -153,8 +191,8 @@ class AddPositionPermissionModule:
             INSERT INTO {self.TABLE_NAME}
             (decision_round_ts, allusdt_first_open_time, allusdt_latest_open_time, allusdt_open, allusdt_close, allusdt_delta,
              btc_first_open_time, btc_latest_open_time, btc_open, btc_close, btc_delta, alt_outperform_btc,
-             allow_add_positions, reason, evaluated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             allusdt_above_1h_ma20, allusdt_1h_ma20_open_time, allusdt_1h_ma20, allow_add_positions, reason, evaluated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(decision_round_ts) DO UPDATE SET
                 allusdt_first_open_time=excluded.allusdt_first_open_time,
                 allusdt_latest_open_time=excluded.allusdt_latest_open_time,
@@ -167,12 +205,16 @@ class AddPositionPermissionModule:
                 btc_close=excluded.btc_close,
                 btc_delta=excluded.btc_delta,
                 alt_outperform_btc=excluded.alt_outperform_btc,
+                allusdt_above_1h_ma20=excluded.allusdt_above_1h_ma20,
+                allusdt_1h_ma20_open_time=excluded.allusdt_1h_ma20_open_time,
+                allusdt_1h_ma20=excluded.allusdt_1h_ma20,
                 allow_add_positions=excluded.allow_add_positions,
                 reason=excluded.reason,
                 evaluated_at=excluded.evaluated_at
             """,
             (r.decision_round_ts, r.allusdt_first_open_time, r.allusdt_latest_open_time, r.allusdt_open, r.allusdt_close, r.allusdt_delta,
-             r.btc_first_open_time, r.btc_latest_open_time, r.btc_open, r.btc_close, r.btc_delta, int(r.alt_outperform_btc), int(r.allow_add_positions), r.reason, r.evaluated_at),
+             r.btc_first_open_time, r.btc_latest_open_time, r.btc_open, r.btc_close, r.btc_delta, int(r.alt_outperform_btc),
+             int(r.allusdt_above_1h_ma20), r.allusdt_1h_ma20_open_time, r.allusdt_1h_ma20, int(r.allow_add_positions), r.reason, r.evaluated_at),
         )
 
     @classmethod
@@ -183,6 +225,10 @@ class AddPositionPermissionModule:
             allusdt_open=row["allusdt_open"], allusdt_close=row["allusdt_close"], allusdt_delta=row["allusdt_delta"],
             btc_first_open_time=row["btc_first_open_time"], btc_latest_open_time=row["btc_latest_open_time"],
             btc_open=row["btc_open"], btc_close=row["btc_close"], btc_delta=row["btc_delta"],
-            alt_outperform_btc=bool(row["alt_outperform_btc"]), allow_add_positions=bool(row["allow_add_positions"]),
+            alt_outperform_btc=bool(row["alt_outperform_btc"]),
+            allusdt_above_1h_ma20=bool(row["allusdt_above_1h_ma20"]),
+            allusdt_1h_ma20_open_time=row["allusdt_1h_ma20_open_time"],
+            allusdt_1h_ma20=row["allusdt_1h_ma20"],
+            allow_add_positions=bool(row["allow_add_positions"]),
             reason=str(row["reason"]), evaluated_at=int(row["evaluated_at"]),
         )
