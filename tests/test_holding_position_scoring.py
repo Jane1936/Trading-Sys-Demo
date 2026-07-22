@@ -3,6 +3,7 @@ import tempfile
 from decimal import Decimal
 from pathlib import Path
 
+from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
 from holding_position_scoring import HoldingPositionScoringSystem, PositionIncreaseCheck
 from trading_experiment import TradingExperiment
 
@@ -1400,3 +1401,43 @@ def test_first_increase_rechecks_permission_before_order_and_skips_current_round
     assert records[0]["status"] == "skipped"
     assert "本轮禁止加仓" in records[0]["reason"]
     assert fake_account.signed_posts == []
+
+
+def test_increase_action_caps_margin_by_dynamic_threshold():
+    fake_account = PositionChangeHardTakeProfitAccountManager(refreshed_amount="132.5", refreshed_entry="10")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
+        TradingExperiment(db_path=db_path, account_manager=fake_account).init_tables()
+        DynamicAddPositionThresholdModule(db_path=db_path).init_table()
+        with sqlite3.connect(db_path) as conn:
+            for idx in range(10):
+                conn.execute(
+                    f"""
+                    INSERT INTO {TradingExperiment.TRADES_TABLE}
+                    (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt,
+                     required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity,
+                     notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation, reason,
+                     created_at, updated_at)
+                    VALUES (?, ?, 'BUY', 'opened', 80, 5, '100', '20', '5000', '50', ?, '1', '30', '120', '90', '', 'test', ?, ?)
+                    """,
+                    (f"S{idx}", 3_000, str(100 + idx), 1_000 + idx, 1_000 + idx),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO partial_take_profit_records
+                    (symbol, checked_at, side, position_amt, take_profit_quantity, entry_price,
+                     account_equity_usdt, r_usdt, trigger_r_usdt, unrealized_pnl,
+                     take_profit_order_id, status, reason, raw_response)
+                    VALUES (?, 2000, 'SELL', '1', '0.3', ?, '5000', '50', '100', '125', 'oid', 'submitted', 'test', '')
+                    """,
+                    (f"S{idx}", str(100 + idx)),
+                )
+        check = PositionIncreaseCheck("BANK", 3_000, "10", "5000", "50", "100", "70", "73", "", "1000", True, "第一次加仓", "first_increase_conditions_met", 4_000)
+        record = scoring._execute_increase_action({"symbol": "BANKUSDT", "positionAmt": "100", "markPrice": "10", "entryPrice": "10", "leverage": "5"}, check, 4_000)
+
+    assert record.status == "submitted"
+    assert record.required_margin_usdt == "13"
+    assert any(endpoint == "/fapi/v1/order" and params.get("quantity") == "6.5" for endpoint, params in fake_account.signed_posts)
+    assert "dynamic_increase_threshold=1.3R" in record.reason

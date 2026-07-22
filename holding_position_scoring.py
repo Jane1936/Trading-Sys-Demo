@@ -22,6 +22,7 @@ from openable_symbol_module import OpenableSymbol
 from trading_experiment import TradingExperiment
 from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
 from add_position_permission_module import AddPositionPermissionModule
+from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
 
 
 @dataclass(frozen=True)
@@ -202,6 +203,7 @@ class HoldingPositionScoringSystem:
     REDUCTION_TAG_MEDIUM_DANGER_PRICE_CONFIRMATION = "中危险区+价格确认"
     REDUCTION_TAG_DEEP_WEAKNESS = "深度弱势"
     REDUCTION_TAG_DEEP_WEAKNESS_TRIGGERED = "已触发深度弱势"
+    DEFAULT_INCREASE_THRESHOLD_R_MULTIPLE = Decimal("2.3")
 
     def __init__(
         self,
@@ -1458,9 +1460,6 @@ class HoldingPositionScoringSystem:
         try:
             helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
             exchange_info = helper._exchange_symbol_info(exchange_symbol)
-            increased_quantity = self._floor_to_step(original_quantity * Decimal("0.5"), exchange_info["step_size"])
-            if increased_quantity <= 0:
-                raise RuntimeError("increase_market_quantity_rounded_to_zero")
             current_price = self._decimal_from(check.current_price, Decimal("0"))
             if current_price <= 0:
                 current_price = self._current_symbol_price(exchange_symbol, position)
@@ -1469,12 +1468,20 @@ class HoldingPositionScoringSystem:
                 raise RuntimeError("increase_current_price_missing")
             if leverage <= 0:
                 raise RuntimeError("increase_position_leverage_missing")
-            required_margin = increased_quantity * current_price / leverage
+            half_position_margin = original_quantity * current_price * Decimal("0.5") / leverage
+            threshold_r_multiple = self._current_increase_threshold_r_multiple(check.decision_round_ts, now_ms)
+            one_r = helper._fetch_experiment_usdt_equity() * Decimal("0.01")
+            threshold_margin = one_r * threshold_r_multiple
+            required_margin = min(half_position_margin, threshold_margin)
+            reason_parts.append(f"dynamic_increase_threshold={self._fmt_decimal(threshold_r_multiple)}R; required_margin=min(half_position_50pct_margin={self._fmt_decimal(half_position_margin)}, threshold_margin={self._fmt_decimal(threshold_margin)})")
+            increased_quantity = self._floor_to_step(required_margin * leverage / current_price, exchange_info["step_size"])
+            if increased_quantity <= 0:
+                raise RuntimeError("increase_market_quantity_rounded_to_zero")
             account = self.account_manager._signed_get("/fapi/v3/account")
             if not isinstance(account, dict):
                 raise RuntimeError("Unexpected Binance account response format")
             available_balance = self._decimal_from(account.get("availableBalance"), Decimal("0"))
-            account_equity = helper._fetch_experiment_usdt_equity()
+            account_equity = one_r / Decimal("0.01")
             latest_positions = helper._fetch_and_store_positions()
             reserved_margin_budget = helper._reserved_margin_from_positions(latest_positions)
             margin_budget_limit = helper._margin_budget_limit(account_equity, latest_positions)
@@ -1556,6 +1563,25 @@ class HoldingPositionScoringSystem:
         finally:
             lock_manager.release(lock_handle)
         return PositionIncreaseRecord(0, check.symbol, check.decision_round_ts, self.INCREASE_TAG_FIRST, check.current_price, check.unrealized_pnl, check.one_r_usdt, check.latest_total_score, check.previous_total_score, check.latest_reduction_price, status, "; ".join(reason_parts), now_ms, self._fmt_decimal(original_quantity), self._fmt_decimal(increased_quantity), self._fmt_decimal(required_margin), self._fmt_decimal(available_experiment_usdt), market_order_id, raw_response)
+
+
+    def _current_increase_threshold_r_multiple(self, decision_round_ts: int, evaluated_at: int | None = None) -> Decimal:
+        """Return this round's dynamic add-position margin cap in R multiples."""
+        try:
+            result = DynamicAddPositionThresholdModule(self.db_path).run_round(
+                decision_round_ts=decision_round_ts, evaluated_at=evaluated_at
+            )
+            success_rate = result.success_rate
+        except Exception:
+            success_rate = None
+        if success_rate is None:
+            return self.DEFAULT_INCREASE_THRESHOLD_R_MULTIPLE
+        rate = Decimal(str(success_rate))
+        if rate > Decimal("0.4"):
+            return Decimal("1.3")
+        if rate >= Decimal("0.2"):
+            return Decimal("1.8")
+        return self.DEFAULT_INCREASE_THRESHOLD_R_MULTIPLE
 
     def _save_increase_check(self, check: PositionIncreaseCheck) -> None:
         with self._connect() as conn:

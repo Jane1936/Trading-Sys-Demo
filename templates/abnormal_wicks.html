@@ -921,16 +921,16 @@
         <div class="symbol-strip collapsible-header">
           <div>
             <div><strong>动态加仓阈值（每15分钟执行）</strong></div>
-            <div class="muted">只显示最近7天内记录。统计最近40笔新开仓单中触发过分批止盈规则的比例；默认折叠，仅展示最新 10 条。</div>
+            <div class="muted">只显示最近7天内记录。统计最近40笔新开仓单中触发过分批止盈规则的比例，并映射本轮加仓阈值；默认折叠，仅展示最新 10 条。</div>
           </div>
           <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
         </div>
-        <div class="collapse-hint">规则：读取交易实验交易记录中最近40笔 status=opened 的新开仓单；若分批止盈卖出记录存在同 symbol、同 entry_price、checked_at 不早于开仓时间且 status=submitted 的记录，则计为曾触发分批止盈规则。2R成功率 = 触发笔数 / 样本笔数。</div>
+        <div class="collapse-hint">规则：读取交易实验交易记录中最近40笔 status=opened 的新开仓单；若分批止盈卖出记录存在同 symbol、同 entry_price、checked_at 不早于开仓时间且 status=submitted 的记录，则计为曾触发分批止盈规则。2R成功率 = 触发笔数 / 样本笔数。基础阈值默认 2.3R；若 2R成功率 > 40%，本轮加仓阈值为 1.3R；若 20% <= 2R成功率 <= 40%，阈值为 1.8R；若 2R成功率 < 20% 或暂无样本，阈值为 2.3R。执行第一次加仓且允许加仓时，加仓保证金 = min(当前持仓50%对应保证金，本轮加仓阈值)，杠杆沿用当前持仓。</div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>决策轮次</th><th>执行时间</th><th>2R成功率</th><th>触发笔数</th><th>样本笔数</th><th>样本最近开仓</th><th>样本最早开仓</th><th>原因</th>
+                <th>决策轮次</th><th>执行时间</th><th>2R成功率</th><th>本轮加仓阈值</th><th>触发笔数</th><th>样本笔数</th><th>样本最近开仓</th><th>样本最早开仓</th><th>原因</th>
               </tr>
             </thead>
             <tbody>
@@ -939,6 +939,7 @@
                   <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
                   <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
                   <td>{{ '%.2f%%'|format(row.success_rate * 100) if row.success_rate is not none else '-' }}</td>
+                  <td>{{ '%.1fR'|format(row.threshold_r_multiple) }}</td>
                   <td>{{ row.success_count }}</td>
                   <td>{{ row.sample_size }}</td>
                   <td>{{ row.latest_trade_created_at|fmt_ms_datetime if row.latest_trade_created_at else '-' }}</td>
@@ -946,7 +947,7 @@
                   <td>{{ row.reason }}</td>
                 </tr>
               {% else %}
-                <tr><td colspan="8" class="muted">暂无动态加仓阈值执行结果。</td></tr>
+                <tr><td colspan="9" class="muted">暂无动态加仓阈值执行结果。</td></tr>
               {% endfor %}
             </tbody>
           </table>
