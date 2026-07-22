@@ -34,6 +34,7 @@ from trading_experiment import TradingExperiment
 from market_filter_module import MarketFilterModule
 from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import DynamicOpenThresholdModule
+from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
 from zombie_force_liquidation import ZombieForceLiquidationModule
 from sqlite_recovery import (
     ensure_sqlite_database_usable,
@@ -953,6 +954,8 @@ def abnormal_wicks():
     market_filter_results = load_module("市场行情过滤", lambda: market_filter.recent_results(limit=100, days=7), [])
     add_position_permission = AddPositionPermissionModule(db_path=_market_db_path())
     add_position_permission_results = load_module("加仓权限", lambda: add_position_permission.recent_results(limit=100, days=7), [])
+    dynamic_add_position_threshold = DynamicAddPositionThresholdModule(db_path=_trading_db_path())
+    dynamic_add_position_threshold_results = load_module("动态加仓阈值", lambda: dynamic_add_position_threshold.recent_results(limit=100, days=7), [])
     dynamic_open_threshold = DynamicOpenThresholdModule(db_path=_scoring_db_path())
     dynamic_open_threshold_results = load_module("动态开仓门槛", lambda: dynamic_open_threshold.recent_results(limit=100, days=7), [])
     open_block_notice = _current_open_block_notice(
@@ -1078,6 +1081,7 @@ def abnormal_wicks():
         openable_min_total_score=openable_min_total_score,
         market_filter_results=market_filter_results,
         add_position_permission_results=add_position_permission_results,
+        dynamic_add_position_threshold_results=dynamic_add_position_threshold_results,
         dynamic_open_threshold_results=dynamic_open_threshold_results,
         open_block_notice=open_block_notice,
         trading_trade_records=trading_trade_records,

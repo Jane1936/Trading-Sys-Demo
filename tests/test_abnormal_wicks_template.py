@@ -385,3 +385,11 @@ def test_openable_section_highlights_current_round_open_block_notice():
     table_index = template.index("openable_symbols", text_index)
 
     assert notice_index < text_index < table_index
+
+
+def test_market_filter_includes_dynamic_add_position_threshold_ui():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    section_index = template.index('id="tab-market-filter"')
+    module_index = template.index("动态加仓阈值（每15分钟执行）", section_index)
+    assert "2R成功率 = 触发笔数 / 样本笔数" in template[module_index:]
+    assert "dynamic_add_position_threshold_results" in template[module_index:]
