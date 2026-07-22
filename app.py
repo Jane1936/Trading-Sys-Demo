@@ -12,7 +12,7 @@ import os
 import sqlite3
 import threading
 import time
-from typing import Iterable, List
+from typing import Callable, Iterable, List
 
 import collector
 import db_config
@@ -141,17 +141,42 @@ def run_first_experiment_after_openable_round(
         )
 
 
+SCORING_WORKER_DEADLINE_MS = 10 * 60_000
+
+
+def _scoring_worker_should_stop(
+    *,
+    decision_round_ts: int,
+    deadline_ts: int | None,
+    stage: str,
+    now_ms: Callable[[], int] | None = None,
+) -> bool:
+    """Return True when a scoring worker should stop at a safe checkpoint."""
+    if deadline_ts is None:
+        return False
+    clock = now_ms or (lambda: int(time.time() * 1000))
+    current_ts = clock()
+    if current_ts < deadline_ts:
+        return False
+    print(
+        f"⏱️ scoring worker stopping safely round={decision_round_ts} "
+        f"stage={stage} now={current_ts} deadline={deadline_ts}"
+    )
+    return True
+
+
 def run_scoring_round_worker(
     db_path: str,
     decision_round_ts: int,
     symbols: List[str],
     abnormal_symbols: List[str],
     evaluated_at: int,
+    deadline_ts: int | None = None,
 ) -> None:
     """Run one scoring round in an isolated process.
 
-    The parent process owns scheduling and may terminate this worker when the
-    round deadline is reached, so stale rounds do not block later decisions.
+    The parent process owns scheduling, but the child exits only at explicit safe
+    checkpoints so SQLite writes are not interrupted by forced termination.
     """
     scoring = ScoringSystem(db_path=db_path)
     scoring.init_table()
@@ -163,6 +188,13 @@ def run_scoring_round_worker(
     holding_scoring.init_tables()
     trailing_reduction = TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH)
     trailing_reduction.init_tables()
+
+    if _scoring_worker_should_stop(
+        decision_round_ts=decision_round_ts,
+        deadline_ts=deadline_ts,
+        stage="before_ma20_readiness",
+    ):
+        return
 
     readiness = scoring.wait_for_15m_ma20_readiness_for_round(
         decision_round_ts=decision_round_ts,
@@ -188,6 +220,13 @@ def run_scoring_round_worker(
             f"missing_symbols={missing_preview}"
         )
 
+    if _scoring_worker_should_stop(
+        decision_round_ts=decision_round_ts,
+        deadline_ts=deadline_ts,
+        stage="before_score_round",
+    ):
+        return
+
     scored = scoring.score_round(
         decision_round_ts=decision_round_ts,
         all_symbols=readiness.ready_symbols,
@@ -199,7 +238,20 @@ def run_scoring_round_worker(
         f"abnormal={len(set(abnormal_symbols))} scored={len(scored)}"
     )
 
+    if _scoring_worker_should_stop(
+        decision_round_ts=decision_round_ts,
+        deadline_ts=deadline_ts,
+        stage="after_score_round",
+    ):
+        return
+
     try:
+        if _scoring_worker_should_stop(
+            decision_round_ts=decision_round_ts,
+            deadline_ts=deadline_ts,
+            stage="before_holding_scoring",
+        ):
+            return
         holding_result = holding_scoring.run_round(decision_round_ts=decision_round_ts)
         print(
             f"📊 holding scoring round={decision_round_ts} "
@@ -209,6 +261,12 @@ def run_scoring_round_worker(
             f"reduction_checked={holding_result.get('reduction_checked', 0)} "
             f"reduction_triggered={holding_result.get('reduction_triggered', 0)}"
         )
+        if _scoring_worker_should_stop(
+            decision_round_ts=decision_round_ts,
+            deadline_ts=deadline_ts,
+            stage="before_trailing_reduction",
+        ):
+            return
         trailing_reduction_result = trailing_reduction.run_round(decision_round_ts=decision_round_ts)
         print(
             f"🧭 trailing reduction round={decision_round_ts} "
@@ -219,6 +277,13 @@ def run_scoring_round_worker(
         )
     except Exception as exc:
         print(f"⚠️ holding scoring failed round={decision_round_ts}: {exc}")
+
+    if _scoring_worker_should_stop(
+        decision_round_ts=decision_round_ts,
+        deadline_ts=deadline_ts,
+        stage="before_dynamic_threshold",
+    ):
+        return
 
     dynamic_threshold_result = dynamic_open_threshold.run_round(
         decision_round_ts=decision_round_ts, evaluated_at=evaluated_at
@@ -251,6 +316,13 @@ def run_scoring_round_worker(
             f"{market_filter_result.reason}"
         )
 
+    if _scoring_worker_should_stop(
+        decision_round_ts=decision_round_ts,
+        deadline_ts=deadline_ts,
+        stage="before_openable",
+    ):
+        return
+
     openable_symbols = openable.run_round(
         decision_round_ts=decision_round_ts,
         evaluated_at=evaluated_at,
@@ -263,6 +335,13 @@ def run_scoring_round_worker(
         f"🚪 openable round={decision_round_ts} candidates={len(openable_symbols)} "
         f"qualified={qualified_openable_count}"
     )
+
+    if _scoring_worker_should_stop(
+        decision_round_ts=decision_round_ts,
+        deadline_ts=deadline_ts,
+        stage="before_first_experiment",
+    ):
+        return
 
     run_first_experiment_after_openable_round(openable_symbols, decision_round_ts)
 
@@ -433,18 +512,8 @@ def start_pre_safety_task() -> None:
                 ):
                     print(
                         f"⏱️ scoring round={active_scoring_round_ts} exceeded deadline "
-                        f"deadline={active_scoring_deadline_ts}; terminating stale worker"
+                        f"deadline={active_scoring_deadline_ts}; waiting for safe worker exit"
                     )
-                    active_scoring_process.terminate()
-                    active_scoring_process.join(timeout=5)
-                    if active_scoring_process.is_alive():
-                        print(
-                            f"⏱️ scoring round={active_scoring_round_ts} did not terminate gracefully; killing worker"
-                        )
-                        active_scoring_process.kill()
-                        active_scoring_process.join(timeout=5)
-                    active_scoring_process = None
-                    active_scoring_round_ts = None
                     active_scoring_deadline_ts = None
             else:
                 active_scoring_process.join(timeout=0)
@@ -469,7 +538,7 @@ def start_pre_safety_task() -> None:
                 _, abnormal_symbols = module.get_latest_round_abnormal_symbols(
                     decision_round_ts=round_ts
                 )
-                active_scoring_deadline_ts = round_ts + round_ms
+                active_scoring_deadline_ts = round_ts + SCORING_WORKER_DEADLINE_MS
                 active_scoring_round_ts = round_ts
                 active_scoring_process = multiprocessing.Process(
                     target=run_scoring_round_worker,
@@ -479,6 +548,7 @@ def start_pre_safety_task() -> None:
                         list(symbols),
                         list(abnormal_symbols),
                         now_ms,
+                        active_scoring_deadline_ts,
                     ),
                     name=f"scoring-round-{round_ts}",
                 )
