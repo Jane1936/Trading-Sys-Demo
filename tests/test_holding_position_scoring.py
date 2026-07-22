@@ -1348,3 +1348,55 @@ def test_reduction_recreates_stop_loss_even_when_hard_take_profit_recreate_fails
     assert "stop_loss_recreated" in records[0]["reason"]
     assert any(endpoint == "/fapi/v1/algoOrder" and params.get("type") == "STOP" and params.get("quantity") == "1" for endpoint, params in fake_account.signed_posts)
     assert errors[0].operation == "holding_reduction:hard_take_profit_recreate"
+
+
+def test_first_increase_rechecks_permission_before_order_and_skips_current_round(monkeypatch):
+    class BlockingPermissionModule:
+        calls = []
+
+        def __init__(self, db_path):
+            self.db_path = db_path
+
+        def ensure_round_result(self, decision_round_ts, evaluated_at=None):
+            BlockingPermissionModule.calls.append((decision_round_ts, evaluated_at))
+
+            class Result:
+                allow_add_positions = False
+
+            return Result()
+
+    fake_account = FakeAccountManager()
+    monkeypatch.setattr("holding_position_scoring.AddPositionPermissionModule", BlockingPermissionModule)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
+        check = PositionIncreaseCheck(
+            symbol="BANK",
+            decision_round_ts=3000,
+            current_price="10",
+            account_equity_usdt="5000",
+            one_r_usdt="50",
+            unrealized_pnl="70",
+            latest_total_score="70",
+            previous_total_score="72",
+            latest_reduction_price="",
+            open_trade_created_at="1000",
+            triggered=True,
+            tag="第一次加仓",
+            reason="first_increase_conditions_met",
+            checked_at=4000,
+        )
+
+        records_count = scoring._record_increase_actions(
+            [check],
+            positions=[{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "10", "unRealizedProfit": "70", "leverage": "5", "entryPrice": "7"}],
+            now_ms=5000,
+        )
+        records = scoring.recent_increase_records()
+
+    assert BlockingPermissionModule.calls == [(3000, 5000)]
+    assert records_count == 1
+    assert records[0]["status"] == "skipped"
+    assert "本轮禁止加仓" in records[0]["reason"]
+    assert fake_account.signed_posts == []

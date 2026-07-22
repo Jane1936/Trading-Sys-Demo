@@ -1272,7 +1272,6 @@ class HoldingPositionScoringSystem:
         if not self._has_total_scores_for_round(round_ts):
             return []
         now_ms = checked_at if checked_at is not None else int(time.time() * 1000)
-        add_permission = AddPositionPermissionModule(db_path=db_config.MARKET_DB_PATH).ensure_round_result(round_ts, evaluated_at=now_ms)
         active_positions = positions if positions is not None else self._active_positions()
         equity = TradingExperiment(self.db_path, account_manager=self.account_manager)._fetch_experiment_usdt_equity()
         one_r = equity * Decimal("0.01")
@@ -1283,13 +1282,6 @@ class HoldingPositionScoringSystem:
             if not symbol or amount == 0:
                 continue
             check = self._evaluate_increase_rules(position, symbol, round_ts, equity, one_r, now_ms)
-            if not add_permission.allow_add_positions and check.triggered:
-                check = PositionIncreaseCheck(
-                    check.symbol, check.decision_round_ts, check.current_price, check.account_equity_usdt,
-                    check.one_r_usdt, check.unrealized_pnl, check.latest_total_score, check.previous_total_score,
-                    check.latest_reduction_price, check.open_trade_created_at, False, "",
-                    f"add_position_permission_blocked: {add_permission.reason}", check.checked_at,
-                )
             self._save_increase_check(check)
             checks.append(check)
         return checks
@@ -1421,14 +1413,30 @@ class HoldingPositionScoringSystem:
         active_positions = positions if positions is not None else self._active_positions()
         created_at = now_ms if now_ms is not None else int(time.time() * 1000)
         records = 0
+        add_permission_module = AddPositionPermissionModule(db_path=db_config.MARKET_DB_PATH)
+        permission_cache: dict[int, bool] = {}
         for check in checks:
             if not check.triggered or self._has_increase_record(check.symbol, check.decision_round_ts):
                 continue
-            position = next((p for p in active_positions if self._base_symbol(str(p.get("symbol", ""))) == check.symbol), None)
-            record = self._execute_increase_action(position, check, created_at) if position else PositionIncreaseRecord(0, check.symbol, check.decision_round_ts, self.INCREASE_TAG_FIRST, check.current_price, check.unrealized_pnl, check.one_r_usdt, check.latest_total_score, check.previous_total_score, check.latest_reduction_price, "failed", f"{check.reason}; increase_position_missing", created_at)
+            if check.decision_round_ts not in permission_cache:
+                permission_cache[check.decision_round_ts] = add_permission_module.ensure_round_result(
+                    check.decision_round_ts, evaluated_at=created_at
+                ).allow_add_positions
+            if not permission_cache[check.decision_round_ts]:
+                record = self._skipped_increase_record(check, created_at, "本轮禁止加仓")
+            else:
+                position = next((p for p in active_positions if self._base_symbol(str(p.get("symbol", ""))) == check.symbol), None)
+                record = self._execute_increase_action(position, check, created_at) if position else PositionIncreaseRecord(0, check.symbol, check.decision_round_ts, self.INCREASE_TAG_FIRST, check.current_price, check.unrealized_pnl, check.one_r_usdt, check.latest_total_score, check.previous_total_score, check.latest_reduction_price, "failed", f"{check.reason}; increase_position_missing", created_at)
             self._save_increase_record(record)
             records += 1
         return records
+
+    def _skipped_increase_record(self, check: PositionIncreaseCheck, created_at: int, reason: str) -> PositionIncreaseRecord:
+        return PositionIncreaseRecord(
+            0, check.symbol, check.decision_round_ts, self.INCREASE_TAG_FIRST, check.current_price,
+            check.unrealized_pnl, check.one_r_usdt, check.latest_total_score, check.previous_total_score,
+            check.latest_reduction_price, "skipped", f"{check.reason}; {reason}", created_at,
+        )
 
     def _execute_increase_action(self, position: dict[str, Any], check: PositionIncreaseCheck, now_ms: int) -> PositionIncreaseRecord:
         amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
