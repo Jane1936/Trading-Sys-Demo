@@ -23,6 +23,7 @@ class DynamicAddPositionThresholdResult:
     sample_size: int
     success_count: int
     success_rate: float | None
+    threshold_r_multiple: float
     latest_trade_created_at: int | None
     earliest_trade_created_at: int | None
     evaluated_at: int
@@ -33,6 +34,7 @@ class DynamicAddPositionThresholdModule:
     TABLE_NAME = "dynamic_add_position_threshold_rounds"
     ROUND_MS = 15 * 60_000
     SAMPLE_LIMIT = 40
+    DEFAULT_THRESHOLD_R_MULTIPLE = 2.3
 
     def __init__(self, db_path: str = db_config.TRADING_DB_PATH) -> None:
         self.db_path = db_path
@@ -58,6 +60,7 @@ class DynamicAddPositionThresholdModule:
                         sample_size INTEGER NOT NULL,
                         success_count INTEGER NOT NULL,
                         success_rate REAL,
+                        threshold_r_multiple REAL NOT NULL DEFAULT 2.3,
                         latest_trade_created_at INTEGER,
                         earliest_trade_created_at INTEGER,
                         evaluated_at INTEGER NOT NULL,
@@ -65,6 +68,9 @@ class DynamicAddPositionThresholdModule:
                     )
                     """
                 )
+                columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.TABLE_NAME})").fetchall()}
+                if "threshold_r_multiple" not in columns:
+                    conn.execute(f"ALTER TABLE {self.TABLE_NAME} ADD COLUMN threshold_r_multiple REAL NOT NULL DEFAULT 2.3")
                 conn.execute(
                     f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_evaluated "
                     f"ON {self.TABLE_NAME}(evaluated_at DESC)"
@@ -109,12 +115,14 @@ class DynamicAddPositionThresholdModule:
             sample_size = int(rows["sample_size"] or 0)
             success_count = int(rows["success_count"] or 0)
             success_rate = (success_count / sample_size) if sample_size else None
+            threshold_r_multiple = self.threshold_r_multiple_for_success_rate(success_rate)
             reason = "sampled_latest_40_opened_trades" if sample_size else "no_opened_trades"
             result = DynamicAddPositionThresholdResult(
                 round_ts,
                 sample_size,
                 success_count,
                 success_rate,
+                threshold_r_multiple,
                 int(rows["latest_trade_created_at"]) if rows["latest_trade_created_at"] is not None else None,
                 int(rows["earliest_trade_created_at"]) if rows["earliest_trade_created_at"] is not None else None,
                 evaluated_ms,
@@ -127,18 +135,19 @@ class DynamicAddPositionThresholdModule:
         conn.execute(
             f"""
             INSERT INTO {self.TABLE_NAME}
-            (decision_round_ts, sample_size, success_count, success_rate, latest_trade_created_at, earliest_trade_created_at, evaluated_at, reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (decision_round_ts, sample_size, success_count, success_rate, threshold_r_multiple, latest_trade_created_at, earliest_trade_created_at, evaluated_at, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(decision_round_ts) DO UPDATE SET
                 sample_size=excluded.sample_size,
                 success_count=excluded.success_count,
                 success_rate=excluded.success_rate,
+                threshold_r_multiple=excluded.threshold_r_multiple,
                 latest_trade_created_at=excluded.latest_trade_created_at,
                 earliest_trade_created_at=excluded.earliest_trade_created_at,
                 evaluated_at=excluded.evaluated_at,
                 reason=excluded.reason
             """,
-            (r.decision_round_ts, r.sample_size, r.success_count, r.success_rate, r.latest_trade_created_at, r.earliest_trade_created_at, r.evaluated_at, r.reason),
+            (r.decision_round_ts, r.sample_size, r.success_count, r.success_rate, r.threshold_r_multiple, r.latest_trade_created_at, r.earliest_trade_created_at, r.evaluated_at, r.reason),
         )
 
     def recent_results(self, limit: int = 100, days: int | None = None, now_ms: int | None = None) -> list[DynamicAddPositionThresholdResult]:
@@ -157,6 +166,16 @@ class DynamicAddPositionThresholdModule:
             ).fetchall()
             return [self._from_row(row) for row in rows]
 
+    @classmethod
+    def threshold_r_multiple_for_success_rate(cls, success_rate: float | None) -> float:
+        if success_rate is None:
+            return cls.DEFAULT_THRESHOLD_R_MULTIPLE
+        if success_rate > 0.4:
+            return 1.3
+        if success_rate >= 0.2:
+            return 1.8
+        return cls.DEFAULT_THRESHOLD_R_MULTIPLE
+
     @staticmethod
     def _from_row(row: sqlite3.Row) -> DynamicAddPositionThresholdResult:
         return DynamicAddPositionThresholdResult(
@@ -164,6 +183,7 @@ class DynamicAddPositionThresholdModule:
             sample_size=int(row["sample_size"]),
             success_count=int(row["success_count"]),
             success_rate=float(row["success_rate"]) if row["success_rate"] is not None else None,
+            threshold_r_multiple=float(row["threshold_r_multiple"]),
             latest_trade_created_at=int(row["latest_trade_created_at"]) if row["latest_trade_created_at"] is not None else None,
             earliest_trade_created_at=int(row["earliest_trade_created_at"]) if row["earliest_trade_created_at"] is not None else None,
             evaluated_at=int(row["evaluated_at"]),

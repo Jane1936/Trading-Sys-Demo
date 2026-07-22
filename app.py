@@ -484,7 +484,8 @@ def start_pre_safety_task() -> None:
                     print(
                         f"📈 dynamic add-position threshold round={round_ts} "
                         f"success_rate={dynamic_add_result.success_rate} "
-                        f"success={dynamic_add_result.success_count}/{dynamic_add_result.sample_size}"
+                        f"success={dynamic_add_result.success_count}/{dynamic_add_result.sample_size} "
+                        f"threshold={dynamic_add_result.threshold_r_multiple}R"
                     )
                 except Exception as exc:
                     print(f"⚠️ market filter failed round={round_ts}: {exc}")
