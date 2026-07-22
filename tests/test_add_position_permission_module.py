@@ -22,18 +22,31 @@ def _insert_rows(conn, table, closes):
         )
 
 
-def test_add_position_permission_allows_when_alt_outperforms_btc(tmp_path):
+def _insert_h1_ma20(conn, ma20):
+    conn.execute(
+        f"""
+        INSERT INTO {allusdt_15m_ma20.H1_MA20_TABLE} (open_time, close_time, close, ma20, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (3_600_000, 7_199_999, ma20, ma20, 7_200_000),
+    )
+
+
+def test_add_position_permission_allows_when_all_conditions_pass(tmp_path):
     db_path = tmp_path / "market.db"
     with sqlite3.connect(db_path) as conn:
         _init_source_tables(conn)
         _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100, 100, 100, 101])
         _insert_rows(conn, collector.BTC_15M_TABLE, [100, 100, 100, 100])
+        _insert_h1_ma20(conn, 100)
 
     result = AddPositionPermissionModule(db_path=str(db_path)).run_round(decision_round_ts=900_000, evaluated_at=900_001)
 
     assert result.allow_add_positions is True
     assert result.alt_outperform_btc is True
-    assert result.reason == "alt_outperform_btc_allow_add_position"
+    assert result.allusdt_above_1h_ma20 is True
+    assert result.allusdt_1h_ma20 == 100
+    assert result.reason == "alt_outperform_btc_and_above_1h_ma20_allow_add_position"
 
 
 def test_add_position_permission_blocks_without_alt_outperformance(tmp_path):
@@ -42,12 +55,29 @@ def test_add_position_permission_blocks_without_alt_outperformance(tmp_path):
         _init_source_tables(conn)
         _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100, 100, 100, 100])
         _insert_rows(conn, collector.BTC_15M_TABLE, [100, 100, 100, 100])
+        _insert_h1_ma20(conn, 99)
 
     result = AddPositionPermissionModule(db_path=str(db_path)).run_round(decision_round_ts=900_000, evaluated_at=900_001)
 
     assert result.allow_add_positions is False
     assert result.alt_outperform_btc is False
     assert result.reason == "alt_not_outperform_btc_block_add_position"
+
+
+def test_add_position_permission_blocks_when_allusdt_not_above_1h_ma20(tmp_path):
+    db_path = tmp_path / "market.db"
+    with sqlite3.connect(db_path) as conn:
+        _init_source_tables(conn)
+        _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100, 100, 100, 101])
+        _insert_rows(conn, collector.BTC_15M_TABLE, [100, 100, 100, 100])
+        _insert_h1_ma20(conn, 101)
+
+    result = AddPositionPermissionModule(db_path=str(db_path)).run_round(decision_round_ts=900_000, evaluated_at=900_001)
+
+    assert result.allow_add_positions is False
+    assert result.alt_outperform_btc is True
+    assert result.allusdt_above_1h_ma20 is False
+    assert result.reason == "allusdt_not_above_1h_ma20_block_add_position"
 
 
 def test_add_position_permission_recent_results_can_filter_to_recent_days(tmp_path):
