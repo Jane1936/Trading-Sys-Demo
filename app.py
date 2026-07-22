@@ -43,6 +43,7 @@ from trading_experiment import TradingExperiment
 from market_filter_module import MarketFilterModule
 from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import DynamicOpenThresholdModule
+from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
 from zombie_force_liquidation import ZombieForceLiquidationModule
 
 _universe_lock = threading.Lock()
@@ -432,6 +433,8 @@ def start_pre_safety_task() -> None:
     add_permission = AddPositionPermissionModule(db_path=db_config.MARKET_DB_PATH)
     add_permission.init_table()
     DynamicOpenThresholdModule(db_path=db_config.SCORING_DB_PATH).init_table()
+    dynamic_add_threshold = DynamicAddPositionThresholdModule(db_path=db_config.TRADING_DB_PATH)
+    dynamic_add_threshold.init_table()
 
     last_pre_safety_round_ts = None
     last_scoring_started_round_ts = None
@@ -476,6 +479,12 @@ def start_pre_safety_task() -> None:
                         f"🌐 market filter round={round_ts} allow={market_result.allow_new_positions} "
                         f"allusdt_delta={market_result.allusdt_delta} btc_delta={market_result.btc_delta} "
                         f"reason={market_result.reason}"
+                    )
+                    dynamic_add_result = dynamic_add_threshold.run_round(decision_round_ts=round_ts, evaluated_at=now_ms)
+                    print(
+                        f"📈 dynamic add-position threshold round={round_ts} "
+                        f"success_rate={dynamic_add_result.success_rate} "
+                        f"success={dynamic_add_result.success_count}/{dynamic_add_result.sample_size}"
                     )
                 except Exception as exc:
                     print(f"⚠️ market filter failed round={round_ts}: {exc}")
