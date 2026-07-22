@@ -98,3 +98,55 @@ def test_add_position_permission_recent_results_can_filter_to_recent_days(tmp_pa
     results = module.recent_results(days=7, now_ms=9 * 24 * 60 * 60_000)
 
     assert [row.reason for row in results] == ["recent"]
+
+
+def test_add_position_permission_waits_for_allusdt_15m_convergence(tmp_path):
+    db_path = tmp_path / "market.db"
+    with sqlite3.connect(db_path) as conn:
+        _init_source_tables(conn)
+        _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100, 100, 100])
+        _insert_rows(conn, collector.BTC_15M_TABLE, [100, 100, 100, 100])
+
+    ready, reason = AddPositionPermissionModule(db_path=str(db_path)).is_data_converged_for_round(3_600_000)
+
+    assert ready is False
+    assert reason == "waiting_allusdt_15m_convergence"
+
+
+def test_add_position_permission_waits_for_btc_15m_convergence(tmp_path):
+    db_path = tmp_path / "market.db"
+    with sqlite3.connect(db_path) as conn:
+        _init_source_tables(conn)
+        _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100, 100, 100, 100])
+        _insert_rows(conn, collector.BTC_15M_TABLE, [100, 100, 100])
+
+    ready, reason = AddPositionPermissionModule(db_path=str(db_path)).is_data_converged_for_round(3_600_000)
+
+    assert ready is False
+    assert reason == "waiting_btc_15m_convergence"
+
+
+def test_add_position_permission_hour_round_waits_for_allusdt_1h_ma20_convergence(tmp_path):
+    db_path = tmp_path / "market.db"
+    with sqlite3.connect(db_path) as conn:
+        _init_source_tables(conn)
+        _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100, 100, 100, 100])
+        _insert_rows(conn, collector.BTC_15M_TABLE, [100, 100, 100, 100])
+
+    ready, reason = AddPositionPermissionModule(db_path=str(db_path)).is_data_converged_for_round(3_600_000)
+
+    assert ready is False
+    assert reason == "waiting_allusdt_1h_ma20_convergence"
+
+
+def test_add_position_permission_non_hour_round_does_not_wait_for_1h_ma20_convergence(tmp_path):
+    db_path = tmp_path / "market.db"
+    with sqlite3.connect(db_path) as conn:
+        _init_source_tables(conn)
+        _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100, 100, 100, 100, 100])
+        _insert_rows(conn, collector.BTC_15M_TABLE, [100, 100, 100, 100, 100])
+
+    ready, reason = AddPositionPermissionModule(db_path=str(db_path)).is_data_converged_for_round(3_600_000 + 900_000)
+
+    assert ready is True
+    assert reason == "data_converged"

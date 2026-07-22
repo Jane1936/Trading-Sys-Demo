@@ -108,6 +108,47 @@ class AddPositionPermissionModule:
             """
         ).fetchall()
 
+    @staticmethod
+    def _is_hour_round(decision_round_ts: int) -> bool:
+        return int(decision_round_ts) % (60 * 60_000) == 0
+
+    @classmethod
+    def _expected_15m_open_time(cls, decision_round_ts: int) -> int:
+        return int(decision_round_ts) - cls.ROUND_MS
+
+    @staticmethod
+    def _expected_1h_open_time(decision_round_ts: int) -> int:
+        return int(decision_round_ts) - 60 * 60_000
+
+    def _latest_open_time(self, conn: sqlite3.Connection, table_name: str) -> int | None:
+        row = conn.execute(
+            f"SELECT open_time FROM {table_name} ORDER BY open_time DESC LIMIT 1"
+        ).fetchone()
+        return int(row["open_time"]) if row else None
+
+    def is_data_converged_for_round(self, decision_round_ts: int) -> tuple[bool, str]:
+        """Return whether the market data required by an add-position round is ready."""
+        self.init_table()
+        round_ts = int(decision_round_ts)
+        expected_15m_open_time = self._expected_15m_open_time(round_ts)
+        with self._connect() as conn:
+            allusdt_latest = self._latest_open_time(conn, allusdt_15m_ma20.KLINE_TABLE)
+            if allusdt_latest is None or allusdt_latest < expected_15m_open_time:
+                return False, "waiting_allusdt_15m_convergence"
+
+            btc_latest = self._latest_open_time(conn, collector.BTC_15M_TABLE)
+            if btc_latest is None or btc_latest < expected_15m_open_time:
+                return False, "waiting_btc_15m_convergence"
+
+            if self._is_hour_round(round_ts):
+                h1_ma20_row = self._latest_1h_ma20(conn)
+                h1_ma20_open_time = int(h1_ma20_row["open_time"]) if h1_ma20_row else None
+                expected_1h_open_time = self._expected_1h_open_time(round_ts)
+                if h1_ma20_open_time is None or h1_ma20_open_time < expected_1h_open_time:
+                    return False, "waiting_allusdt_1h_ma20_convergence"
+
+        return True, "data_converged"
+
     def _latest_1h_ma20(self, conn: sqlite3.Connection) -> sqlite3.Row | None:
         return conn.execute(
             f"""
