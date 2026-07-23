@@ -123,3 +123,70 @@ def test_scoring_worker_should_stop_after_deadline():
         stage="test",
         now_ms=lambda: 999,
     )
+
+
+class FakeActiveProcess:
+    pid = 4321
+
+    def __init__(self, alive=True, exitcode=None, alive_after_terminate=False):
+        self._alive = alive
+        self.exitcode = exitcode
+        self.alive_after_terminate = alive_after_terminate
+        self.join_calls = []
+        self.terminated = False
+        self.killed = False
+
+    def is_alive(self):
+        return self._alive
+
+    def join(self, timeout=0):
+        self.join_calls.append(timeout)
+        if self.terminated and not self.alive_after_terminate:
+            self._alive = False
+            self.exitcode = -15
+        if self.killed:
+            self._alive = False
+            self.exitcode = -9
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.killed = True
+
+
+def test_scoring_worker_deadline_sets_force_terminate_grace():
+    process = FakeActiveProcess(alive=True)
+
+    next_process, next_round, next_deadline, terminate_after = app._reap_or_timeout_scoring_worker(
+        process=process,
+        round_ts=10_000,
+        deadline_ts=20_000,
+        terminate_after_ts=None,
+        now_ms=20_001,
+    )
+
+    assert next_process is process
+    assert next_round == 10_000
+    assert next_deadline is None
+    assert terminate_after == 20_001 + app.SCORING_WORKER_TERMINATE_GRACE_MS
+    assert not process.terminated
+
+
+def test_scoring_worker_stuck_after_grace_is_cleared():
+    process = FakeActiveProcess(alive=True)
+
+    next_process, next_round, next_deadline, terminate_after = app._reap_or_timeout_scoring_worker(
+        process=process,
+        round_ts=10_000,
+        deadline_ts=None,
+        terminate_after_ts=30_000,
+        now_ms=30_000,
+    )
+
+    assert next_process is None
+    assert next_round is None
+    assert next_deadline is None
+    assert terminate_after is None
+    assert process.terminated
+    assert process.exitcode == -15

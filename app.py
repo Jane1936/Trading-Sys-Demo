@@ -143,6 +143,7 @@ def run_first_experiment_after_openable_round(
 
 
 SCORING_WORKER_DEADLINE_MS = 10 * 60_000
+SCORING_WORKER_TERMINATE_GRACE_MS = 2 * 60_000
 
 
 def _scoring_worker_should_stop(
@@ -164,6 +165,63 @@ def _scoring_worker_should_stop(
         f"stage={stage} now={current_ts} deadline={deadline_ts}"
     )
     return True
+
+
+def _reap_or_timeout_scoring_worker(
+    *,
+    process: multiprocessing.Process | None,
+    round_ts: int | None,
+    deadline_ts: int | None,
+    terminate_after_ts: int | None,
+    now_ms: int,
+) -> tuple[multiprocessing.Process | None, int | None, int | None, int | None]:
+    """Reap finished scoring workers and force-stop workers stuck past grace.
+
+    Workers normally exit at safe checkpoints after the scoring deadline.  If a
+    worker gets stuck inside a long-running call and never reaches the next
+    checkpoint, the scheduler must eventually clear it so subsequent 15m rounds
+    can start.
+    """
+    if process is None:
+        return None, None, None, None
+
+    if not process.is_alive():
+        process.join(timeout=0)
+        print(
+            f"✅ scoring worker finished round={round_ts} "
+            f"exitcode={process.exitcode}"
+        )
+        return None, None, None, None
+
+    if terminate_after_ts is not None and now_ms >= terminate_after_ts:
+        print(
+            f"🛑 scoring round={round_ts} stuck after grace; terminating worker "
+            f"pid={process.pid} now={now_ms} terminate_after={terminate_after_ts}"
+        )
+        process.terminate()
+        process.join(timeout=5)
+        if process.is_alive():
+            print(
+                f"🛑 scoring round={round_ts} still alive after terminate; killing worker "
+                f"pid={process.pid}"
+            )
+            process.kill()
+            process.join(timeout=5)
+        print(
+            f"✅ scoring worker cleared round={round_ts} "
+            f"exitcode={process.exitcode}"
+        )
+        return None, None, None, None
+
+    if deadline_ts is not None and now_ms >= deadline_ts:
+        terminate_after_ts = now_ms + SCORING_WORKER_TERMINATE_GRACE_MS
+        print(
+            f"⏱️ scoring round={round_ts} exceeded deadline "
+            f"deadline={deadline_ts}; waiting for safe worker exit until {terminate_after_ts}"
+        )
+        deadline_ts = None
+
+    return process, round_ts, deadline_ts, terminate_after_ts
 
 
 def run_scoring_round_worker(
@@ -442,6 +500,7 @@ def start_pre_safety_task() -> None:
     active_scoring_process: multiprocessing.Process | None = None
     active_scoring_round_ts: int | None = None
     active_scoring_deadline_ts: int | None = None
+    active_scoring_terminate_after_ts: int | None = None
     round_ms = 15 * 60_000
 
     print("🛡️ Pre-safety task started")
@@ -525,26 +584,18 @@ def start_pre_safety_task() -> None:
             except Exception as exc:
                 print(f"⚠️ add-position permission failed round={round_ts}: {exc}")
 
-        if active_scoring_process is not None:
-            if active_scoring_process.is_alive():
-                if (
-                    active_scoring_deadline_ts is not None
-                    and now_ms >= active_scoring_deadline_ts
-                ):
-                    print(
-                        f"⏱️ scoring round={active_scoring_round_ts} exceeded deadline "
-                        f"deadline={active_scoring_deadline_ts}; waiting for safe worker exit"
-                    )
-                    active_scoring_deadline_ts = None
-            else:
-                active_scoring_process.join(timeout=0)
-                print(
-                    f"✅ scoring worker finished round={active_scoring_round_ts} "
-                    f"exitcode={active_scoring_process.exitcode}"
-                )
-                active_scoring_process = None
-                active_scoring_round_ts = None
-                active_scoring_deadline_ts = None
+        (
+            active_scoring_process,
+            active_scoring_round_ts,
+            active_scoring_deadline_ts,
+            active_scoring_terminate_after_ts,
+        ) = _reap_or_timeout_scoring_worker(
+            process=active_scoring_process,
+            round_ts=active_scoring_round_ts,
+            deadline_ts=active_scoring_deadline_ts,
+            terminate_after_ts=active_scoring_terminate_after_ts,
+            now_ms=now_ms,
+        )
 
         if (
             active_scoring_process is None
@@ -560,6 +611,7 @@ def start_pre_safety_task() -> None:
                     decision_round_ts=round_ts
                 )
                 active_scoring_deadline_ts = round_ts + SCORING_WORKER_DEADLINE_MS
+                active_scoring_terminate_after_ts = None
                 active_scoring_round_ts = round_ts
                 active_scoring_process = multiprocessing.Process(
                     target=run_scoring_round_worker,
@@ -584,6 +636,7 @@ def start_pre_safety_task() -> None:
                 active_scoring_process = None
                 active_scoring_round_ts = None
                 active_scoring_deadline_ts = None
+                active_scoring_terminate_after_ts = None
 
         time.sleep(5)
 
