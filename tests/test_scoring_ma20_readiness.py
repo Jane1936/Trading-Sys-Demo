@@ -287,3 +287,65 @@ def test_score_round_records_symbol_error_when_three_15m_ma20_values_missing(tmp
     assert len(symbol_errors) == 1
     assert symbol_errors[0].symbol == "BTCUSDT"
     assert symbol_errors[0].error == "missing_latest_three_15m_ma20_records"
+
+
+def test_latest_round_total_scores_rebuilds_when_rule_round_is_newer(tmp_path, monkeypatch):
+    db_path = tmp_path / "klines.db"
+    scoring = ScoringSystem(db_path=str(db_path))
+    scoring.init_table()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO symbol_total_scores
+            (symbol, decision_round_ts, rule1_score, rule2_score, rule3_score, rule4_score, rule5_score, rule6_score, rule7_score, rule8_score, rule9_score, rule10_score, rule11_score, rule12_score, rule13_score, rule14_score, rule15_score, rule16_score, rule17_score, rule18_score, total_score, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("OLDUSDT", 1_800_000, *([0] * 18), 0, 1_800_100),
+        )
+
+    rebuilt = [
+        type(
+            "Total",
+            (),
+            {"symbol": "NEWUSDT", "decision_round_ts": 2_700_000, "total_score": 18},
+        )()
+    ]
+    monkeypatch.setattr(scoring, "_latest_complete_rule_round", lambda: 2_700_000)
+    monkeypatch.setattr(scoring, "_latest_rule_updated_at_for_round", lambda _round: 2_700_100)
+    monkeypatch.setattr(scoring, "persist_total_scores_for_round", lambda decision_round_ts: rebuilt)
+
+    round_ts, totals = scoring.get_latest_round_total_scores()
+
+    assert round_ts == 2_700_000
+    assert totals == rebuilt
+
+
+def test_latest_round_total_scores_rebuilds_when_same_round_rules_are_newer(tmp_path, monkeypatch):
+    db_path = tmp_path / "klines.db"
+    scoring = ScoringSystem(db_path=str(db_path))
+    scoring.init_table()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO symbol_total_scores
+            (symbol, decision_round_ts, rule1_score, rule2_score, rule3_score, rule4_score, rule5_score, rule6_score, rule7_score, rule8_score, rule9_score, rule10_score, rule11_score, rule12_score, rule13_score, rule14_score, rule15_score, rule16_score, rule17_score, rule18_score, total_score, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("BTCUSDT", 1_800_000, *([0] * 18), 0, 1_800_100),
+        )
+
+    rebuilt = [
+        type(
+            "Total",
+            (),
+            {"symbol": "BTCUSDT", "decision_round_ts": 1_800_000, "total_score": 36},
+        )()
+    ]
+    monkeypatch.setattr(scoring, "_latest_complete_rule_round", lambda: 1_800_000)
+    monkeypatch.setattr(scoring, "_latest_rule_updated_at_for_round", lambda _round: 1_800_200)
+    monkeypatch.setattr(scoring, "persist_total_scores_for_round", lambda decision_round_ts: rebuilt)
+
+    round_ts, totals = scoring.get_latest_round_total_scores()
+
+    assert round_ts == 1_800_000
+    assert totals == rebuilt

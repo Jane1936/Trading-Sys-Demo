@@ -35,6 +35,27 @@ DEFAULT_RULE_SCORE_WEIGHTS: dict[int, int] = {
 RULE_SCORE_WEIGHTS_PATH = Path(__file__).with_name("scoring_rule_weights.json")
 DEFAULT_STRUCTURAL_STOP_LOSS_COEFFICIENT = 0.98
 
+RULE_SCORE_TABLES: tuple[str, ...] = (
+    "symbol_scores",
+    "symbol_scores_close_gt_ma20",
+    "symbol_scores_1h_close_gt_prev",
+    "symbol_scores_15m_bullish_3of4",
+    "symbol_scores_15m_close_increasing_3of4",
+    "symbol_scores_1m_close_gt_5m_ma20",
+    "symbol_scores_15m_close_near_high_2of4",
+    "symbol_scores_1h_latest_highest_24",
+    "symbol_scores_15m_close_desc_3_with_oi_45m",
+    "symbol_scores_1m_close_gt_60m_open_with_oi_60m",
+    "symbol_scores_oi_loss_rate_240m",
+    "symbol_scores_15m_funding_rate_4bars",
+    "symbol_scores_15m_bullish_volume_breakout",
+    "symbol_scores_15m_volume_spike_2of3",
+    "symbol_scores_1h_volume_spike_latest",
+    "symbol_scores_15m_pullback_low_volume",
+    "symbol_scores_15m_low_rebound_3bars",
+    "symbol_scores_structural_stop_loss_distance",
+)
+
 
 def _strip_json_comments_and_trailing_commas(raw: str) -> str:
     """Return JSON text with common hand-edited config conveniences removed."""
@@ -2781,47 +2802,72 @@ class ScoringSystem:
             return None
         return int(row["updated_at"])
 
+    def _latest_complete_rule_round(self) -> int | None:
+        with self._connect() as conn:
+            rule_timestamps = []
+            for table_name in RULE_SCORE_TABLES:
+                row = conn.execute(f"SELECT MAX(decision_round_ts) AS ts FROM {table_name}").fetchone()
+                if row is None or row["ts"] is None:
+                    return None
+                rule_timestamps.append(int(row["ts"]))
+        return min(rule_timestamps)
+
+    def _latest_rule_updated_at_for_round(self, decision_round_ts: int) -> int | None:
+        latest_updated_at: int | None = None
+        with self._connect() as conn:
+            for table_name in RULE_SCORE_TABLES:
+                row = conn.execute(
+                    f"SELECT MAX(updated_at) AS updated_at FROM {table_name} WHERE decision_round_ts = ?",
+                    (int(decision_round_ts),),
+                ).fetchone()
+                if row is None or row["updated_at"] is None:
+                    return None
+                updated_at = int(row["updated_at"])
+                latest_updated_at = (
+                    updated_at
+                    if latest_updated_at is None
+                    else max(latest_updated_at, updated_at)
+                )
+        return latest_updated_at
+
+    def _get_total_scores_for_round(self, round_ts: int) -> list[SymbolTotalScore]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT symbol, decision_round_ts, rule1_score, rule2_score, rule3_score, rule4_score, rule5_score, rule6_score, rule7_score, rule8_score, rule9_score, rule10_score, rule11_score, rule12_score, rule13_score, rule14_score, rule15_score, rule16_score, rule17_score, rule18_score, total_score
+                FROM symbol_total_scores
+                WHERE decision_round_ts = ?
+                ORDER BY total_score DESC, symbol ASC
+                """,
+                (int(round_ts),),
+            ).fetchall()
+        return [self._row_to_total_score(r) for r in rows]
+
     def get_latest_round_total_scores(self) -> tuple[int | None, list[SymbolTotalScore]]:
+        latest_rule_round = self._latest_complete_rule_round()
         with self._connect() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_total_scores").fetchone()
-            if row["ts"] is not None:
-                round_ts = int(row["ts"])
-                rows = conn.execute(
-                    """
-                    SELECT symbol, decision_round_ts, rule1_score, rule2_score, rule3_score, rule4_score, rule5_score, rule6_score, rule7_score, rule8_score, rule9_score, rule10_score, rule11_score, rule12_score, rule13_score, rule14_score, rule15_score, rule16_score, rule17_score, rule18_score, total_score
-                    FROM symbol_total_scores
-                    WHERE decision_round_ts = ?
-                    ORDER BY total_score DESC, symbol ASC
-                    """,
-                    (round_ts,),
-                ).fetchall()
-                return round_ts, [self._row_to_total_score(r) for r in rows]
+        latest_total_round = int(row["ts"]) if row is not None and row["ts"] is not None else None
 
-        rule_timestamps = [
-            self.get_latest_round_scores()[0],
-            self.get_latest_round_scores_close_gt_ma20()[0],
-            self.get_latest_round_scores_1h_close_gt_prev()[0],
-            self.get_latest_round_scores_15m_bullish_3of4()[0],
-            self.get_latest_round_scores_15m_close_increasing_3of4()[0],
-            self.get_latest_round_scores_1m_close_gt_5m_ma20()[0],
-            self.get_latest_round_scores_15m_close_near_high_2of4()[0],
-            self.get_latest_round_scores_1h_latest_highest_24()[0],
-            self.get_latest_round_scores_15m_close_desc_3_with_oi_45m()[0],
-            self.get_latest_round_scores_1m_close_gt_60m_open_with_oi_60m()[0],
-            self.get_latest_round_scores_oi_loss_rate_240m()[0],
-            self.get_latest_round_scores_15m_funding_rate_4bars()[0],
-            self.get_latest_round_scores_15m_bullish_volume_breakout()[0],
-            self.get_latest_round_scores_15m_volume_spike_2of3()[0],
-            self.get_latest_round_scores_1h_volume_spike_latest()[0],
-            self.get_latest_round_scores_15m_pullback_low_volume()[0],
-            self.get_latest_round_scores_15m_low_rebound_3bars()[0],
-            self.get_latest_round_scores_structural_stop_loss_distance()[0],
-        ]
-        if any(ts is None for ts in rule_timestamps):
+        if latest_rule_round is not None:
+            total_updated_at = self.get_total_score_round_updated_at(latest_rule_round)
+            rule_updated_at = self._latest_rule_updated_at_for_round(latest_rule_round)
+            if (
+                latest_total_round is None
+                or latest_total_round < latest_rule_round
+                or (
+                    latest_total_round == latest_rule_round
+                    and total_updated_at is not None
+                    and rule_updated_at is not None
+                    and total_updated_at < rule_updated_at
+                )
+            ):
+                totals = self.persist_total_scores_for_round(decision_round_ts=latest_rule_round)
+                return latest_rule_round, totals
+
+        if latest_total_round is None:
             return None, []
-        round_ts = min(int(ts) for ts in rule_timestamps if ts is not None)
-        totals = self.persist_total_scores_for_round(decision_round_ts=round_ts)
-        return round_ts, totals
+        return latest_total_round, self._get_total_scores_for_round(latest_total_round)
 
     def get_total_score_symbols(self) -> list[str]:
         with self._connect() as conn:
