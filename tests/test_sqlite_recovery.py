@@ -1,6 +1,10 @@
 import sqlite3
 import sys
+import threading
+import time
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -63,7 +67,7 @@ def test_collector_init_db_recreates_after_quarantining_malformed_database(tmp_p
         assert conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (collector.BTC_5M_TABLE,)).fetchone()
 
 
-def test_web_before_request_recovers_malformed_database(tmp_path, monkeypatch):
+def test_web_before_request_reports_without_replacing_live_database(tmp_path, monkeypatch):
     db_path = tmp_path / "klines.db"
     db_path.write_bytes(b"not a sqlite database")
     monkeypatch.setattr(web_app, "DB_PATH", str(db_path))
@@ -75,8 +79,7 @@ def test_web_before_request_recovers_malformed_database(tmp_path, monkeypatch):
     response = web_app.app.test_client().get("/")
 
     assert response.status_code == 200
-    with sqlite3.connect(db_path) as conn:
-        assert conn.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+    assert db_path.read_bytes() == b"not a sqlite database"
 
 
 def test_web_before_request_skips_quick_check_by_default(tmp_path, monkeypatch):
@@ -99,7 +102,7 @@ def test_is_malformed_database_error_matches_sqlite_message():
     assert not is_malformed_database_error(sqlite3.DatabaseError("database is locked"))
 
 
-def test_safe_page_module_retries_schema_initialization_after_quarantine(tmp_path, monkeypatch):
+def test_safe_page_module_does_not_quarantine_live_database(tmp_path, monkeypatch):
     base_db_path = tmp_path / "base.db"
     scoring_db_path = tmp_path / "scoring.db"
     scoring_db_path.write_bytes(b"not a sqlite database")
@@ -114,19 +117,14 @@ def test_safe_page_module_retries_schema_initialization_after_quarantine(tmp_pat
     result, error = web_app._safe_page_module("评分表初始化", scoring.init_table, None)
 
     assert result is None
-    assert error is None
-    with sqlite3.connect(scoring_db_path) as conn:
-        assert conn.execute("PRAGMA quick_check").fetchone()[0] == "ok"
-        expected_tables = {"symbol_scores", "symbol_total_scores", "scoring_ma20_skip_records"}
-        actual_tables = {
-            row[0]
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        }
-    assert expected_tables <= actual_tables
-    assert list(tmp_path.glob("scoring.db.corrupt-*"))
+    assert error is not None
+    assert "已禁止新业务访问" in error["error"]
+    assert scoring_db_path.read_bytes() == b"not a sqlite database"
+    assert not list(tmp_path.glob("scoring.db.corrupt-*"))
+    assert Path(db_config.database_recovery_marker(str(scoring_db_path))).exists()
 
 
-def test_worker_health_check_recovers_malformed_database(tmp_path, monkeypatch):
+def test_worker_health_check_fences_and_replaces_malformed_database(tmp_path, monkeypatch):
     db_paths = [tmp_path / f"db-{index}.sqlite" for index in range(4)]
     for db_path in db_paths:
         with sqlite3.connect(db_path) as conn:
@@ -134,35 +132,28 @@ def test_worker_health_check_recovers_malformed_database(tmp_path, monkeypatch):
     damaged_path = db_paths[2]
     damaged_path.write_bytes(b"not a sqlite database")
 
-    initialized = []
-
-    def initialize_damaged_database():
-        initialized.append(str(damaged_path))
-        with sqlite3.connect(damaged_path) as conn:
+    def initialize():
+        with db_config.connect_sqlite(str(damaged_path)) as conn:
             conn.execute("CREATE TABLE recovered (value INTEGER)")
 
-    initializers = {
-        str(path): (initialize_damaged_database if path == damaged_path else lambda: None)
-        for path in db_paths
-    }
-    monkeypatch.setattr(worker_app, "_database_initializers", lambda: initializers)
+    monkeypatch.setattr(worker_app, "_database_initializers", lambda: {
+        str(path): (initialize if path == damaged_path else lambda: None) for path in db_paths
+    })
 
-    recovered = worker_app.check_and_recover_worker_databases()
+    recovered = worker_app.check_worker_databases()
 
     assert list(recovered) == [str(damaged_path)]
-    assert initialized == [str(damaged_path)]
     with sqlite3.connect(damaged_path) as conn:
         assert conn.execute("PRAGMA quick_check").fetchone()[0] == "ok"
-        assert conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'recovered'"
-        ).fetchone()
+        assert conn.execute("SELECT 1 FROM recovered").fetchall() == []
     assert list(tmp_path.glob(f"{damaged_path.name}.corrupt-*"))
+    assert not Path(db_config.database_recovery_marker(str(damaged_path))).exists()
 
 
 def test_worker_malformed_error_triggers_immediate_health_check(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        worker_app, "check_and_recover_worker_databases", lambda: calls.append(True)
+        worker_app, "check_worker_databases", lambda: calls.append(True)
     )
 
     assert worker_app.recover_after_worker_error(
@@ -173,5 +164,36 @@ def test_worker_malformed_error_triggers_immediate_health_check(monkeypatch):
     assert calls == [True]
 
 
-def test_worker_database_health_check_interval_is_thirty_minutes():
-    assert worker_app.DATABASE_HEALTH_CHECK_INTERVAL_SEC == 30 * 60
+def test_worker_database_health_check_interval_is_thirty_seconds():
+    assert worker_app.DATABASE_HEALTH_CHECK_INTERVAL_SEC == 30
+
+
+def test_recovery_marker_blocks_business_connections(tmp_path):
+    db_path = str(tmp_path / "scoring.db")
+    Path(db_config.database_recovery_marker(db_path)).write_text("recovering")
+
+    with pytest.raises(db_config.DatabaseRecoveringError):
+        db_config.connect_sqlite(db_path)
+
+    with db_config.sqlite_recovery_bypass(db_path):
+        with db_config.connect_sqlite(db_path) as conn:
+            conn.execute("CREATE TABLE recovered (value INTEGER)")
+
+
+def test_exclusive_recovery_waits_for_existing_connection_to_close(tmp_path):
+    db_path = str(tmp_path / "scoring.db")
+    conn = db_config.connect_sqlite(db_path)
+    acquired = threading.Event()
+
+    def acquire_exclusive():
+        with db_config.sqlite_access_lock(db_path, exclusive=True):
+            acquired.set()
+
+    thread = threading.Thread(target=acquire_exclusive)
+    thread.start()
+    time.sleep(0.05)
+    assert not acquired.is_set()
+
+    conn.close()
+    thread.join(timeout=1)
+    assert acquired.is_set()

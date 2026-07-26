@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Iterable
 
@@ -22,6 +23,96 @@ DB_LABELS = {
     "交易数据库": TRADING_DB_PATH,
     "市场行情数据库": MARKET_DB_PATH,
 }
+
+_recovery_local = threading.local()
+
+
+class DatabaseRecoveringError(sqlite3.OperationalError):
+    """Raised when a database has been fenced for automatic recovery."""
+
+
+class sqlite_access_lock:
+    """Cross-process shared/exclusive admission lock for one SQLite file."""
+
+    def __init__(self, db_path: str, *, exclusive: bool = False):
+        self.db_path = db_path
+        self.exclusive = exclusive
+        self._fh = None
+
+    def __enter__(self):
+        ensure_parent_dir(self.db_path)
+        self._fh = open(f"{self.db_path}.access.lock", "a+")
+        if os.name == "posix":
+            import fcntl
+
+            fcntl.flock(
+                self._fh.fileno(), fcntl.LOCK_EX if self.exclusive else fcntl.LOCK_SH
+            )
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self._fh is not None:
+            if os.name == "posix":
+                import fcntl
+
+                fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+            self._fh.close()
+            self._fh = None
+        return False
+
+
+def database_recovery_marker(db_path: str) -> str:
+    return f"{db_path}.recovering"
+
+
+def _recovery_bypass_paths() -> set[str]:
+    paths = getattr(_recovery_local, "paths", None)
+    if paths is None:
+        paths = set()
+        _recovery_local.paths = paths
+    return paths
+
+
+class sqlite_recovery_bypass:
+    """Allow the recovery thread to initialize a fenced database."""
+
+    def __init__(self, db_path: str):
+        self.path = str(Path(db_path).resolve())
+
+    def __enter__(self):
+        _recovery_bypass_paths().add(self.path)
+
+    def __exit__(self, exc_type, exc, tb):
+        _recovery_bypass_paths().discard(self.path)
+        return False
+
+
+class ManagedSQLiteConnection(sqlite3.Connection):
+    """Connection that owns access locks and closes them on context exit."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._access_locks = []
+        self._managed_closed = False
+
+    def add_access_lock(self, lock) -> None:
+        self._access_locks.append(lock)
+
+    def close(self) -> None:
+        if self._managed_closed:
+            return
+        try:
+            super().close()
+        finally:
+            self._managed_closed = True
+            while self._access_locks:
+                self._access_locks.pop().__exit__(None, None, None)
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            return super().__exit__(exc_type, exc, tb)
+        finally:
+            self.close()
 
 
 def ensure_parent_dir(db_path: str) -> None:
@@ -52,7 +143,18 @@ def attach_databases(conn: sqlite3.Connection, attachments: Iterable[tuple[str, 
                 continue
         except OSError:
             pass
-        conn.execute(f"ATTACH DATABASE ? AS {quote_identifier(schema)}", (path,))
+        lock = _acquire_database_access(path)
+        try:
+            conn.execute(f"ATTACH DATABASE ? AS {quote_identifier(schema)}", (path,))
+        except Exception:
+            lock.__exit__(None, None, None)
+            if isinstance(conn, ManagedSQLiteConnection):
+                conn.close()
+            raise
+        if isinstance(conn, ManagedSQLiteConnection):
+            conn.add_access_lock(lock)
+        else:
+            lock.__exit__(None, None, None)
         seen.add(schema)
 
 
@@ -96,13 +198,39 @@ def configure_sqlite_connection(conn: sqlite3.Connection, *, wal: bool = True) -
     conn.execute("PRAGMA busy_timeout=30000;")
     if wal:
         conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
+        # FULL adds an fsync for each WAL transaction.  It costs some write
+        # throughput but is the safer default for bind-mounted production data.
+        conn.execute("PRAGMA synchronous=FULL;")
+        conn.execute("PRAGMA wal_autocheckpoint=1000;")
     return conn
 
 
 def connect_sqlite(db_path: str, *, timeout: int = 30, row_factory=None, wal: bool = True) -> sqlite3.Connection:
     ensure_parent_dir(db_path)
-    conn = sqlite3.connect(db_path, timeout=timeout)
+    lock = _acquire_database_access(db_path)
+    try:
+        conn = sqlite3.connect(db_path, timeout=timeout, factory=ManagedSQLiteConnection)
+    except Exception:
+        lock.__exit__(None, None, None)
+        raise
+    conn.add_access_lock(lock)
     if row_factory is not None:
         conn.row_factory = row_factory
-    return configure_sqlite_connection(conn, wal=wal)
+    try:
+        return configure_sqlite_connection(conn, wal=wal)
+    except Exception:
+        conn.close()
+        raise
+
+
+def _acquire_database_access(db_path: str) -> sqlite_access_lock:
+    normalized = str(Path(db_path).resolve())
+    if os.path.exists(database_recovery_marker(db_path)) and normalized not in _recovery_bypass_paths():
+        raise DatabaseRecoveringError(f"database is recovering: {db_path}")
+    lock = sqlite_access_lock(db_path)
+    lock.__enter__()
+    # Recovery may have fenced the DB while this process waited for the lock.
+    if os.path.exists(database_recovery_marker(db_path)) and normalized not in _recovery_bypass_paths():
+        lock.__exit__(None, None, None)
+        raise DatabaseRecoveringError(f"database is recovering: {db_path}")
+    return lock

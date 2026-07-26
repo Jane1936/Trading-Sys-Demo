@@ -37,9 +37,8 @@ from dynamic_open_threshold import DynamicOpenThresholdModule
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
 from zombie_force_liquidation import ZombieForceLiquidationModule
 from sqlite_recovery import (
-    ensure_sqlite_database_usable,
     is_malformed_database_error,
-    quarantine_malformed_sqlite_databases,
+    quick_check_sqlite_database,
 )
 
 app = Flask(__name__)
@@ -96,10 +95,13 @@ def _ensure_web_database_usable() -> None:
     global _db_recovery_checked_path
     if _db_recovery_checked_path == DB_PATH:
         return
-    quarantined = ensure_sqlite_database_usable(DB_PATH, quick_check=True)
-    if quarantined:
-        app.logger.error("Malformed SQLite database was quarantined before web request: %s", ", ".join(quarantined))
-        collector.init_db()
+    ok, detail = quick_check_sqlite_database(DB_PATH)
+    if not ok:
+        app.logger.error(
+            "SQLite quick_check failed for %s: %s; live quarantine disabled",
+            DB_PATH,
+            detail,
+        )
     _db_recovery_checked_path = DB_PATH
 
 
@@ -113,10 +115,22 @@ def _recover_malformed_database_before_request() -> None:
 def _handle_sqlite_database_error(exc: sqlite3.DatabaseError):
     if not is_malformed_database_error(exc):
         return jsonify({"error": str(exc)}), 502
-    quarantined = ensure_sqlite_database_usable(DB_PATH, quick_check=True, once_per_process=False)
-    collector.init_db()
-    app.logger.error("Malformed SQLite database was quarantined after query failure: %s", ", ".join(quarantined) or DB_PATH)
-    return jsonify({"error": "SQLite database was malformed and has been quarantined. Please retry the request."}), 503
+    _fence_malformed_databases()
+    app.logger.exception("Malformed SQLite database detected and fenced for worker recovery")
+    return jsonify({"error": "SQLite database is malformed and is being automatically recovered."}), 503
+
+
+def _fence_malformed_databases() -> list[str]:
+    fenced = []
+    for path in db_config.DB_LABELS.values():
+        ok, detail = quick_check_sqlite_database(path)
+        if ok:
+            continue
+        marker = db_config.database_recovery_marker(path)
+        with open(marker, "w", encoding="utf-8") as fh:
+            fh.write(f"web detected: {detail}\n")
+        fenced.append(path)
+    return fenced
 
 
 
@@ -127,30 +141,15 @@ def _safe_page_module(label: str, loader, default):
     except Exception as exc:
         error_text = str(exc)
         if is_malformed_database_error(exc):
-            quarantined = quarantine_malformed_sqlite_databases(db_config.DB_LABELS.values())
-            if quarantined:
-                details = "; ".join(
-                    f"{path} -> {', '.join(targets) or 'no sidecar files'}"
-                    for path, targets in quarantined.items()
-                )
-                app.logger.warning(
-                    "Dashboard module hit malformed SQLite, quarantined DB(s), and will retry: %s: %s",
-                    label,
-                    details,
-                )
-                try:
-                    # Initialization loaders can now recreate their schema in the
-                    # fresh database during this same request.  Without the retry,
-                    # every following dashboard query sees an empty SQLite file and
-                    # emits a misleading cascade of "no such table" errors.
-                    return loader(), None
-                except Exception as retry_exc:
-                    error_text = (
-                        f"{error_text}; 已隔离损坏数据库：{details}；"
-                        f"模块自动重新初始化失败：{retry_exc}"
-                    )
-            else:
-                error_text = f"{error_text}; 未定位到可隔离的损坏库，请检查宿主机 data 目录和 SQLite sidecar 文件"
+            _fence_malformed_databases()
+            checks = []
+            for path in db_config.DB_LABELS.values():
+                ok, detail = quick_check_sqlite_database(path)
+                if not ok:
+                    checks.append(f"{path}: {detail}")
+            error_text += "; 已禁止新业务访问，worker 正在自动恢复"
+            if checks:
+                error_text += "；检查失败：" + "; ".join(checks)
         app.logger.exception("Dashboard module failed: %s", label)
         return default, {"label": label, "error": error_text}
 
@@ -197,7 +196,7 @@ def _experiment_equity_trend_rows(since_ms: int) -> list[sqlite3.Row]:
         (DynamicProfitProtection.CHECKS_TABLE, "checked_at"),
     ]
     try:
-        with sqlite3.connect(_trading_db_path(), timeout=30) as conn:
+        with db_config.connect_sqlite(_trading_db_path()) as conn:
             conn.row_factory = sqlite3.Row
             union_queries = []
             params: list[int] = []
@@ -574,7 +573,7 @@ def _annotate_filled_order_exit_reasons(payload: dict) -> dict:
     if not isinstance(orders, list) or not orders:
         return payload
     try:
-        with sqlite3.connect(_trading_db_path(), timeout=30) as conn:
+        with db_config.connect_sqlite(_trading_db_path()) as conn:
             conn.row_factory = sqlite3.Row
             for order in orders:
                 if not isinstance(order, dict):
@@ -773,7 +772,7 @@ def _btc_5m_payload(page: int = 1) -> dict:
     page = max(1, page)
     page_size = 24
     since_ms = int((datetime.now(timezone.utc) - timedelta(days=3)).timestamp() * 1000)
-    with sqlite3.connect(_trading_db_path(), timeout=30) as conn:
+    with db_config.connect_sqlite(_trading_db_path()) as conn:
         total_rows = conn.execute(
             f"""
             SELECT COUNT(1)
