@@ -133,12 +133,22 @@ def _safe_page_module(label: str, loader, default):
                     f"{path} -> {', '.join(targets) or 'no sidecar files'}"
                     for path, targets in quarantined.items()
                 )
-                error_text = f"{error_text}; 已隔离损坏数据库：{details}；请刷新页面等待模块重新初始化"
-                app.logger.error(
-                    "Dashboard module hit malformed SQLite and quarantined DB(s): %s: %s",
+                app.logger.warning(
+                    "Dashboard module hit malformed SQLite, quarantined DB(s), and will retry: %s: %s",
                     label,
                     details,
                 )
+                try:
+                    # Initialization loaders can now recreate their schema in the
+                    # fresh database during this same request.  Without the retry,
+                    # every following dashboard query sees an empty SQLite file and
+                    # emits a misleading cascade of "no such table" errors.
+                    return loader(), None
+                except Exception as retry_exc:
+                    error_text = (
+                        f"{error_text}; 已隔离损坏数据库：{details}；"
+                        f"模块自动重新初始化失败：{retry_exc}"
+                    )
             else:
                 error_text = f"{error_text}; 未定位到可隔离的损坏库，请检查宿主机 data 目录和 SQLite sidecar 文件"
         app.logger.exception("Dashboard module failed: %s", label)
