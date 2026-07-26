@@ -6,6 +6,7 @@ import json
 import sqlite3
 import db_config
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Iterable, List
@@ -34,6 +35,7 @@ DEFAULT_RULE_SCORE_WEIGHTS: dict[int, int] = {
 
 RULE_SCORE_WEIGHTS_PATH = Path(__file__).with_name("scoring_rule_weights.json")
 DEFAULT_STRUCTURAL_STOP_LOSS_COEFFICIENT = 0.98
+SCORING_WRITE_BATCH_SIZE = 20
 
 RULE_SCORE_TABLES: tuple[str, ...] = (
     "symbol_scores",
@@ -259,6 +261,7 @@ class ScoringSystem:
         self.structural_stop_loss_coefficient = load_structural_stop_loss_coefficient(
             rule_weights_path
         )
+        self._active_round_conn: sqlite3.Connection | None = None
 
     def _score_weight(self, rule_id: int) -> int:
         return self.rule_score_weights[rule_id]
@@ -273,8 +276,94 @@ class ScoringSystem:
         db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH)])
         return conn
 
-    def init_table(self) -> None:
+    def _connect_reader(self) -> sqlite3.Connection:
+        """Open a scoring-only reader without attaching the base database."""
+        return db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
+
+    def _connect_writer(self) -> sqlite3.Connection:
+        """Open a scoring-only writer; round snapshots remove the need to ATTACH base."""
+        return db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
+
+    @contextmanager
+    def _round_connection(self):
+        """Borrow the current batch connection or open a standalone legacy connection."""
+        if self._active_round_conn is not None:
+            yield self._active_round_conn
+            return
         with self._connect() as conn:
+            yield conn
+
+    def _load_round_snapshot(self, symbols: list[str]) -> dict[str, list[sqlite3.Row]]:
+        """Read every base-data window needed by a scoring round on one connection."""
+        if not symbols:
+            return {}
+        specs = {
+            "klines_1m": ("open_time", 60),
+            "klines_15m": ("open_time", 24),
+            "klines_1h": ("open_time", 24),
+            "open_interest_1m": ("snapshot_time", 240),
+        }
+        snapshot: dict[str, list[sqlite3.Row]] = {}
+        with db_config.connect_sqlite(
+            db_config.BASE_DB_PATH, row_factory=sqlite3.Row, wal=False
+        ) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            for table, (order_column, limit) in specs.items():
+                rows: list[sqlite3.Row] = []
+                for symbol in symbols:
+                    rows.extend(
+                        conn.execute(
+                            f"SELECT * FROM {table} WHERE symbol = ? "
+                            f"ORDER BY {order_column} DESC LIMIT ?",
+                            (symbol, limit),
+                        ).fetchall()
+                    )
+                snapshot[table] = rows
+            ma20_rows: list[sqlite3.Row] = []
+            for symbol in symbols:
+                for interval in ("5m", "15m"):
+                    ma20_rows.extend(
+                        conn.execute(
+                            "SELECT * FROM ma20_indicators "
+                            "WHERE symbol = ? AND interval = ? "
+                            "ORDER BY open_time DESC LIMIT 3",
+                            (symbol, interval),
+                        ).fetchall()
+                    )
+            snapshot["ma20_indicators"] = ma20_rows
+        return snapshot
+
+    @staticmethod
+    def _install_round_snapshot(
+        conn: sqlite3.Connection, snapshot: dict[str, list[sqlite3.Row]]
+    ) -> None:
+        """Install the immutable base snapshot as TEMP tables shadowing base tables."""
+        table_columns = {
+            "klines_1m": ("symbol", "open_time", "open", "close"),
+            "klines_15m": (
+                "symbol", "open_time", "open", "high", "low", "close", "volume", "funding_rate",
+            ),
+            "klines_1h": ("symbol", "open_time", "high", "close", "volume"),
+            "open_interest_1m": ("symbol", "snapshot_time", "open_interest"),
+            "ma20_indicators": ("symbol", "interval", "open_time", "ma20"),
+        }
+        for table, columns in table_columns.items():
+            definitions = ", ".join(f'"{column}"' for column in columns)
+            conn.execute(f'CREATE TEMP TABLE "{table}" ({definitions})')
+            rows = snapshot.get(table, [])
+            if rows:
+                placeholders = ",".join("?" for _ in columns)
+                conn.executemany(
+                    f'INSERT INTO "{table}" ({definitions}) VALUES ({placeholders})',
+                    [tuple(row[column] for column in columns) for row in rows],
+                )
+            conn.execute(
+                f'CREATE INDEX "idx_temp_{table}_symbol" ON "{table}" (symbol)'
+            )
+
+    def init_table(self) -> None:
+        with self._connect_writer() as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS symbol_scores (
@@ -721,7 +810,7 @@ class ScoringSystem:
                     )
 
     def _latest_three_ma20_15m(self, symbol: str) -> tuple[float, float, float] | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT ma20
@@ -746,57 +835,96 @@ class ScoringSystem:
         candidates = sorted(set(all_symbols) - abnormal_set)
         now_ms = int(time.time() * 1000)
         results: List[SymbolScore] = []
-        for symbol in candidates:
-            try:
-                self._save_close_gt_ma20_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_1h_close_gt_prev_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_15m_bullish_3of4_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_15m_close_increasing_3of4_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_1m_close_gt_5m_ma20_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_15m_close_near_high_2of4_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_1h_latest_highest_24_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_15m_close_desc_3_with_oi_45m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_1m_close_gt_60m_open_with_oi_60m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_oi_loss_rate_240m_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_15m_funding_rate_4bars_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_15m_bullish_volume_breakout_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_15m_volume_spike_2of3_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_1h_volume_spike_latest_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_15m_pullback_low_volume_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_15m_low_rebound_3bars_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_structural_stop_loss(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                self._save_structural_stop_loss_distance_score(symbol=symbol, decision_round_ts=decision_round_ts, updated_at=now_ms)
-                ma20s = self._latest_three_ma20_15m(symbol)
-                if ma20s is None:
-                    error = "missing_latest_three_15m_ma20_records"
-                    self.record_symbol_error_for_round(
-                        decision_round_ts=decision_round_ts,
-                        symbol=symbol,
-                        error=error,
-                        created_at=now_ms,
-                    )
-                    print(
-                        f"⚠️ scoring symbol skipped round={decision_round_ts} "
-                        f"symbol={symbol}: {error}"
-                    )
-                    continue
-                m1, m2, m3 = ma20s
-                hit = m1 > m2 > m3
-                score = self._score_weight(1) if hit else 0
-                reason = "ma20_15m_desc_3bars" if hit else "ma20_15m_rule_not_met"
-                rec = SymbolScore(symbol, decision_round_ts, score, reason, m1, m2, m3, now_ms)
-                results.append(rec)
-                self._save_score(rec)
-            except Exception as exc:
-                self.record_symbol_error_for_round(
-                    decision_round_ts=decision_round_ts,
-                    symbol=symbol,
-                    error=str(exc),
-                    created_at=now_ms,
-                )
-                print(f"⚠️ scoring symbol failed round={decision_round_ts} symbol={symbol}: {exc}")
+        snapshot = self._load_round_snapshot(candidates)
+        conn = self._connect_writer()
+        try:
+            self._install_round_snapshot(conn, snapshot)
+            conn.commit()
+            self._active_round_conn = conn
+            for batch_start in range(0, len(candidates), SCORING_WRITE_BATCH_SIZE):
+                batch = candidates[batch_start : batch_start + SCORING_WRITE_BATCH_SIZE]
+                conn.execute("BEGIN IMMEDIATE")
+                for symbol in batch:
+                    conn.execute("SAVEPOINT scoring_symbol")
+                    try:
+                        self._score_symbol(symbol, decision_round_ts, now_ms, results)
+                    except Exception as exc:
+                        conn.execute("ROLLBACK TO scoring_symbol")
+                        conn.execute("RELEASE scoring_symbol")
+                        self.record_symbol_error_for_round(
+                            decision_round_ts=decision_round_ts,
+                            symbol=symbol,
+                            error=str(exc),
+                            created_at=now_ms,
+                        )
+                        print(
+                            f"⚠️ scoring symbol failed round={decision_round_ts} "
+                            f"symbol={symbol}: {exc}"
+                        )
+                    else:
+                        conn.execute("RELEASE scoring_symbol")
+                conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._active_round_conn = None
+            conn.close()
         self.persist_total_scores_for_round(decision_round_ts=decision_round_ts, updated_at=now_ms)
         return results
+
+    def _score_symbol(
+        self,
+        symbol: str,
+        decision_round_ts: int,
+        now_ms: int,
+        results: list[SymbolScore],
+    ) -> None:
+        """Calculate and stage every rule row for one symbol in the active batch."""
+        kwargs = {
+            "symbol": symbol,
+            "decision_round_ts": decision_round_ts,
+            "updated_at": now_ms,
+        }
+        self._save_close_gt_ma20_score(**kwargs)
+        self._save_1h_close_gt_prev_score(**kwargs)
+        self._save_15m_bullish_3of4_score(**kwargs)
+        self._save_15m_close_increasing_3of4_score(**kwargs)
+        self._save_1m_close_gt_5m_ma20_score(**kwargs)
+        self._save_15m_close_near_high_2of4_score(**kwargs)
+        self._save_1h_latest_highest_24_score(**kwargs)
+        self._save_15m_close_desc_3_with_oi_45m_score(**kwargs)
+        self._save_1m_close_gt_60m_open_with_oi_60m_score(**kwargs)
+        self._save_oi_loss_rate_240m_score(**kwargs)
+        self._save_15m_funding_rate_4bars_score(**kwargs)
+        self._save_15m_bullish_volume_breakout_score(**kwargs)
+        self._save_15m_volume_spike_2of3_score(**kwargs)
+        self._save_1h_volume_spike_latest_score(**kwargs)
+        self._save_15m_pullback_low_volume_score(**kwargs)
+        self._save_15m_low_rebound_3bars_score(**kwargs)
+        self._save_structural_stop_loss(**kwargs)
+        self._save_structural_stop_loss_distance_score(**kwargs)
+        ma20s = self._latest_three_ma20_15m(symbol)
+        if ma20s is None:
+            error = "missing_latest_three_15m_ma20_records"
+            self.record_symbol_error_for_round(
+                decision_round_ts=decision_round_ts,
+                symbol=symbol,
+                error=error,
+                created_at=now_ms,
+            )
+            print(
+                f"⚠️ scoring symbol skipped round={decision_round_ts} "
+                f"symbol={symbol}: {error}"
+            )
+            return
+        m1, m2, m3 = ma20s
+        hit = m1 > m2 > m3
+        score = self._score_weight(1) if hit else 0
+        reason = "ma20_15m_desc_3bars" if hit else "ma20_15m_rule_not_met"
+        rec = SymbolScore(symbol, decision_round_ts, score, reason, m1, m2, m3, now_ms)
+        self._save_score(rec)
+        results.append(rec)
 
     def record_symbol_error_for_round(
         self,
@@ -805,7 +933,7 @@ class ScoringSystem:
         error: str,
         created_at: int | None = None,
     ) -> None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO scoring_symbol_error_records
@@ -831,7 +959,7 @@ class ScoringSystem:
         if not symbol_list:
             return MA20Readiness(target_open_time, [], [])
         placeholders = ",".join(["?"] * len(symbol_list))
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             rows = conn.execute(
                 f"""
                 SELECT DISTINCT symbol
@@ -881,7 +1009,7 @@ class ScoringSystem:
     ) -> None:
         if not readiness.missing_symbols:
             return
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO scoring_ma20_skip_records
@@ -926,7 +1054,7 @@ class ScoringSystem:
         )
 
     def get_latest_ma20_skip_record(self) -> MA20SkipRecord | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute(
                 """
                 SELECT decision_round_ts, target_open_time, universe_count, ready_count,
@@ -941,7 +1069,7 @@ class ScoringSystem:
     def get_ma20_skip_record_for_round(self, decision_round_ts: int | None) -> MA20SkipRecord | None:
         if decision_round_ts is None:
             return None
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute(
                 """
                 SELECT decision_round_ts, target_open_time, universe_count, ready_count,
@@ -959,7 +1087,7 @@ class ScoringSystem:
     ) -> list[ScoringSymbolError]:
         if decision_round_ts is None:
             return []
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT symbol, decision_round_ts, error, created_at
@@ -980,7 +1108,7 @@ class ScoringSystem:
         ]
 
     def get_latest_symbol_error_round(self) -> tuple[int | None, list[ScoringSymbolError]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute(
                 "SELECT MAX(decision_round_ts) AS ts FROM scoring_symbol_error_records"
             ).fetchone()
@@ -990,7 +1118,7 @@ class ScoringSystem:
         return round_ts, self.get_symbol_errors_for_round(round_ts)
 
     def _latest_1m_close_and_15m_ma20(self, symbol: str) -> tuple[float, float] | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             close_row = conn.execute(
                 """
                 SELECT close
@@ -1023,7 +1151,7 @@ class ScoringSystem:
         hit = close_1m > ma20_15m
         score = self._score_weight(2) if hit else 0
         reason = "close_1m_gt_15m_ma20" if hit else "close_1m_rule_not_met"
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_close_gt_ma20
@@ -1041,7 +1169,7 @@ class ScoringSystem:
 
 
     def _latest_1m_close_and_5m_ma20(self, symbol: str) -> tuple[float, float] | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             close_row = conn.execute(
                 """
                 SELECT close
@@ -1074,7 +1202,7 @@ class ScoringSystem:
         hit = close_1m > ma20_5m
         score = self._score_weight(6) if hit else 0
         reason = "close_1m_gt_5m_ma20" if hit else "close_1m_gt_5m_ma20_rule_not_met"
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_1m_close_gt_5m_ma20
@@ -1091,7 +1219,7 @@ class ScoringSystem:
             )
 
     def _latest_two_1h_close(self, symbol: str) -> tuple[float, float] | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT close
@@ -1114,7 +1242,7 @@ class ScoringSystem:
         hit = latest_close_1h > prev_close_1h
         score = self._score_weight(3) if hit else 0
         reason = "close_1h_gt_prev_1h" if hit else "close_1h_rule_not_met"
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_1h_close_gt_prev
@@ -1131,7 +1259,7 @@ class ScoringSystem:
             )
 
     def _latest_four_15m_open_close(self, symbol: str) -> list[tuple[float, float]] | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT open, close
@@ -1147,7 +1275,7 @@ class ScoringSystem:
         return [(float(r["open"]), float(r["close"])) for r in rows]
 
     def _latest_four_15m_close(self, symbol: str) -> list[float] | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT close
@@ -1171,7 +1299,7 @@ class ScoringSystem:
         hit = bullish_count >= 3
         score = self._score_weight(4) if hit else 0
         reason = "kline_15m_bullish_3of4" if hit else "kline_15m_bullish_rule_not_met"
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_15m_bullish_3of4
@@ -1209,7 +1337,7 @@ class ScoringSystem:
         hit = increasing_triplet_exists
         score = self._score_weight(5) if hit else 0
         reason = "close_15m_increasing_3of4" if hit else "close_15m_increasing_rule_not_met"
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_15m_close_increasing_3of4
@@ -1225,7 +1353,7 @@ class ScoringSystem:
             )
 
     def _latest_four_15m_ohlc(self, symbol: str) -> list[tuple[float, float, float, float]] | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT open, high, low, close
@@ -1253,7 +1381,7 @@ class ScoringSystem:
         hit = qualified_count >= 2
         score = self._score_weight(7) if hit else 0
         reason = "close_pos_15m_ge_0.55_2of4" if hit else "close_pos_15m_rule_not_met"
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_15m_close_near_high_2of4
@@ -1269,7 +1397,7 @@ class ScoringSystem:
             )
 
     def _latest_24_1h_high(self, symbol: str) -> list[float] | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT high
@@ -1293,7 +1421,7 @@ class ScoringSystem:
         hit = latest_high > prev_23_max_high
         score = self._score_weight(8) if hit else 0
         reason = "latest_1h_high_gt_prev_23_high" if hit else "latest_1h_high_rule_not_met"
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_1h_latest_highest_24
@@ -1310,7 +1438,7 @@ class ScoringSystem:
             )
 
     def get_latest_round_scores_15m_close_near_high_2of4(self) -> tuple[int | None, list[sqlite3.Row]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_15m_close_near_high_2of4").fetchone()
             if row["ts"] is None:
                 return None, []
@@ -1322,14 +1450,14 @@ class ScoringSystem:
         return round_ts, rows
 
     def _get_round_scores_15m_close_near_high_2of4(self, round_ts: int) -> list[sqlite3.Row]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             return conn.execute(
                 "SELECT symbol, decision_round_ts, score, reason, qualified_count, updated_at FROM symbol_scores_15m_close_near_high_2of4 WHERE decision_round_ts = ? ORDER BY symbol ASC",
                 (round_ts,),
             ).fetchall()
 
     def get_latest_round_scores_1h_latest_highest_24(self) -> tuple[int | None, list[sqlite3.Row]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_1h_latest_highest_24").fetchone()
             if row["ts"] is None:
                 return None, []
@@ -1341,7 +1469,7 @@ class ScoringSystem:
         return round_ts, rows
 
     def _latest_three_15m_close_and_oi_45m(self, symbol: str) -> tuple[float, float, float, float, float] | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             close_rows = conn.execute(
                 """
                 SELECT close
@@ -1379,7 +1507,7 @@ class ScoringSystem:
         hit = (close_latest > close_prev1 > close_prev2) and (latest_oi > oi_45m_ago)
         score = self._score_weight(9) if hit else 0
         reason = "close_15m_desc_3_and_oi_1m_gt_45m" if hit else "rule9_not_met"
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_15m_close_desc_3_with_oi_45m
@@ -1399,7 +1527,7 @@ class ScoringSystem:
             )
 
     def get_latest_round_scores_15m_close_desc_3_with_oi_45m(self) -> tuple[int | None, list[sqlite3.Row]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_15m_close_desc_3_with_oi_45m").fetchone()
             if row["ts"] is None:
                 return None, []
@@ -1416,7 +1544,7 @@ class ScoringSystem:
         return round_ts, rows
 
     def _get_round_scores_15m_close_desc_3_with_oi_45m(self, round_ts: int) -> list[sqlite3.Row]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             return conn.execute(
                 """
                 SELECT symbol, decision_round_ts, score, reason, close_latest, close_prev1, close_prev2, latest_open_interest, open_interest_45m_ago, updated_at
@@ -1430,7 +1558,7 @@ class ScoringSystem:
 
 
     def _save_1m_close_gt_60m_open_with_oi_60m_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             k_rows = conn.execute("""
                 SELECT open, close FROM klines_1m WHERE symbol = ? ORDER BY open_time DESC LIMIT 60
             """, (symbol,)).fetchall()
@@ -1446,7 +1574,7 @@ class ScoringSystem:
         hit = (latest_close > open_60m_ago) and (latest_oi > oi_60m_ago)
         score = self._score_weight(10) if hit else 0
         reason = "close_1m_gt_60m_open_and_oi_gt_60m" if hit else "rule10_not_met"
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute("""
                 INSERT INTO symbol_scores_1m_close_gt_60m_open_with_oi_60m
                 (symbol, decision_round_ts, score, reason, latest_1m_close, open_60m_ago, latest_open_interest, open_interest_60m_ago, updated_at)
@@ -1458,7 +1586,7 @@ class ScoringSystem:
             """, (symbol, decision_round_ts, score, reason, latest_close, open_60m_ago, latest_oi, oi_60m_ago, updated_at))
 
     def _save_oi_loss_rate_240m_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             oi_rows = conn.execute("""
                 SELECT open_interest FROM open_interest_1m WHERE symbol = ? ORDER BY snapshot_time DESC LIMIT 240
             """, (symbol,)).fetchall()
@@ -1477,7 +1605,7 @@ class ScoringSystem:
             hit = loss_rate <= 0.03
         score = self._score_weight(11) if hit else 0
         reason = "oi_1m_gte_240m_or_loss_le_3pct" if hit else "rule11_not_met"
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute("""
                 INSERT INTO symbol_scores_oi_loss_rate_240m
                 (symbol, decision_round_ts, score, reason, latest_open_interest, open_interest_240m_ago, oi_loss_rate, updated_at)
@@ -1489,7 +1617,7 @@ class ScoringSystem:
 
 
     def _latest_four_15m_funding_rates(self, symbol: str) -> tuple[float | None, float | None, float | None, float | None] | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT funding_rate
@@ -1514,7 +1642,7 @@ class ScoringSystem:
         hit = all(rate is not None and 0.0001 < rate < 0.001 for rate in funding_rates)
         score = self._score_weight(12) if hit else 0
         reason = "funding_rate_15m_4bars_between_0.01_and_0.1" if hit else "rule12_not_met"
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_15m_funding_rate_4bars
@@ -1534,7 +1662,7 @@ class ScoringSystem:
 
 
     def _latest_17_15m_ohlcv(self, symbol: str) -> list[sqlite3.Row] | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT open, close, volume
@@ -1569,7 +1697,7 @@ class ScoringSystem:
         else:
             reason = "rule13_price_not_met"
 
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_15m_bullish_volume_breakout
@@ -1589,7 +1717,7 @@ class ScoringSystem:
             )
 
     def get_latest_round_scores_15m_bullish_volume_breakout(self) -> tuple[int | None, list[sqlite3.Row]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_15m_bullish_volume_breakout").fetchone()
             if row["ts"] is None:
                 return None, []
@@ -1606,7 +1734,7 @@ class ScoringSystem:
         return round_ts, rows
 
     def _get_round_scores_15m_bullish_volume_breakout(self, round_ts: int) -> list[sqlite3.Row]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             return conn.execute(
                 """
                 SELECT symbol, decision_round_ts, score, reason, latest_open, latest_close, prev_close, latest_volume, volume_avg, updated_at
@@ -1618,7 +1746,7 @@ class ScoringSystem:
             ).fetchall()
 
     def _latest_19_15m_volumes(self, symbol: str) -> list[float] | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT volume
@@ -1646,7 +1774,7 @@ class ScoringSystem:
         score = self._score_weight(14) if hit else 0
         reason = "volume_15m_spike_2of3" if hit else "rule14_not_met"
 
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_15m_volume_spike_2of3
@@ -1681,7 +1809,7 @@ class ScoringSystem:
             )
 
     def get_latest_round_scores_15m_volume_spike_2of3(self) -> tuple[int | None, list[sqlite3.Row]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_15m_volume_spike_2of3").fetchone()
             if row["ts"] is None:
                 return None, []
@@ -1698,7 +1826,7 @@ class ScoringSystem:
         return round_ts, rows
 
     def _get_round_scores_15m_volume_spike_2of3(self, round_ts: int) -> list[sqlite3.Row]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             return conn.execute(
                 """
                 SELECT symbol, decision_round_ts, score, reason, qualified_count, volume_latest, volume_avg_latest, volume_prev1, volume_avg_prev1, volume_prev2, volume_avg_prev2, updated_at
@@ -1710,7 +1838,7 @@ class ScoringSystem:
             ).fetchall()
 
     def _latest_13_1h_volumes(self, symbol: str) -> list[float] | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT volume
@@ -1736,7 +1864,7 @@ class ScoringSystem:
         score = self._score_weight(15) if hit else 0
         reason = "latest_1h_volume_gt_1_5_avg_prev_12" if hit else "rule15_not_met"
 
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_1h_volume_spike_latest
@@ -1753,7 +1881,7 @@ class ScoringSystem:
             )
 
     def get_latest_round_scores_1h_volume_spike_latest(self) -> tuple[int | None, list[sqlite3.Row]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_1h_volume_spike_latest").fetchone()
             if row["ts"] is None:
                 return None, []
@@ -1770,7 +1898,7 @@ class ScoringSystem:
         return round_ts, rows
 
     def _get_round_scores_1h_volume_spike_latest(self, round_ts: int) -> list[sqlite3.Row]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             return conn.execute(
                 """
                 SELECT symbol, decision_round_ts, score, reason, latest_volume, volume_avg, updated_at
@@ -1783,7 +1911,7 @@ class ScoringSystem:
 
 
     def _latest_2_15m_ohlcv(self, symbol: str) -> list[sqlite3.Row] | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT open, close, volume
@@ -1823,7 +1951,7 @@ class ScoringSystem:
         else:
             reason = "rule16_price_body_not_met"
 
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_15m_pullback_low_volume
@@ -1860,7 +1988,7 @@ class ScoringSystem:
             )
 
     def get_latest_round_scores_15m_pullback_low_volume(self) -> tuple[int | None, list[sqlite3.Row]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_15m_pullback_low_volume").fetchone()
             if row["ts"] is None:
                 return None, []
@@ -1877,7 +2005,7 @@ class ScoringSystem:
         return round_ts, rows
 
     def _get_round_scores_15m_pullback_low_volume(self, round_ts: int) -> list[sqlite3.Row]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             return conn.execute(
                 """
                 SELECT symbol, decision_round_ts, score, reason, latest_open, latest_close, latest_body, latest_volume, prev_open, prev_close, prev_body, prev_volume, updated_at
@@ -1889,7 +2017,7 @@ class ScoringSystem:
             ).fetchall()
 
     def _latest_3_15m_low_close(self, symbol: str) -> list[sqlite3.Row] | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT low, close
@@ -1937,7 +2065,7 @@ class ScoringSystem:
                 reason = "rule17_latest_lowest_or_no_qualified_lowest"
         score = self._score_weight(17) if hit else 0
 
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_15m_low_rebound_3bars
@@ -1976,7 +2104,7 @@ class ScoringSystem:
             )
 
     def get_latest_round_scores_15m_low_rebound_3bars(self) -> tuple[int | None, list[sqlite3.Row]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_15m_low_rebound_3bars").fetchone()
             if row["ts"] is None:
                 return None, []
@@ -1993,7 +2121,7 @@ class ScoringSystem:
         return round_ts, rows
 
     def _get_round_scores_15m_low_rebound_3bars(self, round_ts: int) -> list[sqlite3.Row]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             return conn.execute(
                 """
                 SELECT symbol, decision_round_ts, score, reason, latest_low, latest_close, prev1_low, prev1_close, prev2_low, prev2_close, lowest_low, prev1_rebound_ratio, latest_rebound_ratio, updated_at
@@ -2005,7 +2133,7 @@ class ScoringSystem:
             ).fetchall()
 
     def _latest_24_15m_ohlcv(self, symbol: str) -> list[sqlite3.Row]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             return conn.execute(
                 """
                 SELECT open_time, open, high, low, close, volume
@@ -2169,7 +2297,7 @@ class ScoringSystem:
 
         structural_stop_loss = self._adjust_structural_stop_loss(structural_stop_loss)
 
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_structural_stop_losses
@@ -2218,7 +2346,7 @@ class ScoringSystem:
             )
 
     def get_latest_round_structural_stop_losses(self) -> tuple[int | None, list[sqlite3.Row]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_structural_stop_losses").fetchone()
             if row["ts"] is None:
                 return None, []
@@ -2240,7 +2368,7 @@ class ScoringSystem:
         return round_ts, rows
 
     def _structural_stop_loss_for_round(self, symbol: str, decision_round_ts: int) -> float:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute(
                 """
                 SELECT structural_stop_loss
@@ -2254,7 +2382,7 @@ class ScoringSystem:
         return float(row["structural_stop_loss"])
 
     def _latest_1m_close_and_two_15m_close(self, symbol: str) -> tuple[float, float, float] | None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             close_1m_row = conn.execute(
                 """
                 SELECT close
@@ -2309,7 +2437,7 @@ class ScoringSystem:
                     else:
                         reason = "rule18_stop_loss_distance_not_met"
 
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_structural_stop_loss_distance
@@ -2340,7 +2468,7 @@ class ScoringSystem:
             )
 
     def get_latest_round_scores_structural_stop_loss_distance(self) -> tuple[int | None, list[sqlite3.Row]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_structural_stop_loss_distance").fetchone()
             if row["ts"] is None:
                 return None, []
@@ -2357,7 +2485,7 @@ class ScoringSystem:
         return round_ts, rows
 
     def _get_round_scores_structural_stop_loss_distance(self, round_ts: int) -> list[sqlite3.Row]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             return conn.execute(
                 """
                 SELECT symbol, decision_round_ts, score, reason, structural_stop_loss, latest_1m_close, stop_loss_distance_ratio, latest_15m_close, prev_15m_close, updated_at
@@ -2369,7 +2497,7 @@ class ScoringSystem:
             ).fetchall()
 
     def get_latest_round_scores_15m_funding_rate_4bars(self) -> tuple[int | None, list[sqlite3.Row]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_15m_funding_rate_4bars").fetchone()
             if row["ts"] is None:
                 return None, []
@@ -2386,7 +2514,7 @@ class ScoringSystem:
         return round_ts, rows
 
     def _get_round_scores_15m_funding_rate_4bars(self, round_ts: int) -> list[sqlite3.Row]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             return conn.execute(
                 """
                 SELECT symbol, decision_round_ts, score, reason, funding_rate_latest, funding_rate_prev1, funding_rate_prev2, funding_rate_prev3, updated_at
@@ -2398,7 +2526,7 @@ class ScoringSystem:
             ).fetchall()
 
     def get_latest_round_scores_1m_close_gt_60m_open_with_oi_60m(self) -> tuple[int | None, list[sqlite3.Row]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_1m_close_gt_60m_open_with_oi_60m").fetchone()
             if row["ts"] is None:
                 return None, []
@@ -2407,11 +2535,11 @@ class ScoringSystem:
         return round_ts, rows
 
     def _get_round_scores_1m_close_gt_60m_open_with_oi_60m(self, round_ts: int) -> list[sqlite3.Row]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             return conn.execute("SELECT symbol, decision_round_ts, score, reason, latest_1m_close, open_60m_ago, latest_open_interest, open_interest_60m_ago, updated_at FROM symbol_scores_1m_close_gt_60m_open_with_oi_60m WHERE decision_round_ts = ? ORDER BY symbol ASC", (round_ts,)).fetchall()
 
     def get_latest_round_scores_oi_loss_rate_240m(self) -> tuple[int | None, list[sqlite3.Row]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_oi_loss_rate_240m").fetchone()
             if row["ts"] is None:
                 return None, []
@@ -2420,10 +2548,10 @@ class ScoringSystem:
         return round_ts, rows
 
     def _get_round_scores_oi_loss_rate_240m(self, round_ts: int) -> list[sqlite3.Row]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             return conn.execute("SELECT symbol, decision_round_ts, score, reason, latest_open_interest, open_interest_240m_ago, oi_loss_rate, updated_at FROM symbol_scores_oi_loss_rate_240m WHERE decision_round_ts = ? ORDER BY symbol ASC", (round_ts,)).fetchall()
     def _get_round_scores_1h_latest_highest_24(self, round_ts: int) -> list[sqlite3.Row]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             return conn.execute(
                 "SELECT symbol, decision_round_ts, score, reason, latest_high, prev_23_max_high AS prev_24_max_high, updated_at FROM symbol_scores_1h_latest_highest_24 WHERE decision_round_ts = ? ORDER BY symbol ASC",
                 (round_ts,),
@@ -2431,7 +2559,7 @@ class ScoringSystem:
 
 
     def get_latest_round_scores_15m_close_increasing_3of4(self) -> tuple[int | None, list[sqlite3.Row]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_15m_close_increasing_3of4").fetchone()
             if row["ts"] is None:
                 return None, []
@@ -2443,7 +2571,7 @@ class ScoringSystem:
         return round_ts, rows
 
     def _get_round_scores_15m_close_increasing_3of4(self, round_ts: int) -> list[sqlite3.Row]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             return conn.execute(
                 "SELECT symbol, decision_round_ts, score, reason, updated_at FROM symbol_scores_15m_close_increasing_3of4 WHERE decision_round_ts = ? ORDER BY symbol ASC",
                 (round_ts,),
@@ -2451,7 +2579,7 @@ class ScoringSystem:
 
 
     def get_latest_round_scores_15m_bullish_3of4(self) -> tuple[int | None, list[sqlite3.Row]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_15m_bullish_3of4").fetchone()
             if row["ts"] is None:
                 return None, []
@@ -2468,7 +2596,7 @@ class ScoringSystem:
         return round_ts, rows
 
     def _get_round_scores_15m_bullish_3of4(self, round_ts: int) -> list[sqlite3.Row]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             return conn.execute(
                 """
                 SELECT symbol, decision_round_ts, score, reason, bullish_count, updated_at
@@ -2480,7 +2608,7 @@ class ScoringSystem:
             ).fetchall()
 
     def get_latest_round_scores_close_gt_ma20(self) -> tuple[int | None, list[sqlite3.Row]]:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_close_gt_ma20").fetchone()
             if row["ts"] is None:
                 return None, []
@@ -2568,7 +2696,7 @@ class ScoringSystem:
             ).fetchall()
 
     def _save_score(self, rec: SymbolScore) -> None:
-        with self._connect() as conn:
+        with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores

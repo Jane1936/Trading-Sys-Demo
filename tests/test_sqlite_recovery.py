@@ -16,6 +16,26 @@ from scoring_system import ScoringSystem
 from sqlite_recovery import ensure_sqlite_database_usable, is_malformed_database_error
 
 
+def test_connect_sqlite_initializes_wal_once_per_database_file(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "wal-once.db")
+    calls = []
+    original = db_config.configure_sqlite_connection
+
+    def record_configuration(conn, *, wal=True, initialize_wal=True):
+        calls.append((wal, initialize_wal))
+        return original(conn, wal=wal, initialize_wal=initialize_wal)
+
+    monkeypatch.setattr(db_config, "configure_sqlite_connection", record_configuration)
+    db_config._wal_initialized_files.pop(str(Path(db_path).resolve()), None)
+
+    with db_config.connect_sqlite(db_path):
+        pass
+    with db_config.connect_sqlite(db_path):
+        pass
+
+    assert calls == [(True, True), (True, False)]
+
+
 def test_ensure_sqlite_database_usable_quarantines_malformed_database(tmp_path):
     db_path = tmp_path / "klines.db"
     db_path.write_bytes(b"not a sqlite database")

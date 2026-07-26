@@ -25,6 +25,8 @@ DB_LABELS = {
 }
 
 _recovery_local = threading.local()
+_wal_init_lock = threading.Lock()
+_wal_initialized_files: dict[str, tuple[int, int]] = {}
 
 
 class DatabaseRecoveringError(sqlite3.OperationalError):
@@ -193,11 +195,14 @@ class sqlite_schema_lock:
         return False
 
 
-def configure_sqlite_connection(conn: sqlite3.Connection, *, wal: bool = True) -> sqlite3.Connection:
+def configure_sqlite_connection(
+    conn: sqlite3.Connection, *, wal: bool = True, initialize_wal: bool = True
+) -> sqlite3.Connection:
     """Apply SQLite settings used by concurrent workers."""
     conn.execute("PRAGMA busy_timeout=30000;")
     if wal:
-        conn.execute("PRAGMA journal_mode=WAL;")
+        if initialize_wal:
+            conn.execute("PRAGMA journal_mode=WAL;")
         # FULL adds an fsync for each WAL transaction.  It costs some write
         # throughput but is the safer default for bind-mounted production data.
         conn.execute("PRAGMA synchronous=FULL;")
@@ -217,7 +222,20 @@ def connect_sqlite(db_path: str, *, timeout: int = 30, row_factory=None, wal: bo
     if row_factory is not None:
         conn.row_factory = row_factory
     try:
-        return configure_sqlite_connection(conn, wal=wal)
+        initialize_wal = False
+        if wal:
+            normalized = str(Path(db_path).resolve())
+            stat_result = os.stat(db_path)
+            identity = (stat_result.st_dev, stat_result.st_ino)
+            with _wal_init_lock:
+                initialize_wal = _wal_initialized_files.get(normalized) != identity
+                configured = configure_sqlite_connection(
+                    conn, wal=True, initialize_wal=initialize_wal
+                )
+                if initialize_wal:
+                    _wal_initialized_files[normalized] = identity
+                return configured
+        return configure_sqlite_connection(conn, wal=False)
     except Exception:
         conn.close()
         raise
