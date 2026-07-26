@@ -20,6 +20,14 @@ from urllib3.util.retry import Retry
 import allusdt_15m_ma20
 import db_config
 
+database_error_handler = None
+
+
+def _handle_runtime_database_error(exc: BaseException) -> None:
+    """Forward swallowed scheduler errors to the worker recovery coordinator."""
+    if database_error_handler is not None:
+        database_error_handler(exc)
+
 
 # ================= 配置 =================
 BASE_URL = "https://fapi.binance.com/fapi/v1/klines"
@@ -255,6 +263,7 @@ def fetch_btc_interval_klines(interval, start_time=None, limit=BTC_5M_LIMIT):
                 return []
             return data
         except Exception as e:
+            _handle_runtime_database_error(e)
             if attempt == 0:
                 time.sleep(0.2)
                 continue
@@ -552,6 +561,7 @@ def fetch_klines(symbol, start_time=None, limit=LIMIT):
             return data
 
         except Exception as e:
+            _handle_runtime_database_error(e)
             if attempt == 0:
                 time.sleep(0.2)
                 continue
@@ -584,6 +594,7 @@ def fetch_all_funding_rates():
                 continue
         return rates
     except Exception as e:
+        _handle_runtime_database_error(e)
         print(f"⚠️ funding rate request failed: {e}")
         return {}
 
@@ -605,6 +616,7 @@ def fetch_open_interest(symbol):
                 return None
             return float(open_interest)
         except Exception as e:
+            _handle_runtime_database_error(e)
             if attempt < 3:
                 time.sleep(0.5 * (attempt + 1))
                 continue
@@ -1095,6 +1107,7 @@ def run_kline_main(universe):
                     f"✅ {symbol}: fetched={fetched_count}, inserted_1m={inserted_count}, agg=({agg_summary})"
                 )
             except Exception as e:
+                _handle_runtime_database_error(e)
                 print(f"❌ symbol task failed: {e}")
 
     if funding_rates:
@@ -1111,6 +1124,7 @@ def run_oi_main(universe):
                 symbol, oi_inserted = future.result()
                 print(f"✅ {symbol}: inserted_oi_1m={oi_inserted}")
             except Exception as e:
+                _handle_runtime_database_error(e)
                 print(f"❌ oi symbol task failed: {e}")
 
 
@@ -1126,6 +1140,7 @@ def run_atr_15m_main(universe):
                     continue
                 print(f"✅ {symbol}: atr14_15m={atr14}, changed={changed}")
             except Exception as e:
+                _handle_runtime_database_error(e)
                 print(f"❌ atr 15m symbol task failed: {e}")
 
 
@@ -1155,6 +1170,7 @@ def kline_job():
         allusdt_15m_ma20.run(DB_PATH, db_write_lock=db_write_lock)
 
     except Exception as e:
+        _handle_runtime_database_error(e)
         print("❌ error:", e)
 
     print(f"⏱ cost: {round(time.time() - start, 2)}s")
@@ -1184,6 +1200,7 @@ def oi_job():
 
         run_oi_main(UNIVERSE)
     except Exception as e:
+        _handle_runtime_database_error(e)
         print("❌ oi error:", e)
 
     print(f"⏱ oi cost: {round(time.time() - start, 2)}s")
@@ -1213,6 +1230,7 @@ def funding_job():
 
         run_funding_update(UNIVERSE)
     except Exception as e:
+        _handle_runtime_database_error(e)
         print("❌ funding error:", e)
 
     print(f"⏱ funding cost: {round(time.time() - start, 2)}s")
@@ -1238,6 +1256,7 @@ def btc_5m_job():
     try:
         run_btc_5m_main()
     except Exception as e:
+        _handle_runtime_database_error(e)
         print("❌ BTC 5m error:", e)
 
     print(f"⏱ BTC 5m cost: {round(time.time() - start, 2)}s")
@@ -1262,6 +1281,7 @@ def btc_15m_job():
     try:
         run_btc_15m_main()
     except Exception as e:
+        _handle_runtime_database_error(e)
         print("❌ BTC 15m error:", e)
 
     print(f"⏱ BTC 15m cost: {round(time.time() - start, 2)}s")
@@ -1285,6 +1305,7 @@ def allusdt_15m_ma20_job():
     try:
         allusdt_15m_ma20.run(DB_PATH, db_write_lock=db_write_lock)
     except Exception as e:
+        _handle_runtime_database_error(e)
         print("❌ ALLUSDT 15m MA20 error:", e)
 
     print(f"⏱ ALLUSDT 15m MA20 cost: {round(time.time() - start, 2)}s")
@@ -1312,6 +1333,7 @@ def atr_15m_job():
 
         run_atr_15m_main(UNIVERSE)
     except Exception as e:
+        _handle_runtime_database_error(e)
         print("❌ ATR 15m error:", e)
 
     print(f"⏱ ATR 15m cost: {round(time.time() - start, 2)}s")

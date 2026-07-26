@@ -45,10 +45,94 @@ from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import DynamicOpenThresholdModule
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
 from zombie_force_liquidation import ZombieForceLiquidationModule
+from sqlite_recovery import (
+    is_malformed_database_error,
+    quarantine_sqlite_database,
+    quick_check_sqlite_database,
+)
 
 _universe_lock = threading.Lock()
 _universe_refresh_interval_sec = 12 * 60 * 60
 _universe_last_refresh_ts = 0.0
+DATABASE_HEALTH_CHECK_INTERVAL_SEC = 30 * 60
+
+
+def _database_initializers() -> dict[str, Callable[[], None]]:
+    """Return complete, idempotent schema initializers for every worker DB."""
+    return {
+        db_config.BASE_DB_PATH: collector.init_db,
+        db_config.SCORING_DB_PATH: lambda: (
+            PreSafetyModule(db_path=db_config.SCORING_DB_PATH).init_table(),
+            CooldownModule(db_path=db_config.SCORING_DB_PATH).init_table(),
+            ScoringSystem(db_path=db_config.SCORING_DB_PATH).init_table(),
+            OpenableSymbolModule(db_path=db_config.SCORING_DB_PATH).init_table(),
+            DynamicOpenThresholdModule(db_path=db_config.SCORING_DB_PATH).init_table(),
+        ),
+        db_config.MARKET_DB_PATH: lambda: (
+            MarketFilterModule(db_path=db_config.MARKET_DB_PATH).init_table(),
+            AddPositionPermissionModule(db_path=db_config.MARKET_DB_PATH).init_table(),
+        ),
+        db_config.TRADING_DB_PATH: lambda: (
+            TradingExperiment(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            HoldingPositionScoringSystem(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            BreakEvenTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            PartialTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            DynamicProfitProtection(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            TrailingStopTracker(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            ZombieForceLiquidationModule(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            DynamicAddPositionThresholdModule(db_path=db_config.TRADING_DB_PATH).init_table(),
+        ),
+    }
+
+
+def check_and_recover_worker_databases() -> dict[str, list[str]]:
+    """Quick-check all worker DBs and immediately rebuild malformed ones."""
+    recovered: dict[str, list[str]] = {}
+    for db_path, initialize in _database_initializers().items():
+        ok, detail = quick_check_sqlite_database(db_path)
+        if ok:
+            continue
+        detail_lower = detail.lower()
+        if "locked" in detail_lower or "busy" in detail_lower:
+            print(f"⚠️ SQLite health check deferred db={db_path}: {detail}")
+            continue
+        with db_config.sqlite_schema_lock(f"{db_path}.recovery"):
+            # Another worker may have recovered it while this process waited.
+            ok, detail = quick_check_sqlite_database(db_path)
+            if ok:
+                continue
+            quarantined = quarantine_sqlite_database(db_path)
+            initialize()
+            verified, verify_detail = quick_check_sqlite_database(db_path)
+            if not verified:
+                raise sqlite3.DatabaseError(
+                    f"SQLite recovery verification failed db={db_path}: {verify_detail}"
+                )
+            recovered[db_path] = quarantined
+            print(
+                f"✅ malformed SQLite recovered db={db_path} quarantined="
+                f"{', '.join(quarantined) or 'none'}"
+            )
+    return recovered
+
+
+def recover_after_worker_error(exc: BaseException) -> bool:
+    """Recover a malformed worker DB detected by a runtime task."""
+    if not is_malformed_database_error(exc):
+        return False
+    check_and_recover_worker_databases()
+    return True
+
+
+def start_database_health_check_task() -> None:
+    """Run a quick_check for all four databases every 30 minutes."""
+    while True:
+        try:
+            check_and_recover_worker_databases()
+        except Exception as exc:
+            print(f"⚠️ SQLite health check failed: {exc}")
+        time.sleep(DATABASE_HEALTH_CHECK_INTERVAL_SEC)
 
 
 def verify_db_writable(db_path: str) -> None:
@@ -137,6 +221,7 @@ def run_first_experiment_after_openable_round(
             f"reason={experiment_result.get('reason', '')}"
         )
     except Exception as exc:
+        recover_after_worker_error(exc)
         print(
             f"⚠️ first trading experiment failed after openable round={round_ts}: {exc}"
         )
@@ -335,6 +420,7 @@ def run_scoring_round_worker(
             f"2R={trailing_reduction_result.get('trigger_r_usdt', '')}"
         )
     except Exception as exc:
+        recover_after_worker_error(exc)
         print(f"⚠️ holding scoring failed round={decision_round_ts}: {exc}")
 
     if _scoring_worker_should_stop(
@@ -362,6 +448,7 @@ def run_scoring_round_worker(
                 db_path=db_config.MARKET_DB_PATH
             ).get_result_for_round(decision_round_ts)
         except Exception as exc:
+            recover_after_worker_error(exc)
             print(f"⚠️ market filter lookup failed round={decision_round_ts}: {exc}")
 
     allow_new_positions = dynamic_threshold_result.allow_new_positions
@@ -427,6 +514,7 @@ def start_break_even_take_profit_task() -> None:
                 f"errors={reconcile_result.get('errors', 0)}"
             )
         except Exception as exc:
+            recover_after_worker_error(exc)
             print(f"⚠️ exit-order reconcile failed: {exc}")
 
         try:
@@ -437,6 +525,7 @@ def start_break_even_take_profit_task() -> None:
                 f"records={partial_result.get('records', 0)} 2R={partial_result.get('trigger_r_usdt', '')}"
             )
         except Exception as exc:
+            recover_after_worker_error(exc)
             print(f"⚠️ partial take-profit failed: {exc}")
 
         try:
@@ -447,6 +536,7 @@ def start_break_even_take_profit_task() -> None:
                 f"records={result.get('records', 0)} R={result.get('r_usdt', '')}"
             )
         except Exception as exc:
+            recover_after_worker_error(exc)
             print(f"⚠️ break-even take-profit failed: {exc}")
 
         for _ in range(5):
@@ -458,6 +548,7 @@ def start_break_even_take_profit_task() -> None:
                     f"triggered={dynamic_result.get('triggered', 0)} R={dynamic_result.get('r_usdt', '')}"
                 )
             except Exception as exc:
+                recover_after_worker_error(exc)
                 print(f"⚠️ dynamic profit protection failed: {exc}")
 
             try:
@@ -468,6 +559,7 @@ def start_break_even_take_profit_task() -> None:
                     f"updated={trailing_result.get('updated', 0)}"
                 )
             except Exception as exc:
+                recover_after_worker_error(exc)
                 print(f"⚠️ trailing stop tracker failed: {exc}")
 
             time.sleep(60)
@@ -527,6 +619,7 @@ def start_pre_safety_task() -> None:
                                 f"cond1={event.cond1_ratio:.6f} cond2={event.cond2_ratio:.6f}"
                             )
                     except Exception as exc:  # keep this side-task isolated
+                        recover_after_worker_error(exc)
                         print(f"⚠️ pre-safety detect failed symbol={symbol}: {exc}")
             else:
                 print(f"⏸️ scoring system disabled round={round_ts}; skipping pre-safety, cooldown and scoring")
@@ -547,6 +640,7 @@ def start_pre_safety_task() -> None:
                         f"threshold={dynamic_add_result.threshold_r_multiple}R"
                     )
                 except Exception as exc:
+                    recover_after_worker_error(exc)
                     print(f"⚠️ market filter failed round={round_ts}: {exc}")
             else:
                 print(f"⏸️ market filter disabled round={round_ts}; skipping market filter and add-position permission")
@@ -561,6 +655,7 @@ def start_pre_safety_task() -> None:
                         f"cooldown={len(cooldown_symbols)}"
                     )
                 except Exception as exc:
+                    recover_after_worker_error(exc)
                     print(f"⚠️ cooldown failed round={round_ts}: {exc}")
 
             last_pre_safety_round_ts = round_ts
@@ -582,6 +677,7 @@ def start_pre_safety_task() -> None:
                         f"{convergence_reason}"
                     )
             except Exception as exc:
+                recover_after_worker_error(exc)
                 print(f"⚠️ add-position permission failed round={round_ts}: {exc}")
 
         (
@@ -632,6 +728,7 @@ def start_pre_safety_task() -> None:
                     f"pid={active_scoring_process.pid} deadline={active_scoring_deadline_ts}"
                 )
             except Exception as exc:
+                recover_after_worker_error(exc)
                 print(f"⚠️ scoring worker start failed round={round_ts}: {exc}")
                 active_scoring_process = None
                 active_scoring_round_ts = None
@@ -657,6 +754,7 @@ def start_increase_pretrigger_refresh_task() -> None:
                     f"records={result.get('records', 0)}"
                 )
         except Exception as exc:
+            recover_after_worker_error(exc)
             print(f"⚠️ increase pretrigger refresh failed: {exc}")
         time.sleep(60)
 
@@ -766,6 +864,7 @@ def start_atr_15m_task(symbols: List[str]) -> None:
                 f"eligible={result.get('eligible', 0)} pretriggered={result.get('pretriggered', 0)}"
             )
         except Exception as exc:
+            recover_after_worker_error(exc)
             print(f"⚠️ trailing reduction after ATR failed: {exc}")
 
     scheduler = collector.BlockingScheduler()
@@ -790,6 +889,7 @@ def start_trailing_reduction_refresh_task() -> None:
                 f"triggered={result.get('triggered', 0)} records={result.get('records', 0)}"
             )
         except Exception as exc:
+            recover_after_worker_error(exc)
             print(f"⚠️ trailing reduction refresh failed: {exc}")
 
     scheduler.add_job(_job, "cron", second=45)
@@ -818,6 +918,7 @@ def start_processor_task(symbols: List[str]) -> None:
 
 
 if __name__ == "__main__":
+    collector.database_error_handler = recover_after_worker_error
     verify_db_writable(db_config.BASE_DB_PATH)
     feature_flags.init_feature_flags(db_config.BASE_DB_PATH)
     # 预先构建一次 universe，并按12小时周期刷新
@@ -851,6 +952,11 @@ if __name__ == "__main__":
         target=start_trailing_reduction_refresh_task, daemon=True
     )
     trailing_reduction_refresh_thread.start()
+
+    database_health_thread = threading.Thread(
+        target=start_database_health_check_task, daemon=True
+    )
+    database_health_thread.start()
 
     # 主线程跑 processor task
     start_processor_task(symbols)
