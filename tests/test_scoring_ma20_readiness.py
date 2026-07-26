@@ -1,5 +1,6 @@
 import sqlite3
 
+import db_config
 from scoring_system import ScoringSystem
 
 
@@ -230,6 +231,7 @@ def test_score_round_continues_when_one_symbol_rule_fails(tmp_path, monkeypatch)
         monkeypatch.setattr(scoring, method_name, lambda **_kwargs: None)
     monkeypatch.setattr(scoring, "_latest_three_ma20_15m", lambda symbol: (3.0, 2.0, 1.0))
     monkeypatch.setattr(scoring, "persist_total_scores_for_round", lambda **_kwargs: None)
+    monkeypatch.setattr(scoring, "_load_round_snapshot", lambda _symbols: {})
 
     results = scoring.score_round(
         decision_round_ts=1_800_000,
@@ -275,6 +277,7 @@ def test_score_round_records_symbol_error_when_three_15m_ma20_values_missing(tmp
         monkeypatch.setattr(scoring, method_name, lambda **_kwargs: None)
     monkeypatch.setattr(scoring, "_latest_three_ma20_15m", lambda symbol: None)
     monkeypatch.setattr(scoring, "persist_total_scores_for_round", lambda **_kwargs: None)
+    monkeypatch.setattr(scoring, "_load_round_snapshot", lambda _symbols: {})
 
     results = scoring.score_round(
         decision_round_ts=1_800_000,
@@ -287,6 +290,103 @@ def test_score_round_records_symbol_error_when_three_15m_ma20_values_missing(tmp
     assert len(symbol_errors) == 1
     assert symbol_errors[0].symbol == "BTCUSDT"
     assert symbol_errors[0].error == "missing_latest_three_15m_ma20_records"
+
+
+def test_score_round_commits_twenty_symbols_per_batch(tmp_path, monkeypatch):
+    db_path = tmp_path / "scoring.db"
+    scoring = ScoringSystem(db_path=str(db_path))
+    scoring.init_table()
+    conn = scoring._connect_writer()
+    statements = []
+    conn.set_trace_callback(statements.append)
+
+    monkeypatch.setattr(scoring, "_connect_writer", lambda: conn)
+    monkeypatch.setattr(scoring, "_load_round_snapshot", lambda _symbols: {})
+    monkeypatch.setattr(scoring, "_score_symbol", lambda *_args: None)
+    monkeypatch.setattr(scoring, "persist_total_scores_for_round", lambda **_kwargs: None)
+
+    scoring.score_round(
+        decision_round_ts=1_800_000,
+        all_symbols=[f"SYM{i:02d}" for i in range(41)],
+        abnormal_symbols=[],
+    )
+
+    assert sum(statement == "BEGIN IMMEDIATE" for statement in statements) == 3
+
+
+def test_round_snapshot_bulk_loads_and_caps_each_symbol_window(tmp_path, monkeypatch):
+    base_path = tmp_path / "base.db"
+    with sqlite3.connect(base_path) as conn:
+        conn.execute(
+            "CREATE TABLE klines_1m "
+            "(symbol TEXT, open_time INTEGER, open REAL, close REAL)"
+        )
+        conn.execute(
+            "CREATE TABLE klines_15m "
+            "(symbol TEXT, open_time INTEGER, open REAL, high REAL, low REAL, "
+            "close REAL, volume REAL, funding_rate REAL)"
+        )
+        conn.execute(
+            "CREATE TABLE klines_1h "
+            "(symbol TEXT, open_time INTEGER, high REAL, close REAL, volume REAL)"
+        )
+        conn.execute(
+            "CREATE TABLE open_interest_1m "
+            "(symbol TEXT, snapshot_time INTEGER, open_interest REAL)"
+        )
+        conn.execute(
+            "CREATE TABLE ma20_indicators "
+            "(symbol TEXT, interval TEXT, open_time INTEGER, ma20 REAL)"
+        )
+        for symbol in ("AAA", "BBB", "IGNORED"):
+            conn.executemany(
+                "INSERT INTO klines_1m VALUES (?, ?, ?, ?)",
+                [(symbol, i, float(i), float(i)) for i in range(65)],
+            )
+            conn.executemany(
+                "INSERT INTO klines_15m VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [(symbol, i, 1.0, 2.0, 0.5, 1.5, 10.0, 0.0002) for i in range(30)],
+            )
+            conn.executemany(
+                "INSERT INTO klines_1h VALUES (?, ?, ?, ?, ?)",
+                [(symbol, i, 2.0, 1.5, 10.0) for i in range(30)],
+            )
+            conn.executemany(
+                "INSERT INTO open_interest_1m VALUES (?, ?, ?)",
+                [(symbol, i, 100.0 + i) for i in range(245)],
+            )
+            for interval in ("5m", "15m"):
+                conn.executemany(
+                    "INSERT INTO ma20_indicators VALUES (?, ?, ?, ?)",
+                    [(symbol, interval, i, 100.0 + i) for i in range(5)],
+                )
+
+    monkeypatch.setattr(db_config, "BASE_DB_PATH", str(base_path))
+    scoring = ScoringSystem(db_path=str(tmp_path / "scoring.db"))
+
+    snapshot = scoring._load_round_snapshot(["AAA", "BBB"])
+
+    assert len(snapshot["klines_1m"]) == 120
+    assert len(snapshot["klines_15m"]) == 48
+    assert len(snapshot["klines_1h"]) == 48
+    assert len(snapshot["open_interest_1m"]) == 480
+    assert len(snapshot["ma20_indicators"]) == 12
+    assert {row["symbol"] for rows in snapshot.values() for row in rows} == {"AAA", "BBB"}
+    assert snapshot["klines_1m"][0]["open_time"] == 64
+
+    scoring.init_table()
+    results = scoring.score_round(
+        decision_round_ts=1_800_000,
+        all_symbols=["AAA", "BBB"],
+        abnormal_symbols=[],
+    )
+
+    assert [result.symbol for result in results] == ["AAA", "BBB"]
+    with sqlite3.connect(scoring.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM symbol_total_scores").fetchone()[0] == 2
+        assert conn.execute(
+            "SELECT COUNT(*) FROM symbol_scores_structural_stop_loss_distance"
+        ).fetchone()[0] == 2
 
 
 def test_latest_round_total_scores_rebuilds_when_rule_round_is_newer(tmp_path, monkeypatch):
