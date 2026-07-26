@@ -6,6 +6,7 @@ ALLUSDT hourly indicator can be scheduled as a standalone data-collection task.
 
 from __future__ import annotations
 
+import db_config
 import sqlite3
 import time
 from typing import Iterable, Optional
@@ -193,7 +194,7 @@ def save_ma20(conn: sqlite3.Connection) -> int:
 
 def run(db_path: str, db_write_lock=None) -> tuple[int, int]:
     lock = db_write_lock
-    with sqlite3.connect(db_path, timeout=30) as conn:
+    with db_config.connect_sqlite(db_path) as conn:
         conn.execute("PRAGMA busy_timeout=30000;")
         init_db(conn)
         last_close_time = get_last_close_time(conn)
@@ -202,12 +203,12 @@ def run(db_path: str, db_write_lock=None) -> tuple[int, int]:
     latest_closed_close_time = get_latest_closed_close_time(now_ms)
     if last_close_time is not None and last_close_time >= latest_closed_close_time:
         if lock is None:
-            with sqlite3.connect(db_path, timeout=30) as conn:
+            with db_config.connect_sqlite(db_path) as conn:
                 conn.execute("PRAGMA busy_timeout=30000;")
                 changed_ma20 = save_ma20(conn)
         else:
             with lock:
-                with sqlite3.connect(db_path, timeout=30) as conn:
+                with db_config.connect_sqlite(db_path) as conn:
                     conn.execute("PRAGMA busy_timeout=30000;")
                     changed_ma20 = save_ma20(conn)
         print(f"✅ {SYMBOL} 1h up-to-date, ma20_changed={changed_ma20}")
@@ -226,13 +227,13 @@ def run(db_path: str, db_write_lock=None) -> tuple[int, int]:
         time.sleep(0.05)
 
     if lock is None:
-        with sqlite3.connect(db_path, timeout=30) as conn:
+        with db_config.connect_sqlite(db_path) as conn:
             conn.execute("PRAGMA busy_timeout=30000;")
             inserted = save_klines(conn, all_klines)
             ma20_changed = save_ma20(conn)
     else:
         with lock:
-            with sqlite3.connect(db_path, timeout=30) as conn:
+            with db_config.connect_sqlite(db_path) as conn:
                 conn.execute("PRAGMA busy_timeout=30000;")
                 inserted = save_klines(conn, all_klines)
                 ma20_changed = save_ma20(conn)
@@ -249,7 +250,7 @@ def run_recent_backfill(db_path: str, hours: int = 4, db_write_lock=None) -> tup
     latest_closed_close_time = get_latest_closed_close_time(now_ms)
     earliest_open_time = ((now_ms - hours * 60 * 60_000) // INTERVAL_MS) * INTERVAL_MS
 
-    with sqlite3.connect(db_path, timeout=30) as conn:
+    with db_config.connect_sqlite(db_path) as conn:
         conn.execute("PRAGMA busy_timeout=30000;")
         init_db(conn)
         existing_open_times = {
@@ -267,7 +268,7 @@ def run_recent_backfill(db_path: str, hours: int = 4, db_write_lock=None) -> tup
     expected_open_times = set(range(earliest_open_time, latest_closed_close_time + 1, INTERVAL_MS))
     missing_open_times = expected_open_times - existing_open_times
     if not missing_open_times:
-        writer = sqlite3.connect(db_path, timeout=30)
+        writer = db_config.connect_sqlite(db_path)
         try:
             writer.execute("PRAGMA busy_timeout=30000;")
             if lock is None:
@@ -275,7 +276,7 @@ def run_recent_backfill(db_path: str, hours: int = 4, db_write_lock=None) -> tup
             else:
                 writer.close()
                 with lock:
-                    with sqlite3.connect(db_path, timeout=30) as conn:
+                    with db_config.connect_sqlite(db_path) as conn:
                         conn.execute("PRAGMA busy_timeout=30000;")
                         ma20_changed = save_ma20(conn)
                 writer = None
@@ -292,13 +293,13 @@ def run_recent_backfill(db_path: str, hours: int = 4, db_write_lock=None) -> tup
     ]
 
     if lock is None:
-        with sqlite3.connect(db_path, timeout=30) as conn:
+        with db_config.connect_sqlite(db_path) as conn:
             conn.execute("PRAGMA busy_timeout=30000;")
             inserted = save_klines(conn, target_klines)
             ma20_changed = save_ma20(conn)
     else:
         with lock:
-            with sqlite3.connect(db_path, timeout=30) as conn:
+            with db_config.connect_sqlite(db_path) as conn:
                 conn.execute("PRAGMA busy_timeout=30000;")
                 inserted = save_klines(conn, target_klines)
                 ma20_changed = save_ma20(conn)

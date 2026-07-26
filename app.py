@@ -12,6 +12,7 @@ import os
 import sqlite3
 import threading
 import time
+from pathlib import Path
 from typing import Callable, Iterable, List
 
 import collector
@@ -54,11 +55,10 @@ from sqlite_recovery import (
 _universe_lock = threading.Lock()
 _universe_refresh_interval_sec = 12 * 60 * 60
 _universe_last_refresh_ts = 0.0
-DATABASE_HEALTH_CHECK_INTERVAL_SEC = 30 * 60
+DATABASE_HEALTH_CHECK_INTERVAL_SEC = 30
 
 
 def _database_initializers() -> dict[str, Callable[[], None]]:
-    """Return complete, idempotent schema initializers for every worker DB."""
     return {
         db_config.BASE_DB_PATH: collector.init_db,
         db_config.SCORING_DB_PATH: lambda: (
@@ -86,50 +86,54 @@ def _database_initializers() -> dict[str, Callable[[], None]]:
     }
 
 
-def check_and_recover_worker_databases() -> dict[str, list[str]]:
-    """Quick-check all worker DBs and immediately rebuild malformed ones."""
+def check_worker_databases() -> dict[str, list[str]]:
+    """Fence, drain, replace, and initialize each malformed database."""
     recovered: dict[str, list[str]] = {}
     for db_path, initialize in _database_initializers().items():
         ok, detail = quick_check_sqlite_database(db_path)
         if ok:
+            # Clear a stale fence left by a worker crash after a successful
+            # rebuild, or a transient Web-side detection that now checks clean.
+            Path(db_config.database_recovery_marker(db_path)).unlink(missing_ok=True)
             continue
-        detail_lower = detail.lower()
-        if "locked" in detail_lower or "busy" in detail_lower:
-            print(f"⚠️ SQLite health check deferred db={db_path}: {detail}")
-            continue
-        with db_config.sqlite_schema_lock(f"{db_path}.recovery"):
-            # Another worker may have recovered it while this process waited.
-            ok, detail = quick_check_sqlite_database(db_path)
-            if ok:
-                continue
+        marker = Path(db_config.database_recovery_marker(db_path))
+        marker.write_text(f"pid={os.getpid()} detail={detail}\n", encoding="utf-8")
+        # The marker rejects new connections. EX waits until every managed main
+        # or ATTACH connection has closed, so no process retains the old inode.
+        with db_config.sqlite_access_lock(db_path, exclusive=True):
             quarantined = quarantine_sqlite_database(db_path)
-            initialize()
-            verified, verify_detail = quick_check_sqlite_database(db_path)
+        try:
+            with db_config.sqlite_recovery_bypass(db_path):
+                initialize()
+                verified, verify_detail = quick_check_sqlite_database(db_path)
             if not verified:
                 raise sqlite3.DatabaseError(
                     f"SQLite recovery verification failed db={db_path}: {verify_detail}"
                 )
+        except Exception:
+            # Keep the marker in place: business access must remain fenced if
+            # creation or verification failed.
+            raise
+        else:
+            marker.unlink(missing_ok=True)
             recovered[db_path] = quarantined
-            print(
-                f"✅ malformed SQLite recovered db={db_path} quarantined="
-                f"{', '.join(quarantined) or 'none'}"
-            )
+            print(f"✅ SQLite recovered db={db_path}; quarantined={quarantined}")
     return recovered
 
 
 def recover_after_worker_error(exc: BaseException) -> bool:
-    """Recover a malformed worker DB detected by a runtime task."""
+    """Fence and replace a malformed worker database."""
     if not is_malformed_database_error(exc):
         return False
-    check_and_recover_worker_databases()
+    check_worker_databases()
     return True
 
 
 def start_database_health_check_task() -> None:
-    """Run a quick_check for all four databases every 30 minutes."""
+    """Check and recover all four databases every 30 seconds."""
     while True:
         try:
-            check_and_recover_worker_databases()
+            check_worker_databases()
         except Exception as exc:
             print(f"⚠️ SQLite health check failed: {exc}")
         time.sleep(DATABASE_HEALTH_CHECK_INTERVAL_SEC)
