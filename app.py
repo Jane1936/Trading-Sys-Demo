@@ -26,9 +26,7 @@ from data_processor import (
     init_macd_table,
     init_ma20_table,
     run_loop,
-    save_ema_result,
-    save_macd_result,
-    save_ma20_result,
+    save_indicator_results,
 )
 from break_even_take_profit import BreakEvenTakeProfitStrategy
 from cooldown_module import CooldownModule
@@ -764,8 +762,7 @@ def start_increase_pretrigger_refresh_task() -> None:
 
 
 def on_ma20_result(result: MACalcResult) -> None:
-    save_ma20_result(db_config.BASE_DB_PATH, result)
-    save_ema_result(db_config.BASE_DB_PATH, result)
+    """Log a calculated result; interval completion persists the whole batch."""
     print(
         f"📈 MA20 {result.symbol} {result.interval} "
         f"open_time={result.open_time} close={result.close:.6f} ma20={result.ma20:.6f}"
@@ -786,11 +783,9 @@ def on_ma20_result(result: MACalcResult) -> None:
 
 
 def on_indicator_interval_complete(interval: str, results: List[MACalcResult]) -> None:
-    """Persist MACD only after the interval's EMA/MA20 collection has completed."""
-    if interval != "15m":
-        return
+    """Persist all indicators for the completed interval in one transaction."""
+    saved = save_indicator_results(db_config.BASE_DB_PATH, results)
 
-    macd_saved = 0
     for result in results:
         if (
             result.macd_dif is None
@@ -798,8 +793,6 @@ def on_indicator_interval_complete(interval: str, results: List[MACalcResult]) -
             or result.macd_histogram is None
         ):
             continue
-        save_macd_result(db_config.BASE_DB_PATH, result)
-        macd_saved += 1
         print(
             f"📈 MACD {result.symbol} {result.interval} "
             f"open_time={result.open_time} close={result.close:.6f} "
@@ -807,7 +800,10 @@ def on_indicator_interval_complete(interval: str, results: List[MACalcResult]) -
             f"macd={result.macd_histogram:.6f}"
         )
 
-    print(f"📈 MACD 15m round complete, saved={macd_saved}")
+    print(
+        f"📈 indicator {interval} round committed in one batch, "
+        f"ma20={saved['ma20']} ema={saved['ema']} macd={saved['macd']}"
+    )
 
 
 def start_collector_task(symbols: List[str]) -> None:

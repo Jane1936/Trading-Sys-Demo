@@ -261,7 +261,6 @@ def run_loop(
 
                 on_result(latest)
                 interval_results.append(latest)
-                last_bar_open_time[symbol][interval] = latest.open_time
 
             if interval_results and on_interval_complete is not None:
                 try:
@@ -271,6 +270,12 @@ def run_loop(
                         "⚠️ indicator interval-complete callback failed "
                         f"interval={interval}: {exc}"
                     )
+                    # Do not acknowledge the candle: retry the complete batch on
+                    # the next poll rather than silently losing indicator rows.
+                    continue
+
+            for result in interval_results:
+                last_bar_open_time[result.symbol][interval] = result.open_time
 
         time.sleep(poll_seconds)
 
@@ -463,3 +468,85 @@ def save_macd_result(db_path: str, result: MACalcResult) -> None:
                 now_ms,
             ),
         )
+
+
+def save_indicator_results(db_path: str, results: List[MACalcResult]) -> dict[str, int]:
+    """Persist one completed interval as a single SQLite transaction.
+
+    The processor previously opened and committed up to three connections for
+    every symbol (MA20, EMA, and MACD).  A moderately sized universe therefore
+    produced hundreds of WAL commits at each 15-minute boundary.  Keep the
+    individual save functions for callers that need them, but use this batch
+    entry point for scheduled rounds.
+    """
+    ma20_rows = [result for result in results if result.ma20 is not None]
+    ema_rows = [
+        result
+        for result in results
+        if result.interval == "15m"
+        and result.ema12 is not None
+        and result.ema16 is not None
+        and result.ema21 is not None
+        and result.ema26 is not None
+    ]
+    macd_rows = [
+        result
+        for result in results
+        if result.interval == "15m"
+        and result.macd_dif is not None
+        and result.macd_dea is not None
+        and result.macd_histogram is not None
+    ]
+    if not (ma20_rows or ema_rows or macd_rows):
+        return {"ma20": 0, "ema": 0, "macd": 0}
+
+    now_ms = int(time.time() * 1000)
+    with db_config.connect_sqlite(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO ma20_indicators
+            (symbol, interval, open_time, close_time, close, ma20, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(symbol, interval, open_time) DO UPDATE SET
+                close_time=excluded.close_time, close=excluded.close,
+                ma20=excluded.ma20, updated_at=excluded.updated_at
+            """,
+            [
+                (r.symbol, r.interval, r.open_time, r.close_time, r.close, r.ma20, now_ms)
+                for r in ma20_rows
+            ],
+        )
+        conn.executemany(
+            """
+            INSERT INTO ema_indicators
+            (symbol, interval, open_time, close_time, close, ema12, ema16, ema21, ema26, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(symbol, interval, open_time) DO UPDATE SET
+                close_time=excluded.close_time, close=excluded.close,
+                ema12=excluded.ema12, ema16=excluded.ema16,
+                ema21=excluded.ema21, ema26=excluded.ema26,
+                updated_at=excluded.updated_at
+            """,
+            [
+                (r.symbol, r.interval, r.open_time, r.close_time, r.close,
+                 r.ema12, r.ema16, r.ema21, r.ema26, now_ms)
+                for r in ema_rows
+            ],
+        )
+        conn.executemany(
+            """
+            INSERT INTO macd_indicators
+            (symbol, interval, open_time, close_time, close, dif, dea, macd, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(symbol, interval, open_time) DO UPDATE SET
+                close_time=excluded.close_time, close=excluded.close,
+                dif=excluded.dif, dea=excluded.dea, macd=excluded.macd,
+                updated_at=excluded.updated_at
+            """,
+            [
+                (r.symbol, r.interval, r.open_time, r.close_time, r.close,
+                 r.macd_dif, r.macd_dea, r.macd_histogram, now_ms)
+                for r in macd_rows
+            ],
+        )
+    return {"ma20": len(ma20_rows), "ema": len(ema_rows), "macd": len(macd_rows)}
