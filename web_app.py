@@ -644,9 +644,20 @@ def account_balance_api():
 def account_filled_sell_orders_api():
     days = request.args.get("days", default=7, type=int)
     limit = request.args.get("limit", default=1000, type=int)
+    start_time = request.args.get("start_time", type=int)
+    end_time = request.args.get("end_time", type=int)
+    range_requested = "start_time" in request.args or "end_time" in request.args
     try:
-        payload = BinanceAccountManager().futures_recent_filled_sell_orders(days=days, limit=limit)
+        manager = BinanceAccountManager()
+        if range_requested:
+            if start_time is None or end_time is None:
+                return jsonify({"error": "valid start_time and end_time must be provided together"}), 400
+            payload = manager.futures_filled_orders(start_time=start_time, end_time=end_time, limit=limit)
+        else:
+            payload = manager.futures_recent_filled_sell_orders(days=days, limit=limit)
         return jsonify(_annotate_filled_order_exit_reasons(payload))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     except BinanceAccountConfigError as exc:
         return jsonify({"error": str(exc)}), 400
     except requests.exceptions.RequestException as exc:

@@ -135,12 +135,22 @@ class BinanceAccountManager:
 
     def futures_recent_filled_orders(self, days: int = 7, limit: int = 1000) -> dict[str, Any]:
         """Query and merge recent filled BUY/SELL trades from USDⓈ-M Futures account trade history."""
-        self.validate_config()
         now_ms = int(time.time() * 1000)
         days = max(1, min(int(days), 30))
-        limit = max(1, min(int(limit), 1000))
         start_time = now_ms - days * 24 * 60 * 60 * 1000
-        raw_rows = self._signed_get_user_trades_paginated(start_time=start_time, end_time=now_ms, limit=limit)
+        payload = self.futures_filled_orders(start_time=start_time, end_time=now_ms, limit=limit)
+        payload["days"] = days
+        return payload
+
+    def futures_filled_orders(self, start_time: int, end_time: int, limit: int = 1000) -> dict[str, Any]:
+        """Query and merge filled BUY/SELL trades within an explicit millisecond range."""
+        self.validate_config()
+        start_time = int(start_time)
+        end_time = int(end_time)
+        if start_time >= end_time:
+            raise ValueError("start_time must be earlier than end_time")
+        limit = max(1, min(int(limit), 1000))
+        raw_rows = self._signed_get_user_trades_paginated(start_time=start_time, end_time=end_time, limit=limit)
 
         orders = self._merge_filled_order_rows(
             self._normalize_filled_order_row(row)
@@ -151,10 +161,9 @@ class BinanceAccountManager:
         return {
             "testnet": BINANCE_TESTNET,
             "base_url": self.base_url,
-            "queried_at": now_ms,
-            "days": days,
+            "queried_at": int(time.time() * 1000),
             "start_time": start_time,
-            "end_time": now_ms,
+            "end_time": end_time,
             "orders": [row.__dict__ for row in orders],
         }
 

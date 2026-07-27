@@ -143,6 +143,21 @@ def test_filled_orders_query_supports_configurable_days_dropdown():
     assert 'days=${encodeURIComponent(days)}' in template
 
 
+def test_filled_orders_query_supports_explicit_time_range_before_common_filter():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    days_query_index = template.index('id="query-filled-sell-orders"')
+    start_index = template.index('id="filled-orders-start-time"')
+    end_index = template.index('id="filled-orders-end-time"')
+    range_query_index = template.index('id="query-filled-orders-by-time"')
+    score_filter_index = template.index('id="filled-orders-score-band"')
+
+    assert days_query_index < start_index < end_index < range_query_index < score_filter_index
+    assert 'type="datetime-local"' in template
+    assert "new URLSearchParams({ start_time: String(startTime), end_time: String(endTime) })" in template
+    assert "startTime >= endTime" in template
+
+
 def test_holding_reduction_metrics_have_threshold_highlight_classes():
     template = Path("templates/abnormal_wicks.html").read_text()
 

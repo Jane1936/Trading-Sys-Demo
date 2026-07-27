@@ -187,6 +187,10 @@
     .filled-orders-summary .account-metric-value.pnl-positive,
     .filled-orders-summary .account-metric-value.pnl-negative,
     .filled-orders-summary .account-metric-value.pnl-zero { display:inline-block; font-size:18px; }
+    .filled-orders-query-tools { padding:14px 20px; display:grid; gap:12px; border-bottom:1px solid #fecdd3; background:#fffafa; }
+    .filled-orders-query-row { display:flex; gap:12px; align-items:end; flex-wrap:wrap; }
+    .filled-orders-query-label { min-width:112px; padding-bottom:8px; font-weight:700; color:#7f1d1d; }
+    .filled-orders-filter-row { padding:14px 20px; display:flex; gap:12px; align-items:end; flex-wrap:wrap; border-bottom:1px solid #fecdd3; }
     .bookmark-tab.account-info-tab { color:#7c2d12; background:linear-gradient(135deg, #fffbeb 0%, #fed7aa 100%); border-color:#fb923c; box-shadow:0 -2px 12px rgba(249, 115, 22, 0.16); }
     .bookmark-tab.account-info-tab::before { content:"●"; color:#f97316; margin-right:7px; font-size:11px; vertical-align:middle; }
     .bookmark-tab.account-info-tab.active { color:#ffffff; background:linear-gradient(135deg, #f97316 0%, #dc2626 100%); border-color:#ea580c; box-shadow:0 -5px 18px rgba(249, 115, 22, 0.28); }
@@ -2058,11 +2062,13 @@
       <div id="strategy-filled-orders" class="strategy-subpanel" role="tabpanel">
         <div class="symbol-strip">
           <div><strong>已成交订单分析</strong></div>
-          <div class="muted">点击下方按钮后，通过 REST API 按手动选择的天数查询 Futures 账户成交明细，展示“买入 / BUY”和“卖出 / SELL”方向的已成交记录；同一 symbol、同一 order_id、同一方向的多笔成交会合并展示，已实现盈亏按红正绿负高亮。</div>
+          <div class="muted">点击下方按钮后，通过 REST API 按最近天数或手动选择的起止时间查询 Futures 账户成交明细，展示“买入 / BUY”和“卖出 / SELL”方向的已成交记录；同一 symbol、同一 order_id、同一方向的多笔成交会合并展示，已实现盈亏按红正绿负高亮。</div>
         </div>
-        <div class="toolbar">
-          <label class="control-label" for="filled-orders-days">查询范围</label>
-          <select id="filled-orders-days" class="select-control" aria-label="已成交订单查询天数">
+        <div class="filled-orders-query-tools" aria-label="已成交订单查询条件">
+          <div class="filled-orders-query-row">
+            <span class="filled-orders-query-label">按最近天数</span>
+            <label class="control-label" for="filled-orders-days">查询范围</label>
+            <select id="filled-orders-days" class="select-control" aria-label="已成交订单查询天数">
             <option value="1">近1天</option>
             <option value="2">近2天</option>
             <option value="3">近3天</option>
@@ -2093,8 +2099,21 @@
             <option value="28">近28天</option>
             <option value="29">近29天</option>
             <option value="30">近30天</option>
-          </select>
-          <label class="control-label" for="filled-orders-score-band">开仓评分档位</label>
+            </select>
+            <button id="query-filled-sell-orders" class="btn btn-primary" type="button">查询近7天已成交订单</button>
+          </div>
+          <div class="filled-orders-query-row">
+            <span class="filled-orders-query-label">按起止时间</span>
+            <label class="control-label" for="filled-orders-start-time">开始时间</label>
+            <input id="filled-orders-start-time" class="select-control" type="datetime-local" step="3600" aria-label="已成交订单开始时间">
+            <label class="control-label" for="filled-orders-end-time">截止时间</label>
+            <input id="filled-orders-end-time" class="select-control" type="datetime-local" step="3600" aria-label="已成交订单截止时间">
+            <button id="query-filled-orders-by-time" class="btn btn-primary" type="button">按起止时间查询</button>
+          </div>
+          <span id="filled-sell-orders-status" class="muted">尚未查询</span>
+        </div>
+        <div class="filled-orders-filter-row">
+          <label class="control-label" for="filled-orders-score-band">通用筛选器：开仓评分档位</label>
           <select id="filled-orders-score-band" class="select-control" aria-label="已成交订单开仓评分档位">
             <option value="all" selected>全部档位</option>
             {% for band in score_band_configs %}
@@ -2102,8 +2121,6 @@
             {% endfor %}
             <option value="unknown">无匹配开仓评分</option>
           </select>
-          <button id="query-filled-sell-orders" class="btn btn-primary" type="button">查询近7天已成交订单</button>
-          <span id="filled-sell-orders-status" class="muted">尚未查询</span>
         </div>
         <div id="filled-sell-orders-error" class="account-error"></div>
         <div class="tip">数据来自 Binance USDⓈ-M Futures <code>userTrades</code> 成交明细；同一 symbol、同一 order_id、同一方向的多笔成交会合并为一行；成交价格为按成交额/成交数量计算的均价。开仓评分来自本地“交易实验交易记录”中同一 symbol 在成交时间前最近一次 opened 记录的 total_score，可按评分档位筛选并计算对应胜率。</div>
@@ -3358,18 +3375,27 @@
       if (btn) btn.textContent = `查询近${getFilledOrdersDays()}天已成交订单`;
     }
 
-    function setFilledSellOrdersLoading(isLoading) {
+    function setFilledSellOrdersLoading(isLoading, rangeLabel = '') {
       const btn = document.getElementById('query-filled-sell-orders');
+      const rangeBtn = document.getElementById('query-filled-orders-by-time');
       const daysSelect = document.getElementById('filled-orders-days');
       const scoreBandSelect = document.getElementById('filled-orders-score-band');
+      const startInput = document.getElementById('filled-orders-start-time');
+      const endInput = document.getElementById('filled-orders-end-time');
       const status = document.getElementById('filled-sell-orders-status');
       if (btn) {
         btn.disabled = isLoading;
         btn.textContent = isLoading ? '查询中...' : `查询近${getFilledOrdersDays()}天已成交订单`;
       }
+      if (rangeBtn) {
+        rangeBtn.disabled = isLoading;
+        rangeBtn.textContent = isLoading && rangeLabel ? '查询中...' : '按起止时间查询';
+      }
       if (daysSelect) daysSelect.disabled = isLoading;
       if (scoreBandSelect) scoreBandSelect.disabled = isLoading;
-      if (status && isLoading) status.textContent = `正在请求 Binance REST API（近${getFilledOrdersDays()}天）...`;
+      if (startInput) startInput.disabled = isLoading;
+      if (endInput) endInput.disabled = isLoading;
+      if (status && isLoading) status.textContent = `正在请求 Binance REST API（${rangeLabel || `近${getFilledOrdersDays()}天`}）...`;
       if (isLoading) renderFilledOrdersSummary(null);
     }
 
@@ -3510,6 +3536,9 @@
       const allOrders = payload.orders || [];
       const scoreBandFilter = getFilledOrdersScoreBandFilter();
       const orders = allOrders.filter(row => orderMatchesScoreBandFilter(row, scoreBandFilter));
+      const queriedRange = payload.days
+        ? `近${payload.days}天`
+        : `${formatMsDatetime(payload.start_time)} 至 ${formatMsDatetime(payload.end_time)}`;
       const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 
       if (errorEl) {
@@ -3519,11 +3548,11 @@
       if (statusEl) {
         const queriedAt = payload.queried_at ? formatMsDatetime(payload.queried_at) : '未知时间';
         const filterText = scoreBandFilter === 'all' ? '全部开仓评分档位' : (document.getElementById('filled-orders-score-band')?.selectedOptions?.[0]?.textContent || scoreBandFilter);
-        statusEl.textContent = `${payload.testnet ? 'Demo/Testnet' : 'Real'} 查询完成：${queriedAt}；近${payload.days || 7}天已成交合并记录 ${allOrders.length} 条；当前筛选 ${filterText} 后 ${orders.length} 条`;
+        statusEl.textContent = `${payload.testnet ? 'Demo/Testnet' : 'Real'} 查询完成：${queriedAt}；${queriedRange}已成交合并记录 ${allOrders.length} 条；当前筛选 ${filterText} 后 ${orders.length} 条`;
       }
       if (!rowsEl) return;
       if (!orders.length) {
-        rowsEl.innerHTML = `<tr><td class="empty" colspan="14">最近${payload.days || getFilledOrdersDays()}天当前评分档位下暂无已成交订单</td></tr>`;
+        rowsEl.innerHTML = `<tr><td class="empty" colspan="14">${queriedRange}当前评分档位下暂无已成交订单</td></tr>`;
         renderFilledOrdersSummary({ completedCount: 0, totalProfit: 0, profitCount: 0, totalLoss: 0, lossCount: 0, averageProfit: 0, averageLoss: 0, profitLossRatio: 0, winRate: 0, expectancy: 0 });
         return;
       }
@@ -3569,8 +3598,17 @@
 
     (function initFilledSellOrdersQuery() {
       const btn = document.getElementById('query-filled-sell-orders');
-      if (!btn) return;
+      const rangeBtn = document.getElementById('query-filled-orders-by-time');
+      if (!btn || !rangeBtn) return;
       setFilledOrdersButtonLabel();
+      const toLocalHourValue = (date) => {
+        const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+        return localDate.toISOString().slice(0, 13) + ':00';
+      };
+      const endDate = new Date();
+      endDate.setMinutes(0, 0, 0);
+      document.getElementById('filled-orders-end-time').value = toLocalHourValue(endDate);
+      document.getElementById('filled-orders-start-time').value = toLocalHourValue(new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000));
       const daysSelect = document.getElementById('filled-orders-days');
       if (daysSelect) daysSelect.addEventListener('change', setFilledOrdersButtonLabel);
       const scoreBandSelect = document.getElementById('filled-orders-score-band');
@@ -3584,6 +3622,34 @@
           const response = await fetch(`/api/account/filled-sell-orders?days=${encodeURIComponent(days)}`, {
             headers: { 'Accept': 'application/json' },
           });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          latestFilledOrdersPayload = payload;
+          renderFilledSellOrders(payload);
+        } catch (error) {
+          renderFilledSellOrdersError(`已成交订单查询失败：${error.message}`);
+        } finally {
+          setFilledSellOrdersLoading(false);
+        }
+      });
+      rangeBtn.addEventListener('click', async () => {
+        const startValue = document.getElementById('filled-orders-start-time').value;
+        const endValue = document.getElementById('filled-orders-end-time').value;
+        const startTime = new Date(startValue).getTime();
+        const endTime = new Date(endValue).getTime();
+        if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+          renderFilledSellOrdersError('请同时选择开始时间和截止时间');
+          return;
+        }
+        if (startTime >= endTime) {
+          renderFilledSellOrdersError('开始时间必须早于截止时间');
+          return;
+        }
+        const rangeLabel = `${formatMsDatetime(startTime)} 至 ${formatMsDatetime(endTime)}`;
+        setFilledSellOrdersLoading(true, rangeLabel);
+        try {
+          const query = new URLSearchParams({ start_time: String(startTime), end_time: String(endTime) });
+          const response = await fetch(`/api/account/filled-sell-orders?${query}`, { headers: { 'Accept': 'application/json' } });
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
           latestFilledOrdersPayload = payload;

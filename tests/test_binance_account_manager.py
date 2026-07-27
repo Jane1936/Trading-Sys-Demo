@@ -215,3 +215,24 @@ def test_recent_filled_orders_splits_user_trades_requests_into_seven_day_windows
     assert manager.calls[2]["startTime"] == 29 * day_ms + 2
     assert manager.calls[2]["endTime"] == 30 * day_ms
     assert all(call["endTime"] - call["startTime"] <= 7 * day_ms for call in manager.calls)
+
+
+def test_filled_orders_supports_explicit_start_and_end_times():
+    manager = FakeRecentTradesManager([])
+
+    payload = manager.futures_filled_orders(start_time=1_000, end_time=3_600_000, limit=50)
+
+    assert payload["start_time"] == 1_000
+    assert payload["end_time"] == 3_600_000
+    assert "days" not in payload
+
+
+def test_filled_orders_rejects_reversed_explicit_range():
+    manager = FakeRecentTradesManager([])
+
+    try:
+        manager.futures_filled_orders(start_time=2_000, end_time=1_000)
+    except ValueError as exc:
+        assert str(exc) == "start_time must be earlier than end_time"
+    else:
+        raise AssertionError("Expected a reversed time range to be rejected")
