@@ -373,7 +373,7 @@ def test_market_filter_uses_collapsible_recent_records_ui():
 
     assert collapsible_index < module_index < button_index < table_index
     assert "只显示最近7天内记录" in template[section_index:table_index]
-    assert 'class="{% if loop.index > 10 %}collapsed-extra{% endif %}"' in template[section_index:template.index('</section>', section_index)]
+    assert "{% if loop.index > 10 %} collapsed-extra{% endif %}" in template[section_index:template.index('</section>', section_index)]
 
 
 def test_market_filter_includes_weak_market_profit_adjustment_ui():
@@ -401,3 +401,24 @@ def test_market_filter_includes_dynamic_add_position_threshold_ui():
     module_index = template.index("动态加仓阈值（每15分钟执行）", section_index)
     assert "2R成功率 = 触发笔数 / 样本笔数" in template[module_index:]
     assert "dynamic_add_position_threshold_results" in template[module_index:]
+
+
+def test_market_filter_highlights_latest_decisions_and_permission_statuses():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    section = template[template.index('id="tab-market-filter"'):]
+
+    assert section.count("latest-decision-row") >= 5
+    assert section.count("latest-decision-badge") >= 5
+    assert section.count("'success' if row.allow_") >= 3
+    assert section.count("'danger'") >= 3
+
+
+def test_add_position_modules_use_light_purple_theme():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    section = template[template.index('id="tab-market-filter"'):]
+
+    permission_index = section.index("加仓权限（每15分钟执行）")
+    threshold_index = section.index("动态加仓阈值（每15分钟执行）")
+    assert section.rfind("purple-module", 0, permission_index) > 0
+    assert section.rfind("purple-module", 0, threshold_index) > permission_index
+    assert ".purple-module .collapsible-header" in template
