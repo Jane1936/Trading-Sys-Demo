@@ -6,6 +6,7 @@ from data_processor import (
     init_macd_table,
     save_ema_result,
     save_macd_result,
+    save_indicator_results,
 )
 
 
@@ -151,6 +152,40 @@ def test_save_macd_result_persists_15m_macd_values(tmp_path):
         result.macd_dea,
         result.macd_histogram,
     )
+
+
+def test_save_indicator_results_persists_round_in_one_connection(tmp_path, monkeypatch):
+    import data_processor
+
+    db_path = tmp_path / "klines.db"
+    data_processor.init_ma20_table(str(db_path))
+    init_ema_table(str(db_path))
+    init_macd_table(str(db_path))
+    results = [
+        data_processor.MACalcResult(
+            symbol=symbol, interval="15m", open_time=1, close_time=2,
+            close=10.0, ma20=9.0, ema12=9.1, ema16=9.2,
+            ema21=9.3, ema26=9.4, macd_dif=-0.3, macd_dea=-0.2,
+            macd_histogram=-0.2,
+        )
+        for symbol in ("BTC", "ETH")
+    ]
+    real_connect = data_processor.db_config.connect_sqlite
+    connections = []
+
+    def counted_connect(*args, **kwargs):
+        connections.append(args[0])
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(data_processor.db_config, "connect_sqlite", counted_connect)
+    saved = save_indicator_results(str(db_path), results)
+
+    assert saved == {"ma20": 2, "ema": 2, "macd": 2}
+    assert connections == [str(db_path)]
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM ma20_indicators").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM ema_indicators").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM macd_indicators").fetchone()[0] == 2
 
 
 def test_init_ema_table_adds_ema12_and_ema26_to_existing_table(tmp_path):
