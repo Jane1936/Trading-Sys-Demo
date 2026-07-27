@@ -11,12 +11,14 @@ class FakeAccountManager:
     def __init__(self):
         self.signed_posts = []
         self.signed_deletes = []
+        self.position_risk_calls = 0
 
     def validate_config(self):
         return None
 
     def _signed_get(self, endpoint, params=None):
         if endpoint == "/fapi/v3/positionRisk":
+            self.position_risk_calls += 1
             return [{"symbol": "BANKUSDT", "positionAmt": "2", "leverage": "5"}]
         if endpoint == "/fapi/v1/userTrades":
             assert params == {"symbol": "BANKUSDT", "orderId": "123"}
@@ -335,6 +337,7 @@ def test_portfolio_risk_runs_after_holding_stop_loss_round():
     assert risk.positions[0].account_equity_usdt == "1000"
     assert risk.positions[0].leverage == "5"
     assert risk.positions[0].risk == "0.08"
+    assert fake_account.position_risk_calls == 4
 
 def test_portfolio_risk_includes_all_positions_without_ten_position_cap():
     fake_account = ElevenPositionsAccountManager()
