@@ -34,6 +34,13 @@
 
 因此本次将 processor 的一个 interval 结果合并为单连接、单事务、三次 `executemany`。这会显著减少 WAL 提交、fsync 和 checkpoint 竞争，是与评分库优化效果相同的第一优先级降载措施；但 SQLite 的正常并发只应造成 `locked/busy`，不应造成 `malformed`。如果降载后仍损坏，必须继续按下述宿主机证据链排查，不能把高并发直接当作数据页损坏的根因。
 
+### 结论分级
+
+- **已确认的放大因素**：基础库同时承载 K 线、聚合、OI、ATR、资金费率和技术指标，写入峰值集中在整分及 15 分钟边界；worker 与 Web 又共享同一个 WAL 文件。
+- **代码层已处置的风险**：指标已批量提交，连接统一使用 WAL、`synchronous=FULL` 和 30 秒 busy timeout；在线恢复通过 marker 与跨进程锁先隔离再替换。
+- **尚不能仅凭仓库确认的根因**：宿主机掉电/OOM、磁盘或文件系统 I/O 错误、远程/overlay 文件系统锁语义、外部备份覆盖，以及多个部署实例写入同一路径。频繁出现 `malformed` 时，这一层的优先级高于普通 SQLite 写竞争，因为正常竞争通常只产生 `locked`/`busy`。
+- **需要特别区分**：`database is locked` 是可重试的并发拥塞；`database disk image is malformed`/`file is not a database` 是文件内容或 WAL 组合已损坏，不能用加大 timeout 解释或修复。
+
 建议在下一次故障时保留并对齐以下时间线：
 
 1. 应用日志中首次 `malformed`（不要使用随后大量级联报错的时间）。
@@ -41,6 +48,25 @@
 3. `df -h`、`df -i`、数据目录文件系统类型和 mount 参数。
 4. 故障前后的 `.db`、`-wal`、`-shm` 大小、mtime、inode，以及恢复程序生成的 quarantine 文件名。
 5. 所有挂载该目录的容器、备份/同步任务和打开数据库的进程。
+
+仓库提供只读采证命令，不会创建、隔离或修复数据库。应在**首次报错后、重启或自动恢复前**立即执行：
+
+```bash
+python sqlite_diagnostics.py --output "logs/sqlite-diagnostic-$(date -u +%Y%m%dT%H%M%SZ).json"
+```
+
+报告包含四个库的 `quick_check`、journal/synchronous、页数、主文件及 WAL/SHM 的大小/mtime/inode、recovery marker、剩余空间/inode，以及容器实际看到的 mount 类型与来源。随后在宿主机补充：
+
+```bash
+docker inspect trade trade-web sqlite-web
+docker ps -a --no-trunc
+df -hT "${HOST_DATA_DIR:-./data}" && df -i "${HOST_DATA_DIR:-./data}"
+findmnt -T "${HOST_DATA_DIR:-./data}" -o TARGET,SOURCE,FSTYPE,OPTIONS
+dmesg -T | tail -n 300
+journalctl -k --since '-2 hours'
+```
+
+判断顺序建议为：先找内核 I/O/文件系统/OOM/磁盘满证据，再核对 mount 与多实例，之后排除备份或人工工具覆盖，最后才用事务峰值解释 `locked` 类告警。诊断 JSON 应与首次异常日志按 UTC 时间对齐；自动恢复后的新库健康不能证明旧库没有损坏。
 
 本次防护调整包括：
 
