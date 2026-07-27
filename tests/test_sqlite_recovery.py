@@ -184,8 +184,8 @@ def test_worker_malformed_error_triggers_immediate_health_check(monkeypatch):
     assert calls == [True]
 
 
-def test_worker_database_health_check_interval_is_thirty_seconds():
-    assert worker_app.DATABASE_HEALTH_CHECK_INTERVAL_SEC == 30
+def test_worker_database_health_check_interval_is_five_minutes():
+    assert worker_app.DATABASE_HEALTH_CHECK_INTERVAL_SEC == 5 * 60
 
 
 def test_recovery_marker_blocks_business_connections(tmp_path):

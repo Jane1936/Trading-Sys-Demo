@@ -53,7 +53,7 @@ from sqlite_recovery import (
 _universe_lock = threading.Lock()
 _universe_refresh_interval_sec = 12 * 60 * 60
 _universe_last_refresh_ts = 0.0
-DATABASE_HEALTH_CHECK_INTERVAL_SEC = 30
+DATABASE_HEALTH_CHECK_INTERVAL_SEC = 5 * 60
 
 
 def _database_initializers() -> dict[str, Callable[[], None]]:
@@ -128,7 +128,7 @@ def recover_after_worker_error(exc: BaseException) -> bool:
 
 
 def start_database_health_check_task() -> None:
-    """Check and recover all four databases every 30 seconds."""
+    """Run quick_check and recover all four databases every five minutes."""
     while True:
         try:
             check_worker_databases()
