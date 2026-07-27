@@ -21,6 +21,7 @@ from typing import Any
 from binance_account_manager import BinanceAccountManager
 from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
 from trading_experiment import ExperimentConfig, TradingExperiment
+from weak_market_profit_adjustment import WeakMarketProfitAdjustmentModule
 
 
 @dataclass(frozen=True)
@@ -128,26 +129,36 @@ class PartialTakeProfitStrategy:
             conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
             conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_checked ON {self.RECORDS_TABLE}(checked_at DESC, symbol ASC)")
 
-    def run_round(self) -> dict[str, Any]:
+    def run_round(self, decision_round_ts: int | None = None) -> dict[str, Any]:
         self.account_manager.validate_config()
         self.init_tables()
         helper = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)
         equity = helper._fetch_experiment_usdt_equity()
         r_value = equity * self.config.risk_fraction
-        trigger_r = r_value * self.TRIGGER_R_MULTIPLE
+        market_round = WeakMarketProfitAdjustmentModule.decision_round_ts(decision_round_ts)
+        adjustment = (
+            WeakMarketProfitAdjustmentModule().latest_result_for_round(market_round)
+            if os.path.exists(db_config.MARKET_DB_PATH)
+            else None
+        )
+        trigger_multiple = Decimal(str(adjustment.trigger_r_multiple)) if adjustment else self.TRIGGER_R_MULTIPLE
+        take_profit_fraction = Decimal(str(adjustment.take_profit_fraction)) if adjustment else self.TAKE_PROFIT_FRACTION
+        trigger_r = r_value * trigger_multiple
         positions = helper._fetch_and_store_positions()
         active_positions = [row for row in positions if self._decimal_from(row.get("positionAmt"), Decimal("0")) != 0]
         now = int(time.time() * 1000)
         checked = triggered = records = 0
         for position in active_positions:
             checked += 1
-            result = self._evaluate_position(position, equity, r_value, trigger_r, now)
+            result = self._evaluate_position(position, equity, r_value, trigger_r, now, trigger_multiple, take_profit_fraction)
             if result:
                 triggered += 1
                 records += 1
-        return {"checked": checked, "triggered": triggered, "records": records, "r_usdt": self._fmt_decimal(r_value), "trigger_r_usdt": self._fmt_decimal(trigger_r)}
+        return {"checked": checked, "triggered": triggered, "records": records, "r_usdt": self._fmt_decimal(r_value), "trigger_r_usdt": self._fmt_decimal(trigger_r), "trigger_r_multiple": self._fmt_decimal(trigger_multiple), "take_profit_fraction": self._fmt_decimal(take_profit_fraction)}
 
-    def _evaluate_position(self, position: dict[str, Any], equity: Decimal, r_value: Decimal, trigger_r: Decimal, now: int) -> bool:
+    def _evaluate_position(self, position: dict[str, Any], equity: Decimal, r_value: Decimal, trigger_r: Decimal, now: int, trigger_multiple: Decimal | None = None, take_profit_fraction: Decimal | None = None) -> bool:
+        trigger_multiple = trigger_multiple or self.TRIGGER_R_MULTIPLE
+        take_profit_fraction = take_profit_fraction or self.TAKE_PROFIT_FRACTION
         exchange_symbol = str(position.get("symbol", "")).upper()
         symbol = self._base_symbol(exchange_symbol)
         amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
@@ -155,16 +166,18 @@ class PartialTakeProfitStrategy:
         unrealized_pnl = self._decimal_from(position.get("unRealizedProfit", position.get("unrealizedProfit")), Decimal("0"))
         triggered = amount != 0 and entry_price > 0 and trigger_r > 0 and unrealized_pnl >= trigger_r
         if not triggered:
-            self._insert_check(symbol, now, equity, r_value, trigger_r, unrealized_pnl, entry_price, amount, False, "unrealized_pnl_lt_2r")
+            self._insert_check(symbol, now, equity, r_value, trigger_r, unrealized_pnl, entry_price, amount, False, f"unrealized_pnl_lt_{self._fmt_decimal(trigger_multiple)}r")
             return False
         if self._has_success_record(symbol, entry_price):
             self._insert_check(symbol, now, equity, r_value, trigger_r, unrealized_pnl, entry_price, amount, True, "partial_take_profit_already_completed")
             return False
-        self._insert_check(symbol, now, equity, r_value, trigger_r, unrealized_pnl, entry_price, amount, True, "unrealized_pnl_ge_2r")
-        self._execute_take_profit(position, equity, r_value, trigger_r, unrealized_pnl, now)
+        self._insert_check(symbol, now, equity, r_value, trigger_r, unrealized_pnl, entry_price, amount, True, f"unrealized_pnl_ge_{self._fmt_decimal(trigger_multiple)}r")
+        self._execute_take_profit(position, equity, r_value, trigger_r, unrealized_pnl, now, trigger_multiple, take_profit_fraction)
         return True
 
-    def _execute_take_profit(self, position: dict[str, Any], equity: Decimal, r_value: Decimal, trigger_r: Decimal, unrealized_pnl: Decimal, now: int) -> None:
+    def _execute_take_profit(self, position: dict[str, Any], equity: Decimal, r_value: Decimal, trigger_r: Decimal, unrealized_pnl: Decimal, now: int, trigger_multiple: Decimal | None = None, take_profit_fraction: Decimal | None = None) -> None:
+        trigger_multiple = trigger_multiple or self.TRIGGER_R_MULTIPLE
+        take_profit_fraction = take_profit_fraction or self.TAKE_PROFIT_FRACTION
         exchange_symbol = str(position.get("symbol", "")).upper()
         symbol = self._base_symbol(exchange_symbol)
         amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
@@ -173,7 +186,7 @@ class PartialTakeProfitStrategy:
         status = "submitted"
         order_id = ""
         raw_response = ""
-        reason = "unrealized_pnl_ge_2r_take_profit_30_percent"
+        reason = f"unrealized_pnl_ge_{self._fmt_decimal(trigger_multiple)}r_take_profit_{self._fmt_decimal(take_profit_fraction * 100)}_percent"
         lock_manager, lock_handle, lock_reason = acquire_trade_action_lock(
             self.db_path, symbol, "partial_take_profit", "partial_take_profit", now
         )
@@ -184,7 +197,7 @@ class PartialTakeProfitStrategy:
             helper = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)
             exchange_info = helper._exchange_symbol_info(exchange_symbol)
             step = exchange_info["step_size"]
-            quantity = self._floor_to_step(abs(amount) * self.TAKE_PROFIT_FRACTION, step)
+            quantity = self._floor_to_step(abs(amount) * take_profit_fraction, step)
             if quantity <= 0:
                 raise RuntimeError("take_profit_quantity_rounded_to_zero")
             remaining_quantity = self._floor_to_step(abs(amount) - quantity, step)

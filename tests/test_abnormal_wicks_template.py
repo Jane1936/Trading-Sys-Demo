@@ -376,6 +376,14 @@ def test_market_filter_uses_collapsible_recent_records_ui():
     assert 'class="{% if loop.index > 10 %}collapsed-extra{% endif %}"' in template[section_index:template.index('</section>', section_index)]
 
 
+def test_market_filter_includes_weak_market_profit_adjustment_ui():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    section_index = template.index('<section id="tab-market-filter"')
+    module_index = template.index("弱势市场止盈动态调整（每15分钟执行）", section_index)
+    assert template.index("weak_market_profit_adjustment_results", module_index) > module_index
+    assert "1.4R" in template[module_index:]
+
+
 def test_openable_section_highlights_current_round_open_block_notice():
     template = Path("templates/abnormal_wicks.html").read_text()
 

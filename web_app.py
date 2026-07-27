@@ -32,6 +32,7 @@ from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
 from market_filter_module import MarketFilterModule
+from weak_market_profit_adjustment import WeakMarketProfitAdjustmentModule
 from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import DynamicOpenThresholdModule
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
@@ -961,6 +962,8 @@ def abnormal_wicks():
     )
     market_filter = MarketFilterModule(db_path=_market_db_path())
     market_filter_results = load_module("市场行情过滤", lambda: market_filter.recent_results(limit=100, days=7), [])
+    weak_market_profit_adjustment = WeakMarketProfitAdjustmentModule(db_path=_market_db_path())
+    weak_market_profit_adjustment_results = load_module("弱势市场止盈动态调整", lambda: weak_market_profit_adjustment.recent_results(limit=100, days=7), [])
     add_position_permission = AddPositionPermissionModule(db_path=_market_db_path())
     add_position_permission_results = load_module("加仓权限", lambda: add_position_permission.recent_results(limit=100, days=7), [])
     dynamic_add_position_threshold = DynamicAddPositionThresholdModule(db_path=_trading_db_path())
@@ -1089,6 +1092,7 @@ def abnormal_wicks():
         score_leverage_mapping_text=score_leverage_mapping_text,
         openable_min_total_score=openable_min_total_score,
         market_filter_results=market_filter_results,
+        weak_market_profit_adjustment_results=weak_market_profit_adjustment_results,
         add_position_permission_results=add_position_permission_results,
         dynamic_add_position_threshold_results=dynamic_add_position_threshold_results,
         dynamic_open_threshold_results=dynamic_open_threshold_results,
