@@ -800,7 +800,7 @@ def save_to_sqlite(symbol, klines, interval):
             raise
 
 
-def upsert_aggregated_rows(symbol, interval, rows, funding_rate=None):
+def _upsert_aggregated_rows(conn, symbol, interval, rows, funding_rate=None):
     if not rows:
         return 0
 
@@ -845,33 +845,42 @@ def upsert_aggregated_rows(symbol, interval, rows, funding_rate=None):
         placeholders = "?, ?, ?, ?, ?, ?, ?, ?"
         funding_update = ""
 
+    before = conn.total_changes
+    conn.executemany(
+        f"""
+        INSERT INTO {tbl}
+        ({insert_columns})
+        VALUES ({placeholders})
+        ON CONFLICT(symbol, open_time) DO UPDATE SET
+            open=excluded.open,
+            high=excluded.high,
+            low=excluded.low,
+            close=excluded.close,
+            volume=excluded.volume,
+            close_time=excluded.close_time{funding_update}
+        """,
+        values,
+    )
+    return conn.total_changes - before
+
+
+def upsert_aggregated_rows(symbol, interval, rows, funding_rate=None):
     with db_write_lock:
         with get_db_conn() as conn:
-            before = conn.total_changes
-            conn.executemany(
-                f"""
-                INSERT INTO {tbl}
-                ({insert_columns})
-                VALUES ({placeholders})
-                ON CONFLICT(symbol, open_time) DO UPDATE SET
-                    open=excluded.open,
-                    high=excluded.high,
-                    low=excluded.low,
-                    close=excluded.close,
-                    volume=excluded.volume,
-                    close_time=excluded.close_time{funding_update}
-                """,
-                values,
+            return _upsert_aggregated_rows(
+                conn, symbol, interval, rows, funding_rate=funding_rate
             )
-            return conn.total_changes - before
 
 
 def aggregate_symbol(
-    symbol, source_start_open_time, source_end_close_time, funding_rate=None
+    symbol, source_start_open_time, source_end_close_time, funding_rate=None, conn=None
 ):
     source_interval_ms = interval_to_ms(BASE_INTERVAL)
 
-    with get_db_conn() as conn:
+    owns_connection = conn is None
+    if owns_connection:
+        conn = get_db_conn()
+    try:
         aggregated_stat = {}
 
         for interval in AGG_INTERVALS:
@@ -933,26 +942,28 @@ def aggregate_symbol(
                     }
                 )
 
-            changed = upsert_aggregated_rows(
-                symbol, interval, complete_target_rows, funding_rate=funding_rate
+            changed = _upsert_aggregated_rows(
+                conn, symbol, interval, complete_target_rows, funding_rate=funding_rate
             )
             aggregated_stat[interval] = {
                 "buckets": len(complete_target_rows),
                 "changed": changed,
             }
 
-    return aggregated_stat
+        return aggregated_stat
+    finally:
+        if owns_connection:
+            conn.close()
 
 
 # ================= 7. 单symbol处理 =================
-def process_symbol_kline(symbol, funding_rates=None):
+def fetch_symbol_klines(symbol, last_close_time):
+    """Fetch missing closed candles; database reads/writes belong to the round."""
     interval_ms = interval_to_ms(BASE_INTERVAL)
     now_ms = int(time.time() * 1000)
     latest_closed_close_time = get_latest_closed_close_time(now_ms, interval_ms)
-    _, last_close_time = get_last_kline_record(symbol, BASE_INTERVAL)
-
     if last_close_time is not None and last_close_time >= latest_closed_close_time:
-        return symbol, 0, 0, {}
+        return []
 
     start_time = last_close_time + 1 if last_close_time is not None else None
     missing_klines = None
@@ -988,27 +999,89 @@ def process_symbol_kline(symbol, funding_rates=None):
 
         time.sleep(0.05)
 
-    inserted_count = 0
+    return all_klines
+
+
+def process_symbol_kline(symbol, funding_rates=None):
+    """Legacy one-symbol entry point; scheduled rounds use batch persistence."""
+    _, last_close_time = get_last_kline_record(symbol, BASE_INTERVAL)
+    all_klines = fetch_symbol_klines(symbol, last_close_time)
+    inserted_count = save_to_sqlite(symbol, all_klines, BASE_INTERVAL) if all_klines else 0
     agg_stat = {}
     if all_klines:
-        inserted_count = save_to_sqlite(symbol, all_klines, BASE_INTERVAL)
-        funding_rate = None
-        if funding_rates:
-            funding_rate = funding_rates.get(f"{symbol}USDT")
+        funding_rate = funding_rates.get(f"{symbol}USDT") if funding_rates else None
         agg_stat = aggregate_symbol(
-            symbol,
-            source_start_open_time=int(all_klines[0][0]),
-            source_end_close_time=int(all_klines[-1][6]),
-            funding_rate=funding_rate,
+            symbol, int(all_klines[0][0]), int(all_klines[-1][6]), funding_rate
         )
 
     return symbol, len(all_klines), inserted_count, agg_stat
+
+
+def get_last_kline_records(symbols, interval):
+    if not symbols:
+        return {}
+    placeholders = ", ".join("?" for _ in symbols)
+    with get_db_conn() as conn:
+        rows = conn.execute(
+            f"SELECT symbol, MAX(close_time) FROM {table_name(interval)} "
+            f"WHERE symbol IN ({placeholders}) GROUP BY symbol",
+            tuple(symbols),
+        ).fetchall()
+    return {str(symbol): int(close_time) for symbol, close_time in rows}
+
+
+def save_kline_round(fetched_by_symbol, funding_rates=None):
+    """Commit all base and aggregate candles for a collection round once."""
+    if not fetched_by_symbol:
+        return {}
+    stats = {}
+    with db_write_lock:
+        with get_db_conn() as conn:
+            for symbol, klines in fetched_by_symbol.items():
+                rows = [
+                    (symbol, int(k[0]), float(k[1]), float(k[2]), float(k[3]),
+                     float(k[4]), float(k[5]), int(k[6]))
+                    for k in klines
+                ]
+                before = conn.total_changes
+                conn.executemany(
+                    f"INSERT OR IGNORE INTO {table_name(BASE_INTERVAL)} "
+                    "(symbol, open_time, open, high, low, close, volume, close_time) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    rows,
+                )
+                inserted = conn.total_changes - before
+                funding_rate = funding_rates.get(f"{symbol}USDT") if funding_rates else None
+                agg_stat = aggregate_symbol(
+                    symbol, int(klines[0][0]), int(klines[-1][6]),
+                    funding_rate=funding_rate, conn=conn,
+                )
+                stats[symbol] = (inserted, agg_stat)
+    return stats
 
 
 def process_symbol_oi(symbol):
     open_interest = fetch_open_interest(symbol)
     oi_inserted = save_open_interest(symbol, open_interest)
     return symbol, oi_inserted
+
+
+def save_open_interest_round(values):
+    rows = []
+    snapshot_time = (int(time.time() * 1000) // 60_000) * 60_000
+    for symbol, open_interest in values.items():
+        if open_interest is not None:
+            rows.append((symbol, snapshot_time, open_interest))
+    if not rows:
+        return 0
+    with db_write_lock:
+        with get_db_conn() as conn:
+            before = conn.total_changes
+            conn.executemany(
+                "INSERT OR IGNORE INTO open_interest_1m "
+                "(symbol, snapshot_time, open_interest) VALUES (?, ?, ?)", rows
+            )
+            return conn.total_changes - before
 
 
 def calculate_atr14_from_15m_rows(rows):
@@ -1081,34 +1154,99 @@ def process_symbol_atr_15m(symbol):
     return symbol, changed, atr14
 
 
+def calculate_symbol_atr_row(symbol, rows, now_ms):
+    if len(rows) < 15:
+        return None
+    rows = list(reversed(rows))
+    latest_open_time = int(rows[-1][0])
+    latest_close_time = int(rows[-1][4])
+    if latest_close_time != latest_open_time + interval_to_ms("15m") - 1:
+        return None
+    atr14 = calculate_atr14_from_15m_rows(rows)
+    if atr14 is None:
+        return None
+    return (symbol, latest_open_time, latest_close_time, atr14, now_ms)
+
+
+def load_atr_rows(universe):
+    if not universe:
+        return {}
+    placeholders = ", ".join("?" for _ in universe)
+    with get_db_conn() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT symbol, open_time, high, low, close, close_time
+            FROM (
+                SELECT symbol, open_time, high, low, close, close_time,
+                       ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS row_num
+                FROM {table_name("15m")}
+                WHERE symbol IN ({placeholders})
+            )
+            WHERE row_num <= 15
+            ORDER BY symbol, open_time DESC
+            """,
+            tuple(universe),
+        ).fetchall()
+    grouped = {symbol: [] for symbol in universe}
+    for symbol, *row in rows:
+        grouped.setdefault(symbol, []).append(tuple(row))
+    return grouped
+
+
+def save_atr_round(rows):
+    if not rows:
+        return 0
+    with db_write_lock:
+        with get_db_conn() as conn:
+            before = conn.total_changes
+            conn.executemany(
+                """
+                INSERT INTO atr_15m_indicators
+                (symbol, open_time, close_time, atr14, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, open_time) DO UPDATE SET
+                    close_time=excluded.close_time,
+                    atr14=excluded.atr14,
+                    updated_at=excluded.updated_at
+                """,
+                rows,
+            )
+            return conn.total_changes - before
+
+
 # ================= 8. 主任务 =================
 def run_kline_main(universe):
     funding_rates = fetch_all_funding_rates()
     if not funding_rates:
         print("⚠️ realtime 15m funding rates empty, 15m klines keep existing funding_rate")
 
+    last_close_times = get_last_kline_records(universe, BASE_INTERVAL)
+    fetched_by_symbol = {}
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [
-            executor.submit(process_symbol_kline, s, funding_rates) for s in universe
-        ]
+        futures = {
+            executor.submit(fetch_symbol_klines, s, last_close_times.get(s)): s
+            for s in universe
+        }
 
         for future in as_completed(futures):
             try:
-                symbol, fetched_count, inserted_count, agg_stat = future.result()
-                agg_summary = ", ".join(
-                    [
-                        f"{k}:buckets={v['buckets']},changed={v['changed']}"
-                        for k, v in agg_stat.items()
-                    ]
-                )
-                if not agg_summary:
-                    agg_summary = "-"
-                print(
-                    f"✅ {symbol}: fetched={fetched_count}, inserted_1m={inserted_count}, agg=({agg_summary})"
-                )
+                symbol = futures[future]
+                klines = future.result()
+                if klines:
+                    fetched_by_symbol[symbol] = klines
             except Exception as e:
                 _handle_runtime_database_error(e)
                 print(f"❌ symbol task failed: {e}")
+
+    stats = save_kline_round(fetched_by_symbol, funding_rates)
+    for symbol in universe:
+        klines = fetched_by_symbol.get(symbol, [])
+        inserted_count, agg_stat = stats.get(symbol, (0, {}))
+        agg_summary = ", ".join(
+            f"{key}:buckets={value['buckets']},changed={value['changed']}"
+            for key, value in agg_stat.items()
+        ) or "-"
+        print(f"✅ {symbol}: fetched={len(klines)}, inserted_1m={inserted_count}, agg=({agg_summary})")
 
     if funding_rates:
         updated_15m = save_realtime_15m_funding_rates(universe, funding_rates)
@@ -1116,32 +1254,29 @@ def run_kline_main(universe):
 
 
 def run_oi_main(universe):
+    values = {}
     with ThreadPoolExecutor(max_workers=OI_MAX_WORKERS) as executor:
-        futures = [executor.submit(process_symbol_oi, s) for s in universe]
+        futures = {executor.submit(fetch_open_interest, symbol): symbol for symbol in universe}
 
         for future in as_completed(futures):
             try:
-                symbol, oi_inserted = future.result()
-                print(f"✅ {symbol}: inserted_oi_1m={oi_inserted}")
+                values[futures[future]] = future.result()
             except Exception as e:
                 _handle_runtime_database_error(e)
                 print(f"❌ oi symbol task failed: {e}")
+    inserted = save_open_interest_round(values)
+    print(f"✅ open interest round committed in one batch, inserted={inserted}")
 
 
 def run_atr_15m_main(universe):
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(process_symbol_atr_15m, s) for s in universe]
-
-        for future in as_completed(futures):
-            try:
-                symbol, changed, atr14 = future.result()
-                if atr14 is None:
-                    print(f"⏭️ {symbol}: atr14_15m skipped")
-                    continue
-                print(f"✅ {symbol}: atr14_15m={atr14}, changed={changed}")
-            except Exception as e:
-                _handle_runtime_database_error(e)
-                print(f"❌ atr 15m symbol task failed: {e}")
+    grouped = load_atr_rows(universe)
+    now_ms = int(time.time() * 1000)
+    rows = [
+        row for symbol in universe
+        if (row := calculate_symbol_atr_row(symbol, grouped.get(symbol, []), now_ms))
+    ]
+    changed = save_atr_round(rows)
+    print(f"✅ ATR 15m round committed in one batch, rows={len(rows)}, changed={changed}")
 
 
 # ================= 9. 定时任务 =================

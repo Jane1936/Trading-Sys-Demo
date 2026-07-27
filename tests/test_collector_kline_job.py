@@ -1,4 +1,5 @@
 import collector
+import db_config
 
 
 def test_kline_job_runs_market_filter_sources_in_main_flow(monkeypatch):
@@ -71,3 +72,49 @@ def test_allusdt_1h_ma20_calculates_from_1h_klines(tmp_path):
 
     assert changed == 1
     assert saved == (20.0, 10.5)
+
+
+def test_save_kline_round_uses_one_connection_for_all_symbols(tmp_path, monkeypatch):
+    import sqlite3
+
+    db_path = tmp_path / "base_data.db"
+    monkeypatch.setattr(collector, "DB_PATH", str(db_path))
+    monkeypatch.setattr(collector, "DATA_DIR", str(tmp_path))
+    collector.init_db()
+    connections = []
+
+    def counted_connection():
+        connections.append(True)
+        return db_config.connect_sqlite(str(db_path))
+
+    monkeypatch.setattr(collector, "get_db_conn", counted_connection)
+    klines = {
+        symbol: [
+            [minute * 60_000, "1", "2", "0.5", str(minute + 1), "10", (minute + 1) * 60_000 - 1]
+            for minute in range(5)
+        ]
+        for symbol in ("BTC", "ETH")
+    }
+
+    stats = collector.save_kline_round(klines)
+
+    assert connections == [True]
+    assert stats["BTC"][0] == 5
+    assert stats["ETH"][0] == 5
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM klines_1m").fetchone()[0] == 10
+        assert conn.execute("SELECT COUNT(*) FROM klines_5m").fetchone()[0] == 2
+
+
+def test_save_open_interest_round_uses_one_transaction(tmp_path, monkeypatch):
+    import sqlite3
+
+    db_path = tmp_path / "base_data.db"
+    monkeypatch.setattr(collector, "DB_PATH", str(db_path))
+    monkeypatch.setattr(collector, "DATA_DIR", str(tmp_path))
+    collector.init_db()
+
+    assert collector.save_open_interest_round({"BTC": 100.0, "ETH": 200.0}) == 2
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM open_interest_1m").fetchone()[0] == 2

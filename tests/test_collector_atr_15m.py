@@ -100,20 +100,17 @@ def test_process_symbol_atr_15m_skips_incomplete_latest_bar(tmp_path, monkeypatc
     assert collector.process_symbol_atr_15m("BTC") == ("BTC", 0, None)
 
 
-def test_run_atr_15m_main_continues_when_one_symbol_fails(monkeypatch, capsys):
+def test_run_atr_15m_main_reads_and_writes_one_batch(monkeypatch, capsys):
+    rows = [(index, 3.0, 0.5, 2.0, index + 900_000 - 1) for index in range(15)]
     calls = []
+    monkeypatch.setattr(collector, "load_atr_rows", lambda universe: {"GOOD": rows})
+    monkeypatch.setattr(
+        collector, "save_atr_round", lambda values: calls.append(values) or len(values)
+    )
 
-    def fake_process_symbol_atr_15m(symbol):
-        calls.append(symbol)
-        if symbol == "BAD":
-            raise RuntimeError("boom")
-        return symbol, 1, 2.5
+    collector.run_atr_15m_main(["GOOD", "EMPTY"])
 
-    monkeypatch.setattr(collector, "process_symbol_atr_15m", fake_process_symbol_atr_15m)
-
-    collector.run_atr_15m_main(["BAD", "GOOD"])
-
-    captured = capsys.readouterr().out
-    assert sorted(calls) == ["BAD", "GOOD"]
-    assert "❌ atr 15m symbol task failed: boom" in captured
-    assert "✅ GOOD: atr14_15m=2.5, changed=1" in captured
+    assert len(calls) == 1
+    assert len(calls[0]) == 1
+    assert calls[0][0][0] == "GOOD"
+    assert "committed in one batch" in capsys.readouterr().out
