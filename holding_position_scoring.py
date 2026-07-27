@@ -476,17 +476,20 @@ class HoldingPositionScoringSystem:
         self.init_tables()
         round_ts = decision_round_ts if decision_round_ts is not None else self._current_decision_round_ts()
         now_ms = int(time.time() * 1000)
-        positions = self._active_positions()
-        stop_loss_result = self._run_stop_loss_rule_round(positions=positions, decision_round_ts=round_ts, checked_at=now_ms)
-        reduction_positions = self._positions_after_stop_loss_records_are_persisted(
-            positions=positions,
-            stop_loss_records=stop_loss_result["records"],
-        )
+        # Each module starts from a fresh exchange snapshot.  In particular, do
+        # not carry the empty/stale snapshot from a previous module across the
+        # whole round: an earlier stop-loss or reduction action (or an external
+        # trade) may have changed the account positions in the meantime.
+        stop_loss_positions = self._active_positions()
+        stop_loss_result = self._run_stop_loss_rule_round(positions=stop_loss_positions, decision_round_ts=round_ts, checked_at=now_ms)
+        reduction_positions = self._active_positions()
         reduction_checks = self.evaluate_reduction_conditions(positions=reduction_positions, decision_round_ts=round_ts, checked_at=now_ms)
         reduction_records = self._execute_reduction_actions(reduction_checks, reduction_positions, now_ms)
-        increase_checks = self.evaluate_increase_conditions(positions=reduction_positions, decision_round_ts=round_ts, checked_at=now_ms)
-        increase_records = self._record_increase_actions(increase_checks, reduction_positions, now_ms)
-        portfolio_risk = self.calculate_portfolio_risk(positions=reduction_positions, decision_round_ts=round_ts, calculated_at=now_ms)
+        increase_positions = self._active_positions()
+        increase_checks = self.evaluate_increase_conditions(positions=increase_positions, decision_round_ts=round_ts, checked_at=now_ms)
+        increase_records = self._record_increase_actions(increase_checks, increase_positions, now_ms)
+        portfolio_positions = self._active_positions()
+        portfolio_risk = self.calculate_portfolio_risk(positions=portfolio_positions, decision_round_ts=round_ts, calculated_at=now_ms)
         return {
             "decision_round_ts": round_ts,
             "checked": stop_loss_result["checked"],
