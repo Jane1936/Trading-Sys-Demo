@@ -82,6 +82,14 @@
     .chip { padding: 4px 10px; border-radius: 999px; background: #dbeafe; color: #1e3a8a; font-size: 12px; font-weight: 600; }
     .chip.danger { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
     .chip.success { background:#dcfce7; color:#166534; border:1px solid #86efac; }
+    .decision-status { min-width:42px; text-align:center; }
+    .latest-decision-row { background:#fff7cc; font-weight:700; box-shadow:inset 4px 0 0 #f59e0b; }
+    .latest-decision-row:hover { background:#fef3c7; }
+    .latest-decision-badge { display:inline-block; margin-left:6px; padding:2px 8px; border-radius:999px; background:#f59e0b; color:#fff; font-size:11px; font-weight:800; }
+    .purple-module { border-left:3px solid #a78bfa; border-right:1px solid #ddd6fe; }
+    .purple-module .collapsible-header { background:linear-gradient(135deg, #faf5ff 0%, #ede9fe 100%); border-color:#ddd6fe; }
+    .purple-module .collapse-hint { background:#faf5ff; border-color:#ddd6fe; color:#6d28d9; }
+    .purple-module th { background:#f5f3ff; }
     .feature-flag-status { display:inline-flex; align-items:center; min-width:52px; justify-content:center; padding:4px 10px; border-radius:999px; font-weight:800; font-size:12px; border:1px solid transparent; }
     .feature-flag-status.enabled { background:#dcfce7; color:#166534; border-color:#86efac; }
     .feature-flag-status.disabled { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
@@ -843,8 +851,8 @@
             <thead><tr><th>决策轮次</th><th>执行时间</th><th>15m K线时间</th><th>ALLUSDT close</th><th>1h MA20时间</th><th>1h MA20</th><th>市场弱势</th><th>止盈阈值</th><th>卖出比例</th><th>原因</th></tr></thead>
             <tbody>
               {% for row in weak_market_profit_adjustment_results %}
-              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
-                <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td><td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
+              <tr class="{% if loop.first %}latest-decision-row{% endif %}{% if loop.index > 10 %} collapsed-extra{% endif %}">
+                <td>{{ row.decision_round_ts|fmt_ms_datetime }}{% if loop.first %}<span class="latest-decision-badge">最新</span>{% endif %}</td><td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
                 <td>{{ row.allusdt_15m_open_time|fmt_ms_datetime if row.allusdt_15m_open_time else '-' }}</td>
                 <td>{{ '%.8f'|format(row.allusdt_15m_close) if row.allusdt_15m_close is not none else '-' }}</td>
                 <td>{{ row.allusdt_1h_ma20_open_time|fmt_ms_datetime if row.allusdt_1h_ma20_open_time else '-' }}</td>
@@ -876,14 +884,14 @@
             </thead>
             <tbody>
               {% for row in dynamic_open_threshold_results %}
-                <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
-                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                <tr class="{% if loop.first %}latest-decision-row{% endif %}{% if loop.index > 10 %} collapsed-extra{% endif %}">
+                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}{% if loop.first %}<span class="latest-decision-badge">最新</span>{% endif %}</td>
                   <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
                   <td>{{ row.window_start_ts|fmt_ms_datetime }} ~ {{ row.window_end_ts|fmt_ms_datetime }}</td>
                   <td>{{ row.highest_total_score if row.highest_total_score is not none else '-' }}</td>
                   <td>{{ row.highest_symbol or '-' }}</td>
                   <td>{{ row.highest_score_round_ts|fmt_ms_datetime if row.highest_score_round_ts else '-' }}</td>
-                  <td><span class="chip">{{ '允许' if row.allow_new_positions else '禁止' }}</span></td>
+                  <td><span class="chip decision-status {{ 'success' if row.allow_new_positions else 'danger' }}">{{ '允许' if row.allow_new_positions else '禁止' }}</span></td>
                   <td>{{ row.min_open_total_score if row.min_open_total_score is not none else '无额外门槛' if row.allow_new_positions else '-' }}</td>
                   <td>{{ row.policy }}</td>
                   <td>{{ row.reason }}</td>
@@ -897,7 +905,7 @@
       </div>
 
 
-      <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+      <div class="collapsible-section purple-module is-collapsed" data-collapsible data-collapsed-limit="10">
         <div class="symbol-strip collapsible-header">
           <div>
             <div><strong>加仓权限（每15分钟执行）</strong></div>
@@ -918,10 +926,10 @@
             </thead>
             <tbody>
               {% for row in add_position_permission_results %}
-                <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
-                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                <tr class="{% if loop.first %}latest-decision-row{% endif %}{% if loop.index > 10 %} collapsed-extra{% endif %}">
+                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}{% if loop.first %}<span class="latest-decision-badge">最新</span>{% endif %}</td>
                   <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
-                  <td><span class="chip">{{ '允许' if row.allow_add_positions else '禁止' }}</span></td>
+                  <td><span class="chip decision-status {{ 'success' if row.allow_add_positions else 'danger' }}">{{ '允许' if row.allow_add_positions else '禁止' }}</span></td>
                   <td>{{ row.reason }}</td>
                   <td>{{ row.allusdt_first_open_time|fmt_ms_datetime if row.allusdt_first_open_time else '-' }}</td>
                   <td>{{ row.allusdt_latest_open_time|fmt_ms_datetime if row.allusdt_latest_open_time else '-' }}</td>
@@ -945,7 +953,7 @@
         </div>
       </div>
 
-      <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+      <div class="collapsible-section purple-module is-collapsed" data-collapsible data-collapsed-limit="10">
         <div class="symbol-strip collapsible-header">
           <div>
             <div><strong>动态加仓阈值（每15分钟执行）</strong></div>
@@ -963,8 +971,8 @@
             </thead>
             <tbody>
               {% for row in dynamic_add_position_threshold_results %}
-                <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
-                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                <tr class="{% if loop.first %}latest-decision-row{% endif %}{% if loop.index > 10 %} collapsed-extra{% endif %}">
+                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}{% if loop.first %}<span class="latest-decision-badge">最新</span>{% endif %}</td>
                   <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
                   <td>{{ '%.2f%%'|format(row.success_rate * 100) if row.success_rate is not none else '-' }}</td>
                   <td>{{ '%.1fR'|format(row.threshold_r_multiple) }}</td>
@@ -1003,10 +1011,10 @@
           </thead>
           <tbody>
             {% for row in market_filter_results %}
-              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
-                <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+              <tr class="{% if loop.first %}latest-decision-row{% endif %}{% if loop.index > 10 %} collapsed-extra{% endif %}">
+                <td>{{ row.decision_round_ts|fmt_ms_datetime }}{% if loop.first %}<span class="latest-decision-badge">最新</span>{% endif %}</td>
                 <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
-                <td><span class="chip">{{ '允许' if row.allow_new_positions else '禁止' }}</span></td>
+                <td><span class="chip decision-status {{ 'success' if row.allow_new_positions else 'danger' }}">{{ '允许' if row.allow_new_positions else '禁止' }}</span></td>
                 <td>{{ row.block_until|fmt_ms_datetime if row.block_until else '-' }}</td>
                 <td>{{ row.reason }}</td>
                 <td>{{ row.allusdt_first_open_time|fmt_ms_datetime if row.allusdt_first_open_time else '-' }}</td>
