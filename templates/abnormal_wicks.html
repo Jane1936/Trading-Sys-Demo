@@ -832,6 +832,34 @@
       <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
         <div class="symbol-strip collapsible-header">
           <div>
+            <div><strong>弱势市场止盈动态调整（每15分钟执行）</strong></div>
+            <div class="muted">只显示最近7天内记录。等待 ALLUSDT 15分钟K线收敛；1小时整点还会等待 ALLUSDT 1小时MA20计算完成。默认折叠，仅展示最新 10 条。</div>
+          </div>
+          <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+        </div>
+        <div class="collapse-hint">规则：若最近第1条 ALLUSDT 15分钟K线 close &lt; 最近第1条 ALLUSDT 1小时MA20，则触发市场弱势。市场弱势时，分批止盈改为未变现盈亏 ≥ 1.4R 时卖出当前仓位50%；否则维持 ≥ 2R 时卖出30%。15分钟整点的分批止盈扫描会等待本模块完成。</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>决策轮次</th><th>执行时间</th><th>15m K线时间</th><th>ALLUSDT close</th><th>1h MA20时间</th><th>1h MA20</th><th>市场弱势</th><th>止盈阈值</th><th>卖出比例</th><th>原因</th></tr></thead>
+            <tbody>
+              {% for row in weak_market_profit_adjustment_results %}
+              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td><td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
+                <td>{{ row.allusdt_15m_open_time|fmt_ms_datetime if row.allusdt_15m_open_time else '-' }}</td>
+                <td>{{ '%.8f'|format(row.allusdt_15m_close) if row.allusdt_15m_close is not none else '-' }}</td>
+                <td>{{ row.allusdt_1h_ma20_open_time|fmt_ms_datetime if row.allusdt_1h_ma20_open_time else '-' }}</td>
+                <td>{{ '%.8f'|format(row.allusdt_1h_ma20) if row.allusdt_1h_ma20 is not none else '-' }}</td>
+                <td><span class="chip">{{ '是' if row.weak_market else '否' }}</span></td>
+                <td>{{ '%.1fR'|format(row.trigger_r_multiple) }}</td><td>{{ '%.0f%%'|format(row.take_profit_fraction * 100) }}</td><td>{{ row.reason }}</td>
+              </tr>
+              {% else %}<tr><td colspan="10" class="muted">暂无弱势市场止盈动态调整执行结果。</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+        <div class="symbol-strip collapsible-header">
+          <div>
             <div><strong>动态开仓门槛（每15分钟执行，评分完成后）</strong></div>
             <div class="muted">只显示最近7天内记录。维护最近12小时内评分系统最高总分，并按最高分动态限制本轮新开仓门槛；默认折叠，仅展示最新 10 条。</div>
           </div>
@@ -1666,7 +1694,7 @@
         <div class="symbol-strip">
           <div><strong>分批止盈规则：5分钟扫描结果</strong></div>
           {% if partial_take_profit_round_ts %}
-            <div class="muted">最近判断轮次：{{ partial_take_profit_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；若未变现盈亏 ≥ 2 × R，则提交 reduceOnly MARKET 订单卖出当前仓位的30%。</div>
+            <div class="muted">最近判断轮次：{{ partial_take_profit_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；常态下未变现盈亏 ≥ 2R 卖出30%，市场弱势时动态调整为 ≥ 1.4R 卖出50%。</div>
           {% else %}
             <div class="muted">暂无分批止盈扫描结果。</div>
           {% endif %}

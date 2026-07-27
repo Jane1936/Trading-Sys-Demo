@@ -40,6 +40,7 @@ from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
 from market_filter_module import MarketFilterModule
+from weak_market_profit_adjustment import WeakMarketProfitAdjustmentModule
 from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import DynamicOpenThresholdModule
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
@@ -504,6 +505,8 @@ def start_break_even_take_profit_task() -> None:
     partial_strategy.init_tables()
     dynamic_profit_protection.init_tables()
     trailing_stop_tracker.init_tables()
+    weak_market_adjustment = WeakMarketProfitAdjustmentModule(db_path=db_config.MARKET_DB_PATH)
+    weak_market_adjustment.init_table()
     print("🟢 Break-even, partial take-profit, dynamic profit protection and trailing stop tracker task started")
     while True:
         try:
@@ -520,7 +523,20 @@ def start_break_even_take_profit_task() -> None:
             print(f"⚠️ exit-order reconcile failed: {exc}")
 
         try:
-            partial_result = partial_strategy.run_round()
+            scan_ms = int(time.time() * 1000)
+            market_round_ts = WeakMarketProfitAdjustmentModule.decision_round_ts(scan_ms)
+            # The first five-minute scan observed in every quarter-hour must
+            # not overtake the adjustment, even when this worker started late.
+            if weak_market_adjustment.latest_result_for_round(market_round_ts) is None:
+                while True:
+                    converged, convergence_reason = weak_market_adjustment.is_data_converged_for_round(market_round_ts)
+                    if converged:
+                        adjustment = weak_market_adjustment.run_round(market_round_ts)
+                        print(f"📉 weak-market profit adjustment round={market_round_ts} weak={adjustment.weak_market} trigger={adjustment.trigger_r_multiple}R fraction={adjustment.take_profit_fraction}")
+                        break
+                    print(f"⏳ weak-market profit adjustment round={market_round_ts} waiting: {convergence_reason}")
+                    time.sleep(2)
+            partial_result = partial_strategy.run_round(decision_round_ts=scan_ms)
             print(
                 f"🟢 partial take-profit checked={partial_result.get('checked', 0)} "
                 f"triggered={partial_result.get('triggered', 0)} "
