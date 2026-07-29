@@ -124,6 +124,10 @@ def recover_after_worker_error(exc: BaseException) -> bool:
     """Fence and replace a malformed worker database."""
     if not is_malformed_database_error(exc):
         return False
+    # Recovery needs an exclusive access lock.  Do not wait on the connection
+    # owned by the current round when a nested strategy reports corruption.
+    for db_path in db_config.DB_LABELS.values():
+        db_config.close_scoped_connection(db_path)
     check_worker_databases()
     return True
 
@@ -399,29 +403,34 @@ def run_scoring_round_worker(
             stage="before_holding_scoring",
         ):
             return
-        holding_result = holding_scoring.run_round(decision_round_ts=decision_round_ts)
-        print(
-            f"📊 holding scoring round={decision_round_ts} "
-            f"checked={holding_result.get('checked', 0)} "
-            f"triggered={holding_result.get('triggered', 0)} "
-            f"records={holding_result.get('records', 0)} "
-            f"reduction_checked={holding_result.get('reduction_checked', 0)} "
-            f"reduction_triggered={holding_result.get('reduction_triggered', 0)}"
-        )
-        if _scoring_worker_should_stop(
-            decision_round_ts=decision_round_ts,
-            deadline_ts=deadline_ts,
-            stage="before_trailing_reduction",
+        with db_config.sqlite_connection_scope(
+            db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
         ):
-            return
-        trailing_reduction_result = trailing_reduction.run_round(decision_round_ts=decision_round_ts)
-        print(
-            f"🧭 trailing reduction round={decision_round_ts} "
-            f"checked={trailing_reduction_result.get('checked', 0)} "
-            f"eligible={trailing_reduction_result.get('eligible', 0)} "
-            f"pretriggered={trailing_reduction_result.get('pretriggered', 0)} "
-            f"2R={trailing_reduction_result.get('trigger_r_usdt', '')}"
-        )
+            holding_result = holding_scoring.run_round(decision_round_ts=decision_round_ts)
+            print(
+                f"📊 holding scoring round={decision_round_ts} "
+                f"checked={holding_result.get('checked', 0)} "
+                f"triggered={holding_result.get('triggered', 0)} "
+                f"records={holding_result.get('records', 0)} "
+                f"reduction_checked={holding_result.get('reduction_checked', 0)} "
+                f"reduction_triggered={holding_result.get('reduction_triggered', 0)}"
+            )
+            if _scoring_worker_should_stop(
+                decision_round_ts=decision_round_ts,
+                deadline_ts=deadline_ts,
+                stage="before_trailing_reduction",
+            ):
+                return
+            trailing_reduction_result = trailing_reduction.run_round(
+                decision_round_ts=decision_round_ts
+            )
+            print(
+                f"🧭 trailing reduction round={decision_round_ts} "
+                f"checked={trailing_reduction_result.get('checked', 0)} "
+                f"eligible={trailing_reduction_result.get('eligible', 0)} "
+                f"pretriggered={trailing_reduction_result.get('pretriggered', 0)} "
+                f"2R={trailing_reduction_result.get('trigger_r_usdt', '')}"
+            )
     except Exception as exc:
         recover_after_worker_error(exc)
         print(f"⚠️ holding scoring failed round={decision_round_ts}: {exc}")
@@ -509,76 +518,82 @@ def start_break_even_take_profit_task() -> None:
     weak_market_adjustment.init_table()
     print("🟢 Break-even, partial take-profit, dynamic profit protection and trailing stop tracker task started")
     while True:
-        try:
-            reconcile_result = TradingExperiment(
-                db_path=db_config.TRADING_DB_PATH
-            ).reconcile_missing_exit_orders()
-            print(
-                f"🧩 exit-order reconcile checked={reconcile_result.get('checked', 0)} "
-                f"created={reconcile_result.get('created', 0)} "
-                f"errors={reconcile_result.get('errors', 0)}"
-            )
-        except Exception as exc:
-            recover_after_worker_error(exc)
-            print(f"⚠️ exit-order reconcile failed: {exc}")
+        with db_config.sqlite_connection_scope(
+            db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
+        ):
+            try:
+                reconcile_result = TradingExperiment(
+                    db_path=db_config.TRADING_DB_PATH
+                ).reconcile_missing_exit_orders()
+                print(
+                    f"🧩 exit-order reconcile checked={reconcile_result.get('checked', 0)} "
+                    f"created={reconcile_result.get('created', 0)} "
+                    f"errors={reconcile_result.get('errors', 0)}"
+                )
+            except Exception as exc:
+                recover_after_worker_error(exc)
+                print(f"⚠️ exit-order reconcile failed: {exc}")
 
-        try:
-            scan_ms = int(time.time() * 1000)
-            market_round_ts = WeakMarketProfitAdjustmentModule.decision_round_ts(scan_ms)
-            # The first five-minute scan observed in every quarter-hour must
-            # not overtake the adjustment, even when this worker started late.
-            if weak_market_adjustment.latest_result_for_round(market_round_ts) is None:
-                while True:
-                    converged, convergence_reason = weak_market_adjustment.is_data_converged_for_round(market_round_ts)
-                    if converged:
-                        adjustment = weak_market_adjustment.run_round(market_round_ts)
-                        print(f"📉 weak-market profit adjustment round={market_round_ts} weak={adjustment.weak_market} trigger={adjustment.trigger_r_multiple}R fraction={adjustment.take_profit_fraction}")
-                        break
-                    print(f"⏳ weak-market profit adjustment round={market_round_ts} waiting: {convergence_reason}")
-                    time.sleep(2)
-            partial_result = partial_strategy.run_round(decision_round_ts=scan_ms)
-            print(
-                f"🟢 partial take-profit checked={partial_result.get('checked', 0)} "
-                f"triggered={partial_result.get('triggered', 0)} "
-                f"records={partial_result.get('records', 0)} 2R={partial_result.get('trigger_r_usdt', '')}"
-            )
-        except Exception as exc:
-            recover_after_worker_error(exc)
-            print(f"⚠️ partial take-profit failed: {exc}")
+            try:
+                scan_ms = int(time.time() * 1000)
+                market_round_ts = WeakMarketProfitAdjustmentModule.decision_round_ts(scan_ms)
+                # The first five-minute scan observed in every quarter-hour must
+                # not overtake the adjustment, even when this worker started late.
+                if weak_market_adjustment.latest_result_for_round(market_round_ts) is None:
+                    while True:
+                        converged, convergence_reason = weak_market_adjustment.is_data_converged_for_round(market_round_ts)
+                        if converged:
+                            adjustment = weak_market_adjustment.run_round(market_round_ts)
+                            print(f"📉 weak-market profit adjustment round={market_round_ts} weak={adjustment.weak_market} trigger={adjustment.trigger_r_multiple}R fraction={adjustment.take_profit_fraction}")
+                            break
+                        print(f"⏳ weak-market profit adjustment round={market_round_ts} waiting: {convergence_reason}")
+                        time.sleep(2)
+                partial_result = partial_strategy.run_round(decision_round_ts=scan_ms)
+                print(
+                    f"🟢 partial take-profit checked={partial_result.get('checked', 0)} "
+                    f"triggered={partial_result.get('triggered', 0)} "
+                    f"records={partial_result.get('records', 0)} 2R={partial_result.get('trigger_r_usdt', '')}"
+                )
+            except Exception as exc:
+                recover_after_worker_error(exc)
+                print(f"⚠️ partial take-profit failed: {exc}")
 
-        try:
-            result = strategy.run_round()
-            print(
-                f"🟢 break-even take-profit checked={result.get('checked', 0)} "
-                f"triggered={result.get('triggered', 0)} "
-                f"records={result.get('records', 0)} R={result.get('r_usdt', '')}"
-            )
-        except Exception as exc:
-            recover_after_worker_error(exc)
-            print(f"⚠️ break-even take-profit failed: {exc}")
+            try:
+                result = strategy.run_round()
+                print(
+                    f"🟢 break-even take-profit checked={result.get('checked', 0)} "
+                    f"triggered={result.get('triggered', 0)} "
+                    f"records={result.get('records', 0)} R={result.get('r_usdt', '')}"
+                )
+            except Exception as exc:
+                recover_after_worker_error(exc)
+                print(f"⚠️ break-even take-profit failed: {exc}")
 
         for _ in range(5):
-            try:
-                dynamic_result = dynamic_profit_protection.run_round()
-                print(
-                    f"🟢 dynamic profit protection checked={dynamic_result.get('checked', 0)} "
-                    f"eligible={dynamic_result.get('eligible', 0)} "
-                    f"triggered={dynamic_result.get('triggered', 0)} R={dynamic_result.get('r_usdt', '')}"
-                )
-            except Exception as exc:
-                recover_after_worker_error(exc)
-                print(f"⚠️ dynamic profit protection failed: {exc}")
+            with db_config.sqlite_connection_scope(
+                db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
+            ):
+                try:
+                    dynamic_result = dynamic_profit_protection.run_round()
+                    print(
+                        f"🟢 dynamic profit protection checked={dynamic_result.get('checked', 0)} "
+                        f"eligible={dynamic_result.get('eligible', 0)} "
+                        f"triggered={dynamic_result.get('triggered', 0)} R={dynamic_result.get('r_usdt', '')}"
+                    )
+                except Exception as exc:
+                    recover_after_worker_error(exc)
+                    print(f"⚠️ dynamic profit protection failed: {exc}")
 
-            try:
-                trailing_result = trailing_stop_tracker.run_round()
-                print(
-                    f"🟢 trailing stop tracker checked={trailing_result.get('checked', 0)} "
-                    f"eligible={trailing_result.get('eligible', 0)} "
-                    f"updated={trailing_result.get('updated', 0)}"
-                )
-            except Exception as exc:
-                recover_after_worker_error(exc)
-                print(f"⚠️ trailing stop tracker failed: {exc}")
+                try:
+                    trailing_result = trailing_stop_tracker.run_round()
+                    print(
+                        f"🟢 trailing stop tracker checked={trailing_result.get('checked', 0)} "
+                        f"eligible={trailing_result.get('eligible', 0)} "
+                        f"updated={trailing_result.get('updated', 0)}"
+                    )
+                except Exception as exc:
+                    recover_after_worker_error(exc)
+                    print(f"⚠️ trailing stop tracker failed: {exc}")
 
             time.sleep(60)
 
@@ -763,7 +778,10 @@ def start_increase_pretrigger_refresh_task() -> None:
     print("🟣 Increase pre-trigger refresh task started")
     while True:
         try:
-            result = holding_scoring.refresh_pretrigger_increase_checks()
+            with db_config.sqlite_connection_scope(
+                db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
+            ):
+                result = holding_scoring.refresh_pretrigger_increase_checks()
             if result.get("refreshed", 0):
                 print(
                     f"🟣 increase pretrigger refresh round={result.get('round_ts')} "
@@ -874,7 +892,12 @@ def start_atr_15m_task(symbols: List[str]) -> None:
         ensure_universe()
         collector.atr_15m_job()
         try:
-            result = TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH).run_round(decision_round_ts=int(time.time() * 1000))
+            with db_config.sqlite_connection_scope(
+                db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
+            ):
+                result = TrailingReductionTracker(
+                    db_path=db_config.TRADING_DB_PATH
+                ).run_round(decision_round_ts=int(time.time() * 1000))
             print(
                 f"🧭 trailing reduction after ATR checked={result.get('checked', 0)} "
                 f"eligible={result.get('eligible', 0)} pretriggered={result.get('pretriggered', 0)}"
@@ -899,7 +922,10 @@ def start_trailing_reduction_refresh_task() -> None:
 
     def _job():
         try:
-            result = tracker.refresh_pretriggered_symbols()
+            with db_config.sqlite_connection_scope(
+                db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
+            ):
+                result = tracker.refresh_pretriggered_symbols()
             print(
                 f"🧭 trailing reduction refresh refreshed={result.get('refreshed', 0)} "
                 f"triggered={result.get('triggered', 0)} records={result.get('records', 0)}"

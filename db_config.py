@@ -8,6 +8,8 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Iterable
 
@@ -25,8 +27,12 @@ DB_LABELS = {
 }
 
 _recovery_local = threading.local()
+_connection_local = threading.local()
 _wal_init_lock = threading.Lock()
 _wal_initialized_files: dict[str, tuple[int, int]] = {}
+_scoped_connections: ContextVar[dict[str, sqlite3.Connection] | None] = ContextVar(
+    "sqlite_scoped_connections", default=None
+)
 
 
 class DatabaseRecoveringError(sqlite3.OperationalError):
@@ -96,6 +102,7 @@ class ManagedSQLiteConnection(sqlite3.Connection):
         super().__init__(*args, **kwargs)
         self._access_locks = []
         self._managed_closed = False
+        self._db_path = ""
 
     def add_access_lock(self, lock) -> None:
         self._access_locks.append(lock)
@@ -107,6 +114,7 @@ class ManagedSQLiteConnection(sqlite3.Connection):
             super().close()
         finally:
             self._managed_closed = True
+            _unregister_connection(self)
             while self._access_locks:
                 self._access_locks.pop().__exit__(None, None, None)
 
@@ -115,6 +123,110 @@ class ManagedSQLiteConnection(sqlite3.Connection):
             return super().__exit__(exc_type, exc, tb)
         finally:
             self.close()
+
+
+def _thread_connections() -> list[ManagedSQLiteConnection]:
+    connections = getattr(_connection_local, "connections", None)
+    if connections is None:
+        connections = []
+        _connection_local.connections = connections
+    return connections
+
+
+def _register_connection(conn: ManagedSQLiteConnection, db_path: str) -> None:
+    conn._db_path = str(Path(db_path).resolve())
+    _thread_connections().append(conn)
+
+
+def _unregister_connection(conn: ManagedSQLiteConnection) -> None:
+    connections = _thread_connections()
+    try:
+        connections.remove(conn)
+    except ValueError:
+        pass
+
+
+def assert_no_active_sqlite_transaction(operation: str = "network request") -> None:
+    """Reject slow external I/O while this thread owns a SQLite transaction."""
+    active_paths = [
+        conn._db_path or "<unknown>"
+        for conn in tuple(_thread_connections())
+        if not conn._managed_closed and conn.in_transaction
+    ]
+    if active_paths:
+        joined = ", ".join(sorted(set(active_paths)))
+        raise RuntimeError(
+            f"cannot perform {operation} during an active SQLite transaction: {joined}"
+        )
+
+
+class BorrowedSQLiteConnection:
+    """A non-owning lease for a connection managed by a round scope.
+
+    Existing modules can keep using ``with connect_sqlite(...) as conn``.  The
+    nested context still commits or rolls back its unit of work, but closing the
+    lease does not close the round-owned connection.
+    """
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            self._conn.commit()
+        else:
+            self._conn.rollback()
+        return False
+
+    def close(self) -> None:
+        """Release this lease; the owning round scope closes the connection."""
+
+
+@contextmanager
+def sqlite_connection_scope(
+    db_path: str, *, row_factory=None, wal: bool = True
+):
+    """Reuse one SQLite connection for repeated opens in one logical round.
+
+    Scopes are context-local, so worker threads and scoring subprocesses never
+    share a SQLite connection.  A nested scope for the same database borrows the
+    existing connection; the outermost scope owns and closes it.
+    """
+    normalized = str(Path(db_path).resolve())
+    current = _scoped_connections.get()
+    if current is not None and normalized in current:
+        yield BorrowedSQLiteConnection(current[normalized])
+        return
+
+    conn = connect_sqlite(db_path, row_factory=row_factory, wal=wal, _allow_borrow=False)
+    scoped = dict(current or {})
+    scoped[normalized] = conn
+    token = _scoped_connections.set(scoped)
+    try:
+        yield conn
+    finally:
+        _scoped_connections.reset(token)
+        conn.close()
+
+
+def close_scoped_connection(db_path: str) -> bool:
+    """Close and evict a round connection before malformed-DB recovery."""
+    normalized = str(Path(db_path).resolve())
+    current = _scoped_connections.get()
+    if current is None or normalized not in current:
+        return False
+    conn = current[normalized]
+    remaining = dict(current)
+    del remaining[normalized]
+    _scoped_connections.set(remaining)
+    conn.close()
+    return True
 
 
 def ensure_parent_dir(db_path: str) -> None:
@@ -134,8 +246,9 @@ def attach_databases(conn: sqlite3.Connection, attachments: Iterable[tuple[str, 
     schemas, which lets module-owned tables live in main while read-only source
     tables can be found in their own database files.
     """
+    managed_conn = conn._conn if isinstance(conn, BorrowedSQLiteConnection) else conn
     main_path = Path(conn.execute("PRAGMA database_list").fetchone()[2] or "").resolve()
-    seen = {"main"}
+    seen = {str(row[1]) for row in conn.execute("PRAGMA database_list").fetchall()}
     for schema, path in attachments:
         if not path or schema in seen:
             continue
@@ -150,11 +263,11 @@ def attach_databases(conn: sqlite3.Connection, attachments: Iterable[tuple[str, 
             conn.execute(f"ATTACH DATABASE ? AS {quote_identifier(schema)}", (path,))
         except Exception:
             lock.__exit__(None, None, None)
-            if isinstance(conn, ManagedSQLiteConnection):
-                conn.close()
+            if isinstance(managed_conn, ManagedSQLiteConnection):
+                managed_conn.close()
             raise
-        if isinstance(conn, ManagedSQLiteConnection):
-            conn.add_access_lock(lock)
+        if isinstance(managed_conn, ManagedSQLiteConnection):
+            managed_conn.add_access_lock(lock)
         else:
             lock.__exit__(None, None, None)
         seen.add(schema)
@@ -210,7 +323,21 @@ def configure_sqlite_connection(
     return conn
 
 
-def connect_sqlite(db_path: str, *, timeout: int = 30, row_factory=None, wal: bool = True) -> sqlite3.Connection:
+def connect_sqlite(
+    db_path: str,
+    *,
+    timeout: int = 30,
+    row_factory=None,
+    wal: bool = True,
+    _allow_borrow: bool = True,
+) -> sqlite3.Connection:
+    normalized = str(Path(db_path).resolve())
+    scoped = _scoped_connections.get()
+    if _allow_borrow and scoped is not None and normalized in scoped:
+        conn = scoped[normalized]
+        if row_factory is not None:
+            conn.row_factory = row_factory
+        return BorrowedSQLiteConnection(conn)
     ensure_parent_dir(db_path)
     lock = _acquire_database_access(db_path)
     try:
@@ -218,6 +345,7 @@ def connect_sqlite(db_path: str, *, timeout: int = 30, row_factory=None, wal: bo
     except Exception:
         lock.__exit__(None, None, None)
         raise
+    _register_connection(conn, db_path)
     conn.add_access_lock(lock)
     if row_factory is not None:
         conn.row_factory = row_factory
