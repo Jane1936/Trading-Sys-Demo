@@ -53,6 +53,7 @@ class PartialTakeProfitRecord:
     trigger_r_usdt: str
     unrealized_pnl: str
     take_profit_order_id: str
+    trigger_label: str
     status: str
     reason: str
     raw_response: str
@@ -65,6 +66,8 @@ class PartialTakeProfitStrategy:
     RECORDS_TABLE = "partial_take_profit_records"
     TAKE_PROFIT_FRACTION = Decimal("0.3")
     TRIGGER_R_MULTIPLE = Decimal("2")
+    TRIGGER_LABEL_2R = "已触发2R分批止盈"
+    TRIGGER_LABEL_1_4R = "已触发1.4R分批止盈"
 
     def __init__(
         self,
@@ -120,11 +123,28 @@ class PartialTakeProfitStrategy:
                     trigger_r_usdt TEXT NOT NULL,
                     unrealized_pnl TEXT NOT NULL,
                     take_profit_order_id TEXT NOT NULL DEFAULT '',
+                    trigger_label TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL,
                     reason TEXT NOT NULL,
                     raw_response TEXT NOT NULL DEFAULT ''
                 )
                 """
+            )
+            columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.RECORDS_TABLE})").fetchall()}
+            if "trigger_label" not in columns:
+                conn.execute(f"ALTER TABLE {self.RECORDS_TABLE} ADD COLUMN trigger_label TEXT NOT NULL DEFAULT ''")
+            # Label records created before this column existed from their persisted R values.
+            conn.execute(
+                f"""
+                UPDATE {self.RECORDS_TABLE}
+                SET trigger_label = CASE
+                    WHEN ABS(CAST(trigger_r_usdt AS REAL) - 1.4 * CAST(r_usdt AS REAL)) < 0.000001
+                        THEN ?
+                    ELSE ?
+                END
+                WHERE trigger_label = ''
+                """,
+                (self.TRIGGER_LABEL_1_4R, self.TRIGGER_LABEL_2R),
             )
             conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
             conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_checked ON {self.RECORDS_TABLE}(checked_at DESC, symbol ASC)")
@@ -191,7 +211,7 @@ class PartialTakeProfitStrategy:
             self.db_path, symbol, "partial_take_profit", "partial_take_profit", now
         )
         if lock_handle is None:
-            self._insert_record(symbol, now, side, amount, Decimal("0"), entry_price, equity, r_value, trigger_r, unrealized_pnl, "", "failed", f"{reason}; {lock_reason}", raw_response)
+            self._insert_record(symbol, now, side, amount, Decimal("0"), entry_price, equity, r_value, trigger_r, unrealized_pnl, "", "failed", f"{reason}; {lock_reason}", raw_response, trigger_multiple)
             return
         try:
             helper = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)
@@ -245,7 +265,7 @@ class PartialTakeProfitStrategy:
             reason = f"partial_take_profit_failed: {type(exc).__name__}: {exc}"
         finally:
             lock_manager.release(lock_handle)
-        self._insert_record(symbol, now, side, amount, quantity, entry_price, equity, r_value, trigger_r, unrealized_pnl, order_id, status, reason, raw_response)
+        self._insert_record(symbol, now, side, amount, quantity, entry_price, equity, r_value, trigger_r, unrealized_pnl, order_id, status, reason, raw_response, trigger_multiple)
 
     def _cancel_existing_exit_orders(self, exchange_symbol: str, raw_parts: list[str]) -> str:
         for endpoint, label in (
@@ -378,9 +398,16 @@ class PartialTakeProfitStrategy:
         with self._connect() as conn:
             conn.execute(f"INSERT INTO {self.CHECKS_TABLE} (symbol, checked_at, account_equity_usdt, r_usdt, trigger_r_usdt, unrealized_pnl, entry_price, position_amt, triggered, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, self._fmt_decimal(equity), self._fmt_decimal(r_value), self._fmt_decimal(trigger_r), self._fmt_decimal(pnl), self._fmt_decimal(entry), self._fmt_decimal(amount), int(triggered), reason))
 
-    def _insert_record(self, symbol: str, checked_at: int, side: str, amount: Decimal, quantity: Decimal, entry: Decimal, equity: Decimal, r_value: Decimal, trigger_r: Decimal, pnl: Decimal, order_id: str, status: str, reason: str, raw: str) -> None:
+    def _insert_record(self, symbol: str, checked_at: int, side: str, amount: Decimal, quantity: Decimal, entry: Decimal, equity: Decimal, r_value: Decimal, trigger_r: Decimal, pnl: Decimal, order_id: str, status: str, reason: str, raw: str, trigger_multiple: Decimal) -> None:
+        trigger_label = self._trigger_label(trigger_multiple)
         with self._connect() as conn:
-            conn.execute(f"INSERT INTO {self.RECORDS_TABLE} (symbol, checked_at, side, position_amt, take_profit_quantity, entry_price, account_equity_usdt, r_usdt, trigger_r_usdt, unrealized_pnl, take_profit_order_id, status, reason, raw_response) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, side, self._fmt_decimal(amount), self._fmt_decimal(quantity), self._fmt_decimal(entry), self._fmt_decimal(equity), self._fmt_decimal(r_value), self._fmt_decimal(trigger_r), self._fmt_decimal(pnl), order_id, status, reason, raw))
+            conn.execute(f"INSERT INTO {self.RECORDS_TABLE} (symbol, checked_at, side, position_amt, take_profit_quantity, entry_price, account_equity_usdt, r_usdt, trigger_r_usdt, unrealized_pnl, take_profit_order_id, trigger_label, status, reason, raw_response) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, side, self._fmt_decimal(amount), self._fmt_decimal(quantity), self._fmt_decimal(entry), self._fmt_decimal(equity), self._fmt_decimal(r_value), self._fmt_decimal(trigger_r), self._fmt_decimal(pnl), order_id, trigger_label, status, reason, raw))
+
+    @classmethod
+    def _trigger_label(cls, trigger_multiple: Decimal) -> str:
+        if trigger_multiple == Decimal("1.4"):
+            return cls.TRIGGER_LABEL_1_4R
+        return cls.TRIGGER_LABEL_2R
 
     def get_latest_round_checks(self) -> tuple[int | None, list[PartialTakeProfitCheck]]:
         self.init_tables()

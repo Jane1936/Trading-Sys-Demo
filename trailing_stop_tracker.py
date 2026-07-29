@@ -149,7 +149,15 @@ class TrailingStopTracker:
         self.init_tables()
         helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
         positions = helper._fetch_and_store_positions()
-        active_positions = [row for row in positions if self._decimal_from(row.get("positionAmt"), Decimal("0")) != 0]
+        active_positions = [
+            row
+            for row in positions
+            if self._decimal_from(row.get("positionAmt"), Decimal("0")) != 0
+            and self._has_2r_partial_take_profit_record(
+                self._base_symbol(str(row.get("symbol", "")).upper()),
+                self._decimal_from(row.get("entryPrice"), Decimal("0")),
+            )
+        ]
         now = int(time.time() * 1000)
         checked = eligible = updated = 0
         for position in active_positions:
@@ -167,7 +175,7 @@ class TrailingStopTracker:
         entry_price = self._decimal_from(position.get("entryPrice"), Decimal("0"))
         if amount == 0 or entry_price <= 0:
             return False
-        if not self._has_partial_take_profit_record(symbol, entry_price):
+        if not self._has_2r_partial_take_profit_record(symbol, entry_price):
             self._insert_check(symbol, now, entry_price, amount, Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), now, None, Decimal("0"), Decimal("0"), Decimal("0"), False, False, "", "not_required", Decimal("0"), "", "not_required", False, "partial_take_profit_not_triggered", latest_1m_close=Decimal("0"), highest_since_open=Decimal("0"), atr14=Decimal("0"), volatility=Decimal("0"), price_drawdown=Decimal("0"), pretriggered=False, tag="")
             return False
         try:
@@ -222,12 +230,12 @@ class TrailingStopTracker:
             self._insert_check(symbol, now, entry_price, amount, Decimal("0"), Decimal("0"), max_pnl, drawdown, max_at, None, Decimal("0"), Decimal("0"), Decimal("0"), False, False, "", "not_required", Decimal("0"), "", "not_required", True, f"trailing_stop_tracker_failed: {type(exc).__name__}: {exc}", latest_1m_close=Decimal("0"), highest_since_open=Decimal("0"), atr14=Decimal("0"), volatility=Decimal("0"), price_drawdown=Decimal("0"), pretriggered=False, tag="")
             return False
 
-    def _has_partial_take_profit_record(self, symbol: str, entry_price: Decimal) -> bool:
+    def _has_2r_partial_take_profit_record(self, symbol: str, entry_price: Decimal) -> bool:
         table = PartialTakeProfitStrategy.RECORDS_TABLE
         with self._connect() as conn:
             row = conn.execute(
-                f"SELECT 1 FROM {table} WHERE symbol = ? AND entry_price = ? AND status = 'submitted' LIMIT 1",
-                (symbol, self._fmt_decimal(entry_price)),
+                f"SELECT 1 FROM {table} WHERE symbol = ? AND entry_price = ? AND status = 'submitted' AND trigger_label = ? LIMIT 1",
+                (symbol, self._fmt_decimal(entry_price), PartialTakeProfitStrategy.TRIGGER_LABEL_2R),
             ).fetchone()
         return row is not None
 
