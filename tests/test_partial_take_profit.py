@@ -1,4 +1,5 @@
 import tempfile
+from decimal import Decimal
 from pathlib import Path
 
 from partial_take_profit import PartialTakeProfitStrategy
@@ -137,6 +138,7 @@ def test_partial_take_profit_sells_30_percent_when_unrealized_pnl_reaches_2r():
     ]
     assert records[0].take_profit_order_id == "789"
     assert records[0].take_profit_quantity == "3"
+    assert records[0].trigger_label == "已触发2R分批止盈"
 
 
 def test_partial_take_profit_skips_when_unrealized_pnl_below_2r():
@@ -155,3 +157,21 @@ def test_partial_take_profit_skips_when_unrealized_pnl_below_2r():
     assert checks[0].reason == "unrealized_pnl_lt_2r"
     assert records == []
     assert fake_account.signed_posts == []
+
+
+def test_partial_take_profit_persists_1_4r_trigger_label():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        strategy = PartialTakeProfitStrategy(
+            db_path=str(Path(tmpdir) / "klines.db"),
+            account_manager=FakeAccountManager(),
+        )
+        strategy.init_tables()
+        strategy._insert_record(
+            "BANK", 1000, "SELL", Decimal("10"), Decimal("5"), Decimal("10"),
+            Decimal("1100"), Decimal("11"), Decimal("15.4"), Decimal("16"),
+            "789", "submitted", "weak_market_partial_take_profit", "{}", Decimal("1.4"),
+        )
+
+        records = strategy.recent_records()
+
+    assert records[0].trigger_label == "已触发1.4R分批止盈"

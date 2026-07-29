@@ -1782,7 +1782,7 @@
                 <th>take_profit_quantity</th>
                 <th>entry_price</th>
                 <th>R / 2R / 未变现盈亏</th>
-                <th>take_profit_order_id</th>
+                <th>take_profit_order_id / 触发档位</th>
                 <th>status</th>
                 <th>reason</th>
               </tr>
@@ -1797,7 +1797,7 @@
                 <td>{{ row.take_profit_quantity }}</td>
                 <td>{{ row.entry_price }}</td>
                 <td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }} / {{ row.unrealized_pnl }}</td>
-                <td>{{ row.take_profit_order_id or '-' }}</td>
+                <td>{{ row.take_profit_order_id or '-' }} / {{ row.trigger_label or '-' }}</td>
                 <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
                 <td>{{ row.reason }}</td>
               </tr>

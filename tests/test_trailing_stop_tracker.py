@@ -163,17 +163,33 @@ def _insert_open_trade(db_path):
         )
 
 
-def _insert_partial_take_profit_record(db_path):
+def _insert_partial_take_profit_record(db_path, trigger_label="已触发2R分批止盈"):
     strategy = PartialTakeProfitStrategy(db_path=db_path, account_manager=FakeAccountManager())
     strategy.init_tables()
     with strategy._connect() as conn:
         conn.execute(
             f"""
             INSERT INTO {PartialTakeProfitStrategy.RECORDS_TABLE}
-            (symbol, checked_at, side, position_amt, take_profit_quantity, entry_price, account_equity_usdt, r_usdt, trigger_r_usdt, unrealized_pnl, take_profit_order_id, status, reason, raw_response)
-            VALUES ('BANK', 1000, 'SELL', '10', '3', '10', '5100', '51', '102', '110', '789', 'submitted', 'unrealized_pnl_ge_2r_take_profit_30_percent', '{{}}')
-            """
+            (symbol, checked_at, side, position_amt, take_profit_quantity, entry_price, account_equity_usdt, r_usdt, trigger_r_usdt, unrealized_pnl, take_profit_order_id, trigger_label, status, reason, raw_response)
+            VALUES ('BANK', 1000, 'SELL', '10', '3', '10', '5100', '51', '102', '110', '789', ?, 'submitted', 'unrealized_pnl_ge_2r_take_profit_30_percent', '{{}}')
+            """,
+            (trigger_label,),
         )
+
+
+def test_trailing_stop_tracker_ignores_1_4r_partial_take_profit_record():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        _insert_partial_take_profit_record(db_path, "已触发1.4R分批止盈")
+        tracker = TrailingStopTracker(db_path=db_path, account_manager=fake_account)
+
+        result = tracker.run_round()
+        _, checks = tracker.get_latest_round_checks()
+
+    assert result["eligible"] == 0
+    assert result["checked"] == 0
+    assert checks == []
 
 
 def test_trailing_stop_tracker_updates_max_after_partial_take_profit():
@@ -213,8 +229,8 @@ def test_trailing_stop_tracker_requires_partial_take_profit_record():
         _, checks = tracker.get_latest_round_checks()
 
     assert result["eligible"] == 0
-    assert checks[0].eligible is False
-    assert checks[0].reason == "partial_take_profit_not_triggered"
+    assert result["checked"] == 0
+    assert checks == []
 
 
 def test_trailing_stop_tracker_closes_position_when_drawdown_threshold_hit():
