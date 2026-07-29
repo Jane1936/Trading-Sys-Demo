@@ -18,6 +18,8 @@ from urllib.parse import urlencode
 
 import requests
 
+import db_config
+
 
 def _env_or_default(name: str, default: str) -> str:
     value = os.getenv(name)
@@ -206,6 +208,7 @@ class BinanceAccountManager:
         return rows
 
     def _signed_get(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
+        db_config.assert_no_active_sqlite_transaction(f"Binance GET {endpoint}")
         response = self.session.get(
             f"{self.base_url}{endpoint}",
             params=self._signed_params(params),
@@ -216,6 +219,7 @@ class BinanceAccountManager:
         return response.json()
 
     def _signed_post(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
+        db_config.assert_no_active_sqlite_transaction(f"Binance POST {endpoint}")
         response = self.session.post(
             f"{self.base_url}{endpoint}",
             params=self._signed_params(params),
@@ -226,6 +230,7 @@ class BinanceAccountManager:
         return response.json()
 
     def _signed_delete(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
+        db_config.assert_no_active_sqlite_transaction(f"Binance DELETE {endpoint}")
         response = self.session.delete(
             f"{self.base_url}{endpoint}",
             params=self._signed_params(params),
@@ -236,6 +241,7 @@ class BinanceAccountManager:
         return response.json()
 
     def _public_get(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
+        db_config.assert_no_active_sqlite_transaction(f"Binance GET {endpoint}")
         response = self.session.get(
             f"{self.base_url}{endpoint}",
             params=dict(params or {}),

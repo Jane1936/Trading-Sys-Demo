@@ -1,3 +1,11 @@
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import db_config
 from binance_account_manager import BinanceAccountManager
 
 
@@ -236,3 +244,51 @@ def test_filled_orders_rejects_reversed_explicit_range():
         assert str(exc) == "start_time must be earlier than end_time"
     else:
         raise AssertionError("Expected a reversed time range to be rejected")
+
+
+class FakeResponse:
+    text = ""
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"ok": True}
+
+
+@pytest.mark.parametrize(
+    ("method_name", "request_method"),
+    [
+        ("_signed_get", "get"),
+        ("_signed_post", "post"),
+        ("_signed_delete", "delete"),
+        ("_public_get", "get"),
+    ],
+)
+def test_binance_requests_reject_active_sqlite_transactions(
+    tmp_path, monkeypatch, method_name, request_method
+):
+    manager = BinanceAccountManager(api_key="key", secret_key="secret")
+    network_calls = []
+
+    def request(*args, **kwargs):
+        network_calls.append((args, kwargs))
+        return FakeResponse()
+
+    monkeypatch.setattr(manager.session, request_method, request)
+    with db_config.connect_sqlite(str(tmp_path / "trading.db")) as conn:
+        conn.execute("CREATE TABLE events (value INTEGER)")
+        conn.execute("INSERT INTO events VALUES (1)")
+        with pytest.raises(RuntimeError, match="active SQLite transaction"):
+            getattr(manager, method_name)("/test")
+        assert network_calls == []
+
+
+def test_binance_request_runs_after_sqlite_transaction_commits(tmp_path, monkeypatch):
+    manager = BinanceAccountManager(api_key="key", secret_key="secret")
+    monkeypatch.setattr(manager.session, "get", lambda *args, **kwargs: FakeResponse())
+
+    with db_config.connect_sqlite(str(tmp_path / "trading.db")) as conn:
+        conn.execute("CREATE TABLE events (value INTEGER)")
+        conn.execute("INSERT INTO events VALUES (1)")
+    assert manager._public_get("/test") == {"ok": True}
