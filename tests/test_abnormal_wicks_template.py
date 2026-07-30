@@ -437,3 +437,14 @@ def test_add_position_modules_use_light_purple_theme():
     assert section.rfind("purple-module", 0, permission_index) > 0
     assert section.rfind("purple-module", 0, threshold_index) > permission_index
     assert ".purple-module .collapsible-header" in template
+
+
+def test_feature_flags_page_contains_all_rule_weight_controls_and_save_logic():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    section = template[template.index('id="tab-feature-flags"'):]
+
+    assert "评分规则权重" in section
+    assert 'id="score-weight-form"' in section
+    assert 'data-rule-id="{{ rule.rule_id }}"' in section
+    assert "保存全部权重" in section
+    assert "fetch('/api/scoring-rule-weights'" in section

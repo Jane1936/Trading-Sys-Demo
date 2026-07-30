@@ -95,6 +95,12 @@
     .feature-flag-status.disabled { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
     .feature-flag-message { padding:0 20px 14px; color:#4b5563; font-size:13px; }
     .feature-flag-message.error { color:#991b1b; }
+    .score-weight-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(245px, 1fr)); gap:12px; padding:16px 20px 20px; }
+    .score-weight-item { display:grid; grid-template-columns:1fr 82px; align-items:center; gap:12px; padding:12px; border:1px solid var(--line); border-radius:10px; background:#f8fafc; }
+    .score-weight-label { display:flex; flex-direction:column; gap:4px; font-weight:700; }
+    .score-weight-label small { color:#64748b; font-weight:500; }
+    .score-weight-input { width:100%; box-sizing:border-box; border:1px solid #94a3b8; border-radius:8px; padding:9px; text-align:center; font-weight:800; }
+    .score-weight-actions { display:flex; align-items:center; gap:10px; padding:0 20px 20px; }
     .reduction-tags { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
     .reduction-tag { display:inline-flex; align-items:center; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:800; border:1px solid transparent; white-space:nowrap; }
     .reduction-tag-rule2 { background:#ffedd5; color:#c2410c; border-color:#fdba74; }
@@ -2562,6 +2568,36 @@
         </table>
       </div>
     </div>
+    <div class="card">
+      <div class="header">
+        <h2>评分规则权重</h2>
+      </div>
+      <div class="tip">
+        可配置评分系统全部 18 条规则的命中分值，允许填写 0–100 的整数；0 表示该规则命中也不加分。保存后会持久化到基础数据库，并从下一轮评分开始生效。本轮已生成的历史评分不会重算。
+      </div>
+      <div id="score-weight-message" class="feature-flag-message" role="status" aria-live="polite"></div>
+      <form id="score-weight-form">
+        <div class="score-weight-grid">
+          {% for rule in scoring_rule_weight_settings %}
+          <label class="score-weight-item">
+            <span class="score-weight-label">
+              <span>规则 {{ rule.rule_id }}：{{ rule.name }}</span>
+              <small>文件默认值：{{ rule.default_weight }} 分</small>
+            </span>
+            <input class="score-weight-input" type="number" min="0" max="100" step="1" required
+                   name="rule-{{ rule.rule_id }}" value="{{ rule.weight }}"
+                   data-rule-id="{{ rule.rule_id }}" data-default-weight="{{ rule.default_weight }}"
+                   aria-label="规则 {{ rule.rule_id }} 的评分权重">
+          </label>
+          {% endfor %}
+        </div>
+        <div class="score-weight-actions">
+          <button id="save-score-weights" class="btn btn-success" type="submit">保存全部权重</button>
+          <button id="reset-score-weights" class="btn" type="button">恢复文件默认值</button>
+          <span class="muted">为避免部分规则使用新旧权重，18 条规则会一次性校验并保存。</span>
+        </div>
+      </form>
+    </div>
   </section>
   </main>
   </div>
@@ -2639,6 +2675,50 @@
             button.disabled = false;
           }
         });
+      });
+    })();
+
+    (function initScoreWeightForm() {
+      const form = document.getElementById('score-weight-form');
+      const message = document.getElementById('score-weight-message');
+      const saveButton = document.getElementById('save-score-weights');
+      const inputs = Array.from(document.querySelectorAll('.score-weight-input'));
+      if (!form || !message) return;
+      const showMessage = (text, isError = false) => {
+        message.textContent = text;
+        message.classList.toggle('error', isError);
+      };
+      document.getElementById('reset-score-weights')?.addEventListener('click', () => {
+        inputs.forEach(input => { input.value = input.dataset.defaultWeight; });
+        showMessage('已填入文件默认值，请点击“保存全部权重”确认生效。');
+      });
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        const rules = inputs.map(input => ({
+          rule_id: Number(input.dataset.ruleId),
+          weight: Number(input.value),
+        }));
+        saveButton.disabled = true;
+        showMessage('正在校验并保存全部评分权重...');
+        try {
+          const response = await fetch('/api/scoring-rule-weights', {
+            method: 'PUT',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rules }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          payload.rules.forEach(rule => {
+            const input = inputs.find(item => Number(item.dataset.ruleId) === rule.rule_id);
+            if (input) input.value = rule.weight;
+          });
+          showMessage('18 条评分规则权重已保存，将从下一轮评分开始生效。');
+        } catch (err) {
+          showMessage(`评分权重保存失败：${err.message || err}`, true);
+        } finally {
+          saveButton.disabled = false;
+        }
       });
     })();
 

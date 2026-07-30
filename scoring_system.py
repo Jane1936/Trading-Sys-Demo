@@ -33,6 +33,28 @@ DEFAULT_RULE_SCORE_WEIGHTS: dict[int, int] = {
     18: 5,
 }
 
+RULE_SCORE_WEIGHT_MAX = 100
+RULE_SCORE_NAMES: dict[int, str] = {
+    1: "15m MA20 连续上升",
+    2: "1h 收盘价高于 MA20",
+    3: "1h 收盘价高于前值",
+    4: "15m 最近4根至少3根阳线",
+    5: "15m 收盘价连续走高",
+    6: "1m 收盘价高于5m MA20",
+    7: "15m 收盘价接近最高价",
+    8: "1h 最新价创24根新高",
+    9: "15m 回落并配合 OI",
+    10: "1m 涨幅并配合 OI",
+    11: "240m OI 降幅",
+    12: "15m 资金费率连续达标",
+    13: "15m 阳线放量突破",
+    14: "15m 三根中至少两根放量",
+    15: "1h 最新K线放量",
+    16: "15m 缩量回调",
+    17: "15m 低位反弹",
+    18: "结构止损位距离与15m节奏",
+}
+
 RULE_SCORE_WEIGHTS_PATH = Path(__file__).with_name("scoring_rule_weights.json")
 DEFAULT_STRUCTURAL_STOP_LOSS_COEFFICIENT = 0.98
 SCORING_WRITE_BATCH_SIZE = 20
@@ -162,6 +184,108 @@ def load_rule_score_weights(config_path: str | Path = RULE_SCORE_WEIGHTS_PATH) -
     return weights
 
 
+def _validate_rule_score_weight(rule_id: int, weight: object) -> int:
+    if isinstance(weight, bool) or not isinstance(weight, int):
+        raise ValueError(f"Scoring rule {rule_id} weight must be an integer")
+    if not 0 <= weight <= RULE_SCORE_WEIGHT_MAX:
+        raise ValueError(
+            f"Scoring rule {rule_id} weight must be between 0 and {RULE_SCORE_WEIGHT_MAX}"
+        )
+    return weight
+
+
+def init_rule_score_weight_settings(
+    db_path: str | None = None,
+    defaults: dict[int, int] | None = None,
+) -> None:
+    """Create and seed the runtime scoring-weight settings in the base database."""
+    db_path = db_path or db_config.BASE_DB_PATH
+    defaults = defaults or load_rule_score_weights()
+    with db_config.sqlite_schema_lock(db_path):
+        with db_config.connect_sqlite(db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS scoring_rule_weights (
+                    rule_id INTEGER PRIMARY KEY,
+                    weight INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )
+                """
+            )
+            now_ms = int(time.time() * 1000)
+            conn.executemany(
+                """
+                INSERT INTO scoring_rule_weights (rule_id, weight, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(rule_id) DO NOTHING
+                """,
+                [(rule_id, weight, now_ms) for rule_id, weight in defaults.items()],
+            )
+            conn.commit()
+
+
+def get_rule_score_weight_settings(
+    db_path: str | None = None,
+    defaults: dict[int, int] | None = None,
+) -> list[dict]:
+    """Return all 18 runtime weights, seeding missing rows from file defaults."""
+    db_path = db_path or db_config.BASE_DB_PATH
+    defaults = defaults or load_rule_score_weights()
+    init_rule_score_weight_settings(db_path, defaults)
+    with db_config.connect_sqlite(db_path, row_factory=sqlite3.Row) as conn:
+        rows = conn.execute(
+            "SELECT rule_id, weight, updated_at FROM scoring_rule_weights ORDER BY rule_id"
+        ).fetchall()
+    by_id = {int(row["rule_id"]): row for row in rows}
+    return [
+        {
+            "rule_id": rule_id,
+            "name": RULE_SCORE_NAMES[rule_id],
+            "weight": int(by_id[rule_id]["weight"]),
+            "default_weight": int(defaults[rule_id]),
+            "updated_at": int(by_id[rule_id]["updated_at"]),
+        }
+        for rule_id in DEFAULT_RULE_SCORE_WEIGHTS
+    ]
+
+
+def set_rule_score_weight_settings(
+    weights: dict[int, int],
+    db_path: str | None = None,
+    defaults: dict[int, int] | None = None,
+) -> list[dict]:
+    """Validate and atomically persist a complete set of 18 scoring weights."""
+    expected = set(DEFAULT_RULE_SCORE_WEIGHTS)
+    if set(weights) != expected:
+        raise ValueError("All 18 scoring rule weights are required")
+    validated = {
+        rule_id: _validate_rule_score_weight(rule_id, weight)
+        for rule_id, weight in weights.items()
+    }
+    db_path = db_path or db_config.BASE_DB_PATH
+    defaults = defaults or load_rule_score_weights()
+    init_rule_score_weight_settings(db_path, defaults)
+    now_ms = int(time.time() * 1000)
+    with db_config.connect_sqlite(db_path) as conn:
+        conn.executemany(
+            "UPDATE scoring_rule_weights SET weight = ?, updated_at = ? WHERE rule_id = ?",
+            [(weight, now_ms, rule_id) for rule_id, weight in validated.items()],
+        )
+        conn.commit()
+    return get_rule_score_weight_settings(db_path, defaults)
+
+
+def load_runtime_rule_score_weights(
+    db_path: str | None = None,
+    config_path: str | Path = RULE_SCORE_WEIGHTS_PATH,
+) -> dict[int, int]:
+    defaults = load_rule_score_weights(config_path)
+    return {
+        row["rule_id"]: row["weight"]
+        for row in get_rule_score_weight_settings(db_path, defaults)
+    }
+
+
 def load_structural_stop_loss_coefficient(
     config_path: str | Path = RULE_SCORE_WEIGHTS_PATH,
 ) -> float:
@@ -255,9 +379,12 @@ class ScoringSystem:
         self,
         db_path: str = "data/klines.db",
         rule_weights_path: str | Path = RULE_SCORE_WEIGHTS_PATH,
+        settings_db_path: str | None = None,
     ) -> None:
         self.db_path = db_path
-        self.rule_score_weights = load_rule_score_weights(rule_weights_path)
+        self.rule_score_weights = load_runtime_rule_score_weights(
+            settings_db_path or db_config.BASE_DB_PATH, rule_weights_path
+        )
         self.structural_stop_loss_coefficient = load_structural_stop_loss_coefficient(
             rule_weights_path
         )

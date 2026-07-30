@@ -29,7 +29,11 @@ from dynamic_profit_protection import DynamicProfitProtection
 from trailing_stop_tracker import TrailingStopTracker
 from trailing_reduction_tracker import TrailingReductionTracker
 from holding_position_scoring import HoldingPositionScoringSystem
-from scoring_system import ScoringSystem
+from scoring_system import (
+    ScoringSystem,
+    get_rule_score_weight_settings,
+    set_rule_score_weight_settings,
+)
 from trading_experiment import TradingExperiment
 from market_filter_module import MarketFilterModule
 from weak_market_profit_adjustment import WeakMarketProfitAdjustmentModule
@@ -872,6 +876,31 @@ def update_feature_flag_api(key: str):
     return jsonify({"flag": feature_flags.flags_to_dict([flag])[0]})
 
 
+@app.get("/api/scoring-rule-weights")
+def scoring_rule_weights_api():
+    return jsonify({"rules": get_rule_score_weight_settings(BASE_DB_PATH)})
+
+
+@app.put("/api/scoring-rule-weights")
+def update_scoring_rule_weights_api():
+    payload = request.get_json(silent=True) or {}
+    raw_rules = payload.get("rules")
+    if not isinstance(raw_rules, list):
+        return jsonify({"error": "rules must be an array containing all 18 rules"}), 400
+    try:
+        weights = {
+            int(item["rule_id"]): item["weight"]
+            for item in raw_rules
+            if isinstance(item, dict)
+        }
+        if len(weights) != len(raw_rules):
+            raise ValueError("Each rule must have a unique rule_id and weight")
+        rules = set_rule_score_weight_settings(weights, BASE_DB_PATH)
+    except (KeyError, TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"rules": rules})
+
+
 @app.post("/api/trading-experiment/run")
 def trading_experiment_run_api():
     try:
@@ -1158,6 +1187,7 @@ def abnormal_wicks():
         should_load_abnormal_events=should_load_abnormal_events,
         btc_total_pages=btc_total_pages,
         feature_flags=feature_flags.list_feature_flags(BASE_DB_PATH),
+        scoring_rule_weight_settings=get_rule_score_weight_settings(BASE_DB_PATH),
     )
 
 
