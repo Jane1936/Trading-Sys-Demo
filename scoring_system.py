@@ -45,7 +45,7 @@ RULE_SCORE_NAMES: dict[int, str] = {
     8: "1h 最新价创24根新高",
     9: "15m 回落并配合 OI",
     10: "1m 涨幅并配合 OI",
-    11: "240m OI 降幅",
+    11: "当前 OI 不低于 240m 前",
     12: "15m 资金费率连续达标",
     13: "15m 阳线放量突破",
     14: "15m 三根中至少两根放量",
@@ -1724,14 +1724,11 @@ class ScoringSystem:
         if oi_240m_ago <= 0:
             loss_rate = 1.0
             hit = False
-        elif latest_oi >= oi_240m_ago:
-            loss_rate = 0.0
-            hit = True
         else:
-            loss_rate = (oi_240m_ago - latest_oi) / oi_240m_ago
-            hit = loss_rate <= 0.03
+            loss_rate = max((oi_240m_ago - latest_oi) / oi_240m_ago, 0.0)
+            hit = latest_oi >= oi_240m_ago
         score = self._score_weight(11) if hit else 0
-        reason = "oi_1m_gte_240m_or_loss_le_3pct" if hit else "rule11_not_met"
+        reason = "oi_1m_gte_240m" if hit else "rule11_not_met"
         with self._round_connection() as conn:
             conn.execute("""
                 INSERT INTO symbol_scores_oi_loss_rate_240m
