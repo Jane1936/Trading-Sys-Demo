@@ -377,6 +377,7 @@ class TradingExperiment:
                 f"""
                 SELECT
                     p.*,
+                    p.rowid AS snapshot_rowid,
                     (
                         SELECT MAX(t.created_at)
                         FROM {self.TRADES_TABLE} AS t
@@ -1226,7 +1227,10 @@ class TradingExperiment:
             elapsed_ms = max(0, int(time.time() * 1000) - opened_at)
             holding_hours = f"{elapsed_ms / 3_600_000:.2f}"
         return ExperimentPositionSnapshot(
-            id=int(row["id"]),
+            # Some databases created by early deployments did not enforce an
+            # INTEGER PRIMARY KEY on this table, so their legacy rows can have
+            # a NULL id. SQLite's rowid is always available as a stable fallback.
+            id=int(row["id"] if row["id"] is not None else row["snapshot_rowid"]),
             symbol=str(row["symbol"]),
             position_amt=str(row["position_amt"]),
             entry_price=str(row["entry_price"]),

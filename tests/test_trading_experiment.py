@@ -1266,6 +1266,46 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(snapshots[0].symbol, "BANK")
         self.assertEqual(snapshots[0].leverage, "7")
 
+    def test_latest_position_snapshots_falls_back_to_rowid_for_legacy_null_id(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=FakeAccountManager(),
+            )
+            experiment.init_tables()
+            with experiment._connect() as conn:
+                conn.execute(f"DROP TABLE {experiment.POSITIONS_TABLE}")
+                conn.execute(
+                    f"""
+                    CREATE TABLE {experiment.POSITIONS_TABLE} (
+                        id INTEGER,
+                        symbol TEXT NOT NULL,
+                        position_amt TEXT NOT NULL,
+                        entry_price TEXT NOT NULL,
+                        mark_price TEXT NOT NULL,
+                        unrealized_pnl TEXT NOT NULL,
+                        leverage TEXT NOT NULL,
+                        notional TEXT NOT NULL,
+                        liquidation_price TEXT NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    f"""
+                    INSERT INTO {experiment.POSITIONS_TABLE}
+                    (id, symbol, position_amt, entry_price, mark_price, unrealized_pnl,
+                     leverage, notional, liquidation_price, updated_at)
+                    VALUES (NULL, 'BANK', '2', '1', '1.1', '0.2', '5', '2.2', '0.5', 2000)
+                    """
+                )
+
+            snapshots = experiment.latest_position_snapshots()
+
+        self.assertEqual(len(snapshots), 1)
+        self.assertIsInstance(snapshots[0].id, int)
+        self.assertGreater(snapshots[0].id, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
