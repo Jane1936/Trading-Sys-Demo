@@ -129,17 +129,25 @@ class TradingExperiment:
         config: ExperimentConfig | None = None,
     ) -> None:
         self.db_path = db_path
+        self.core_db_path = db_config.trading_core_path(db_path)
         self.account_manager = account_manager or BinanceAccountManager()
         self.config = config or ExperimentConfig()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
+        conn = db_config.connect_sqlite(self.core_db_path, row_factory=sqlite3.Row)
         db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
         return conn
 
+    def _error_connect(self) -> sqlite3.Connection:
+        return db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
+
     def init_tables(self) -> None:
-        db_config.ensure_parent_dir(self.db_path)
-        with db_config.sqlite_schema_lock(self.db_path):
+        self.init_core_tables()
+        self.init_error_tables()
+
+    def init_core_tables(self) -> None:
+        db_config.ensure_parent_dir(self.core_db_path)
+        with db_config.sqlite_schema_lock(self.core_db_path):
             with self._connect() as conn:
                 conn.execute(
                     f"""
@@ -186,21 +194,6 @@ class TradingExperiment:
                     )
                     """
                 )
-                conn.execute(
-                    f"""
-                    CREATE TABLE IF NOT EXISTS {self.ERRORS_TABLE} (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        symbol TEXT NOT NULL,
-                        decision_round_ts INTEGER,
-                        total_score INTEGER,
-                        leverage INTEGER,
-                        operation TEXT NOT NULL,
-                        error_type TEXT NOT NULL,
-                        error_message TEXT NOT NULL,
-                        created_at INTEGER NOT NULL
-                    )
-                    """
-                )
                 columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.TRADES_TABLE})").fetchall()}
                 if "required_margin_usdt" not in columns:
                     conn.execute(
@@ -219,6 +212,18 @@ class TradingExperiment:
                 conn.execute(
                     f"CREATE INDEX IF NOT EXISTS idx_{self.POSITIONS_TABLE}_updated "
                     f"ON {self.POSITIONS_TABLE}(updated_at DESC, symbol ASC)"
+                )
+
+    def init_error_tables(self) -> None:
+        db_config.ensure_parent_dir(self.db_path)
+        with db_config.sqlite_schema_lock(self.db_path):
+            with self._error_connect() as conn:
+                conn.execute(
+                    f"""CREATE TABLE IF NOT EXISTS {self.ERRORS_TABLE} (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT NOT NULL,
+                        decision_round_ts INTEGER, total_score INTEGER, leverage INTEGER,
+                        operation TEXT NOT NULL, error_type TEXT NOT NULL,
+                        error_message TEXT NOT NULL, created_at INTEGER NOT NULL)"""
                 )
                 conn.execute(
                     f"CREATE INDEX IF NOT EXISTS idx_{self.ERRORS_TABLE}_created "
@@ -401,7 +406,7 @@ class TradingExperiment:
         else:
             query = f"SELECT * FROM {self.ERRORS_TABLE} ORDER BY created_at DESC, id DESC LIMIT ?"
             params = (int(limit),)
-        with self._connect() as conn:
+        with self._error_connect() as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._error_from_row(row) for row in rows]
 
@@ -1078,7 +1083,7 @@ class TradingExperiment:
 
     def _record_error(self, candidate: OpenableSymbol, operation: str, exc: Exception) -> None:
         now = int(time.time() * 1000)
-        with self._connect() as conn:
+        with self._error_connect() as conn:
             conn.execute(
                 f"""
                 INSERT INTO {self.ERRORS_TABLE}

@@ -375,7 +375,7 @@ class TrailingReductionTracker:
 
     def _latest_open_trade_created_at(self, symbol: str) -> int:
         try:
-            with self._connect() as conn:
+            with db_config.connect_sqlite(db_config.trading_core_path(self.db_path), row_factory=sqlite3.Row) as conn:
                 row = conn.execute("SELECT created_at FROM trading_experiment_trades WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1", (symbol,)).fetchone()
             return int(row["created_at"]) if row and row["created_at"] is not None else 0
         except Exception:
