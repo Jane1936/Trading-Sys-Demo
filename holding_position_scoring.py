@@ -220,6 +220,11 @@ class HoldingPositionScoringSystem:
         db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
         return conn
 
+    def _trading_core_connect(self) -> sqlite3.Connection:
+        return db_config.connect_sqlite(
+            db_config.trading_core_path(self.db_path), row_factory=sqlite3.Row
+        )
+
     def init_tables(self) -> None:
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
@@ -1055,7 +1060,7 @@ class HoldingPositionScoringSystem:
 
     def _latest_open_trade_take_profit_order_id(self, symbol: str) -> str:
         try:
-            with self._connect() as conn:
+            with self._trading_core_connect() as conn:
                 row = conn.execute("SELECT take_profit_order_id FROM trading_experiment_trades WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1", (symbol,)).fetchone()
         except sqlite3.Error:
             return ""
@@ -1063,7 +1068,7 @@ class HoldingPositionScoringSystem:
 
     def _update_latest_open_trade_take_profit(self, symbol: str, order_id: str, price: Decimal) -> None:
         try:
-            with self._connect() as conn:
+            with self._trading_core_connect() as conn:
                 conn.execute(
                     """
                     UPDATE trading_experiment_trades
@@ -1081,7 +1086,7 @@ class HoldingPositionScoringSystem:
 
     def _update_latest_open_trade_stop_loss(self, symbol: str, order_id: str, price: Decimal) -> None:
         try:
-            with self._connect() as conn:
+            with self._trading_core_connect() as conn:
                 conn.execute(
                     """
                     UPDATE trading_experiment_trades
@@ -1101,7 +1106,7 @@ class HoldingPositionScoringSystem:
         if entry_price <= 0:
             return
         try:
-            with self._connect() as conn:
+            with self._trading_core_connect() as conn:
                 conn.execute(
                     """
                     UPDATE trading_experiment_trades
@@ -1146,7 +1151,7 @@ class HoldingPositionScoringSystem:
 
     def _latest_open_trade_stop_loss_order_id(self, symbol: str) -> str:
         try:
-            with self._connect() as conn:
+            with self._trading_core_connect() as conn:
                 row = conn.execute("SELECT stop_loss_order_id FROM trading_experiment_trades WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1", (symbol,)).fetchone()
         except sqlite3.Error:
             return ""
@@ -1154,7 +1159,7 @@ class HoldingPositionScoringSystem:
 
     def _latest_open_trade_stop_loss_price(self, symbol: str) -> str:
         try:
-            with self._connect() as conn:
+            with self._trading_core_connect() as conn:
                 row = conn.execute("SELECT stop_loss_price FROM trading_experiment_trades WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1", (symbol,)).fetchone()
         except sqlite3.Error:
             return ""
@@ -1202,7 +1207,7 @@ class HoldingPositionScoringSystem:
 
     def _latest_open_trade_total_score(self, symbol: str) -> str:
         try:
-            with self._connect() as conn:
+            with self._trading_core_connect() as conn:
                 row = conn.execute(
                     "SELECT total_score FROM trading_experiment_trades WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1",
                     (symbol,),
@@ -1214,7 +1219,7 @@ class HoldingPositionScoringSystem:
 
     def _latest_open_trade_entry_price(self, symbol: str) -> str:
         try:
-            with self._connect() as conn:
+            with self._trading_core_connect() as conn:
                 columns = {row["name"] for row in conn.execute("PRAGMA table_info(trading_experiment_trades)").fetchall()}
                 if "entry_price" not in columns:
                     return ""
@@ -1228,7 +1233,7 @@ class HoldingPositionScoringSystem:
 
     def _latest_open_trade_created_at(self, symbol: str) -> str:
         try:
-            with self._connect() as conn:
+            with self._trading_core_connect() as conn:
                 row = conn.execute(
                     "SELECT created_at FROM trading_experiment_trades WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1",
                     (symbol,),

@@ -72,15 +72,18 @@ def _database_initializers() -> dict[str, Callable[[], None]]:
             AddPositionPermissionModule(db_path=db_config.MARKET_DB_PATH).init_table(),
         ),
         db_config.TRADING_DB_PATH: lambda: (
-            TradingExperiment(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            TradingExperiment(db_path=db_config.TRADING_DB_PATH).init_error_tables(),
             HoldingPositionScoringSystem(db_path=db_config.TRADING_DB_PATH).init_tables(),
             BreakEvenTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH).init_tables(),
             PartialTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH).init_tables(),
             DynamicProfitProtection(db_path=db_config.TRADING_DB_PATH).init_tables(),
             TrailingStopTracker(db_path=db_config.TRADING_DB_PATH).init_tables(),
             TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH).init_tables(),
-            ZombieForceLiquidationModule(db_path=db_config.TRADING_DB_PATH).init_tables(),
             DynamicAddPositionThresholdModule(db_path=db_config.TRADING_DB_PATH).init_table(),
+        ),
+        db_config.TRADING_CORE_DB_PATH: lambda: (
+            TradingExperiment(db_path=db_config.TRADING_DB_PATH).init_core_tables(),
+            ZombieForceLiquidationModule(db_path=db_config.TRADING_DB_PATH).init_tables(),
         ),
     }
 
@@ -133,7 +136,7 @@ def recover_after_worker_error(exc: BaseException) -> bool:
 
 
 def start_database_health_check_task() -> None:
-    """Run quick_check and recover all four databases every five minutes."""
+    """Run quick_check and recover every configured database every five minutes."""
     while True:
         try:
             check_worker_databases()

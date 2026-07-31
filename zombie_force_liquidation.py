@@ -68,16 +68,20 @@ class ZombieForceLiquidationModule:
         config: ExperimentConfig | None = None,
     ) -> None:
         self.db_path = db_path
+        self.core_db_path = db_config.trading_core_path(db_path)
         self.account_manager = account_manager or BinanceAccountManager()
         self.config = config or ExperimentConfig()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
+        conn = db_config.connect_sqlite(self.core_db_path, row_factory=sqlite3.Row)
         db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
         return conn
 
+    def _trading_connect(self) -> sqlite3.Connection:
+        return db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
+
     def init_tables(self) -> None:
-        db_dir = os.path.dirname(self.db_path)
+        db_dir = os.path.dirname(self.core_db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
         TradeActionLockManager(self.db_path).init_table()
@@ -226,7 +230,7 @@ class ZombieForceLiquidationModule:
     def _has_lifecycle_break_even_record(self, symbol: str, opened_at: int | None) -> bool:
         if opened_at is None:
             return False
-        with self._connect() as conn:
+        with self._trading_connect() as conn:
             row = conn.execute(
                 f"""
                 SELECT 1 FROM {BreakEvenTakeProfitStrategy.RECORDS_TABLE}

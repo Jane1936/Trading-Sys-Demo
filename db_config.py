@@ -1,6 +1,6 @@
 """Central SQLite database layout.
 
-The system uses four independent SQLite files so a corrupted/deleted module DB
+The system uses independent SQLite files so a corrupted/deleted module DB
 only disables that module instead of taking down the whole app.
 """
 from __future__ import annotations
@@ -17,14 +17,23 @@ DATA_DIR = os.getenv("DATA_DIR", "data")
 BASE_DB_PATH = os.getenv("BASE_DB_PATH", os.getenv("DB_PATH", f"{DATA_DIR}/base_data.db"))
 SCORING_DB_PATH = os.getenv("SCORING_DB_PATH", f"{DATA_DIR}/scoring.db")
 TRADING_DB_PATH = os.getenv("TRADING_DB_PATH", f"{DATA_DIR}/trading.db")
+TRADING_CORE_DB_PATH = os.getenv("TRADING_CORE_DB_PATH", f"{DATA_DIR}/trading_core.db")
 MARKET_DB_PATH = os.getenv("MARKET_DB_PATH", f"{DATA_DIR}/market.db")
 
 DB_LABELS = {
     "基础数据库": BASE_DB_PATH,
     "评分系统数据库": SCORING_DB_PATH,
     "交易数据库": TRADING_DB_PATH,
+    "交易核心数据库": TRADING_CORE_DB_PATH,
     "市场行情数据库": MARKET_DB_PATH,
 }
+
+
+def trading_core_path(trading_db_path: str) -> str:
+    """Route production trading-core tables while keeping custom/test DBs isolated."""
+    if Path(trading_db_path).resolve() == Path(TRADING_DB_PATH).resolve():
+        return TRADING_CORE_DB_PATH
+    return trading_db_path
 
 _recovery_local = threading.local()
 _connection_local = threading.local()
