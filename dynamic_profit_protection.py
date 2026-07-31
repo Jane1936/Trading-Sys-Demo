@@ -27,6 +27,8 @@ class DynamicProfitProtectionCheck:
     id: int
     symbol: str
     checked_at: int
+    open_trade_id: int
+    opened_at: int
     entry_price: str
     position_amt: str
     account_equity_usdt: str
@@ -71,6 +73,8 @@ class DynamicProfitProtection:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     symbol TEXT NOT NULL,
                     checked_at INTEGER NOT NULL,
+                    open_trade_id INTEGER NOT NULL DEFAULT 0,
+                    opened_at INTEGER NOT NULL DEFAULT 0,
                     entry_price TEXT NOT NULL,
                     position_amt TEXT NOT NULL,
                     account_equity_usdt TEXT NOT NULL DEFAULT '0',
@@ -93,6 +97,7 @@ class DynamicProfitProtection:
             """)
             columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.CHECKS_TABLE})")}
             migrations = {
+                "open_trade_id": "INTEGER NOT NULL DEFAULT 0", "opened_at": "INTEGER NOT NULL DEFAULT 0",
                 "account_equity_usdt": "TEXT NOT NULL DEFAULT '0'", "r_usdt": "TEXT NOT NULL DEFAULT '0'",
                 "unrealized_pnl": "TEXT NOT NULL DEFAULT '0'", "profit_r_multiple": "TEXT NOT NULL DEFAULT '0'",
                 "latest_1m_high": "TEXT NOT NULL DEFAULT '0'", "latest_1m_close": "TEXT NOT NULL DEFAULT '0'",
@@ -105,7 +110,7 @@ class DynamicProfitProtection:
                 if column not in columns:
                     conn.execute(f"ALTER TABLE {self.CHECKS_TABLE} ADD COLUMN {column} {definition}")
             conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
-            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_position ON {self.CHECKS_TABLE}(symbol ASC, entry_price ASC, checked_at DESC)")
+            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_open_trade ON {self.CHECKS_TABLE}(symbol ASC, open_trade_id ASC, checked_at DESC)")
 
     def run_round(self) -> dict[str, Any]:
         self.account_manager.validate_config()
@@ -134,12 +139,13 @@ class DynamicProfitProtection:
         r_multiple = pnl / r_value if r_value > 0 else Decimal("0")
         close_quantity = Decimal("0"); close_order_id = ""; close_status = "not_required"
         high = close = highest = drawdown = threshold = highest_profit = highest_r_multiple = Decimal("0")
+        open_trade_id = open_time = 0
         current_tier = "未达档"
         eligible = amount > 0 and entry_price > 0 and r_value > 0
         try:
-            high, close = self._latest_1m_high_close(symbol)
-            open_time = self._latest_open_trade_created_at(symbol)
-            highest = max(self._previous_highest_since_open(symbol, entry_price), self._highest_1m_high_since(symbol, open_time), high)
+            open_trade_id, open_time = self._latest_open_trade(symbol)
+            high, close = self._latest_1m_high_close_since(symbol, open_time)
+            highest = max(self._previous_highest_since_open(symbol, open_trade_id), self._highest_1m_high_since(symbol, open_time), high)
             highest_profit = max(Decimal("0"), (highest - entry_price) * amount)
             highest_r_multiple = highest_profit / r_value if r_value > 0 else Decimal("0")
             current_tier, threshold = self._tier_and_threshold_for_reached_r_multiple(highest_r_multiple)
@@ -156,18 +162,18 @@ class DynamicProfitProtection:
             else:
                 drawdown = max(Decimal("0"), (highest - close) / (highest - entry_price))
                 if drawdown >= threshold:
-                    if self._has_close_record(symbol, entry_price):
+                    if self._has_close_record(symbol, open_trade_id):
                         reason = "dynamic_profit_protection_already_completed"
                     else:
                         close_quantity, close_order_id, close_status, action_reason = self._execute_close(exchange_symbol, symbol, amount, now)
                         reason = f"dynamic_profit_protection_triggered; tier={current_tier}; highest_profit_r={self._fmt_decimal(highest_r_multiple)}; current_profit_r={self._fmt_decimal(r_multiple)}; drawdown={self._fmt_decimal(drawdown)}; threshold={self._fmt_decimal(threshold)}; {action_reason}"
-                        self._insert_check(symbol, now, entry_price, amount, equity, r_value, pnl, r_multiple, high, close, highest, drawdown, threshold, current_tier, close_status == "submitted", close_quantity, close_order_id, close_status, eligible, reason)
+                        self._insert_check(symbol, now, open_trade_id, open_time, entry_price, amount, equity, r_value, pnl, r_multiple, high, close, highest, drawdown, threshold, current_tier, close_status == "submitted", close_quantity, close_order_id, close_status, eligible, reason)
                         return eligible, close_status == "submitted"
                 else:
                     reason = f"dynamic_profit_protection_not_triggered; tier={current_tier}; highest_profit_r={self._fmt_decimal(highest_r_multiple)}; current_profit_r={self._fmt_decimal(r_multiple)}; drawdown_lt_threshold"
         except Exception as exc:
             reason = f"dynamic_profit_protection_failed: {type(exc).__name__}: {exc}"
-        self._insert_check(symbol, now, entry_price, amount, equity, r_value, pnl, r_multiple, high, close, highest, drawdown, threshold, current_tier, False, close_quantity, close_order_id, close_status, eligible, reason)
+        self._insert_check(symbol, now, open_trade_id, open_time, entry_price, amount, equity, r_value, pnl, r_multiple, high, close, highest, drawdown, threshold, current_tier, False, close_quantity, close_order_id, close_status, eligible, reason)
         return eligible, False
 
     @staticmethod
@@ -202,14 +208,14 @@ class DynamicProfitProtection:
         finally:
             lock_manager.release(lock_handle)
 
-    def _has_close_record(self, symbol: str, entry_price: Decimal) -> bool:
+    def _has_close_record(self, symbol: str, open_trade_id: int) -> bool:
         with self._connect() as conn:
-            row = conn.execute(f"SELECT 1 FROM {self.CHECKS_TABLE} WHERE symbol = ? AND entry_price = ? AND triggered = 1 AND close_status = 'submitted' LIMIT 1", (symbol, self._fmt_decimal(entry_price))).fetchone()
+            row = conn.execute(f"SELECT 1 FROM {self.CHECKS_TABLE} WHERE symbol = ? AND open_trade_id = ? AND triggered = 1 AND close_status = 'submitted' LIMIT 1", (symbol, int(open_trade_id))).fetchone()
         return row is not None
 
-    def _latest_1m_high_close(self, symbol: str) -> tuple[Decimal, Decimal]:
+    def _latest_1m_high_close_since(self, symbol: str, opened_at: int) -> tuple[Decimal, Decimal]:
         with self._connect() as conn:
-            row = conn.execute("SELECT high, close FROM klines_1m WHERE symbol = ? ORDER BY open_time DESC LIMIT 1", (symbol,)).fetchone()
+            row = conn.execute("SELECT high, close FROM klines_1m WHERE symbol = ? AND open_time >= ? ORDER BY open_time DESC LIMIT 1", (symbol, int(opened_at))).fetchone()
         if row is None:
             raise RuntimeError("missing_1m_kline")
         high = self._decimal_from(row["high"], Decimal("0")); close = self._decimal_from(row["close"], Decimal("0"))
@@ -217,13 +223,15 @@ class DynamicProfitProtection:
             raise RuntimeError("invalid_1m_kline")
         return high, close
 
-    def _latest_open_trade_created_at(self, symbol: str) -> int:
+    def _latest_open_trade(self, symbol: str) -> tuple[int, int]:
         try:
             with self._connect() as conn:
-                row = conn.execute(f"SELECT created_at FROM {TradingExperiment.TRADES_TABLE} WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1", (symbol,)).fetchone()
+                row = conn.execute(f"SELECT id, created_at FROM {TradingExperiment.TRADES_TABLE} WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1", (symbol,)).fetchone()
         except sqlite3.OperationalError:
-            return 0
-        return int(row["created_at"]) if row and row["created_at"] is not None else 0
+            row = None
+        if row is None or row["created_at"] is None:
+            raise RuntimeError("missing_latest_open_trade")
+        return int(row["id"]), int(row["created_at"])
 
     def _highest_1m_high_since(self, symbol: str, since_ms: int) -> Decimal:
         if since_ms <= 0:
@@ -232,14 +240,14 @@ class DynamicProfitProtection:
             row = conn.execute("SELECT MAX(CAST(high AS REAL)) AS highest FROM klines_1m WHERE symbol = ? AND open_time >= ?", (symbol, int(since_ms))).fetchone()
         return self._decimal_from(row["highest"], Decimal("0")) if row else Decimal("0")
 
-    def _previous_highest_since_open(self, symbol: str, entry_price: Decimal) -> Decimal:
+    def _previous_highest_since_open(self, symbol: str, open_trade_id: int) -> Decimal:
         with self._connect() as conn:
-            row = conn.execute(f"SELECT highest_since_open FROM {self.CHECKS_TABLE} WHERE symbol = ? AND entry_price = ? ORDER BY checked_at DESC, id DESC LIMIT 1", (symbol, self._fmt_decimal(entry_price))).fetchone()
+            row = conn.execute(f"SELECT highest_since_open FROM {self.CHECKS_TABLE} WHERE symbol = ? AND open_trade_id = ? ORDER BY checked_at DESC, id DESC LIMIT 1", (symbol, int(open_trade_id))).fetchone()
         return self._decimal_from(row["highest_since_open"], Decimal("0")) if row else Decimal("0")
 
-    def _insert_check(self, symbol: str, checked_at: int, entry: Decimal, amount: Decimal, equity: Decimal, r_value: Decimal, pnl: Decimal, r_multiple: Decimal, high: Decimal, close: Decimal, highest: Decimal, drawdown: Decimal, threshold: Decimal, current_tier: str, triggered: bool, close_quantity: Decimal, close_order_id: str, close_status: str, eligible: bool, reason: str) -> None:
+    def _insert_check(self, symbol: str, checked_at: int, open_trade_id: int, opened_at: int, entry: Decimal, amount: Decimal, equity: Decimal, r_value: Decimal, pnl: Decimal, r_multiple: Decimal, high: Decimal, close: Decimal, highest: Decimal, drawdown: Decimal, threshold: Decimal, current_tier: str, triggered: bool, close_quantity: Decimal, close_order_id: str, close_status: str, eligible: bool, reason: str) -> None:
         with self._connect() as conn:
-            conn.execute(f"INSERT INTO {self.CHECKS_TABLE} (symbol, checked_at, entry_price, position_amt, account_equity_usdt, r_usdt, unrealized_pnl, profit_r_multiple, latest_1m_high, latest_1m_close, highest_since_open, profit_drawdown_ratio, drawdown_threshold, current_tier, triggered, close_quantity, close_order_id, close_status, eligible, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, self._fmt_decimal(entry), self._fmt_decimal(amount), self._fmt_decimal(equity), self._fmt_decimal(r_value), self._fmt_decimal(pnl), self._fmt_decimal(r_multiple), self._fmt_decimal(high), self._fmt_decimal(close), self._fmt_decimal(highest), self._fmt_decimal(drawdown), self._fmt_decimal(threshold), current_tier, int(triggered), self._fmt_decimal(close_quantity), close_order_id, close_status, int(eligible), reason))
+            conn.execute(f"INSERT INTO {self.CHECKS_TABLE} (symbol, checked_at, open_trade_id, opened_at, entry_price, position_amt, account_equity_usdt, r_usdt, unrealized_pnl, profit_r_multiple, latest_1m_high, latest_1m_close, highest_since_open, profit_drawdown_ratio, drawdown_threshold, current_tier, triggered, close_quantity, close_order_id, close_status, eligible, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, int(open_trade_id), int(opened_at), self._fmt_decimal(entry), self._fmt_decimal(amount), self._fmt_decimal(equity), self._fmt_decimal(r_value), self._fmt_decimal(pnl), self._fmt_decimal(r_multiple), self._fmt_decimal(high), self._fmt_decimal(close), self._fmt_decimal(highest), self._fmt_decimal(drawdown), self._fmt_decimal(threshold), current_tier, int(triggered), self._fmt_decimal(close_quantity), close_order_id, close_status, int(eligible), reason))
 
     def summary_payload(self) -> dict[str, Any]:
         round_ts, checks = self.get_latest_round_checks()
