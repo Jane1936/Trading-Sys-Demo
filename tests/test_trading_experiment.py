@@ -1182,6 +1182,48 @@ class TradingExperimentSymbolTests(unittest.TestCase):
             self.assertEqual([row.symbol for row in experiment.recent_trade_records(since_ms=1500)], ["NEW"])
             self.assertEqual([row.symbol for row in experiment.recent_error_records(since_ms=1500)], ["NEW"])
 
+    def test_recent_trade_records_falls_back_to_rowid_for_legacy_null_id(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=FakeAccountManager(),
+            )
+            experiment.init_tables()
+            with experiment._connect() as conn:
+                conn.execute(f"DROP TABLE {experiment.TRADES_TABLE}")
+                conn.execute(
+                    f"""
+                    CREATE TABLE {experiment.TRADES_TABLE} (
+                        id INTEGER, symbol TEXT NOT NULL, decision_round_ts INTEGER,
+                        side TEXT NOT NULL, status TEXT NOT NULL, total_score INTEGER,
+                        leverage INTEGER, allocated_usdt TEXT NOT NULL,
+                        required_margin_usdt TEXT NOT NULL, account_equity_usdt TEXT NOT NULL,
+                        max_loss_usdt TEXT NOT NULL, entry_price TEXT NOT NULL,
+                        quantity TEXT NOT NULL, notional_usdt TEXT NOT NULL,
+                        take_profit_price TEXT NOT NULL, stop_loss_price TEXT NOT NULL,
+                        stop_loss_calculation TEXT NOT NULL, take_profit_order_id TEXT NOT NULL,
+                        stop_loss_order_id TEXT NOT NULL, reason TEXT NOT NULL,
+                        raw_response TEXT NOT NULL, created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    f"""
+                    INSERT INTO {experiment.TRADES_TABLE}
+                    VALUES (NULL, 'BANK', 1, 'LONG', 'opened', 80, 5, '10', '2',
+                            '1000', '10', '1', '1', '10', '1.2', '0.9', '', '', '',
+                            'legacy', '', 2000, 2000)
+                    """
+                )
+
+            records = experiment.recent_trade_records()
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].symbol, "BANK")
+        self.assertIsInstance(records[0].id, int)
+        self.assertGreater(records[0].id, 0)
+
     def test_position_snapshot_uses_latest_opened_trade_leverage_when_position_risk_omits_it(self):
         class PositionWithoutLeverageAccountManager(FakeAccountManager):
             def _signed_get(self, endpoint, params=None):
