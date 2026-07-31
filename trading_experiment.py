@@ -358,9 +358,10 @@ class TradingExperiment:
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT * FROM {self.TRADES_TABLE}
-                WHERE status = 'opened' {since_clause}
-                ORDER BY created_at DESC, id DESC
+                SELECT t.*, t.rowid AS trade_rowid
+                FROM {self.TRADES_TABLE} AS t
+                WHERE t.status = 'opened' {since_clause}
+                ORDER BY t.created_at DESC, t.id DESC
                 LIMIT ?
                 """,
                 params,
@@ -1194,7 +1195,10 @@ class TradingExperiment:
     @staticmethod
     def _trade_from_row(row: sqlite3.Row) -> ExperimentTradeRecord:
         return ExperimentTradeRecord(
-            id=int(row["id"]),
+            # Legacy deployments may have created this table without an
+            # INTEGER PRIMARY KEY, leaving otherwise valid rows with a NULL id.
+            # SQLite's rowid gives the page a stable identifier for those rows.
+            id=int(row["id"] if row["id"] is not None else row["trade_rowid"]),
             symbol=str(row["symbol"]),
             decision_round_ts=int(row["decision_round_ts"]) if row["decision_round_ts"] is not None else None,
             side=str(row["side"]),
