@@ -64,10 +64,44 @@ def _connect(db_path: str) -> sqlite3.Connection:
     return db_config.connect_sqlite(db_path, row_factory=sqlite3.Row)
 
 
+def _feature_flags_are_current(db_path: str) -> bool:
+    """Return whether the feature-flag schema and definitions are already seeded.
+
+    This intentionally uses ordinary SQLite reads rather than the cross-process
+    schema lock.  Web requests call ``init_feature_flags`` frequently, and
+    waiting on a lock held by an unrelated migration can exceed Gunicorn's
+    worker timeout even though this table needs no initialization.
+    """
+    with _connect(db_path) as conn:
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'feature_flags'"
+        ).fetchone()
+        if table_exists is None:
+            return False
+        rows = conn.execute(
+            "SELECT key, name, description FROM feature_flags"
+        ).fetchall()
+
+    actual = {
+        str(row["key"]): (str(row["name"]), str(row["description"])) for row in rows
+    }
+    expected = {
+        definition.key: (definition.name, definition.description)
+        for definition in FEATURE_FLAG_DEFINITIONS
+    }
+    return all(actual.get(key) == value for key, value in expected.items())
+
+
 def init_feature_flags(db_path: str | None = None) -> None:
     """Create and seed the feature flag table with all switches enabled by default."""
     db_path = db_path or db_config.BASE_DB_PATH
+    if _feature_flags_are_current(db_path):
+        return
     with db_config.sqlite_schema_lock(db_path):
+        # Another process may have completed initialization while this process
+        # was waiting.  Recheck to avoid unnecessary DDL and writes.
+        if _feature_flags_are_current(db_path):
+            return
         with _connect(db_path) as conn:
             conn.execute(
                 """

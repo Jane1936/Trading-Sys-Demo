@@ -42,3 +42,18 @@ def test_unknown_feature_flag_rejected(tmp_path):
         pass
     else:
         raise AssertionError("unknown feature flag should raise KeyError")
+
+
+def test_initialized_flags_do_not_wait_for_schema_lock(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "base_data.db")
+    feature_flags.init_feature_flags(db_path)
+
+    class UnexpectedSchemaLock:
+        def __init__(self, _db_path):
+            raise AssertionError("initialized feature flags must not acquire the schema lock")
+
+    monkeypatch.setattr(feature_flags.db_config, "sqlite_schema_lock", UnexpectedSchemaLock)
+
+    flags = feature_flags.list_feature_flags(db_path)
+
+    assert len(flags) == len(feature_flags.FEATURE_FLAG_DEFINITIONS)
