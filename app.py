@@ -401,20 +401,15 @@ def run_scoring_round_worker(
         f"abnormal={len(set(abnormal_symbols))} scored={len(scored)}"
     )
 
-    if _scoring_worker_should_stop(
-        decision_round_ts=decision_round_ts,
-        deadline_ts=deadline_ts,
-        stage="after_score_round",
-    ):
-        return
-
     try:
-        if _scoring_worker_should_stop(
-            decision_round_ts=decision_round_ts,
-            deadline_ts=deadline_ts,
-            stage="before_holding_scoring",
-        ):
-            return
+        # A completed score round must always publish the holding stop-loss
+        # judgement that consumes it.  Previously the generic scoring deadline
+        # could return at either of the two checkpoints above this block.  When
+        # scoring used most of its time budget (for example after schema work
+        # during a database split), the holding table then appeared to have
+        # stopped even though scoring itself completed successfully.  Keep the
+        # deadline for optional downstream work, but never strand this
+        # safety-critical result between two decision rounds.
         # Trading-owned modules are optional consumers of a completed scoring
         # round.  Initialize them here, rather than before score_round, so a
         # damaged/recovering trading DB cannot stop the independent scoring DB.
@@ -444,7 +439,7 @@ def run_scoring_round_worker(
             if _scoring_worker_should_stop(
                 decision_round_ts=decision_round_ts,
                 deadline_ts=deadline_ts,
-                stage="before_trailing_reduction",
+                stage="after_holding_scoring",
             ):
                 return
             trailing_reduction_result = trailing_reduction.run_round(
