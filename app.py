@@ -421,6 +421,9 @@ def run_scoring_round_worker(
         trailing_reduction.init_tables()
         with db_config.sqlite_connection_scope(
             db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
+        ), db_config.sqlite_connection_scope(
+            db_config.trading_core_path(db_config.TRADING_DB_PATH),
+            row_factory=sqlite3.Row,
         ):
             holding_result = holding_scoring.run_round(decision_round_ts=decision_round_ts)
             print(
