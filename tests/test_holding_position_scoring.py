@@ -122,6 +122,33 @@ class ExpiredNoFillAccountManager(FakeAccountManager):
             raise AssertionError("should not query realized PnL for an unfilled stop-loss order")
         return super()._signed_get(endpoint, params)
 
+
+def test_ensure_upsert_key_repairs_legacy_table_and_keeps_latest_row(tmp_path):
+    db_path = tmp_path / "legacy.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE legacy_checks (symbol TEXT, decision_round_ts INTEGER, reason TEXT)"
+        )
+        conn.executemany(
+            "INSERT INTO legacy_checks VALUES (?, ?, ?)",
+            [("BTC", 1000, "old"), ("BTC", 1000, "new")],
+        )
+
+        HoldingPositionScoringSystem._ensure_upsert_key(
+            conn, "legacy_checks", ("symbol", "decision_round_ts")
+        )
+        conn.execute(
+            """
+            INSERT INTO legacy_checks VALUES ('BTC', 1000, 'updated')
+            ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET reason=excluded.reason
+            """
+        )
+        rows = conn.execute(
+            "SELECT symbol, decision_round_ts, reason FROM legacy_checks"
+        ).fetchall()
+
+    assert rows == [("BTC", 1000, "updated")]
+
 class ReduceOnlyRejectedAccountManager(FakeAccountManager):
     def __init__(self):
         super().__init__()

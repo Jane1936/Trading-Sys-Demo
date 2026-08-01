@@ -226,6 +226,31 @@ class HoldingPositionScoringSystem:
             db_config.trading_core_path(self.db_path), row_factory=sqlite3.Row
         )
 
+    @staticmethod
+    def _ensure_upsert_key(
+        conn: sqlite3.Connection, table: str, columns: tuple[str, ...]
+    ) -> None:
+        """Make legacy tables compatible with their ``ON CONFLICT`` clauses.
+
+        ``CREATE TABLE IF NOT EXISTS`` does not add a primary key to a table
+        created by an older release.  Remove duplicate legacy rows (retaining
+        the newest one) before adding an equivalent unique index.
+        """
+        quoted_columns = ", ".join(f'"{column}"' for column in columns)
+        index_suffix = "_".join(columns)
+        conn.execute(
+            f"""
+            DELETE FROM "{table}"
+            WHERE rowid NOT IN (
+                SELECT MAX(rowid) FROM "{table}" GROUP BY {quoted_columns}
+            )
+            """
+        )
+        conn.execute(
+            f'CREATE UNIQUE INDEX IF NOT EXISTS "uq_{table}_{index_suffix}" '
+            f'ON "{table}" ({quoted_columns})'
+        )
+
     def init_tables(self) -> None:
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
@@ -411,6 +436,18 @@ class HoldingPositionScoringSystem:
                     raw_response TEXT NOT NULL DEFAULT ''
                 )
                 """
+            )
+            for table, columns in (
+                (self.CHECKS_TABLE, ("symbol", "decision_round_ts")),
+                (self.PORTFOLIO_RISK_TABLE, ("symbol", "decision_round_ts")),
+                (self.REDUCTION_CHECKS_TABLE, ("symbol", "decision_round_ts")),
+                (self.PORTFOLIO_RISK_SUMMARY_TABLE, ("decision_round_ts",)),
+            ):
+                self._ensure_upsert_key(core_conn, table, columns)
+            self._ensure_upsert_key(
+                trading_conn,
+                self.INCREASE_CHECKS_TABLE,
+                ("symbol", "decision_round_ts"),
             )
             core_conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.REDUCTION_CHECKS_TABLE}_round "
