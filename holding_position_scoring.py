@@ -13,6 +13,7 @@ import os
 import sqlite3
 import db_config
 import time
+from contextlib import ExitStack
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Iterable
@@ -230,8 +231,13 @@ class HoldingPositionScoringSystem:
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
         TradeActionLockManager(self.db_path).init_table()
-        with self._connect() as conn:
-            conn.execute(
+        with ExitStack() as stack:
+            trading_conn = stack.enter_context(self._connect())
+            if os.path.realpath(db_config.trading_core_path(self.db_path)) == os.path.realpath(self.db_path):
+                core_conn = trading_conn
+            else:
+                core_conn = stack.enter_context(self._trading_core_connect())
+            core_conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.CHECKS_TABLE} (
                     symbol TEXT NOT NULL,
@@ -249,7 +255,7 @@ class HoldingPositionScoringSystem:
                 )
                 """
             )
-            conn.execute(
+            core_conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.RECORDS_TABLE} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -270,7 +276,7 @@ class HoldingPositionScoringSystem:
                 )
                 """
             )
-            conn.execute(
+            core_conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.PORTFOLIO_RISK_TABLE} (
                     symbol TEXT NOT NULL,
@@ -287,7 +293,7 @@ class HoldingPositionScoringSystem:
                 )
                 """
             )
-            conn.execute(
+            core_conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.REDUCTION_CHECKS_TABLE} (
                     symbol TEXT NOT NULL,
@@ -326,7 +332,7 @@ class HoldingPositionScoringSystem:
                 )
                 """
             )
-            conn.execute(
+            core_conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.PORTFOLIO_RISK_SUMMARY_TABLE} (
                     decision_round_ts INTEGER PRIMARY KEY,
@@ -337,7 +343,7 @@ class HoldingPositionScoringSystem:
                 )
                 """
             )
-            conn.execute(
+            core_conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.REDUCTION_RECORDS_TABLE} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -360,7 +366,7 @@ class HoldingPositionScoringSystem:
                 )
                 """
             )
-            conn.execute(
+            trading_conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.INCREASE_CHECKS_TABLE} (
                     symbol TEXT NOT NULL,
@@ -381,7 +387,7 @@ class HoldingPositionScoringSystem:
                 )
                 """
             )
-            conn.execute(
+            trading_conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.INCREASE_RECORDS_TABLE} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -406,21 +412,21 @@ class HoldingPositionScoringSystem:
                 )
                 """
             )
-            conn.execute(
+            core_conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.REDUCTION_CHECKS_TABLE}_round "
                 f"ON {self.REDUCTION_CHECKS_TABLE}(decision_round_ts DESC, triggered DESC, symbol ASC)"
             )
-            conn.execute(
+            core_conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_round "
                 f"ON {self.CHECKS_TABLE}(decision_round_ts DESC, triggered DESC, symbol ASC)"
             )
-            record_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.RECORDS_TABLE})").fetchall()}
+            record_columns = {row["name"] for row in core_conn.execute(f"PRAGMA table_info({self.RECORDS_TABLE})").fetchall()}
             if "realized_pnl" not in record_columns:
-                conn.execute(f"ALTER TABLE {self.RECORDS_TABLE} ADD COLUMN realized_pnl TEXT NOT NULL DEFAULT ''")
-            risk_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.PORTFOLIO_RISK_TABLE})").fetchall()}
+                core_conn.execute(f"ALTER TABLE {self.RECORDS_TABLE} ADD COLUMN realized_pnl TEXT NOT NULL DEFAULT ''")
+            risk_columns = {row["name"] for row in core_conn.execute(f"PRAGMA table_info({self.PORTFOLIO_RISK_TABLE})").fetchall()}
             if "total_score" not in risk_columns:
-                conn.execute(f"ALTER TABLE {self.PORTFOLIO_RISK_TABLE} ADD COLUMN total_score TEXT NOT NULL DEFAULT ''")
-            reduction_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.REDUCTION_CHECKS_TABLE})").fetchall()}
+                core_conn.execute(f"ALTER TABLE {self.PORTFOLIO_RISK_TABLE} ADD COLUMN total_score TEXT NOT NULL DEFAULT ''")
+            reduction_columns = {row["name"] for row in core_conn.execute(f"PRAGMA table_info({self.REDUCTION_CHECKS_TABLE})").fetchall()}
             for column, ddl in {
                 "latest_15m_open": "TEXT NOT NULL DEFAULT ''",
                 "latest_15m_close": "TEXT NOT NULL DEFAULT ''",
@@ -441,8 +447,8 @@ class HoldingPositionScoringSystem:
                 "ema21": "TEXT NOT NULL DEFAULT ''",
             }.items():
                 if column not in reduction_columns:
-                    conn.execute(f"ALTER TABLE {self.REDUCTION_CHECKS_TABLE} ADD COLUMN {column} {ddl}")
-            increase_record_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.INCREASE_RECORDS_TABLE})").fetchall()}
+                    core_conn.execute(f"ALTER TABLE {self.REDUCTION_CHECKS_TABLE} ADD COLUMN {column} {ddl}")
+            increase_record_columns = {row["name"] for row in trading_conn.execute(f"PRAGMA table_info({self.INCREASE_RECORDS_TABLE})").fetchall()}
             for column, ddl in {
                 "original_quantity": "TEXT NOT NULL DEFAULT ''",
                 "increased_quantity": "TEXT NOT NULL DEFAULT ''",
@@ -452,20 +458,20 @@ class HoldingPositionScoringSystem:
                 "raw_response": "TEXT NOT NULL DEFAULT ''",
             }.items():
                 if column not in increase_record_columns:
-                    conn.execute(f"ALTER TABLE {self.INCREASE_RECORDS_TABLE} ADD COLUMN {column} {ddl}")
-            conn.execute(
+                    trading_conn.execute(f"ALTER TABLE {self.INCREASE_RECORDS_TABLE} ADD COLUMN {column} {ddl}")
+            core_conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_created "
                 f"ON {self.RECORDS_TABLE}(created_at DESC, symbol ASC)"
             )
-            conn.execute(
+            core_conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.REDUCTION_RECORDS_TABLE}_created "
                 f"ON {self.REDUCTION_RECORDS_TABLE}(created_at DESC, symbol ASC)"
             )
-            conn.execute(
+            trading_conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.INCREASE_CHECKS_TABLE}_round "
                 f"ON {self.INCREASE_CHECKS_TABLE}(decision_round_ts DESC, triggered DESC, symbol ASC)"
             )
-            conn.execute(
+            trading_conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.INCREASE_RECORDS_TABLE}_created "
                 f"ON {self.INCREASE_RECORDS_TABLE}(created_at DESC, symbol ASC)"
             )
@@ -1243,7 +1249,7 @@ class HoldingPositionScoringSystem:
         return str(row["created_at"]) if row and row["created_at"] is not None else ""
 
     def _has_rule5_reduction_record_since(self, symbol: str, lifecycle_started_at: int) -> bool:
-        with self._connect() as conn:
+        with self._trading_core_connect() as conn:
             row = conn.execute(
                 f"SELECT 1 FROM {self.REDUCTION_RECORDS_TABLE} WHERE symbol = ? AND matched_rule LIKE ? AND created_at >= ? LIMIT 1",
                 (symbol, "%规则五%", lifecycle_started_at),
@@ -1253,7 +1259,7 @@ class HoldingPositionScoringSystem:
     def _has_recent_rule2_trigger(self, symbol: str, now_ms: int) -> bool:
         cutoff = int(now_ms) - self.REDUCTION_RULE2_COOLDOWN_MS
         try:
-            with self._connect() as conn:
+            with self._trading_core_connect() as conn:
                 row = conn.execute(
                     f"""
                     SELECT 1
@@ -1394,7 +1400,7 @@ class HoldingPositionScoringSystem:
 
     def _latest_reduction_price_since(self, symbol: str, lifecycle_started_at: int) -> str:
         try:
-            with self._connect() as conn:
+            with self._trading_core_connect() as conn:
                 row = conn.execute(
                     f"""
                     SELECT COALESCE(NULLIF(c.current_price, ''), NULLIF(r.limit_price, '')) AS price
@@ -1797,7 +1803,7 @@ class HoldingPositionScoringSystem:
         return self._decimal_from(fallback.get(self._base_symbol(position.get("symbol", "")), "0"), Decimal("0"))
 
     def _save_portfolio_risk_summary(self, summary: PortfolioRiskSummary) -> None:
-        with self._connect() as conn:
+        with self._trading_core_connect() as conn:
             conn.execute(
                 f"""
                 INSERT INTO {self.PORTFOLIO_RISK_SUMMARY_TABLE}
@@ -1813,7 +1819,7 @@ class HoldingPositionScoringSystem:
             )
 
     def _save_portfolio_risk_rows(self, decision_round_ts: int, rows: list[PortfolioRiskPosition]) -> None:
-        with self._connect() as conn:
+        with self._trading_core_connect() as conn:
             conn.execute(f"DELETE FROM {self.PORTFOLIO_RISK_TABLE} WHERE decision_round_ts = ?", (decision_round_ts,))
             conn.executemany(
                 f"""
@@ -1826,7 +1832,7 @@ class HoldingPositionScoringSystem:
 
     def get_latest_portfolio_risk(self) -> PortfolioRiskSummary | None:
         self.init_tables()
-        with self._connect() as conn:
+        with self._trading_core_connect() as conn:
             summary_row = conn.execute(
                 f"SELECT * FROM {self.PORTFOLIO_RISK_SUMMARY_TABLE} ORDER BY decision_round_ts DESC LIMIT 1"
             ).fetchone()
@@ -2060,7 +2066,7 @@ class HoldingPositionScoringSystem:
 
 
     def _save_reduction_check(self, check: PositionReductionCheck) -> None:
-        with self._connect() as conn:
+        with self._trading_core_connect() as conn:
             conn.execute(
                 f"""
                 INSERT INTO {self.REDUCTION_CHECKS_TABLE}
@@ -2102,7 +2108,7 @@ class HoldingPositionScoringSystem:
             )
 
     def _save_reduction_record(self, record: PositionReductionRecord) -> None:
-        with self._connect() as conn:
+        with self._trading_core_connect() as conn:
             conn.execute(
                 f"""
                 INSERT INTO {self.REDUCTION_RECORDS_TABLE}
@@ -2113,7 +2119,7 @@ class HoldingPositionScoringSystem:
             )
 
     def _has_reduction_record(self, symbol: str, decision_round_ts: int) -> bool:
-        with self._connect() as conn:
+        with self._trading_core_connect() as conn:
             row = conn.execute(
                 f"SELECT 1 FROM {self.REDUCTION_RECORDS_TABLE} WHERE symbol = ? AND decision_round_ts = ? LIMIT 1",
                 (symbol, decision_round_ts),
@@ -2122,7 +2128,7 @@ class HoldingPositionScoringSystem:
 
     def recent_reduction_records(self, limit: int = 100) -> list[sqlite3.Row]:
         self.init_tables()
-        with self._connect() as conn:
+        with self._trading_core_connect() as conn:
             return conn.execute(
                 f"SELECT * FROM {self.REDUCTION_RECORDS_TABLE} ORDER BY created_at DESC, id DESC LIMIT ?",
                 (limit,),
@@ -2130,7 +2136,7 @@ class HoldingPositionScoringSystem:
 
     def get_latest_reduction_checks(self) -> tuple[int | None, list[sqlite3.Row]]:
         self.init_tables()
-        with self._connect() as conn:
+        with self._trading_core_connect() as conn:
             row = conn.execute(f"SELECT MAX(decision_round_ts) AS ts FROM {self.REDUCTION_CHECKS_TABLE}").fetchone()
             round_ts = int(row["ts"]) if row and row["ts"] is not None else None
             if round_ts is None:
@@ -2142,7 +2148,7 @@ class HoldingPositionScoringSystem:
         return round_ts, rows
 
     def _save_check(self, check: HoldingStopLossCheck) -> None:
-        with self._connect() as conn:
+        with self._trading_core_connect() as conn:
             conn.execute(
                 f"""
                 INSERT INTO {self.CHECKS_TABLE}
@@ -2163,7 +2169,7 @@ class HoldingPositionScoringSystem:
             )
 
     def _save_record(self, record: HoldingStopLossRecord) -> None:
-        with self._connect() as conn:
+        with self._trading_core_connect() as conn:
             conn.execute(
                 f"""
                 INSERT INTO {self.RECORDS_TABLE}
@@ -2174,7 +2180,7 @@ class HoldingPositionScoringSystem:
             )
 
     def _has_stop_loss_record(self, symbol: str, decision_round_ts: int) -> bool:
-        with self._connect() as conn:
+        with self._trading_core_connect() as conn:
             row = conn.execute(
                 f"SELECT 1 FROM {self.RECORDS_TABLE} WHERE symbol = ? AND decision_round_ts = ? LIMIT 1",
                 (symbol, decision_round_ts),
@@ -2183,7 +2189,7 @@ class HoldingPositionScoringSystem:
 
     def get_latest_round_checks(self) -> tuple[int | None, list[sqlite3.Row]]:
         self.init_tables()
-        with self._connect() as conn:
+        with self._trading_core_connect() as conn:
             row = conn.execute(f"SELECT MAX(decision_round_ts) AS ts FROM {self.CHECKS_TABLE}").fetchone()
             round_ts = int(row["ts"]) if row and row["ts"] is not None else None
             if round_ts is None:
@@ -2196,7 +2202,7 @@ class HoldingPositionScoringSystem:
 
     def recent_stop_loss_records(self, limit: int = 100) -> list[sqlite3.Row]:
         self.init_tables()
-        with self._connect() as conn:
+        with self._trading_core_connect() as conn:
             return conn.execute(
                 f"""
                 SELECT * FROM {self.RECORDS_TABLE}
