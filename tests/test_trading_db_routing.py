@@ -164,6 +164,44 @@ def test_scoring_worker_should_stop_after_deadline():
     )
 
 
+def test_completed_scoring_round_publishes_holding_result_after_deadline(
+    monkeypatch, tmp_path
+):
+    scoring_db = str(tmp_path / "scoring.db")
+    trading_db = str(tmp_path / "trading.db")
+    run_calls = []
+
+    class RecordingTradingModule(FakeTradingOwnedModule):
+        def run_round(self, decision_round_ts):
+            run_calls.append(decision_round_ts)
+            return {}
+
+    monkeypatch.setattr(app.db_config, "TRADING_DB_PATH", trading_db)
+    monkeypatch.setattr(app, "ScoringSystem", FakeScoringSystem)
+    monkeypatch.setattr(app, "OpenableSymbolModule", FakeOpenableSymbolModule)
+    monkeypatch.setattr(app, "DynamicOpenThresholdModule", FakeDynamicOpenThresholdModule)
+    monkeypatch.setattr(app, "HoldingPositionScoringSystem", RecordingTradingModule)
+    monkeypatch.setattr(app, "TrailingReductionTracker", FakeTradingOwnedModule)
+    monkeypatch.setattr(
+        app,
+        "_scoring_worker_should_stop",
+        lambda **kwargs: kwargs["stage"]
+        in {"after_score_round", "before_holding_scoring", "after_holding_scoring"},
+    )
+
+    app.run_scoring_round_worker(
+        db_path=scoring_db,
+        decision_round_ts=123,
+        symbols=["BTC"],
+        abnormal_symbols=[],
+        evaluated_at=456,
+        # The simulated deadline elapses immediately after score_round.
+        deadline_ts=1,
+    )
+
+    assert run_calls == [123]
+
+
 class FakeActiveProcess:
     pid = 4321
 
