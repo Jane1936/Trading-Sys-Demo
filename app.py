@@ -98,6 +98,13 @@ def check_worker_databases() -> dict[str, list[str]]:
             # rebuild, or a transient Web-side detection that now checks clean.
             Path(db_config.database_recovery_marker(db_path)).unlink(missing_ok=True)
             continue
+        detail_lower = detail.lower()
+        if "database is locked" in detail_lower or "database is busy" in detail_lower:
+            # A health probe can overlap a legitimately long write transaction.
+            # Contention is not corruption: quarantining here would discard a
+            # healthy database merely because quick_check exhausted its timeout.
+            print(f"⚠️ SQLite health check deferred db={db_path}; detail={detail}")
+            continue
         marker = Path(db_config.database_recovery_marker(db_path))
         marker.write_text(f"pid={os.getpid()} detail={detail}\n", encoding="utf-8")
         # The marker rejects new connections. EX waits until every managed main
