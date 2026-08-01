@@ -170,6 +170,28 @@ def test_worker_health_check_fences_and_replaces_malformed_database(tmp_path, mo
     assert not Path(db_config.database_recovery_marker(str(damaged_path))).exists()
 
 
+@pytest.mark.parametrize("detail", ["database is locked", "database is busy"])
+def test_worker_health_check_does_not_replace_contended_database(
+    tmp_path, monkeypatch, detail
+):
+    db_path = tmp_path / "trading.db"
+    db_path.write_bytes(b"healthy database placeholder")
+    initialized = []
+    monkeypatch.setattr(
+        worker_app, "_database_initializers", lambda: {str(db_path): lambda: initialized.append(True)}
+    )
+    monkeypatch.setattr(
+        worker_app, "quick_check_sqlite_database", lambda _path: (False, detail)
+    )
+
+    recovered = worker_app.check_worker_databases()
+
+    assert recovered == {}
+    assert initialized == []
+    assert db_path.read_bytes() == b"healthy database placeholder"
+    assert not Path(db_config.database_recovery_marker(str(db_path))).exists()
+
+
 def test_worker_malformed_error_triggers_immediate_health_check(monkeypatch):
     calls = []
     monkeypatch.setattr(
