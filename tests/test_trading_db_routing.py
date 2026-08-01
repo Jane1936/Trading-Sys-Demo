@@ -106,6 +106,45 @@ def test_scoring_worker_keeps_scoring_tables_in_scoring_db_and_holding_tables_in
     assert FakeTradingOwnedModule.seen_paths == [trading_db, trading_db]
 
 
+def test_scoring_worker_continues_when_trading_module_initialization_fails(
+    monkeypatch, tmp_path
+):
+    scoring_db = str(tmp_path / "scoring.db")
+    score_calls = []
+    threshold_calls = []
+
+    class RecordingScoringSystem(FakeScoringSystem):
+        def score_round(self, decision_round_ts, all_symbols, abnormal_symbols):
+            score_calls.append((decision_round_ts, list(all_symbols)))
+            return []
+
+    class RecordingThreshold(FakeDynamicOpenThresholdModule):
+        def run_round(self, **kwargs):
+            threshold_calls.append(kwargs)
+            return super().run_round(**kwargs)
+
+    class BrokenTradingModule(FakeTradingOwnedModule):
+        def init_tables(self):
+            raise RuntimeError("trading database unavailable")
+
+    monkeypatch.setattr(app, "ScoringSystem", RecordingScoringSystem)
+    monkeypatch.setattr(app, "OpenableSymbolModule", FakeOpenableSymbolModule)
+    monkeypatch.setattr(app, "DynamicOpenThresholdModule", RecordingThreshold)
+    monkeypatch.setattr(app, "HoldingPositionScoringSystem", BrokenTradingModule)
+    monkeypatch.setattr(app, "TrailingReductionTracker", FakeTradingOwnedModule)
+
+    app.run_scoring_round_worker(
+        db_path=scoring_db,
+        decision_round_ts=123,
+        symbols=["BTC"],
+        abnormal_symbols=[],
+        evaluated_at=456,
+    )
+
+    assert score_calls == [(123, ["BTC"])]
+    assert threshold_calls == [{"decision_round_ts": 123, "evaluated_at": 456}]
+
+
 def test_scoring_worker_deadline_is_ten_minutes():
     assert app.SCORING_WORKER_DEADLINE_MS == 10 * 60_000
 
