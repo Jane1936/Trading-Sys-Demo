@@ -338,11 +338,6 @@ def run_scoring_round_worker(
     openable.init_table()
     dynamic_open_threshold = DynamicOpenThresholdModule(db_path=db_path)
     dynamic_open_threshold.init_table()
-    holding_scoring = HoldingPositionScoringSystem(db_path=db_config.TRADING_DB_PATH)
-    holding_scoring.init_tables()
-    trailing_reduction = TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH)
-    trailing_reduction.init_tables()
-
     if _scoring_worker_should_stop(
         decision_round_ts=decision_round_ts,
         deadline_ts=deadline_ts,
@@ -406,6 +401,17 @@ def run_scoring_round_worker(
             stage="before_holding_scoring",
         ):
             return
+        # Trading-owned modules are optional consumers of a completed scoring
+        # round.  Initialize them here, rather than before score_round, so a
+        # damaged/recovering trading DB cannot stop the independent scoring DB.
+        holding_scoring = HoldingPositionScoringSystem(
+            db_path=db_config.TRADING_DB_PATH
+        )
+        holding_scoring.init_tables()
+        trailing_reduction = TrailingReductionTracker(
+            db_path=db_config.TRADING_DB_PATH
+        )
+        trailing_reduction.init_tables()
         with db_config.sqlite_connection_scope(
             db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
         ):
