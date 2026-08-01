@@ -83,6 +83,13 @@ def _database_initializers() -> dict[str, Callable[[], None]]:
         ),
         db_config.TRADING_CORE_DB_PATH: lambda: (
             TradingExperiment(db_path=db_config.TRADING_DB_PATH).init_core_tables(),
+            # These tables were moved out of trading.db together.  Recreate
+            # them when trading_core.db is recovered independently; otherwise
+            # the next holding round fails on its first stop-loss write and the
+            # sequential reduction and portfolio-risk stages never run.
+            HoldingPositionScoringSystem(
+                db_path=db_config.TRADING_DB_PATH
+            ).init_tables(),
             ZombieForceLiquidationModule(db_path=db_config.TRADING_DB_PATH).init_tables(),
         ),
     }

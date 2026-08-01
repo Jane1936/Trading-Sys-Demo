@@ -12,6 +12,7 @@ import collector
 import db_config
 import app as worker_app
 import web_app
+from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from sqlite_recovery import ensure_sqlite_database_usable, is_malformed_database_error
 
@@ -208,6 +209,34 @@ def test_worker_malformed_error_triggers_immediate_health_check(monkeypatch):
 
 def test_worker_database_health_check_interval_is_five_minutes():
     assert worker_app.DATABASE_HEALTH_CHECK_INTERVAL_SEC == 5 * 60
+
+
+def test_trading_core_recovery_recreates_holding_risk_tables(tmp_path, monkeypatch):
+    trading_db = str(tmp_path / "trading.db")
+    trading_core_db = str(tmp_path / "trading_core.db")
+    monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
+    monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", trading_core_db)
+
+    worker_app._database_initializers()[trading_core_db]()
+
+    scoring = HoldingPositionScoringSystem(db_path=trading_db)
+    expected_tables = {
+        scoring.CHECKS_TABLE,
+        scoring.RECORDS_TABLE,
+        scoring.PORTFOLIO_RISK_TABLE,
+        scoring.PORTFOLIO_RISK_SUMMARY_TABLE,
+        scoring.REDUCTION_CHECKS_TABLE,
+        scoring.REDUCTION_RECORDS_TABLE,
+    }
+    with sqlite3.connect(trading_core_db) as conn:
+        actual_tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+
+    assert expected_tables <= actual_tables
 
 
 def test_recovery_marker_blocks_business_connections(tmp_path):
