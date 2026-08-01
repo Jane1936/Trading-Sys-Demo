@@ -112,3 +112,23 @@ def test_refresh_pretriggered_symbols_preserves_recent_records_without_checks(tm
     assert payload["triggered"] == 0
     assert payload["created_records"] == 0
     assert [record["market_order_id"] for record in payload["records"]] == ["existing"]
+
+
+def test_lock_busy_record_does_not_prevent_structure_reduction_retry(tmp_path):
+    tracker = TrailingReductionTracker(db_path=str(tmp_path / "klines.db"), account_manager=FakeAccountManager())
+    tracker.init_tables()
+    values = (
+        "BTC", 2000, 1000, Decimal("2"), Decimal("1.5"), Decimal("2"),
+        Decimal("0.1"), Decimal("0.5"), Decimal("1"), Decimal("0"),
+        Decimal("0"), "", "", "",
+    )
+    tracker._insert_record(
+        *values, "failed",
+        "trade_action_lock_busy: symbol=BTC; locked_by=holding_position_scoring", ""
+    )
+
+    assert tracker._has_structure_record("BTC", 2000) is False
+
+    tracker._insert_record(*values, "submitted", "structure reduction submitted", "")
+
+    assert tracker._has_structure_record("BTC", 2000) is True
