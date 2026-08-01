@@ -2158,7 +2158,12 @@ class HoldingPositionScoringSystem:
     def _has_reduction_record(self, symbol: str, decision_round_ts: int) -> bool:
         with self._trading_core_connect() as conn:
             row = conn.execute(
-                f"SELECT 1 FROM {self.REDUCTION_RECORDS_TABLE} WHERE symbol = ? AND decision_round_ts = ? LIMIT 1",
+                f"""
+                SELECT 1 FROM {self.REDUCTION_RECORDS_TABLE}
+                WHERE symbol = ? AND decision_round_ts = ?
+                  AND NOT (status = 'failed' AND reason LIKE '%trade_action_lock_busy%')
+                LIMIT 1
+                """,
                 (symbol, decision_round_ts),
             ).fetchone()
         return row is not None
@@ -2219,7 +2224,12 @@ class HoldingPositionScoringSystem:
     def _has_stop_loss_record(self, symbol: str, decision_round_ts: int) -> bool:
         with self._trading_core_connect() as conn:
             row = conn.execute(
-                f"SELECT 1 FROM {self.RECORDS_TABLE} WHERE symbol = ? AND decision_round_ts = ? LIMIT 1",
+                f"""
+                SELECT 1 FROM {self.RECORDS_TABLE}
+                WHERE symbol = ? AND decision_round_ts = ?
+                  AND NOT (status = 'failed' AND reason LIKE '%trade_action_lock_busy%')
+                LIMIT 1
+                """,
                 (symbol, decision_round_ts),
             ).fetchone()
         return row is not None

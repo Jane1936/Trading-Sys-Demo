@@ -7,6 +7,38 @@ from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
 from holding_position_scoring import HoldingPositionScoringSystem, PositionIncreaseCheck
 from trading_experiment import TradingExperiment
 
+
+def test_lock_busy_records_allow_holding_action_retry(tmp_path):
+    scoring = HoldingPositionScoringSystem(db_path=str(tmp_path / "trading.db"))
+    scoring.init_tables()
+    with scoring._trading_core_connect() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {scoring.RECORDS_TABLE}
+            (symbol, decision_round_ts, side, quantity, latest_15m_close,
+             latest_structural_stop_loss, prev_15m_close,
+             prev_structural_stop_loss, status, order_id, realized_pnl,
+             reason, raw_response, created_at)
+            VALUES ('BTC', 2000, 'SELL', '1', 1, 2, 1, 2, 'failed', '', '',
+                    'trade_action_lock_busy: locked_by=trailing_reduction', '', 1000)
+            """
+        )
+        conn.execute(
+            f"""
+            INSERT INTO {scoring.REDUCTION_RECORDS_TABLE}
+            (symbol, decision_round_ts, side, matched_rule, reduction_percent,
+             original_quantity, reduced_quantity, remaining_quantity,
+             old_limit_order_id, new_limit_order_id, market_order_id,
+             limit_price, status, reason, raw_response, created_at)
+            VALUES ('BTC', 2000, 'SELL', 'rule1', '0.3', '1', '0', '0',
+                    '', '', '', '', 'failed',
+                    'trade_action_lock_busy: locked_by=trailing_reduction', '', 1000)
+            """
+        )
+
+    assert scoring._has_stop_loss_record("BTC", 2000) is False
+    assert scoring._has_reduction_record("BTC", 2000) is False
+
 class FakeAccountManager:
     def __init__(self):
         self.signed_posts = []

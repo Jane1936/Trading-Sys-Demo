@@ -356,7 +356,15 @@ class TrailingReductionTracker:
 
     def _has_structure_record(self, symbol: str, round_ts: int) -> bool:
         with self._connect() as conn:
-            return conn.execute(f"SELECT 1 FROM {self.RECORDS_TABLE} WHERE symbol = ? AND decision_round_ts = ? LIMIT 1", (symbol, int(round_ts))).fetchone() is not None
+            return conn.execute(
+                f"""
+                SELECT 1 FROM {self.RECORDS_TABLE}
+                WHERE symbol = ? AND decision_round_ts = ?
+                  AND NOT (status = 'failed' AND reason LIKE '%trade_action_lock_busy%')
+                LIMIT 1
+                """,
+                (symbol, int(round_ts)),
+            ).fetchone() is not None
 
     def _latest_atr14(self, symbol: str) -> Decimal:
         with self._connect() as conn:
