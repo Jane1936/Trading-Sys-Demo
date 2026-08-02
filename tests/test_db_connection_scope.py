@@ -79,3 +79,47 @@ def test_scoped_connection_can_be_released_before_recovery(tmp_path):
 
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("SELECT value FROM events").fetchall() == [(1,)]
+
+
+def test_connection_scopes_deduplicates_duplicate_paths(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "trading.db")
+    physical_opens = []
+    real_connect = db_config.sqlite3.connect
+
+    def counted_connect(*args, **kwargs):
+        physical_opens.append(args[0])
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(db_config.sqlite3, "connect", counted_connect)
+
+    with db_config.sqlite_connection_scopes(db_path, db_path):
+        with db_config.connect_sqlite(db_path) as conn:
+            conn.execute("CREATE TABLE events (value INTEGER)")
+            conn.execute("INSERT INTO events VALUES (1)")
+        with db_config.connect_sqlite(db_path) as conn:
+            conn.execute("INSERT INTO events VALUES (2)")
+
+    assert physical_opens == [db_path]
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM events").fetchone() == (2,)
+
+
+def test_connection_scopes_reuses_trading_and_core_connections(tmp_path, monkeypatch):
+    trading_path = str(tmp_path / "trading.db")
+    core_path = str(tmp_path / "trading_core.db")
+    physical_opens = []
+    real_connect = db_config.sqlite3.connect
+
+    def counted_connect(*args, **kwargs):
+        physical_opens.append(args[0])
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(db_config.sqlite3, "connect", counted_connect)
+
+    with db_config.sqlite_connection_scopes(trading_path, core_path):
+        for path, value in ((trading_path, 1), (core_path, 2), (trading_path, 3), (core_path, 4)):
+            with db_config.connect_sqlite(path) as conn:
+                conn.execute("CREATE TABLE IF NOT EXISTS events (value INTEGER)")
+                conn.execute("INSERT INTO events VALUES (?)", (value,))
+
+    assert physical_opens == [trading_path, core_path]

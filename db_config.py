@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Iterable
@@ -222,6 +222,28 @@ def sqlite_connection_scope(
     finally:
         _scoped_connections.reset(token)
         conn.close()
+
+
+@contextmanager
+def sqlite_connection_scopes(*db_paths: str, row_factory=None, wal: bool = True):
+    """Open reusable SQLite round scopes for multiple database files.
+
+    This is a convenience wrapper for code paths that read/write both
+    ``trading.db`` and ``trading_core.db`` in one logical round.  Duplicate
+    paths are de-duplicated so custom/test deployments where the core path
+    routes back to the trading DB still open one physical connection.
+    """
+    with ExitStack() as stack:
+        seen: set[str] = set()
+        for db_path in db_paths:
+            normalized = str(Path(db_path).resolve())
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            stack.enter_context(
+                sqlite_connection_scope(db_path, row_factory=row_factory, wal=wal)
+            )
+        yield
 
 
 def close_scoped_connection(db_path: str) -> bool:

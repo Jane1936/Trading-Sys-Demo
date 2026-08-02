@@ -421,9 +421,8 @@ def run_scoring_round_worker(
             db_path=db_config.TRADING_DB_PATH
         )
         trailing_reduction.init_tables()
-        with db_config.sqlite_connection_scope(
-            db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
-        ), db_config.sqlite_connection_scope(
+        with db_config.sqlite_connection_scopes(
+            db_config.TRADING_DB_PATH,
             db_config.trading_core_path(db_config.TRADING_DB_PATH),
             row_factory=sqlite3.Row,
         ):
@@ -526,7 +525,7 @@ def run_scoring_round_worker(
 
 
 def start_break_even_take_profit_task() -> None:
-    """Run break-even protection every 5 minutes and partial take-profit every minute."""
+    """Run break-even protection first, then partial take-profit, every minute."""
     strategy = BreakEvenTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH)
     partial_strategy = PartialTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH)
     dynamic_profit_protection = DynamicProfitProtection(db_path=db_config.TRADING_DB_PATH)
@@ -566,57 +565,53 @@ def start_break_even_take_profit_task() -> None:
                 recover_after_worker_error(exc)
                 print(f"⚠️ break-even take-profit failed: {exc}")
 
-        for _ in range(5):
-            with db_config.sqlite_connection_scope(
-                db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
-            ):
-                try:
-                    scan_ms = int(time.time() * 1000)
-                    market_round_ts = WeakMarketProfitAdjustmentModule.decision_round_ts(scan_ms)
-                    # The first minute-level scan observed in every quarter-hour must
-                    # not overtake the adjustment, even when this worker started late.
-                    if weak_market_adjustment.latest_result_for_round(market_round_ts) is None:
-                        while True:
-                            converged, convergence_reason = weak_market_adjustment.is_data_converged_for_round(market_round_ts)
-                            if converged:
-                                adjustment = weak_market_adjustment.run_round(market_round_ts)
-                                print(f"📉 weak-market profit adjustment round={market_round_ts} weak={adjustment.weak_market} trigger={adjustment.trigger_r_multiple}R fraction={adjustment.take_profit_fraction}")
-                                break
-                            print(f"⏳ weak-market profit adjustment round={market_round_ts} waiting: {convergence_reason}")
-                            time.sleep(2)
-                    partial_result = partial_strategy.run_round(decision_round_ts=scan_ms)
-                    print(
-                        f"🟢 partial take-profit checked={partial_result.get('checked', 0)} "
-                        f"triggered={partial_result.get('triggered', 0)} "
-                        f"records={partial_result.get('records', 0)} 2R={partial_result.get('trigger_r_usdt', '')}"
-                    )
-                except Exception as exc:
-                    recover_after_worker_error(exc)
-                    print(f"⚠️ partial take-profit failed: {exc}")
+            try:
+                scan_ms = int(time.time() * 1000)
+                market_round_ts = WeakMarketProfitAdjustmentModule.decision_round_ts(scan_ms)
+                # The first minute-level scan observed in every quarter-hour must
+                # not overtake the adjustment, even when this worker started late.
+                if weak_market_adjustment.latest_result_for_round(market_round_ts) is None:
+                    while True:
+                        converged, convergence_reason = weak_market_adjustment.is_data_converged_for_round(market_round_ts)
+                        if converged:
+                            adjustment = weak_market_adjustment.run_round(market_round_ts)
+                            print(f"📉 weak-market profit adjustment round={market_round_ts} weak={adjustment.weak_market} trigger={adjustment.trigger_r_multiple}R fraction={adjustment.take_profit_fraction}")
+                            break
+                        print(f"⏳ weak-market profit adjustment round={market_round_ts} waiting: {convergence_reason}")
+                        time.sleep(2)
+                partial_result = partial_strategy.run_round(decision_round_ts=scan_ms)
+                print(
+                    f"🟢 partial take-profit checked={partial_result.get('checked', 0)} "
+                    f"triggered={partial_result.get('triggered', 0)} "
+                    f"records={partial_result.get('records', 0)} 2R={partial_result.get('trigger_r_usdt', '')}"
+                )
+            except Exception as exc:
+                recover_after_worker_error(exc)
+                print(f"⚠️ partial take-profit failed: {exc}")
 
-                try:
-                    dynamic_result = dynamic_profit_protection.run_round()
-                    print(
-                        f"🟢 dynamic profit protection checked={dynamic_result.get('checked', 0)} "
-                        f"eligible={dynamic_result.get('eligible', 0)} "
-                        f"triggered={dynamic_result.get('triggered', 0)} R={dynamic_result.get('r_usdt', '')}"
-                    )
-                except Exception as exc:
-                    recover_after_worker_error(exc)
-                    print(f"⚠️ dynamic profit protection failed: {exc}")
+            try:
+                dynamic_result = dynamic_profit_protection.run_round()
+                print(
+                    f"🟢 dynamic profit protection checked={dynamic_result.get('checked', 0)} "
+                    f"eligible={dynamic_result.get('eligible', 0)} "
+                    f"triggered={dynamic_result.get('triggered', 0)} R={dynamic_result.get('r_usdt', '')}"
+                )
+            except Exception as exc:
+                recover_after_worker_error(exc)
+                print(f"⚠️ dynamic profit protection failed: {exc}")
 
-                try:
-                    trailing_result = trailing_stop_tracker.run_round()
-                    print(
-                        f"🟢 trailing stop tracker checked={trailing_result.get('checked', 0)} "
-                        f"eligible={trailing_result.get('eligible', 0)} "
-                        f"updated={trailing_result.get('updated', 0)}"
-                    )
-                except Exception as exc:
-                    recover_after_worker_error(exc)
-                    print(f"⚠️ trailing stop tracker failed: {exc}")
+            try:
+                trailing_result = trailing_stop_tracker.run_round()
+                print(
+                    f"🟢 trailing stop tracker checked={trailing_result.get('checked', 0)} "
+                    f"eligible={trailing_result.get('eligible', 0)} "
+                    f"updated={trailing_result.get('updated', 0)}"
+                )
+            except Exception as exc:
+                recover_after_worker_error(exc)
+                print(f"⚠️ trailing stop tracker failed: {exc}")
 
-            time.sleep(60)
+        time.sleep(60)
 
 
 def start_pre_safety_task() -> None:

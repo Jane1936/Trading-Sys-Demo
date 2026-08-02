@@ -1,5 +1,6 @@
 import sqlite3
 
+import db_config
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
 from partial_take_profit import PartialTakeProfitStrategy
 from trading_experiment import TradingExperiment
@@ -66,6 +67,42 @@ def test_dynamic_add_position_threshold_counts_submitted_partial_take_profit(tmp
     assert result.latest_trade_created_at == 1_044
     assert result.earliest_trade_created_at == 1_005
 
+
+def test_dynamic_add_position_threshold_reads_trades_from_trading_core_db(
+    tmp_path, monkeypatch
+):
+    trading_db = str(tmp_path / "trading.db")
+    core_db = str(tmp_path / "trading_core.db")
+    monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
+    monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", core_db)
+    module = DynamicAddPositionThresholdModule(db_path=trading_db)
+    module.init_table()
+
+    with sqlite3.connect(core_db) as conn:
+        _insert_trade(conn, "CORE", "100", 2_000)
+    with sqlite3.connect(trading_db) as conn:
+        assert not {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        } & {TradingExperiment.TRADES_TABLE}
+        conn.execute(
+            f"""
+            INSERT INTO {PartialTakeProfitStrategy.RECORDS_TABLE}
+            (symbol, checked_at, side, position_amt, take_profit_quantity, entry_price,
+             account_equity_usdt, r_usdt, trigger_r_usdt, unrealized_pnl,
+             take_profit_order_id, status, reason, raw_response)
+            VALUES ('CORE', 3000, 'SELL', '1', '0.3', '100', '1000', '10',
+                    '20', '25', 'oid', 'submitted', 'test', '')
+            """
+        )
+
+    result = module.run_round(decision_round_ts=9_000_000, evaluated_at=10_000_000)
+
+    assert result.sample_size == 1
+    assert result.success_count == 1
+    assert result.latest_trade_created_at == 2_000
 
 def test_dynamic_add_position_threshold_recent_results_filters_to_seven_days(tmp_path):
     db_path = str(tmp_path / "trading.db")

@@ -44,9 +44,24 @@ class DynamicAddPositionThresholdModule:
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
         conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
-        db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
+        db_config.attach_databases(
+            conn,
+            [
+                ("base", db_config.BASE_DB_PATH),
+                ("scoring", db_config.SCORING_DB_PATH),
+                ("market", db_config.MARKET_DB_PATH),
+                ("core", db_config.trading_core_path(self.db_path)),
+            ],
+        )
         conn.execute("PRAGMA busy_timeout=30000;")
         return conn
+
+    def _trades_table_name(self) -> str:
+        if os.path.realpath(db_config.trading_core_path(self.db_path)) == os.path.realpath(
+            self.db_path
+        ):
+            return TradingExperiment.TRADES_TABLE
+        return f"core.{TradingExperiment.TRADES_TABLE}"
 
     def init_table(self) -> None:
         TradingExperiment(self.db_path).init_tables()
@@ -86,11 +101,12 @@ class DynamicAddPositionThresholdModule:
         round_ts = self.decision_round_ts() if decision_round_ts is None else int(decision_round_ts)
         evaluated_ms = int(time.time() * 1000) if evaluated_at is None else int(evaluated_at)
         with self._connect() as conn:
+            trades_table = self._trades_table_name()
             rows = conn.execute(
                 f"""
                 WITH recent_open_trades AS (
                     SELECT id, symbol, entry_price, created_at
-                    FROM {TradingExperiment.TRADES_TABLE}
+                    FROM {trades_table}
                     WHERE status = 'opened'
                     ORDER BY created_at DESC, id DESC
                     LIMIT ?
