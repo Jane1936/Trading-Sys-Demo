@@ -184,12 +184,22 @@ def _score_band_context() -> tuple[list[dict], str, str, int]:
     return bands, threshold_text, leverage_text, OpenableSymbolModule.MIN_TOTAL_SCORE
 
 
-def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+def _table_exists(
+    conn: sqlite3.Connection, table_name: str, *, schema: str = "main"
+) -> bool:
     row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        f"SELECT 1 FROM {db_config.quote_identifier(schema)}.sqlite_master "
+        "WHERE type = 'table' AND name = ?",
         (table_name,),
     ).fetchone()
     return row is not None
+
+
+def _qualified_table(schema: str, table_name: str) -> str:
+    return (
+        f"{db_config.quote_identifier(schema)}."
+        f"{db_config.quote_identifier(table_name)}"
+    )
 
 
 def _experiment_equity_trend_rows(since_ms: int) -> list[sqlite3.Row]:
@@ -320,7 +330,13 @@ def _raw_response_contains_order_id(raw_response: object, order_id: object) -> b
     return False
 
 
-def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, time_tolerance_ms: int = 5 * 60 * 1000) -> list[dict[str, str]]:
+def _filled_order_exit_reason_matches(
+    conn: sqlite3.Connection,
+    order: dict,
+    time_tolerance_ms: int = 5 * 60 * 1000,
+    *,
+    core_schema: str = "main",
+) -> list[dict[str, str]]:
     """Match a filled order to local strategy records.
 
     Local strategy tables store symbols without the USDT suffix, while Binance
@@ -340,13 +356,20 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
         return []
 
     matches: list[dict[str, str]] = []
-    if _table_exists(conn, ZombieForceLiquidationModule.RECORDS_TABLE):
-        zombie_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({ZombieForceLiquidationModule.RECORDS_TABLE})").fetchall()}
+    if _table_exists(conn, ZombieForceLiquidationModule.RECORDS_TABLE, schema=core_schema):
+        zombie_table = _qualified_table(core_schema, ZombieForceLiquidationModule.RECORDS_TABLE)
+        zombie_columns = {
+            row["name"]
+            for row in conn.execute(
+                f"PRAGMA {db_config.quote_identifier(core_schema)}.table_info("
+                f"{db_config.quote_identifier(ZombieForceLiquidationModule.RECORDS_TABLE)})"
+            ).fetchall()
+        }
         zombie_order_id_select = "order_id" if "order_id" in zombie_columns else "'' AS order_id"
         rows = conn.execute(
             f"""
             SELECT checked_at AS matched_at, quantity, {zombie_order_id_select}, raw_response
-            FROM {ZombieForceLiquidationModule.RECORDS_TABLE}
+            FROM {zombie_table}
             WHERE symbol = ?
               AND side = ?
               AND status = 'submitted'
@@ -382,11 +405,12 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
                     break
         return matches
 
-    if _table_exists(conn, HoldingPositionScoringSystem.RECORDS_TABLE):
+    if _table_exists(conn, HoldingPositionScoringSystem.RECORDS_TABLE, schema=core_schema):
+        stop_loss_table = _qualified_table(core_schema, HoldingPositionScoringSystem.RECORDS_TABLE)
         rows = conn.execute(
             f"""
             SELECT created_at AS matched_at, quantity, reason
-            FROM {HoldingPositionScoringSystem.RECORDS_TABLE}
+            FROM {stop_loss_table}
             WHERE symbol = ?
               AND side = 'SELL'
               AND created_at BETWEEN ? AND ?
@@ -399,11 +423,14 @@ def _filled_order_exit_reason_matches(conn: sqlite3.Connection, order: dict, tim
                 matches.append({"type": "结构止损", "matched_at": str(row["matched_at"] or "")})
                 break
 
-    if _table_exists(conn, HoldingPositionScoringSystem.REDUCTION_RECORDS_TABLE):
+    if _table_exists(conn, HoldingPositionScoringSystem.REDUCTION_RECORDS_TABLE, schema=core_schema):
+        reduction_table = _qualified_table(
+            core_schema, HoldingPositionScoringSystem.REDUCTION_RECORDS_TABLE
+        )
         rows = conn.execute(
             f"""
             SELECT created_at AS matched_at, reduced_quantity
-            FROM {HoldingPositionScoringSystem.REDUCTION_RECORDS_TABLE}
+            FROM {reduction_table}
             WHERE symbol = ?
               AND side = 'SELL'
               AND created_at BETWEEN ? AND ?
@@ -523,10 +550,13 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
     return "硬止盈" if realized_pnl > 0 else "硬止损"
 
 
-def _filled_order_open_score(conn: sqlite3.Connection, order: dict) -> tuple[int | None, str]:
+def _filled_order_open_score(
+    conn: sqlite3.Connection, order: dict, *, core_schema: str = "main"
+) -> tuple[int | None, str]:
     """Return the latest local experiment opening score before a Binance fill."""
-    if not _table_exists(conn, TradingExperiment.TRADES_TABLE):
+    if not _table_exists(conn, TradingExperiment.TRADES_TABLE, schema=core_schema):
         return None, ""
+    trades_table = _qualified_table(core_schema, TradingExperiment.TRADES_TABLE)
     symbol = _base_symbol(str(order.get("symbol", "")))
     order_time = int(order.get("time") or 0)
     if not symbol or order_time <= 0:
@@ -537,7 +567,7 @@ def _filled_order_open_score(conn: sqlite3.Connection, order: dict) -> tuple[int
         row = conn.execute(
             f"""
             SELECT total_score, created_at
-            FROM {TradingExperiment.TRADES_TABLE}
+            FROM {trades_table}
             WHERE symbol = ?
               AND status = 'opened'
               AND created_at BETWEEN ? AND ?
@@ -551,7 +581,7 @@ def _filled_order_open_score(conn: sqlite3.Connection, order: dict) -> tuple[int
         row = conn.execute(
             f"""
             SELECT total_score, created_at
-            FROM {TradingExperiment.TRADES_TABLE}
+            FROM {trades_table}
             WHERE symbol = ?
               AND status = 'opened'
               AND created_at <= ?
@@ -578,15 +608,25 @@ def _annotate_filled_order_exit_reasons(payload: dict) -> dict:
     if not isinstance(orders, list) or not orders:
         return payload
     try:
-        with db_config.connect_sqlite(_trading_db_path()) as conn:
+        trading_db_path = _trading_db_path()
+        core_db_path = db_config.trading_core_path(trading_db_path)
+        with db_config.connect_sqlite(trading_db_path) as conn:
             conn.row_factory = sqlite3.Row
+            core_schema = "main"
+            if os.path.realpath(core_db_path) != os.path.realpath(trading_db_path):
+                db_config.attach_databases(conn, [("trading_core", core_db_path)])
+                core_schema = "trading_core"
             for order in orders:
                 if not isinstance(order, dict):
                     continue
-                matches = _filled_order_exit_reason_matches(conn, order)
+                matches = _filled_order_exit_reason_matches(
+                    conn, order, core_schema=core_schema
+                )
                 order["exit_reason"] = _filled_order_exit_reason_label(order, matches)
                 order["exit_reason_matches"] = matches
-                open_score, matched_at = _filled_order_open_score(conn, order)
+                open_score, matched_at = _filled_order_open_score(
+                    conn, order, core_schema=core_schema
+                )
                 order["open_total_score"] = open_score
                 order["open_score_band"] = _score_band_label(open_score)
                 order["open_score_matched_at"] = matched_at
