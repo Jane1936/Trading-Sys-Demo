@@ -1708,23 +1708,25 @@
         </div>
 
         <div id="holding-module-partial-take-profit" class="holding-module-panel" role="tabpanel">
-        <div class="critical-section sky-theme-section" aria-label="关键分批止盈5分钟扫描结果">
+        <div class="critical-section sky-theme-section" aria-label="关键分批止盈每分钟扫描结果">
         <div class="symbol-strip">
-          <div><strong>分批止盈规则：5分钟扫描结果</strong></div>
+          <div><strong>分批止盈规则：每分钟扫描结果</strong></div>
+          <button id="refresh-partial-take-profit" class="btn btn-primary btn-small" type="button">刷新</button>
+          <span id="partial-take-profit-refresh-status" class="muted">点击刷新查看最新分批止盈扫描结果与卖出记录</span>
           {% if partial_take_profit_round_ts %}
-            <div class="muted">最近判断轮次：{{ partial_take_profit_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每5分钟扫描当前持仓；常态下未变现盈亏 ≥ 2R 卖出30%，市场弱势时动态调整为 ≥ 1.4R 卖出50%。</div>
+            <div class="muted" id="partial-take-profit-round-note">最近判断轮次：{{ partial_take_profit_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每分钟扫描当前持仓；常态下未变现盈亏 ≥ 2R 卖出30%，市场弱势时动态调整为 ≥ 1.4R 卖出50%。</div>
           {% else %}
-            <div class="muted">暂无分批止盈扫描结果。</div>
+            <div class="muted" id="partial-take-profit-round-note">暂无分批止盈扫描结果。</div>
           {% endif %}
           {% set triggered_partial_take_profit_checks = partial_take_profit_checks|selectattr('triggered')|list %}
           {% if triggered_partial_take_profit_checks %}
-            <div class="chips">
+            <div class="chips" id="partial-take-profit-triggered-chips">
               {% for row in triggered_partial_take_profit_checks %}
                 <span class="chip" title="{{ row.reason }}">{{ row.symbol }}</span>
               {% endfor %}
             </div>
           {% else %}
-            <div class="chips"><span class="chip">本轮无触发分批止盈symbol</span></div>
+            <div class="chips" id="partial-take-profit-triggered-chips"><span class="chip">本轮无触发分批止盈symbol</span></div>
           {% endif %}
         </div>
         <div class="table-wrap">
@@ -1742,7 +1744,7 @@
                 <th>reason</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="partial-take-profit-checks-body">
               {% for row in partial_take_profit_checks %}
               <tr>
                 <td>{{ row.checked_at|fmt_ms_datetime }}</td>
@@ -1793,7 +1795,7 @@
                 <th>reason</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="partial-take-profit-records-body">
               {% for row in partial_take_profit_records %}
               <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
                 <td>{{ row.checked_at|fmt_ms_datetime }}</td>
@@ -3036,6 +3038,96 @@
           if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
           renderBreakEvenSummary(payload);
           if (statusEl) statusEl.textContent = `刷新完成：扫描结果 ${payload.checks?.length || 0} 条，止损单记录 ${payload.records?.length || 0} 条。`;
+        } catch (error) {
+          if (statusEl) statusEl.textContent = `刷新失败：${error.message}`;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '刷新';
+        }
+      });
+    })();
+
+
+    const PARTIAL_TAKE_PROFIT_RULE_NOTE = 'R = 实验组USDT净值 × 1%。每分钟扫描当前持仓；常态下未变现盈亏 ≥ 2R 卖出30%，市场弱势时动态调整为 ≥ 1.4R 卖出50%。';
+
+    function partialTakeProfitTriggeredCell(row) {
+      if (row.reason === 'partial_take_profit_already_completed') {
+        return '<span class="status-badge status-pass">已完成分批止盈</span>';
+      }
+      return statusBadge(row.triggered);
+    }
+
+    function renderPartialTakeProfitChecks(rows) {
+      const rowsEl = document.getElementById('partial-take-profit-checks-body');
+      if (!rowsEl) return;
+      if (!rows.length) {
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="9">暂无分批止盈扫描结果</td></tr>';
+        return;
+      }
+      rowsEl.innerHTML = rows.map(row => `
+        <tr>
+          <td>${formatMsDatetime(row.checked_at)}</td>
+          <td>${escapeHtml(row.symbol)}</td>
+          <td>${escapeHtml(row.account_equity_usdt)}</td>
+          <td>${escapeHtml(row.r_usdt)} / ${escapeHtml(row.trigger_r_usdt)}</td>
+          <td>${escapeHtml(row.unrealized_pnl)}</td>
+          <td>${escapeHtml(row.entry_price)}</td>
+          <td>${escapeHtml(row.position_amt)}</td>
+          <td>${partialTakeProfitTriggeredCell(row)}</td>
+          <td>${escapeHtml(row.reason)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderPartialTakeProfitRecords(rows) {
+      const rowsEl = document.getElementById('partial-take-profit-records-body');
+      if (!rowsEl) return;
+      if (!rows.length) {
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="10">暂无分批止盈卖出记录</td></tr>';
+        return;
+      }
+      rowsEl.innerHTML = rows.map((row, index) => `
+        <tr class="${index >= 10 ? 'collapsed-extra' : ''}">
+          <td>${formatMsDatetime(row.checked_at)}</td>
+          <td>${escapeHtml(row.symbol)}</td>
+          <td>${escapeHtml(row.side)}</td>
+          <td>${escapeHtml(row.position_amt)}</td>
+          <td>${escapeHtml(row.take_profit_quantity)}</td>
+          <td>${escapeHtml(row.entry_price)}</td>
+          <td>${escapeHtml(row.r_usdt)} / ${escapeHtml(row.trigger_r_usdt)} / ${escapeHtml(row.unrealized_pnl)}</td>
+          <td>${escapeHtml(row.take_profit_order_id || '-')} / ${escapeHtml(row.trigger_label || '-')}</td>
+          <td><span class="status-badge ${row.status === 'submitted' ? 'status-pass' : 'status-fail'}">${escapeHtml(row.status)}</span></td>
+          <td>${escapeHtml(row.reason)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderPartialTakeProfitSummary(payload) {
+      const roundNoteEl = document.getElementById('partial-take-profit-round-note');
+      if (roundNoteEl) roundNoteEl.textContent = payload.round_ts ? `最近判断轮次：${formatMsDatetime(payload.round_ts)}。${PARTIAL_TAKE_PROFIT_RULE_NOTE}` : '暂无分批止盈扫描结果。';
+      const chipsEl = document.getElementById('partial-take-profit-triggered-chips');
+      if (chipsEl) {
+        const triggeredRows = (payload.checks || []).filter(row => row.triggered);
+        chipsEl.innerHTML = triggeredRows.length ? triggeredRows.map(row => `<span class="chip" title="${escapeHtml(row.reason)}">${escapeHtml(row.symbol)}</span>`).join('') : '<span class="chip">本轮无触发分批止盈symbol</span>';
+      }
+      renderPartialTakeProfitChecks(payload.checks || []);
+      renderPartialTakeProfitRecords(payload.records || []);
+    }
+
+    (function initPartialTakeProfitRefresh() {
+      const btn = document.getElementById('refresh-partial-take-profit');
+      const statusEl = document.getElementById('partial-take-profit-refresh-status');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.textContent = '刷新中...';
+        if (statusEl) statusEl.textContent = '正在获取分批止盈最新扫描结果与卖出记录...';
+        try {
+          const response = await fetch('/api/partial-take-profit/summary', { headers: { 'Accept': 'application/json' } });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          renderPartialTakeProfitSummary(payload);
+          if (statusEl) statusEl.textContent = `刷新完成：扫描结果 ${payload.checks?.length || 0} 条，卖出记录 ${payload.records?.length || 0} 条。`;
         } catch (error) {
           if (statusEl) statusEl.textContent = `刷新失败：${error.message}`;
         } finally {

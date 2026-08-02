@@ -526,7 +526,7 @@ def run_scoring_round_worker(
 
 
 def start_break_even_take_profit_task() -> None:
-    """Run break-even protection and partial take-profit every 5 minutes."""
+    """Run break-even protection every 5 minutes and partial take-profit every minute."""
     strategy = BreakEvenTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH)
     partial_strategy = PartialTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH)
     dynamic_profit_protection = DynamicProfitProtection(db_path=db_config.TRADING_DB_PATH)
@@ -556,30 +556,6 @@ def start_break_even_take_profit_task() -> None:
                 print(f"⚠️ exit-order reconcile failed: {exc}")
 
             try:
-                scan_ms = int(time.time() * 1000)
-                market_round_ts = WeakMarketProfitAdjustmentModule.decision_round_ts(scan_ms)
-                # The first five-minute scan observed in every quarter-hour must
-                # not overtake the adjustment, even when this worker started late.
-                if weak_market_adjustment.latest_result_for_round(market_round_ts) is None:
-                    while True:
-                        converged, convergence_reason = weak_market_adjustment.is_data_converged_for_round(market_round_ts)
-                        if converged:
-                            adjustment = weak_market_adjustment.run_round(market_round_ts)
-                            print(f"📉 weak-market profit adjustment round={market_round_ts} weak={adjustment.weak_market} trigger={adjustment.trigger_r_multiple}R fraction={adjustment.take_profit_fraction}")
-                            break
-                        print(f"⏳ weak-market profit adjustment round={market_round_ts} waiting: {convergence_reason}")
-                        time.sleep(2)
-                partial_result = partial_strategy.run_round(decision_round_ts=scan_ms)
-                print(
-                    f"🟢 partial take-profit checked={partial_result.get('checked', 0)} "
-                    f"triggered={partial_result.get('triggered', 0)} "
-                    f"records={partial_result.get('records', 0)} 2R={partial_result.get('trigger_r_usdt', '')}"
-                )
-            except Exception as exc:
-                recover_after_worker_error(exc)
-                print(f"⚠️ partial take-profit failed: {exc}")
-
-            try:
                 result = strategy.run_round()
                 print(
                     f"🟢 break-even take-profit checked={result.get('checked', 0)} "
@@ -594,6 +570,30 @@ def start_break_even_take_profit_task() -> None:
             with db_config.sqlite_connection_scope(
                 db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
             ):
+                try:
+                    scan_ms = int(time.time() * 1000)
+                    market_round_ts = WeakMarketProfitAdjustmentModule.decision_round_ts(scan_ms)
+                    # The first minute-level scan observed in every quarter-hour must
+                    # not overtake the adjustment, even when this worker started late.
+                    if weak_market_adjustment.latest_result_for_round(market_round_ts) is None:
+                        while True:
+                            converged, convergence_reason = weak_market_adjustment.is_data_converged_for_round(market_round_ts)
+                            if converged:
+                                adjustment = weak_market_adjustment.run_round(market_round_ts)
+                                print(f"📉 weak-market profit adjustment round={market_round_ts} weak={adjustment.weak_market} trigger={adjustment.trigger_r_multiple}R fraction={adjustment.take_profit_fraction}")
+                                break
+                            print(f"⏳ weak-market profit adjustment round={market_round_ts} waiting: {convergence_reason}")
+                            time.sleep(2)
+                    partial_result = partial_strategy.run_round(decision_round_ts=scan_ms)
+                    print(
+                        f"🟢 partial take-profit checked={partial_result.get('checked', 0)} "
+                        f"triggered={partial_result.get('triggered', 0)} "
+                        f"records={partial_result.get('records', 0)} 2R={partial_result.get('trigger_r_usdt', '')}"
+                    )
+                except Exception as exc:
+                    recover_after_worker_error(exc)
+                    print(f"⚠️ partial take-profit failed: {exc}")
+
                 try:
                     dynamic_result = dynamic_profit_protection.run_round()
                     print(
