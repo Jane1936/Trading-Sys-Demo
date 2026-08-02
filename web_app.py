@@ -729,6 +729,25 @@ def break_even_summary_api():
         return jsonify({"error": str(exc)}), 502
 
 
+def _partial_take_profit_payload() -> dict:
+    strategy = PartialTakeProfitStrategy(db_path=_trading_db_path())
+    round_ts, checks = strategy.get_latest_round_checks()
+    records = strategy.recent_records(limit=100)
+    return {
+        "round_ts": round_ts,
+        "checks": [asdict(row) for row in checks],
+        "records": [asdict(row) for row in records],
+    }
+
+
+@app.get("/api/partial-take-profit/summary")
+def partial_take_profit_summary_api():
+    try:
+        return jsonify(_partial_take_profit_payload())
+    except sqlite3.Error as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
 def _trailing_reduction_payload() -> dict:
     return TrailingReductionTracker(db_path=_trading_db_path()).summary_payload()
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 import os
 import sqlite3
+import threading
 import db_config
 import time
 from dataclasses import dataclass
@@ -22,6 +23,16 @@ from binance_account_manager import BinanceAccountManager
 from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
 from trading_experiment import ExperimentConfig, TradingExperiment
 from weak_market_profit_adjustment import WeakMarketProfitAdjustmentModule
+
+_initialized_table_paths: dict[str, int | None] = {}
+_initialized_table_paths_lock = threading.Lock()
+
+
+def _database_inode(db_path: str) -> int | None:
+    try:
+        return os.stat(db_path).st_ino
+    except FileNotFoundError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -86,68 +97,74 @@ class PartialTakeProfitStrategy:
         return conn
 
     def init_tables(self) -> None:
-        db_dir = os.path.dirname(self.db_path)
-        if db_dir:
-            os.makedirs(db_dir, exist_ok=True)
-        TradeActionLockManager(self.db_path).init_table()
-        with self._connect() as conn:
-            conn.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.CHECKS_TABLE} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    symbol TEXT NOT NULL,
-                    checked_at INTEGER NOT NULL,
-                    account_equity_usdt TEXT NOT NULL,
-                    r_usdt TEXT NOT NULL,
-                    trigger_r_usdt TEXT NOT NULL,
-                    unrealized_pnl TEXT NOT NULL,
-                    entry_price TEXT NOT NULL,
-                    position_amt TEXT NOT NULL,
-                    triggered INTEGER NOT NULL,
-                    reason TEXT NOT NULL
+        normalized_path = os.path.abspath(self.db_path)
+        with _initialized_table_paths_lock:
+            db_inode = _database_inode(self.db_path)
+            if db_inode is not None and _initialized_table_paths.get(normalized_path) == db_inode:
+                return
+            db_dir = os.path.dirname(self.db_path)
+            if db_dir:
+                os.makedirs(db_dir, exist_ok=True)
+            TradeActionLockManager(self.db_path).init_table()
+            with self._connect() as conn:
+                conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self.CHECKS_TABLE} (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        symbol TEXT NOT NULL,
+                        checked_at INTEGER NOT NULL,
+                        account_equity_usdt TEXT NOT NULL,
+                        r_usdt TEXT NOT NULL,
+                        trigger_r_usdt TEXT NOT NULL,
+                        unrealized_pnl TEXT NOT NULL,
+                        entry_price TEXT NOT NULL,
+                        position_amt TEXT NOT NULL,
+                        triggered INTEGER NOT NULL,
+                        reason TEXT NOT NULL
+                    )
+                    """
                 )
-                """
-            )
-            conn.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.RECORDS_TABLE} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    symbol TEXT NOT NULL,
-                    checked_at INTEGER NOT NULL,
-                    side TEXT NOT NULL,
-                    position_amt TEXT NOT NULL,
-                    take_profit_quantity TEXT NOT NULL,
-                    entry_price TEXT NOT NULL,
-                    account_equity_usdt TEXT NOT NULL,
-                    r_usdt TEXT NOT NULL,
-                    trigger_r_usdt TEXT NOT NULL,
-                    unrealized_pnl TEXT NOT NULL,
-                    take_profit_order_id TEXT NOT NULL DEFAULT '',
-                    trigger_label TEXT NOT NULL DEFAULT '',
-                    status TEXT NOT NULL,
-                    reason TEXT NOT NULL,
-                    raw_response TEXT NOT NULL DEFAULT ''
+                conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self.RECORDS_TABLE} (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        symbol TEXT NOT NULL,
+                        checked_at INTEGER NOT NULL,
+                        side TEXT NOT NULL,
+                        position_amt TEXT NOT NULL,
+                        take_profit_quantity TEXT NOT NULL,
+                        entry_price TEXT NOT NULL,
+                        account_equity_usdt TEXT NOT NULL,
+                        r_usdt TEXT NOT NULL,
+                        trigger_r_usdt TEXT NOT NULL,
+                        unrealized_pnl TEXT NOT NULL,
+                        take_profit_order_id TEXT NOT NULL DEFAULT '',
+                        trigger_label TEXT NOT NULL DEFAULT '',
+                        status TEXT NOT NULL,
+                        reason TEXT NOT NULL,
+                        raw_response TEXT NOT NULL DEFAULT ''
+                    )
+                    """
                 )
-                """
-            )
-            columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.RECORDS_TABLE})").fetchall()}
-            if "trigger_label" not in columns:
-                conn.execute(f"ALTER TABLE {self.RECORDS_TABLE} ADD COLUMN trigger_label TEXT NOT NULL DEFAULT ''")
-            # Label records created before this column existed from their persisted R values.
-            conn.execute(
-                f"""
-                UPDATE {self.RECORDS_TABLE}
-                SET trigger_label = CASE
-                    WHEN ABS(CAST(trigger_r_usdt AS REAL) - 1.4 * CAST(r_usdt AS REAL)) < 0.000001
-                        THEN ?
-                    ELSE ?
-                END
-                WHERE trigger_label = ''
-                """,
-                (self.TRIGGER_LABEL_1_4R, self.TRIGGER_LABEL_2R),
-            )
-            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
-            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_checked ON {self.RECORDS_TABLE}(checked_at DESC, symbol ASC)")
+                columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.RECORDS_TABLE})").fetchall()}
+                if "trigger_label" not in columns:
+                    conn.execute(f"ALTER TABLE {self.RECORDS_TABLE} ADD COLUMN trigger_label TEXT NOT NULL DEFAULT ''")
+                # Label records created before this column existed from their persisted R values.
+                conn.execute(
+                    f"""
+                    UPDATE {self.RECORDS_TABLE}
+                    SET trigger_label = CASE
+                        WHEN ABS(CAST(trigger_r_usdt AS REAL) - 1.4 * CAST(r_usdt AS REAL)) < 0.000001
+                            THEN ?
+                        ELSE ?
+                    END
+                    WHERE trigger_label = ''
+                    """,
+                    (self.TRIGGER_LABEL_1_4R, self.TRIGGER_LABEL_2R),
+                )
+                conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
+                conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_checked ON {self.RECORDS_TABLE}(checked_at DESC, symbol ASC)")
+            _initialized_table_paths[normalized_path] = _database_inode(self.db_path)
 
     def run_round(self, decision_round_ts: int | None = None) -> dict[str, Any]:
         self.account_manager.validate_config()
