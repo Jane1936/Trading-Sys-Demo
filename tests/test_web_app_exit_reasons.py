@@ -343,3 +343,72 @@ def test_filled_order_annotation_adds_open_score_from_latest_trade_record(tmp_pa
     assert annotated["orders"][0]["open_total_score"] == 90
     assert annotated["orders"][0]["open_score_band"] == "确定性强趋势单"
     assert annotated["orders"][0]["open_score_matched_at"] == "1100"
+
+
+def test_filled_order_annotation_reads_migrated_records_from_trading_core_db(
+    tmp_path, monkeypatch
+):
+    trading_db = tmp_path / "trading.db"
+    core_db = tmp_path / "trading_core.db"
+    monkeypatch.setattr(web_app, "DB_PATH", web_app.BASE_DB_PATH)
+    monkeypatch.setattr(web_app, "TRADING_DB_PATH", str(trading_db))
+    monkeypatch.setattr(web_app.db_config, "TRADING_DB_PATH", str(trading_db))
+    monkeypatch.setattr(web_app.db_config, "TRADING_CORE_DB_PATH", str(core_db))
+
+    with sqlite3.connect(trading_db) as conn:
+        conn.execute("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)")
+    with sqlite3.connect(core_db) as conn:
+        conn.execute(
+            f"""
+            CREATE TABLE {ZombieForceLiquidationModule.RECORDS_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                checked_at INTEGER NOT NULL,
+                side TEXT NOT NULL,
+                quantity TEXT NOT NULL,
+                status TEXT NOT NULL,
+                order_id TEXT NOT NULL DEFAULT '',
+                raw_response TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            f"""
+            CREATE TABLE {web_app.TradingExperiment.TRADES_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                status TEXT NOT NULL,
+                total_score INTEGER,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            f"INSERT INTO {ZombieForceLiquidationModule.RECORDS_TABLE} "
+            "(symbol, checked_at, side, quantity, status, order_id, raw_response) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("BANK", 1000, "SELL", "2", "submitted", "9001", "{}"),
+        )
+        conn.execute(
+            f"INSERT INTO {web_app.TradingExperiment.TRADES_TABLE} "
+            "(symbol, status, total_score, created_at) VALUES (?, ?, ?, ?)",
+            ("BANK", "opened", 90, 900),
+        )
+
+    payload = {
+        "orders": [
+            {
+                "symbol": "BANKUSDT",
+                "order_id": "9001",
+                "side": "SELL",
+                "time": 1000,
+                "quantity": "2",
+                "realized_pnl": "-1",
+            }
+        ]
+    }
+
+    annotated = web_app._annotate_filled_order_exit_reasons(payload)
+
+    assert annotated["orders"][0]["exit_reason"] == "僵尸强平"
+    assert annotated["orders"][0]["open_total_score"] == 90
