@@ -7,13 +7,15 @@ Run:
 from __future__ import annotations
 
 import ast
+from io import BytesIO
 import os
 import sqlite3
+from zipfile import ZIP_DEFLATED, ZipFile
 from dataclasses import asdict
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
 import requests
 
 from binance_account_manager import BinanceAccountConfigError, BinanceAccountManager
@@ -708,6 +710,99 @@ def account_filled_sell_orders_api():
         return jsonify({"error": f"Binance filled sell orders request failed: {exc}"}), 502
     except RuntimeError as exc:
         return jsonify({"error": str(exc)}), 502
+
+
+FILLED_ORDER_EXPORT_COLUMNS = (
+    ("成交时间", "time"),
+    ("symbol", "symbol"),
+    ("开仓评分档位", "open_score_band"),
+    ("开仓总分", "open_total_score"),
+    ("止盈/止损原因", "exit_reason"),
+    ("方向", "side"),
+    ("order_id", "order_id"),
+    ("成交价格", "price"),
+    ("成交数量", "quantity"),
+    ("成交额", "quote_quantity"),
+    ("已实现盈亏", "realized_pnl"),
+    ("手续费", "commission"),
+    ("手续费资产", "commission_asset"),
+    ("maker", "maker"),
+    ("trade_id", "trade_id"),
+)
+
+
+def _filled_orders_excel(orders: list[dict]) -> BytesIO:
+    """Build an Excel workbook containing the filled orders visible in the UI."""
+    rows = [[label for label, _ in FILLED_ORDER_EXPORT_COLUMNS]]
+    for order in orders:
+        values = []
+        for _, key in FILLED_ORDER_EXPORT_COLUMNS:
+            value = order.get(key, "")
+            if key == "time":
+                try:
+                    value = datetime.fromtimestamp(int(value) / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                except (TypeError, ValueError, OSError):
+                    value = ""
+            elif key == "maker":
+                value = "是" if value else "否"
+            values.append(value if value is not None else "")
+        rows.append(values)
+
+    from xml.sax.saxutils import escape
+
+    xml_rows = []
+    for row_number, row in enumerate(rows, start=1):
+        cells = []
+        for column_number, value in enumerate(row, start=1):
+            column_name = chr(64 + column_number)
+            style = ' s="1"' if row_number == 1 else ""
+            safe_value = escape(str(value), {'"': "&quot;"})
+            cells.append(
+                f'<c r="{column_name}{row_number}" t="inlineStr"{style}><is><t>{safe_value}</t></is></c>'
+            )
+        xml_rows.append(f'<row r="{row_number}">{"".join(cells)}</row>')
+
+    last_row = len(rows)
+    worksheet = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+  <cols><col min="1" max="1" width="23" customWidth="1"/><col min="2" max="15" width="18" customWidth="1"/></cols>
+  <sheetData>{''.join(xml_rows)}</sheetData><autoFilter ref="A1:O{last_row}"/>
+</worksheet>'''
+
+    output = BytesIO()
+    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>''')
+        archive.writestr("_rels/.rels", '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>''')
+        archive.writestr("xl/workbook.xml", '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="已成交订单" sheetId="1" r:id="rId1"/></sheets></workbook>''')
+        archive.writestr("xl/_rels/workbook.xml.rels", '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>''')
+        archive.writestr("xl/styles.xml", '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font/><font><b/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="2"><xf xfId="0"/><xf xfId="0" fontId="1" applyFont="1"/></cellXfs></styleSheet>''')
+        archive.writestr("xl/worksheets/sheet1.xml", worksheet)
+    output.seek(0)
+    return output
+
+
+@app.post("/api/account/filled-orders/export")
+def account_filled_orders_export_api():
+    payload = request.get_json(silent=True)
+    orders = payload.get("orders") if isinstance(payload, dict) else None
+    if not isinstance(orders, list) or not orders:
+        return jsonify({"error": "没有可导出的已成交订单数据"}), 400
+    if len(orders) > 10000 or any(not isinstance(order, dict) for order in orders):
+        return jsonify({"error": "导出数据格式无效或超过 10000 条限制"}), 400
+
+    filename = f"filled_orders_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return send_file(
+        _filled_orders_excel(orders),
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 def _break_even_payload() -> dict:
