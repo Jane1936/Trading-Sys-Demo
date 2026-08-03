@@ -1402,6 +1402,28 @@
             </table>
           </div>
         </div>
+
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>重挂止损失败后强平记录</strong></div>
+              <div class="muted">展示近7天减仓完成后，因重挂止损会立即触发而改用市价单全部平仓的记录。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>created_at</th><th>symbol</th><th>轮次</th><th>side</th><th>强平数量</th><th>减仓订单ID</th><th>强平订单ID</th><th>status</th><th>触发错误</th><th>reason</th></tr></thead>
+              <tbody>
+                {% for row in holding_reduction_stop_failure_liquidations %}
+                <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                  <td>{{ row.created_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.decision_round_ts|fmt_ms_datetime }}</td><td>{{ row.side }}</td><td>{{ row.quantity }}</td><td>{{ row.reduction_market_order_id or '-' }}</td><td>{{ row.liquidation_market_order_id or '-' }}</td><td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td><td>{{ row.trigger_error }}</td><td>{{ row.reason }}</td>
+                </tr>
+                {% else %}<tr><td class="empty" colspan="10">近7天暂无重挂止损失败后强平记录</td></tr>{% endfor %}
+              </tbody>
+            </table>
+          </div>
         </div>
 
 
@@ -2135,7 +2157,7 @@
         </div>
         <div id="filled-sell-orders-error" class="account-error"></div>
         <div class="tip">数据来自 Binance USDⓈ-M Futures <code>userTrades</code> 成交明细；同一 symbol、同一 order_id、同一方向的多笔成交会合并为一行；成交价格为按成交额/成交数量计算的均价。开仓评分来自本地“交易实验交易记录”中同一 symbol 在成交时间前最近一次 opened 记录的 total_score，可按评分档位筛选并计算对应胜率。</div>
-        <div class="tip"><strong>止盈/止损原因显示规则：</strong>SELL 成交优先匹配本地策略记录；僵尸强平会优先使用 Binance order_id 匹配本地强平下单记录，无法使用 order_id 时再按 symbol、成交时间（±5分钟）和成交数量匹配。其他策略记录按 symbol、成交时间（±5分钟）和成交数量匹配，命中优先级依次为：僵尸强平（僵尸单强平操作记录）、结构止损（止损记录）、减仓（减仓操作记录）、移动追踪减仓（移动追踪减仓记录）、移动追踪止盈、分批止盈；若没有匹配到策略记录，则按已实现盈亏判断：realized_pnl &gt; 0 显示“硬止盈”，否则显示“硬止损”。BUY 成交会按相同匹配条件查询“加仓操作记录”，命中则显示“加仓”，未命中则不显示原因。</div>
+        <div class="tip"><strong>止盈/止损原因显示规则：</strong>SELL 成交优先匹配本地策略记录；强平记录会优先使用 Binance order_id 匹配本地下单记录，无法使用 order_id 时再按 symbol、成交时间（±5分钟）和成交数量匹配。其他策略记录按 symbol、成交时间（±5分钟）和成交数量匹配，命中优先级依次为：减仓失败强平（重挂止损失败后强平记录）、僵尸强平（僵尸单强平操作记录）、结构止损（止损记录）、减仓（减仓操作记录）、移动追踪减仓（移动追踪减仓记录）、移动追踪止盈、分批止盈；若没有匹配到策略记录，则按已实现盈亏判断：realized_pnl &gt; 0 显示“硬止盈”，否则显示“硬止损”。BUY 成交也会优先匹配减仓失败强平记录；否则查询“加仓操作记录”，命中则显示“加仓”，未命中则不显示原因。</div>
         <div id="filled-orders-summary" class="filled-orders-summary" aria-label="已完成订单统计">
           <div class="account-metric">
             <div class="account-metric-label">已完成订单数量</div>

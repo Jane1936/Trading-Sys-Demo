@@ -344,9 +344,9 @@ def _filled_order_exit_reason_matches(
     Local strategy tables store symbols without the USDT suffix, while Binance
     userTrades returns symbols like BTCUSDT.  The audit rows are written at order
     submission time, so a small time tolerance is used around the fill time.
-    Zombie force-liquidation records are matched before BUY fills are checked
-    against position increase records, and order-id matches are preferred when
-    the local raw exchange response contains the Binance order id.
+    Force-liquidation records are matched before BUY fills are checked against
+    position increase records.  Stored Binance order ids are preferred, with
+    symbol/time/quantity retained as the fallback for legacy or incomplete rows.
     """
     side = str(order.get("side", "")).upper()
     if side not in {"SELL", "BUY"}:
@@ -386,6 +386,34 @@ def _filled_order_exit_reason_matches(
             expected_order_id = str(order_id or "").strip()
             if (stored_order_id and stored_order_id == expected_order_id) or _raw_response_contains_order_id(row["raw_response"], order_id) or _decimal_text_equal(row["quantity"], quantity):
                 matches.append({"type": "僵尸强平", "matched_at": str(row["matched_at"] or "")})
+                break
+
+    if _table_exists(
+        conn,
+        HoldingPositionScoringSystem.REDUCTION_STOP_FAILURE_LIQUIDATIONS_TABLE,
+        schema=core_schema,
+    ):
+        liquidation_table = _qualified_table(
+            core_schema,
+            HoldingPositionScoringSystem.REDUCTION_STOP_FAILURE_LIQUIDATIONS_TABLE,
+        )
+        rows = conn.execute(
+            f"""
+            SELECT created_at AS matched_at, quantity, liquidation_market_order_id
+            FROM {liquidation_table}
+            WHERE symbol = ?
+              AND side = ?
+              AND status = 'submitted'
+              AND created_at BETWEEN ? AND ?
+            ORDER BY ABS(created_at - ?) ASC, id DESC
+            """,
+            (symbol, side, order_time - time_tolerance_ms, order_time + time_tolerance_ms, order_time),
+        ).fetchall()
+        expected_order_id = str(order.get("order_id", "") or "").strip()
+        for row in rows:
+            stored_order_id = str(row["liquidation_market_order_id"] or "").strip()
+            if (stored_order_id and stored_order_id == expected_order_id) or _decimal_text_equal(row["quantity"], quantity):
+                matches.append({"type": "减仓失败强平", "matched_at": str(row["matched_at"] or "")})
                 break
 
     if side == "BUY":
@@ -526,6 +554,8 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
     if side not in {"SELL", "BUY"}:
         return ""
 
+    if "减仓失败强平" in match_types:
+        return "减仓失败强平"
     if "僵尸强平" in match_types:
         return "僵尸强平"
     if "结构止损" in match_types:
@@ -1200,6 +1230,11 @@ def abnormal_wicks():
     holding_increase_pretrigger_rounds = load_module("持仓加仓预触发", holding_scoring.latest_pretrigger_increase_rounds, {})
     holding_stop_loss_records = load_module("持仓结构止损记录", lambda: holding_scoring.recent_stop_loss_records(limit=100), [])
     holding_reduction_records = load_module("持仓减仓记录", lambda: holding_scoring.recent_reduction_records(limit=100), [])
+    holding_reduction_stop_failure_liquidations = load_module(
+        "重挂止损失败后强平记录",
+        lambda: holding_scoring.recent_reduction_stop_failure_liquidations(limit=100, since_ms=trading_records_since_ms),
+        [],
+    )
     holding_increase_records = load_module("持仓加仓记录", lambda: holding_scoring.recent_increase_records(limit=100, since_ms=trading_records_since_ms), [])
     break_even_payload = load_module("保本止盈", _break_even_payload, {"round_ts": 0, "checks": [], "records": []})
     break_even_round_ts = break_even_payload["round_ts"]
@@ -1312,6 +1347,7 @@ def abnormal_wicks():
         holding_increase_pretrigger_rounds=holding_increase_pretrigger_rounds,
         holding_stop_loss_records=holding_stop_loss_records,
         holding_reduction_records=holding_reduction_records,
+        holding_reduction_stop_failure_liquidations=holding_reduction_stop_failure_liquidations,
         holding_increase_records=holding_increase_records,
         break_even_round_ts=break_even_round_ts,
         break_even_checks=break_even_checks,

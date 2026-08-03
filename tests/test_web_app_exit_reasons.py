@@ -52,6 +52,19 @@ def _create_exit_reason_tables(db_path):
         )
         conn.execute(
             f"""
+            CREATE TABLE {HoldingPositionScoringSystem.REDUCTION_STOP_FAILURE_LIQUIDATIONS_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                side TEXT NOT NULL,
+                quantity TEXT NOT NULL,
+                liquidation_market_order_id TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            f"""
             CREATE TABLE {TrailingStopTracker.CHECKS_TABLE} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL,
@@ -227,6 +240,53 @@ def test_filled_sell_order_exit_reason_uses_reduction_match(tmp_path, monkeypatc
     assert annotated["orders"][0]["exit_reason"] == "减仓"
     assert annotated["orders"][0]["exit_reason_matches"] == [{"type": "减仓", "matched_at": "1000"}]
     assert "reduction_percent" not in str(annotated["orders"][0])
+
+
+def test_reduction_failure_liquidation_takes_priority_over_reduction_match(tmp_path, monkeypatch):
+    db_path = tmp_path / "orders.db"
+    _create_exit_reason_tables(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"INSERT INTO {HoldingPositionScoringSystem.REDUCTION_RECORDS_TABLE} "
+            "(symbol, side, reduced_quantity, reason, created_at) VALUES (?, ?, ?, ?, ?)",
+            ("BANK", "SELL", "1", "normal reduction", 1000),
+        )
+        conn.execute(
+            f"INSERT INTO {HoldingPositionScoringSystem.REDUCTION_STOP_FAILURE_LIQUIDATIONS_TABLE} "
+            "(symbol, side, quantity, liquidation_market_order_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            ("BANK", "SELL", "1", "force-close-123", "submitted", 1000),
+        )
+    monkeypatch.setattr(web_app, "DB_PATH", str(db_path))
+    payload = {"orders": [{
+        "symbol": "BANKUSDT", "order_id": "force-close-123", "side": "SELL",
+        "time": 1000, "quantity": "1", "realized_pnl": "-2",
+    }]}
+
+    annotated = web_app._annotate_filled_order_exit_reasons(payload)
+
+    assert annotated["orders"][0]["exit_reason"] == "减仓失败强平"
+    assert {match["type"] for match in annotated["orders"][0]["exit_reason_matches"]} == {"减仓失败强平", "减仓"}
+
+
+def test_short_reduction_failure_liquidation_matches_buy_fill(tmp_path, monkeypatch):
+    db_path = tmp_path / "orders.db"
+    _create_exit_reason_tables(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"INSERT INTO {HoldingPositionScoringSystem.REDUCTION_STOP_FAILURE_LIQUIDATIONS_TABLE} "
+            "(symbol, side, quantity, liquidation_market_order_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            ("BANK", "BUY", "2", "short-close-456", "submitted", 1000),
+        )
+    monkeypatch.setattr(web_app, "DB_PATH", str(db_path))
+    payload = {"orders": [{
+        "symbol": "BANKUSDT", "order_id": "short-close-456", "side": "BUY",
+        "time": 1000, "quantity": "2", "realized_pnl": "-3",
+    }]}
+
+    annotated = web_app._annotate_filled_order_exit_reasons(payload)
+
+    assert annotated["orders"][0]["exit_reason"] == "减仓失败强平"
+    assert annotated["orders"][0]["exit_reason_matches"] == [{"type": "减仓失败强平", "matched_at": "1000"}]
 
 
 def test_filled_sell_order_exit_reason_uses_trailing_reduction_match(tmp_path, monkeypatch):
