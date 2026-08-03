@@ -12,3 +12,53 @@ def test_profit_task_runs_break_even_before_partial_take_profit_each_loop():
         "partial_result = partial_strategy.run_round"
     )
     assert "time.sleep(60)" in source
+
+
+def test_first_experiment_refreshes_holding_scoring_after_open(monkeypatch):
+    calls = []
+
+    class FakeMarketFilter:
+        def __init__(self, db_path):
+            pass
+
+        def run_round(self, decision_round_ts):
+            return type("Result", (), {
+                "allow_new_positions": True,
+                "allusdt_delta": "0",
+                "btc_delta": "0",
+                "reason": "ok",
+            })()
+
+    class FakeZombie:
+        def __init__(self, db_path):
+            pass
+
+        def run_round(self, checked_at):
+            return {"checked": 0, "triggered": 0, "records": 0}
+
+    class FakeExperiment:
+        def __init__(self, db_path):
+            pass
+
+        def run_round(self, rows):
+            calls.append(("open", len(rows)))
+            return {"opened": 2, "skipped": 0, "reason": "completed"}
+
+    class FakeHoldingScoring:
+        def __init__(self, db_path):
+            pass
+
+        def run_round(self, decision_round_ts):
+            calls.append(("holding", decision_round_ts))
+            return {"checked": 2, "risk_position_count": 2}
+
+    monkeypatch.setattr(app, "MarketFilterModule", FakeMarketFilter)
+    monkeypatch.setattr(app, "ZombieForceLiquidationModule", FakeZombie)
+    monkeypatch.setattr(app, "TradingExperiment", FakeExperiment)
+    monkeypatch.setattr(app, "HoldingPositionScoringSystem", FakeHoldingScoring)
+    monkeypatch.setattr(app.feature_flags, "is_feature_enabled", lambda name: True)
+    openable = type("Openable", (), {"qualified": True})()
+
+    app.run_first_experiment_after_openable_round([openable], 123_000)
+
+    assert calls == [("open", 1), ("holding", 123_000)]
