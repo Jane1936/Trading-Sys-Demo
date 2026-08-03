@@ -519,3 +519,28 @@ def test_break_even_strategy_creates_new_stop_loss_before_canceling_old_one():
     assert [call[0] for call in calls] == ["post", "delete"]
     assert calls[0][1] == "/fapi/v1/algoOrder"
     assert calls[1] == ("delete", "/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "123"})
+
+
+def test_break_even_strategy_records_failure_when_action_lock_lookup_raises(monkeypatch):
+    fake_account = FakeAccountManager()
+
+    def failed_lock(*args, **kwargs):
+        raise RuntimeError("lock database unavailable")
+
+    monkeypatch.setattr("break_even_take_profit.acquire_trade_action_lock", failed_lock)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "trading.db")
+        strategy = BreakEvenTakeProfitStrategy(
+            db_path=db_path, account_manager=fake_account
+        )
+        result = strategy.run_round()
+        records = strategy.recent_records()
+
+    assert result["triggered"] == 1
+    assert result["records"] == 1
+    assert len(records) == 1
+    assert records[0].status == "failed"
+    assert records[0].old_stop_loss_order_id == "123"
+    assert records[0].new_stop_loss_order_id == ""
+    assert "lock database unavailable" in records[0].reason
