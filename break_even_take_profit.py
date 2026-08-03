@@ -73,6 +73,7 @@ class BreakEvenTakeProfitStrategy:
         config: ExperimentConfig | None = None,
     ) -> None:
         self.db_path = db_path
+        self.core_db_path = db_config.trading_core_path(db_path)
         self.account_manager = account_manager or BinanceAccountManager()
         self.config = config or ExperimentConfig()
 
@@ -81,6 +82,10 @@ class BreakEvenTakeProfitStrategy:
         conn.row_factory = sqlite3.Row
         db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
         return conn
+
+    def _core_connect(self) -> sqlite3.Connection:
+        """Connect to the database that owns experiment trade lifecycle data."""
+        return db_config.connect_sqlite(self.core_db_path, row_factory=sqlite3.Row)
 
     def init_tables(self) -> None:
         db_dir = os.path.dirname(self.db_path)
@@ -368,7 +373,7 @@ class BreakEvenTakeProfitStrategy:
         return self._floor_to_step(entry_price, tick) if side == "SELL" else TradingExperiment._ceil_to_tick(entry_price, tick)
 
     def _latest_stop_loss_order_id(self, symbol: str) -> str:
-        with self._connect() as conn:
+        with self._core_connect() as conn:
             row = conn.execute(
                 f"""
                 SELECT stop_loss_order_id FROM {TradingExperiment.TRADES_TABLE}
