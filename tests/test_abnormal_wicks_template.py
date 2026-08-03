@@ -1,3 +1,4 @@
+from html.parser import HTMLParser
 import sqlite3
 import sys
 import tempfile
@@ -178,6 +179,41 @@ def test_reduction_stop_failure_liquidation_records_follow_reduction_records():
     assert liquidation_index > reduction_index
     assert "holding_reduction_stop_failure_liquidations" in template
     assert "近7天暂无重挂止损失败后强平记录" in template
+
+
+def test_strategy_subpanels_are_not_nested_inside_holding_module_panels():
+    class StrategyPanelNestingParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack = []
+            self.nested_panels = []
+
+        def handle_starttag(self, tag, attrs):
+            attributes = dict(attrs)
+            classes = set(attributes.get("class", "").split())
+            if "strategy-subpanel" in classes:
+                holding_parent = next(
+                    (
+                        item_id
+                        for item_tag, item_id, item_classes in reversed(self.stack)
+                        if item_tag == "div" and "holding-module-panel" in item_classes
+                    ),
+                    None,
+                )
+                if holding_parent:
+                    self.nested_panels.append((attributes.get("id"), holding_parent))
+            self.stack.append((tag, attributes.get("id"), classes))
+
+        def handle_endtag(self, tag):
+            for index in range(len(self.stack) - 1, -1, -1):
+                if self.stack[index][0] == tag:
+                    del self.stack[index:]
+                    return
+
+    parser = StrategyPanelNestingParser()
+    parser.feed(Path("templates/abnormal_wicks.html").read_text(encoding="utf-8"))
+
+    assert parser.nested_panels == []
 
 
 def _insert_abnormal_wick_event(conn, symbol, detected_at):
