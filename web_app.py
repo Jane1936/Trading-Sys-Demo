@@ -942,7 +942,9 @@ def _btc_5m_payload(page: int = 1) -> dict:
     page = max(1, page)
     page_size = 24
     since_ms = int((datetime.now(timezone.utc) - timedelta(days=3)).timestamp() * 1000)
-    with db_config.connect_sqlite(_trading_db_path()) as conn:
+    # BTC candles are collector-owned base data.  They were previously read via
+    # the trading DB route, which still pointed at the pre-split database.
+    with db_config.connect_sqlite(_base_db_path()) as conn:
         total_rows = conn.execute(
             f"""
             SELECT COUNT(1)

@@ -165,15 +165,44 @@ class BreakEvenTakeProfitStrategy:
             return False
 
         self._insert_check(symbol, now, equity, r_value, unrealized_pnl, entry_price, amount, True, "unrealized_pnl_ge_r")
-        self._move_stop_loss_to_break_even(
-            position,
-            equity,
-            r_value,
-            unrealized_pnl,
-            now,
-            current_stop_losses=current_stop_losses,
-            stop_loss_price=target_stop_price,
-        )
+        try:
+            self._move_stop_loss_to_break_even(
+                position,
+                equity,
+                r_value,
+                unrealized_pnl,
+                now,
+                current_stop_losses=current_stop_losses,
+                stop_loss_price=target_stop_price,
+            )
+        except Exception as exc:
+            # The scan check is deliberately persisted before order handling.
+            # Failures that occur while looking up the old DB order or acquiring
+            # the action lock used to escape before _move_stop_loss_to_break_even
+            # could write its action record.  That left the dashboard showing a
+            # trigger with no corresponding success/failure record.
+            current_order_ids = [
+                self._stop_loss_order_id(order)
+                for order in current_stop_losses
+                if self._stop_loss_order_id(order)
+            ]
+            self._insert_record(
+                symbol,
+                now,
+                "SELL" if amount > 0 else "BUY",
+                amount,
+                entry_price,
+                equity,
+                r_value,
+                unrealized_pnl,
+                ",".join(current_order_ids),
+                "",
+                target_stop_price,
+                "failed",
+                "break_even_stop_loss_action_failed: "
+                f"{type(exc).__name__}: {exc}",
+                "",
+            )
         return True
 
     def _move_stop_loss_to_break_even(
