@@ -1,4 +1,5 @@
 import tempfile
+import sqlite3
 from decimal import Decimal
 from pathlib import Path
 
@@ -7,8 +8,9 @@ from trading_experiment import TradingExperiment
 
 
 class FakeAccountManager:
-    def __init__(self, unrealized_profit="25"):
+    def __init__(self, unrealized_profit="25", open_stop_price=None):
         self.unrealized_profit = unrealized_profit
+        self.open_stop_price = open_stop_price
         self.signed_deletes = []
         self.signed_posts = []
 
@@ -16,6 +18,15 @@ class FakeAccountManager:
         return None
 
     def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v1/openAlgoOrders":
+            if self.open_stop_price is None:
+                return []
+            return [{
+                "symbol": "BANKUSDT", "side": "SELL", "type": "STOP_MARKET",
+                "status": "NEW", "triggerPrice": self.open_stop_price, "algoId": 111,
+            }]
+        if endpoint == "/fapi/v1/openOrders":
+            return []
         if endpoint == "/fapi/v3/balance":
             return [{"asset": "USDT", "balance": "5100"}]
         if endpoint == "/fapi/v3/positionRisk":
@@ -175,3 +186,53 @@ def test_partial_take_profit_persists_1_4r_trigger_label():
         records = strategy.recent_records()
 
     assert records[0].trigger_label == "已触发1.4R分批止盈"
+
+
+def test_partial_take_profit_preserves_live_break_even_stop_price():
+    fake_account = FakeAccountManager(open_stop_price="10")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        _insert_open_trade(db_path)
+        strategy = PartialTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+
+        strategy.run_round()
+        record = strategy.recent_records()[0]
+
+    stop_order = next(params for endpoint, params in fake_account.signed_posts if params.get("type") == "STOP")
+    assert stop_order["triggerPrice"] == "10"
+    assert record.status == "submitted"
+    assert "remaining_stop_loss_price_from_live_order" in record.reason
+
+
+def test_partial_take_profit_uses_live_stop_when_trade_price_is_missing():
+    fake_account = FakeAccountManager(open_stop_price="10")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        _insert_open_trade(db_path)
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(f"UPDATE {TradingExperiment.TRADES_TABLE} SET stop_loss_price = '0'")
+        strategy = PartialTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+
+        strategy.run_round()
+        record = strategy.recent_records()[0]
+
+    assert record.status == "submitted"
+    assert record.take_profit_quantity == "3"
+
+
+def test_partial_take_profit_does_not_cancel_orders_when_no_stop_price_exists():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        _insert_open_trade(db_path)
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(f"UPDATE {TradingExperiment.TRADES_TABLE} SET stop_loss_price = '0'")
+        strategy = PartialTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+
+        strategy.run_round()
+        record = strategy.recent_records()[0]
+
+    assert record.status == "failed"
+    assert "remaining_stop_loss_not_recreated_missing_price" in record.reason
+    assert fake_account.signed_deletes == []
+    assert fake_account.signed_posts == []
