@@ -241,13 +241,23 @@ class PartialTakeProfitStrategy:
             if remaining_quantity <= 0:
                 raise RuntimeError("remaining_position_quantity_rounded_to_zero")
             raw_parts: list[str] = []
+            # The break-even worker runs immediately before this strategy and can
+            # move the live stop without changing the original trade row.  Read
+            # the exchange order before cancelling exits so we preserve that
+            # newer (and usually safer) price.  The DB value remains a fallback
+            # for deployments where the exchange order lookup is unavailable.
+            stop_loss_price, stop_loss_price_reason = self._remaining_stop_loss_price(
+                exchange_symbol, symbol, side
+            )
+            if stop_loss_price <= 0:
+                raise RuntimeError("remaining_stop_loss_not_recreated_missing_price")
             cancel_reason = self._cancel_existing_exit_orders(exchange_symbol, raw_parts)
             stop_loss_order_id, stop_loss_reason = self._replace_remaining_stop_loss(
                 helper,
                 exchange_symbol,
-                symbol,
                 side,
                 remaining_quantity,
+                stop_loss_price,
                 raw_parts,
             )
             take_profit_order_id, take_profit_reason = self._replace_remaining_hard_take_profit(
@@ -275,7 +285,7 @@ class PartialTakeProfitStrategy:
             raw_response = " | ".join(raw_parts)
             order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
             self._update_latest_open_trade_exit_orders(symbol, take_profit_order_id, stop_loss_order_id)
-            reason = f"{reason}; {cancel_reason}; {stop_loss_reason}; {take_profit_reason}"
+            reason = f"{reason}; {stop_loss_price_reason}; {cancel_reason}; {stop_loss_reason}; {take_profit_reason}"
         except Exception as exc:
             status = "failed"
             quantity = Decimal("0")
@@ -297,14 +307,11 @@ class PartialTakeProfitStrategy:
         self,
         helper: TradingExperiment,
         exchange_symbol: str,
-        symbol: str,
         side: str,
         quantity: Decimal,
+        stop_loss_price: Decimal,
         raw_parts: list[str],
     ) -> tuple[str, str]:
-        stop_loss_price = self._latest_open_stop_loss_price(symbol)
-        if stop_loss_price <= 0:
-            raise RuntimeError("remaining_stop_loss_not_recreated_missing_price")
         endpoint, params = TradingExperiment._exit_order_request(
             {
                 "symbol": exchange_symbol,
@@ -322,6 +329,43 @@ class PartialTakeProfitStrategy:
         raw_parts.append(str({"remaining_stop_loss": response}))
         order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
         return order_id, f"remaining_stop_loss_recreated; quantity={self._fmt_decimal(quantity)}; order_id={order_id}"
+
+    def _remaining_stop_loss_price(self, exchange_symbol: str, symbol: str, side: str) -> tuple[Decimal, str]:
+        """Prefer the current exchange stop, falling back to the persisted trade price."""
+        live_prices: list[Decimal] = []
+        for endpoint in ("/fapi/v1/openAlgoOrders", "/fapi/v1/openOrders"):
+            try:
+                rows = self.account_manager._signed_get(endpoint, {"symbol": exchange_symbol})
+            except Exception:
+                continue
+            if not isinstance(rows, list):
+                continue
+            for order in rows:
+                if not isinstance(order, dict):
+                    continue
+                order_type = str(order.get("type") or order.get("orderType") or "").upper()
+                status = str(order.get("status", "NEW")).upper()
+                if (
+                    str(order.get("symbol", "")).upper() != exchange_symbol
+                    or str(order.get("side", "")).upper() != side
+                    or order_type not in {"STOP", "STOP_MARKET"}
+                    or status not in {"NEW", "PENDING", "PARTIALLY_FILLED"}
+                ):
+                    continue
+                for key in ("triggerPrice", "stopPrice", "price"):
+                    price = self._decimal_from(order.get(key), Decimal("0"))
+                    if price > 0:
+                        live_prices.append(price)
+                        break
+        if live_prices:
+            # For a long position the highest sell stop is most protective; for
+            # a short position the lowest buy stop is most protective.
+            price = max(live_prices) if side == "SELL" else min(live_prices)
+            return price, "remaining_stop_loss_price_from_live_order"
+        price = self._latest_open_stop_loss_price(symbol)
+        if price > 0:
+            return price, "remaining_stop_loss_price_from_trade_record"
+        return Decimal("0"), "remaining_stop_loss_price_missing"
 
     def _replace_remaining_hard_take_profit(
         self,
