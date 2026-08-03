@@ -244,6 +244,30 @@ def run_first_experiment_after_openable_round(
             f"skipped={experiment_result.get('skipped', 0)} "
             f"reason={experiment_result.get('reason', '')}"
         )
+        # The regular holding round runs before the openable-symbol and trading
+        # stages.  When an account starts a decision round with no positions
+        # (notably just after a Binance account reset), that first pass quite
+        # correctly persists zero portfolio positions; positions opened below
+        # would otherwise remain absent from the holding checks and portfolio
+        # risk UI until the next 15-minute round.  Re-run the idempotent holding
+        # pipeline after a successful open so the current round immediately
+        # reflects and protects the newly created positions.
+        if int(experiment_result.get("opened", 0) or 0) > 0:
+            try:
+                holding_result = HoldingPositionScoringSystem(
+                    db_path=db_config.TRADING_DB_PATH
+                ).run_round(decision_round_ts=round_ts)
+                print(
+                    f"📊 holding scoring refreshed after open round={round_ts} "
+                    f"checked={holding_result.get('checked', 0)} "
+                    f"risk_positions={holding_result.get('risk_position_count', 0)}"
+                )
+            except Exception as exc:
+                recover_after_worker_error(exc)
+                print(
+                    f"⚠️ holding scoring refresh failed after open "
+                    f"round={round_ts}: {exc}"
+                )
     except Exception as exc:
         recover_after_worker_error(exc)
         print(
