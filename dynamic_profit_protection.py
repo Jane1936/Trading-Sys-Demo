@@ -54,6 +54,7 @@ class DynamicProfitProtection:
 
     def __init__(self, db_path: str = db_config.TRADING_DB_PATH, account_manager: BinanceAccountManager | None = None, config: ExperimentConfig | None = None) -> None:
         self.db_path = db_path
+        self.core_db_path = db_config.trading_core_path(db_path)
         self.account_manager = account_manager or BinanceAccountManager()
         self.config = config or ExperimentConfig()
 
@@ -61,6 +62,10 @@ class DynamicProfitProtection:
         conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
         db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
         return conn
+
+    def _core_connect(self) -> sqlite3.Connection:
+        """Connect to the database that owns experiment trade lifecycle data."""
+        return db_config.connect_sqlite(self.core_db_path, row_factory=sqlite3.Row)
 
     def init_tables(self) -> None:
         db_dir = os.path.dirname(self.db_path)
@@ -225,7 +230,7 @@ class DynamicProfitProtection:
 
     def _latest_open_trade(self, symbol: str) -> tuple[int, int]:
         try:
-            with self._connect() as conn:
+            with self._core_connect() as conn:
                 row = conn.execute(f"SELECT id, created_at FROM {TradingExperiment.TRADES_TABLE} WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1", (symbol,)).fetchone()
         except sqlite3.OperationalError:
             row = None

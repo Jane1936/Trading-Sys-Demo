@@ -2,6 +2,7 @@ import sqlite3
 
 import db_config
 from break_even_take_profit import BreakEvenTakeProfitStrategy
+from dynamic_profit_protection import DynamicProfitProtection
 from holding_position_scoring import HoldingPositionScoringSystem
 from trading_experiment import TradingExperiment
 from zombie_force_liquidation import ZombieForceLiquidationModule
@@ -83,6 +84,35 @@ def test_break_even_reads_latest_stop_loss_from_trading_core_db(monkeypatch, tmp
     strategy = BreakEvenTakeProfitStrategy(db_path=trading_db)
 
     assert strategy._latest_stop_loss_order_id("BANK") == "core-stop-123"
+
+
+def test_dynamic_profit_protection_reads_open_trade_from_trading_core_db(monkeypatch, tmp_path):
+    trading_db = str(tmp_path / "trading.db")
+    core_db = str(tmp_path / "trading_core.db")
+    monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
+    monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", core_db)
+
+    experiment = TradingExperiment(db_path=trading_db)
+    experiment.init_tables()
+    with experiment._connect() as conn:
+        cursor = conn.execute(
+            f"""
+            INSERT INTO {TradingExperiment.TRADES_TABLE}
+            (symbol, side, status, allocated_usdt, account_equity_usdt,
+             max_loss_usdt, entry_price, quantity, notional_usdt,
+             take_profit_price, stop_loss_price, reason, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "BANK", "LONG", "opened", "20", "1100", "11", "10", "2",
+                "20", "12", "9", "test", 123456, 123456,
+            ),
+        )
+        trade_id = cursor.lastrowid
+
+    strategy = DynamicProfitProtection(db_path=trading_db)
+
+    assert strategy._latest_open_trade("BANK") == (trade_id, 123456)
 
 
 def test_holding_risk_tables_are_initialized_in_trading_core_db(monkeypatch, tmp_path):
