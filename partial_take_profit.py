@@ -87,6 +87,7 @@ class PartialTakeProfitStrategy:
         config: ExperimentConfig | None = None,
     ) -> None:
         self.db_path = db_path
+        self.core_db_path = db_config.trading_core_path(db_path)
         self.account_manager = account_manager or BinanceAccountManager()
         self.config = config or ExperimentConfig()
 
@@ -95,6 +96,10 @@ class PartialTakeProfitStrategy:
         conn.row_factory = sqlite3.Row
         db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
         return conn
+
+    def _core_connect(self) -> sqlite3.Connection:
+        """Connect to the database that owns experiment trade lifecycle data."""
+        return db_config.connect_sqlite(self.core_db_path, row_factory=sqlite3.Row)
 
     def init_tables(self) -> None:
         normalized_path = os.path.abspath(self.db_path)
@@ -402,7 +407,7 @@ class PartialTakeProfitStrategy:
         response = helper._signed_post_order_with_ioc_retry(endpoint, params, trading_symbol=exchange_symbol)
         raw_parts.append(str({"remaining_take_profit": response}))
         order_id = TradingExperiment._exit_order_id(response if isinstance(response, dict) else None)
-        with self._connect() as conn:
+        with self._core_connect() as conn:
             conn.execute(
                 f"""
                 UPDATE {TradingExperiment.TRADES_TABLE}
@@ -418,7 +423,7 @@ class PartialTakeProfitStrategy:
         return order_id, f"remaining_hard_take_profit_recreated; target_profit_usdt={self._fmt_decimal(self.config.hard_take_profit_usdt)}; quantity={self._fmt_decimal(quantity)}; price={self._fmt_decimal(take_profit_price)}; order_id={order_id}"
 
     def _update_latest_open_trade_exit_orders(self, symbol: str, take_profit_order_id: str, stop_loss_order_id: str) -> None:
-        with self._connect() as conn:
+        with self._core_connect() as conn:
             conn.execute(
                 f"""
                 UPDATE {TradingExperiment.TRADES_TABLE}
@@ -434,7 +439,7 @@ class PartialTakeProfitStrategy:
 
     def _latest_open_stop_loss_price(self, symbol: str) -> Decimal:
         try:
-            with self._connect() as conn:
+            with self._core_connect() as conn:
                 row = conn.execute(
                     f"""
                     SELECT stop_loss_price FROM {TradingExperiment.TRADES_TABLE}
