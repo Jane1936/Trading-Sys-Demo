@@ -2118,7 +2118,10 @@
             <input id="filled-orders-end-time" class="select-control" type="datetime-local" step="3600" aria-label="已成交订单截止时间">
             <button id="query-filled-orders-by-time" class="btn btn-primary" type="button">按起止时间查询</button>
           </div>
-          <span id="filled-sell-orders-status" class="muted">尚未查询</span>
+          <div class="filled-orders-query-row">
+            <button id="export-filled-orders" class="btn btn-primary" type="button" disabled>导出 Excel 到本地</button>
+            <span id="filled-sell-orders-status" class="muted">尚未查询</span>
+          </div>
         </div>
         <div class="filled-orders-filter-row">
           <label class="control-label" for="filled-orders-score-band">通用筛选器：开仓评分档位</label>
@@ -3708,6 +3711,9 @@
       const allOrders = payload.orders || [];
       const scoreBandFilter = getFilledOrdersScoreBandFilter();
       const orders = allOrders.filter(row => orderMatchesScoreBandFilter(row, scoreBandFilter));
+      currentDisplayedFilledOrders = orders;
+      const exportBtn = document.getElementById('export-filled-orders');
+      if (exportBtn) exportBtn.disabled = !orders.length;
       const queriedRange = payload.days
         ? `近${payload.days}天`
         : `${formatMsDatetime(payload.start_time)} 至 ${formatMsDatetime(payload.end_time)}`;
@@ -3767,11 +3773,13 @@
     }
 
     let latestFilledOrdersPayload = null;
+    let currentDisplayedFilledOrders = [];
 
     (function initFilledSellOrdersQuery() {
       const btn = document.getElementById('query-filled-sell-orders');
       const rangeBtn = document.getElementById('query-filled-orders-by-time');
-      if (!btn || !rangeBtn) return;
+      const exportBtn = document.getElementById('export-filled-orders');
+      if (!btn || !rangeBtn || !exportBtn) return;
       setFilledOrdersButtonLabel();
       const toLocalHourValue = (date) => {
         const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -3786,6 +3794,37 @@
       const scoreBandSelect = document.getElementById('filled-orders-score-band');
       if (scoreBandSelect) scoreBandSelect.addEventListener('change', () => {
         if (latestFilledOrdersPayload) renderFilledSellOrders(latestFilledOrdersPayload);
+      });
+      exportBtn.addEventListener('click', async () => {
+        if (!currentDisplayedFilledOrders.length) return;
+        exportBtn.disabled = true;
+        exportBtn.textContent = '正在导出...';
+        try {
+          const response = await fetch('/api/account/filled-orders/export', {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orders: currentDisplayedFilledOrders }),
+          });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload.error || `HTTP ${response.status}`);
+          }
+          const blob = await response.blob();
+          const disposition = response.headers.get('Content-Disposition') || '';
+          const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+          const link = document.createElement('a');
+          link.href = URL.createObjectURL(blob);
+          link.download = filenameMatch?.[1] || 'filled_orders.xlsx';
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(link.href);
+        } catch (error) {
+          renderFilledSellOrdersError(`Excel 导出失败：${error.message}`);
+        } finally {
+          exportBtn.disabled = !currentDisplayedFilledOrders.length;
+          exportBtn.textContent = '导出 Excel 到本地';
+        }
       });
       btn.addEventListener('click', async () => {
         setFilledSellOrdersLoading(true);
