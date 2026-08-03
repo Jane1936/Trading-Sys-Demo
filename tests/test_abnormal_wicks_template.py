@@ -170,6 +170,16 @@ def test_holding_reduction_metrics_have_threshold_highlight_classes():
     assert "pnl_r_multiple >= 1" in template
 
 
+def test_reduction_stop_failure_liquidation_records_follow_reduction_records():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+
+    reduction_index = template.index("减仓操作记录")
+    liquidation_index = template.index("重挂止损失败后强平记录")
+    assert liquidation_index > reduction_index
+    assert "holding_reduction_stop_failure_liquidations" in template
+    assert "近7天暂无重挂止损失败后强平记录" in template
+
+
 def _insert_abnormal_wick_event(conn, symbol, detected_at):
     conn.execute(
         """

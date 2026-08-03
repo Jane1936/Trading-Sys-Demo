@@ -4,7 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
-from holding_position_scoring import HoldingPositionScoringSystem, PositionIncreaseCheck
+from holding_position_scoring import HoldingPositionScoringSystem, PositionIncreaseCheck, PositionReductionCheck
 from trading_experiment import TradingExperiment
 
 
@@ -83,6 +83,76 @@ class FakeAccountManager:
     def _signed_delete(self, endpoint, params=None):
         self.signed_deletes.append((endpoint, dict(params or {})))
         return {"code": 200, "msg": "success"}
+
+
+def test_replacement_stop_immediate_trigger_force_closes_and_records(tmp_path):
+    fake_account = FakeAccountManager()
+    scoring = HoldingPositionScoringSystem(db_path=str(tmp_path / "trading.db"), account_manager=fake_account)
+    scoring.init_tables()
+    check = PositionReductionCheck(
+        "BANK", 4000, "", "8", "", "", "", "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "", "", "", "", "", "", "", "规则五", True, "", "", 4000,
+    )
+    trigger = RuntimeError("reduction_replacement_stop_skipped_immediate_trigger: side=SELL")
+
+    record = scoring._force_close_after_replacement_stop_failure(
+        check, "BANKUSDT", "SELL", Decimal("1"), "reduction-1", trigger, 5000
+    )
+    scoring._save_reduction_stop_failure_liquidation(record)
+    rows = scoring.recent_reduction_stop_failure_liquidations(since_ms=0)
+
+    assert record.status == "submitted"
+    assert record.liquidation_market_order_id == "123"
+    assert rows[0]["trigger_error"].startswith("reduction_replacement_stop_skipped_immediate_trigger")
+    assert rows[0]["reduction_market_order_id"] == "reduction-1"
+    assert ("/fapi/v1/order", {
+        "symbol": "BANKUSDT", "side": "SELL", "type": "MARKET", "quantity": "1",
+        "reduceOnly": "true", "newOrderRespType": "RESULT",
+    }) in fake_account.signed_posts
+
+
+def test_only_runtime_replacement_stop_immediate_trigger_uses_special_force_close():
+    scoring = HoldingPositionScoringSystem()
+
+    assert scoring._is_reduction_replacement_stop_immediate_trigger(
+        RuntimeError("reduction_replacement_stop_skipped_immediate_trigger")
+    )
+    assert not scoring._is_reduction_replacement_stop_immediate_trigger(
+        ValueError("reduction_replacement_stop_skipped_immediate_trigger")
+    )
+
+
+def test_reduction_action_force_closes_when_post_reduction_stop_recreate_is_immediate_trigger(tmp_path, monkeypatch):
+    fake_account = FakeAccountManager()
+    scoring = HoldingPositionScoringSystem(db_path=str(tmp_path / "trading.db"), account_manager=fake_account)
+    scoring.init_tables()
+    check = PositionReductionCheck(
+        "BANK", 4000, "", "8", "", "", "", "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "", "", "", "", "", "", "", "规则五", True, "", "", 4000,
+    )
+    monkeypatch.setattr(scoring, "_latest_open_trade_stop_loss_order_id", lambda symbol: "old-sl")
+    monkeypatch.setattr(scoring, "_latest_open_trade_stop_loss_price", lambda symbol: "7")
+    monkeypatch.setattr(scoring, "_cancel_existing_exit_orders", lambda *args, **kwargs: "exit_orders_cancelled")
+    monkeypatch.setattr(TradingExperiment, "_exchange_symbol_info", lambda helper, symbol: {
+        "step_size": Decimal("0.1"), "tick_size": Decimal("0.01")
+    })
+    monkeypatch.setattr(scoring, "_current_position_quantity_and_entry", lambda *args: (Decimal("1"), Decimal("8")))
+    monkeypatch.setattr(scoring, "_replace_hard_take_profit_for_position", lambda *args: ("tp-1", Decimal("9"), "tp_recreated"))
+    monkeypatch.setattr(scoring, "_replace_stop_loss_for_position", lambda *args: (_ for _ in ()).throw(
+        RuntimeError("reduction_replacement_stop_skipped_immediate_trigger: side=SELL")
+    ))
+    monkeypatch.setattr(scoring, "_record_reduction_error", lambda *args: None)
+
+    record = scoring._execute_reduction_action(
+        {"symbol": "BANKUSDT", "positionAmt": "2", "entryPrice": "8"}, check, 5000
+    )
+    special_rows = scoring.recent_reduction_stop_failure_liquidations(since_ms=0)
+
+    assert record.status == "failed"
+    assert len(special_rows) == 1
+    assert special_rows[0]["quantity"] == "1"
+    market_orders = [params for endpoint, params in fake_account.signed_posts if endpoint == "/fapi/v1/order"]
+    assert [order["quantity"] for order in market_orders] == ["1", "1"]
 
 class ElevenPositionsAccountManager(FakeAccountManager):
     def _signed_get(self, endpoint, params=None):

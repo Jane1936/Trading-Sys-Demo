@@ -182,6 +182,21 @@ class PositionReductionRecord:
     created_at: int
 
 
+@dataclass(frozen=True)
+class ReductionStopFailureLiquidationRecord:
+    symbol: str
+    decision_round_ts: int
+    side: str
+    quantity: str
+    reduction_market_order_id: str
+    liquidation_market_order_id: str
+    status: str
+    trigger_error: str
+    reason: str
+    raw_response: str
+    created_at: int
+
+
 class HoldingPositionScoringSystem:
     """Evaluate held symbols and execute structural stop-loss exits."""
 
@@ -191,6 +206,7 @@ class HoldingPositionScoringSystem:
     PORTFOLIO_RISK_SUMMARY_TABLE = "holding_portfolio_risk_summaries"
     REDUCTION_CHECKS_TABLE = "holding_position_reduction_checks"
     REDUCTION_RECORDS_TABLE = "holding_position_reduction_records"
+    REDUCTION_STOP_FAILURE_LIQUIDATIONS_TABLE = "holding_reduction_stop_failure_liquidations"
     INCREASE_CHECKS_TABLE = "holding_position_increase_checks"
     INCREASE_RECORDS_TABLE = "holding_position_increase_records"
     INCREASE_TAG_FIRST = "第一次加仓"
@@ -385,6 +401,24 @@ class HoldingPositionScoringSystem:
                     market_order_id TEXT NOT NULL DEFAULT '',
                     limit_price TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    raw_response TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            core_conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.REDUCTION_STOP_FAILURE_LIQUIDATIONS_TABLE} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    decision_round_ts INTEGER NOT NULL,
+                    side TEXT NOT NULL,
+                    quantity TEXT NOT NULL,
+                    reduction_market_order_id TEXT NOT NULL DEFAULT '',
+                    liquidation_market_order_id TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    trigger_error TEXT NOT NULL,
                     reason TEXT NOT NULL,
                     raw_response TEXT NOT NULL DEFAULT '',
                     created_at INTEGER NOT NULL
@@ -940,6 +974,12 @@ class HoldingPositionScoringSystem:
                     status = "failed"
                     reason_parts.append(f"stop_loss_recreate_failed: {type(exc).__name__}: {exc}")
                     self._record_reduction_error(check, "stop_loss_recreate", exc)
+                    if self._is_reduction_replacement_stop_immediate_trigger(exc):
+                        liquidation = self._force_close_after_replacement_stop_failure(
+                            check, exchange_symbol, side, actual_quantity, market_order_id, exc, now_ms
+                        )
+                        self._save_reduction_stop_failure_liquidation(liquidation)
+                        reason_parts.append(liquidation.reason)
         except Exception as exc:
             status = "failed"
             reason_parts.append(f"reduction_action_failed: {type(exc).__name__}: {exc}")
@@ -948,6 +988,39 @@ class HoldingPositionScoringSystem:
         finally:
             lock_manager.release(lock_handle)
         return PositionReductionRecord(0, check.symbol, check.decision_round_ts, side, matched_rule, self._fmt_decimal(percent), self._fmt_decimal(original_quantity), self._fmt_decimal(reduced_quantity), self._fmt_decimal(remaining_quantity), old_limit_order_id, new_limit_order_id, market_order_id, limit_price, status, "; ".join(reason_parts), " | ".join(raw_parts), now_ms)
+
+    @staticmethod
+    def _is_reduction_replacement_stop_immediate_trigger(exc: Exception) -> bool:
+        return isinstance(exc, RuntimeError) and "reduction_replacement_stop_skipped_immediate_trigger" in str(exc)
+
+    def _force_close_after_replacement_stop_failure(
+        self, check: PositionReductionCheck, exchange_symbol: str, side: str,
+        quantity: Decimal, reduction_market_order_id: str, trigger: Exception, now_ms: int,
+    ) -> ReductionStopFailureLiquidationRecord:
+        liquidation_order_id = ""
+        raw_response = ""
+        status = "failed"
+        reason = "replacement_stop_immediate_trigger_force_close_failed"
+        try:
+            cancel_reason = self._cancel_existing_exit_orders(exchange_symbol, context="replacement_stop_failure")
+            response = self.account_manager._signed_post(
+                "/fapi/v1/order", self._market_close_order_params(exchange_symbol, side, quantity)
+            )
+            raw_response = str(response)
+            liquidation_order_id = str(response.get("orderId", "")) if isinstance(response, dict) else ""
+            no_fill_reason = self._no_fill_order_response_reason(response)
+            if no_fill_reason:
+                reason = f"replacement_stop_immediate_trigger_force_close_failed: {no_fill_reason}; {cancel_reason}"
+            else:
+                status = "submitted"
+                reason = f"replacement_stop_immediate_trigger_force_close_submitted; {cancel_reason}"
+        except Exception as exc:
+            reason = f"replacement_stop_immediate_trigger_force_close_failed: {type(exc).__name__}: {exc}"
+        return ReductionStopFailureLiquidationRecord(
+            check.symbol, check.decision_round_ts, side, self._fmt_decimal(quantity),
+            reduction_market_order_id, liquidation_order_id, status, str(trigger), reason,
+            raw_response, now_ms,
+        )
 
 
     def _record_reduction_error(self, check: PositionReductionCheck, operation: str, exc: Exception) -> None:
@@ -2174,6 +2247,31 @@ class HoldingPositionScoringSystem:
             return conn.execute(
                 f"SELECT * FROM {self.REDUCTION_RECORDS_TABLE} ORDER BY created_at DESC, id DESC LIMIT ?",
                 (limit,),
+            ).fetchall()
+
+    def _save_reduction_stop_failure_liquidation(self, record: ReductionStopFailureLiquidationRecord) -> None:
+        with self._trading_core_connect() as conn:
+            conn.execute(
+                f"""INSERT INTO {self.REDUCTION_STOP_FAILURE_LIQUIDATIONS_TABLE}
+                (symbol, decision_round_ts, side, quantity, reduction_market_order_id,
+                 liquidation_market_order_id, status, trigger_error, reason, raw_response, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (record.symbol, record.decision_round_ts, record.side, record.quantity,
+                 record.reduction_market_order_id, record.liquidation_market_order_id,
+                 record.status, record.trigger_error, record.reason, record.raw_response,
+                 record.created_at),
+            )
+
+    def recent_reduction_stop_failure_liquidations(
+        self, limit: int = 100, since_ms: int | None = None
+    ) -> list[sqlite3.Row]:
+        self.init_tables()
+        cutoff = since_ms if since_ms is not None else int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
+        with self._trading_core_connect() as conn:
+            return conn.execute(
+                f"SELECT * FROM {self.REDUCTION_STOP_FAILURE_LIQUIDATIONS_TABLE} "
+                "WHERE created_at >= ? ORDER BY created_at DESC, id DESC LIMIT ?",
+                (cutoff, limit),
             ).fetchall()
 
     def get_latest_reduction_checks(self) -> tuple[int | None, list[sqlite3.Row]]:
