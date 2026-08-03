@@ -231,12 +231,18 @@ class DynamicProfitProtection:
     def _latest_open_trade(self, symbol: str) -> tuple[int, int]:
         try:
             with self._core_connect() as conn:
-                row = conn.execute(f"SELECT id, created_at FROM {TradingExperiment.TRADES_TABLE} WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1", (symbol,)).fetchone()
+                row = conn.execute(
+                    f"SELECT COALESCE(id, rowid) AS trade_id, created_at "
+                    f"FROM {TradingExperiment.TRADES_TABLE} "
+                    "WHERE symbol = ? AND status = 'opened' "
+                    "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                    (symbol,),
+                ).fetchone()
         except sqlite3.OperationalError:
             row = None
-        if row is None or row["created_at"] is None:
+        if row is None or row["trade_id"] is None or row["created_at"] is None:
             raise RuntimeError("missing_latest_open_trade")
-        return int(row["id"]), int(row["created_at"])
+        return int(row["trade_id"]), int(row["created_at"])
 
     def _highest_1m_high_since(self, symbol: str, since_ms: int) -> Decimal:
         if since_ms <= 0:
