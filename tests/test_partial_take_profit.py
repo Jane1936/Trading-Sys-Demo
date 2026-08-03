@@ -3,6 +3,7 @@ import sqlite3
 from decimal import Decimal
 from pathlib import Path
 
+import db_config
 from partial_take_profit import PartialTakeProfitStrategy
 from trading_experiment import TradingExperiment
 
@@ -150,6 +151,45 @@ def test_partial_take_profit_sells_30_percent_when_unrealized_pnl_reaches_2r():
     assert records[0].take_profit_order_id == "789"
     assert records[0].take_profit_quantity == "3"
     assert records[0].trigger_label == "已触发2R分批止盈"
+
+
+def test_partial_take_profit_updates_trade_in_routed_core_database(monkeypatch, tmp_path):
+    trading_db = str(tmp_path / "trading.db")
+    core_db = str(tmp_path / "trading_core.db")
+    monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
+    monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", core_db)
+    fake_account = FakeAccountManager()
+    experiment = TradingExperiment(db_path=trading_db, account_manager=fake_account)
+    experiment.init_tables()
+    with experiment._connect() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {TradingExperiment.TRADES_TABLE}
+            (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt,
+             required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity,
+             notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation,
+             take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at)
+            VALUES ('BANK', 1000, 'LONG', 'opened', 80, 5, '100', '20', '1100', '11',
+                    '10', '10', '100', '0', '9', '', '', '111', 'test', '{{}}', 1000, 1000)
+            """
+        )
+
+    strategy = PartialTakeProfitStrategy(db_path=trading_db, account_manager=fake_account)
+    result = strategy.run_round()
+
+    assert result["triggered"] == 1
+    assert strategy.recent_records()[0].status == "submitted"
+    with sqlite3.connect(core_db) as conn:
+        row = conn.execute(
+            f"SELECT take_profit_order_id, stop_loss_order_id FROM {TradingExperiment.TRADES_TABLE}"
+        ).fetchone()
+    assert row == ("456", "456")
+    with sqlite3.connect(trading_db) as conn:
+        trade_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (TradingExperiment.TRADES_TABLE,),
+        ).fetchone()
+    assert trade_table is None
 
 
 def test_partial_take_profit_skips_when_unrealized_pnl_below_2r():
