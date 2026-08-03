@@ -114,3 +114,22 @@ def test_dynamic_profit_protection_resets_highest_for_latest_open_trade_with_sam
     assert checks[0].highest_since_open == "13"
     assert checks[0].opened_at == 2000
     assert checks[0].open_trade_id > 0
+
+
+def test_latest_open_trade_falls_back_to_rowid_when_legacy_id_is_null():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = str(Path(tmp) / "legacy.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                f"CREATE TABLE {TradingExperiment.TRADES_TABLE} "
+                "(id INT, symbol TEXT, status TEXT, created_at INTEGER)"
+            )
+            cursor = conn.execute(
+                f"INSERT INTO {TradingExperiment.TRADES_TABLE} "
+                "(id, symbol, status, created_at) VALUES (NULL, 'BANK', 'opened', 123456)"
+            )
+            rowid = cursor.lastrowid
+
+        tracker = DynamicProfitProtection(db_path=db_path)
+
+        assert tracker._latest_open_trade("BANK") == (rowid, 123456)
