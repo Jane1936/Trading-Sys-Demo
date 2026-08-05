@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
+import time
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -19,6 +20,7 @@ SCORING_DB_PATH = os.getenv("SCORING_DB_PATH", f"{DATA_DIR}/scoring.db")
 TRADING_DB_PATH = os.getenv("TRADING_DB_PATH", f"{DATA_DIR}/trading.db")
 TRADING_CORE_DB_PATH = os.getenv("TRADING_CORE_DB_PATH", f"{DATA_DIR}/trading_core.db")
 MARKET_DB_PATH = os.getenv("MARKET_DB_PATH", f"{DATA_DIR}/market.db")
+SCHEMA_LOCK_TIMEOUT_SECONDS = float(os.getenv("SCHEMA_LOCK_TIMEOUT_SECONDS", "30"))
 
 DB_LABELS = {
     "基础数据库": BASE_DB_PATH,
@@ -324,7 +326,19 @@ class sqlite_schema_lock:
         if os.name == "posix":
             import fcntl
 
-            fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
+            deadline = time.monotonic() + SCHEMA_LOCK_TIMEOUT_SECONDS
+            while True:
+                try:
+                    fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        self._fh.close()
+                        self._fh = None
+                        raise TimeoutError(
+                            f"Timed out waiting for SQLite schema lock: {lock_path}"
+                        )
+                    time.sleep(0.1)
         return self
 
     def __exit__(self, exc_type, exc, tb):

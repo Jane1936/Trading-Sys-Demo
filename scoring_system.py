@@ -201,7 +201,14 @@ def init_rule_score_weight_settings(
     """Create and seed the runtime scoring-weight settings in the base database."""
     db_path = db_path or db_config.BASE_DB_PATH
     defaults = defaults or load_rule_score_weights()
+    if _rule_score_weight_settings_are_current(db_path, defaults):
+        return
     with db_config.sqlite_schema_lock(db_path):
+        # Web requests can instantiate ``ScoringSystem`` frequently.  Recheck
+        # after waiting so normal reads do not repeatedly take the schema lock
+        # and risk being killed by Gunicorn while another worker is migrating.
+        if _rule_score_weight_settings_are_current(db_path, defaults):
+            return
         with db_config.connect_sqlite(db_path) as conn:
             conn.execute(
                 """
@@ -222,6 +229,31 @@ def init_rule_score_weight_settings(
                 [(rule_id, weight, now_ms) for rule_id, weight in defaults.items()],
             )
             conn.commit()
+
+
+def _rule_score_weight_settings_are_current(
+    db_path: str, defaults: dict[int, int]
+) -> bool:
+    """Return whether the runtime scoring-weight table is ready for reads."""
+    try:
+        with db_config.connect_sqlite(db_path, row_factory=sqlite3.Row) as conn:
+            table_exists = conn.execute(
+                """
+                SELECT 1
+                FROM sqlite_master
+                WHERE type = 'table' AND name = 'scoring_rule_weights'
+                """
+            ).fetchone()
+            if table_exists is None:
+                return False
+            rows = conn.execute(
+                "SELECT rule_id, weight FROM scoring_rule_weights"
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return False
+
+    actual = {int(row["rule_id"]): int(row["weight"]) for row in rows}
+    return all(rule_id in actual for rule_id in defaults)
 
 
 def get_rule_score_weight_settings(

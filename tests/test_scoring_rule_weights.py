@@ -70,6 +70,28 @@ def test_runtime_rule_weights_are_seeded_updated_and_loaded_by_scoring_system(tm
     assert scoring.rule_score_weights[8] == 22
 
 
+def test_runtime_rule_weights_skip_schema_lock_when_current(tmp_path: Path, monkeypatch):
+    settings_db = str(tmp_path / "base.db")
+    seeded = get_rule_score_weight_settings(settings_db)
+    assert len(seeded) == 18
+
+    class UnexpectedSchemaLock:
+        def __init__(self, db_path: str):
+            self.db_path = db_path
+
+        def __enter__(self):
+            raise AssertionError("current scoring weights should not take schema lock")
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("scoring_system.db_config.sqlite_schema_lock", UnexpectedSchemaLock)
+
+    current = get_rule_score_weight_settings(settings_db)
+    assert len(current) == 18
+    assert current[7]["weight"] == DEFAULT_RULE_SCORE_WEIGHTS[8]
+
+
 @pytest.mark.parametrize("invalid_weight", [-1, 101, 1.5, True, "5"])
 def test_runtime_rule_weights_reject_invalid_values(tmp_path: Path, invalid_weight):
     weights = DEFAULT_RULE_SCORE_WEIGHTS.copy()
