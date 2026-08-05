@@ -403,3 +403,33 @@ def test_trailing_stop_tracker_uses_2atr_threshold_when_volatility_is_high():
     assert checks[0].price_drawdown == "1.1"
     assert checks[0].trailing_stop_triggered is True
     assert "drawdown_gt_2atr" in checks[0].reason
+
+
+def test_trailing_stop_tracker_reads_migrated_open_trade_from_trading_core_db(tmp_path, monkeypatch):
+    trading_db = tmp_path / "trading.db"
+    core_db = tmp_path / "trading_core.db"
+    monkeypatch.setattr("db_config.TRADING_DB_PATH", str(trading_db))
+    monkeypatch.setattr("db_config.TRADING_CORE_DB_PATH", str(core_db))
+    fake_account = FakeAccountManager()
+
+    _insert_partial_take_profit_record(str(trading_db))
+    _insert_open_trade(str(trading_db))
+    _insert_atr14(str(trading_db), atr14=0.25)
+    _insert_1m_kline(str(trading_db), high=13, open_time=1000, close=13)
+    _insert_1m_kline(str(trading_db), high=12.3, open_time=2000, close=12.3)
+    _insert_15m_kline(str(trading_db), low=13, open_time=1000)
+    _insert_15m_kline(str(trading_db), low=13, open_time=2000)
+    _insert_15m_kline(str(trading_db), low=13, open_time=3000)
+    _insert_15m_kline(str(trading_db), low=13, open_time=4000, close=12)
+    tracker = TrailingStopTracker(db_path=str(trading_db), account_manager=fake_account)
+
+    result = tracker.run_round()
+    _, checks = tracker.get_latest_round_checks()
+    action_records = tracker.recent_action_records()
+
+    assert result["eligible"] == 1
+    assert checks[0].trailing_stop_triggered is True
+    assert checks[0].cancel_take_profit_order_id == "123"
+    assert checks[0].close_status == "submitted"
+    assert action_records[0].close_order_id == "456"
+    assert fake_account.signed_posts[0][1]["type"] == "MARKET"
