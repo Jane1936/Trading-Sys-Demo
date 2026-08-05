@@ -4,6 +4,57 @@ import db_config
 from scoring_system import ScoringSystem
 
 
+def test_rule17_scores_when_previous_low_rebounds_and_latest_rebound_is_capped(tmp_path, monkeypatch):
+    db_path = tmp_path / "klines.db"
+    scoring = ScoringSystem(db_path=str(db_path))
+    scoring.init_table()
+    monkeypatch.setattr(
+        scoring,
+        "_latest_3_15m_low_close",
+        lambda _symbol: [
+            {"low": 103.0, "close": 105.0},
+            {"low": 104.0, "close": 107.0},
+            {"low": 100.0, "close": 101.0},
+        ],
+    )
+
+    scoring._save_15m_low_rebound_3bars_score(
+        symbol="BTCUSDT",
+        decision_round_ts=1_800_000,
+        updated_at=1_800_001,
+    )
+
+    _, rows = scoring.get_latest_round_scores_15m_low_rebound_3bars()
+    assert rows[0]["score"] == 5
+    assert rows[0]["reason"] == "third_15m_lowest_rebound_ge_6pct_and_latest_rebound_lte_6pct"
+
+
+def test_rule17_does_not_score_when_latest_rebound_exceeds_six_percent(tmp_path, monkeypatch):
+    db_path = tmp_path / "klines.db"
+    scoring = ScoringSystem(db_path=str(db_path))
+    scoring.init_table()
+    monkeypatch.setattr(
+        scoring,
+        "_latest_3_15m_low_close",
+        lambda _symbol: [
+            {"low": 103.0, "close": 106.1},
+            {"low": 104.0, "close": 107.0},
+            {"low": 100.0, "close": 101.0},
+        ],
+    )
+
+    scoring._save_15m_low_rebound_3bars_score(
+        symbol="BTCUSDT",
+        decision_round_ts=1_800_000,
+        updated_at=1_800_001,
+    )
+
+    _, rows = scoring.get_latest_round_scores_15m_low_rebound_3bars()
+    assert rows[0]["score"] == 0
+    assert rows[0]["reason"] == "rule17_third_lowest_rebound_not_met"
+    assert rows[0]["latest_rebound_ratio"] > 0.06
+
+
 def test_15m_ma20_readiness_reports_ready_and_missing_symbols(tmp_path):
     db_path = tmp_path / "klines.db"
     with sqlite3.connect(db_path) as conn:

@@ -2210,12 +2210,22 @@ class ScoringSystem:
             latest_rebound_ratio = (latest_close - lowest_low) / lowest_low
             prev2_low_is_lowest = prev2_low == lowest_low
             prev1_low_is_lowest = prev1_low == lowest_low
+            latest_rebound_lte_6pct = latest_rebound_ratio <= 0.06
             if prev2_low_is_lowest:
-                hit = prev1_rebound_ratio >= 0.06 or latest_rebound_ratio >= 0.06
-                reason = "third_15m_lowest_and_rebound_ge_6pct" if hit else "rule17_third_lowest_rebound_not_met"
+                has_rebound_ge_6pct = prev1_rebound_ratio >= 0.06 or latest_rebound_ratio >= 0.06
+                hit = has_rebound_ge_6pct and latest_rebound_lte_6pct
+                reason = (
+                    "third_15m_lowest_rebound_ge_6pct_and_latest_rebound_lte_6pct"
+                    if hit
+                    else "rule17_third_lowest_rebound_not_met"
+                )
             elif prev1_low_is_lowest:
-                hit = latest_rebound_ratio >= 0.06
-                reason = "second_15m_lowest_and_latest_rebound_ge_6pct" if hit else "rule17_second_lowest_rebound_not_met"
+                hit = latest_rebound_ratio >= 0.06 and latest_rebound_lte_6pct
+                reason = (
+                    "second_15m_lowest_latest_rebound_eq_6pct"
+                    if hit
+                    else "rule17_second_lowest_rebound_not_met"
+                )
             else:
                 hit = False
                 reason = "rule17_latest_lowest_or_no_qualified_lowest"
