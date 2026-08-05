@@ -686,7 +686,7 @@ def test_position_reduction_rule2_tags_trend_weakening_with_descending_macd():
             conn.execute("CREATE TABLE ema_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ema16 REAL, ema21 REAL)")
             conn.execute("CREATE TABLE macd_indicators (symbol TEXT, interval TEXT, open_time INTEGER, macd REAL)")
             conn.execute("INSERT INTO ema_indicators (symbol, interval, open_time, ema16, ema21) VALUES (?, ?, ?, ?, ?)", ("BANK", "15m", 4000, 9, 12))
-            conn.executemany("INSERT INTO macd_indicators (symbol, interval, open_time, macd) VALUES (?, ?, ?, ?)", [("BANK", "15m", 4000, 1), ("BANK", "15m", 3000, 2), ("BANK", "15m", 2000, 3)])
+            conn.executemany("INSERT INTO macd_indicators (symbol, interval, open_time, macd) VALUES (?, ?, ?, ?)", [("BANK", "15m", 4000, -1), ("BANK", "15m", 3000, 0), ("BANK", "15m", 2000, 1)])
             conn.execute(
                 "INSERT INTO trading_experiment_trades (symbol, status, total_score, created_at) VALUES (?, ?, ?, ?)",
                 ("BANK", "opened", 80, 1000),
@@ -710,9 +710,9 @@ def test_position_reduction_rule2_tags_trend_weakening_with_descending_macd():
     assert checks[0]["previous_total_score"] == "70"
     assert checks[0]["score_drawdown"] == "27"
     assert checks[0]["recent_score_drawdown"] == "17"
-    assert checks[0]["latest_macd"] == "1"
-    assert checks[0]["second_macd"] == "2"
-    assert checks[0]["third_macd"] == "3"
+    assert checks[0]["latest_macd"] == "-1"
+    assert checks[0]["second_macd"] == "0"
+    assert checks[0]["third_macd"] == "1"
     assert checks[0]["rule_name"] == "规则二"
 
 def test_position_reduction_rule2_skips_when_recent_trend_weakening_triggered():
@@ -743,7 +743,7 @@ def test_position_reduction_rule2_skips_when_recent_trend_weakening_triggered():
             conn.execute("CREATE TABLE ema_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ema16 REAL, ema21 REAL)")
             conn.execute("CREATE TABLE macd_indicators (symbol TEXT, interval TEXT, open_time INTEGER, macd REAL)")
             conn.execute("INSERT INTO ema_indicators (symbol, interval, open_time, ema16, ema21) VALUES (?, ?, ?, ?, ?)", ("BANK", "15m", 4000, 9, 12))
-            conn.executemany("INSERT INTO macd_indicators (symbol, interval, open_time, macd) VALUES (?, ?, ?, ?)", [("BANK", "15m", 4000, 1), ("BANK", "15m", 3000, 2), ("BANK", "15m", 2000, 3)])
+            conn.executemany("INSERT INTO macd_indicators (symbol, interval, open_time, macd) VALUES (?, ?, ?, ?)", [("BANK", "15m", 4000, -1), ("BANK", "15m", 3000, 0), ("BANK", "15m", 2000, 1)])
             conn.execute(
                 "INSERT INTO trading_experiment_trades (symbol, status, total_score, created_at) VALUES (?, ?, ?, ?)",
                 ("BANK", "opened", 80, 1000),
