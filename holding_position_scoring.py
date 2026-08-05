@@ -711,19 +711,20 @@ class HoldingPositionScoringSystem:
         equity = TradingExperiment(self.db_path, account_manager=self.account_manager)._fetch_experiment_usdt_equity()
         one_r = equity * Decimal("0.01")
         two_r = equity * Decimal("0.02")
+        half_r = one_r * Decimal("0.5")
         checks: list[PositionReductionCheck] = []
         for position in active_positions:
             symbol = self._base_symbol(str(position.get("symbol", "")))
             amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
             if not symbol or amount == 0:
                 continue
-            check = self._evaluate_reduction_rules(position, symbol, round_ts, equity, one_r, two_r, now_ms)
+            check = self._evaluate_reduction_rules(position, symbol, round_ts, equity, one_r, two_r, half_r, now_ms)
             self._save_reduction_check(check)
             checks.append(check)
         return checks
 
     def _evaluate_reduction_rules(
-        self, position: dict[str, Any], symbol: str, round_ts: int, equity: Decimal, one_r: Decimal, two_r: Decimal, now_ms: int
+        self, position: dict[str, Any], symbol: str, round_ts: int, equity: Decimal, one_r: Decimal, two_r: Decimal, half_r: Decimal, now_ms: int
     ) -> PositionReductionCheck:
         highest = self._highest_recent_15m_high(symbol, limit=3)
         atr14 = self._latest_atr14_15m(symbol)
@@ -778,12 +779,14 @@ class HoldingPositionScoringSystem:
             reasons.append("rule2_missing_15m_ema16")
         elif current_price >= latest_ema16:
             reasons.append("rule2_current_price_not_below_15m_ema16")
-        elif unrealized_pnl >= two_r:
-            reasons.append("rule2_unrealized_pnl_ge_2r")
+        elif unrealized_pnl >= half_r:
+            reasons.append("rule2_unrealized_pnl_ge_0_5r")
         elif len(recent_macds) < 3:
             reasons.append("rule2_missing_recent_three_macd")
         elif not (third_macd > second_macd > latest_macd):
             reasons.append("rule2_recent_three_macd_not_descending")
+        elif latest_macd >= 0:
+            reasons.append("rule2_latest_macd_not_below_zero")
         else:
             triggered = True
             tags.append(self.REDUCTION_TAG_TREND_WEAKENING)
