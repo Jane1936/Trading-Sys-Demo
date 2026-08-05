@@ -66,12 +66,17 @@ class TrailingStopTracker:
 
     def __init__(self, db_path: str = db_config.TRADING_DB_PATH, account_manager: BinanceAccountManager | None = None) -> None:
         self.db_path = db_path
+        self.core_db_path = db_config.trading_core_path(db_path)
         self.account_manager = account_manager or BinanceAccountManager()
 
     def _connect(self) -> sqlite3.Connection:
         conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
         db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
         return conn
+
+    def _core_connect(self) -> sqlite3.Connection:
+        """Connect to the database that owns experiment trade lifecycle rows."""
+        return db_config.connect_sqlite(self.core_db_path, row_factory=sqlite3.Row)
 
     def init_tables(self) -> None:
         db_dir = os.path.dirname(self.db_path)
@@ -269,15 +274,18 @@ class TrailingStopTracker:
         return row is not None
 
     def _latest_take_profit_order_id(self, symbol: str, entry_price: Decimal) -> str:
-        with self._connect() as conn:
-            row = conn.execute(
-                f"""
-                SELECT take_profit_order_id FROM {TradingExperiment.TRADES_TABLE}
-                WHERE symbol = ? AND entry_price = ? AND status = 'opened' AND take_profit_order_id != ''
-                ORDER BY created_at DESC, id DESC LIMIT 1
-                """,
-                (symbol, self._fmt_decimal(entry_price)),
-            ).fetchone()
+        try:
+            with self._core_connect() as conn:
+                row = conn.execute(
+                    f"""
+                    SELECT take_profit_order_id FROM {TradingExperiment.TRADES_TABLE}
+                    WHERE symbol = ? AND entry_price = ? AND status = 'opened' AND take_profit_order_id != ''
+                    ORDER BY created_at DESC, id DESC LIMIT 1
+                    """,
+                    (symbol, self._fmt_decimal(entry_price)),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return ""
         return str(row["take_profit_order_id"]) if row else ""
 
     def _execute_trailing_stop_close(self, exchange_symbol: str, symbol: str, amount: Decimal, entry_price: Decimal) -> tuple[str, str, Decimal, str, str, str]:
@@ -402,7 +410,7 @@ class TrailingStopTracker:
 
     def _latest_open_trade_created_at(self, symbol: str) -> int:
         try:
-            with self._connect() as conn:
+            with self._core_connect() as conn:
                 row = conn.execute(f"SELECT created_at FROM {TradingExperiment.TRADES_TABLE} WHERE symbol = ? AND status = 'opened' ORDER BY created_at DESC, id DESC LIMIT 1", (symbol,)).fetchone()
             return int(row["created_at"]) if row and row["created_at"] is not None else 0
         except Exception:
