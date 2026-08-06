@@ -40,6 +40,8 @@ class OpenableSymbol:
     qualified: bool
     reason: str
     evaluated_at: int
+    previous_total_score: int | None = None
+    previous_score_band: str = "NA"
 
 
 class OpenableSymbolModule:
@@ -108,6 +110,8 @@ class OpenableSymbolModule:
                         decision_round_ts INTEGER NOT NULL,
                         total_score INTEGER NOT NULL,
                         score_band TEXT NOT NULL,
+                        previous_total_score INTEGER,
+                        previous_score_band TEXT NOT NULL DEFAULT 'NA',
                         stop_loss_distance_ratio REAL,
                         distance_threshold REAL,
                         stop_loss_distance_tier TEXT NOT NULL DEFAULT 'NA',
@@ -131,6 +135,15 @@ class OpenableSymbolModule:
                         f"ALTER TABLE {self.TABLE_NAME} "
                         "ADD COLUMN opening_leverage TEXT NOT NULL DEFAULT 'NA'"
                     )
+                if "previous_total_score" not in columns:
+                    conn.execute(
+                        f"ALTER TABLE {self.TABLE_NAME} ADD COLUMN previous_total_score INTEGER"
+                    )
+                if "previous_score_band" not in columns:
+                    conn.execute(
+                        f"ALTER TABLE {self.TABLE_NAME} "
+                        "ADD COLUMN previous_score_band TEXT NOT NULL DEFAULT 'NA'"
+                    )
                 conn.execute(
                     f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_round "
                     f"ON {self.TABLE_NAME}(decision_round_ts DESC, qualified DESC, total_score DESC, symbol ASC)"
@@ -147,6 +160,20 @@ class OpenableSymbolModule:
     def score_band_for_total(cls, total_score: int) -> str:
         band = cls.score_band_config_for_total(total_score)
         return band.label if band else "NA"
+
+    @classmethod
+    def is_previous_score_band_lower(cls, previous_total_score: int | None, total_score: int) -> bool:
+        """Return whether an available previous score belongs to a lower band."""
+        if previous_total_score is None:
+            return False
+        current_band = cls.score_band_config_for_total(total_score)
+        if current_band is None:
+            return False
+        previous_band = cls.score_band_config_for_total(previous_total_score)
+        if previous_band is None:
+            return False
+        band_ranks = {band.label: rank for rank, band in enumerate(cls.SCORE_BANDS)}
+        return band_ranks[previous_band.label] < band_ranks[current_band.label]
 
     @classmethod
     def distance_threshold_for_total(cls, total_score: int) -> float | None:
@@ -209,6 +236,14 @@ class OpenableSymbolModule:
                     t.symbol,
                     t.decision_round_ts,
                     t.total_score,
+                    (
+                        SELECT previous.total_score
+                        FROM symbol_total_scores AS previous
+                        WHERE previous.symbol = t.symbol
+                          AND previous.decision_round_ts < t.decision_round_ts
+                        ORDER BY previous.decision_round_ts DESC
+                        LIMIT 1
+                    ) AS previous_total_score,
                     r18.stop_loss_distance_ratio
                 FROM symbol_total_scores AS t
                 LEFT JOIN current_round_cooldown_symbols AS c
@@ -256,6 +291,11 @@ class OpenableSymbolModule:
         threshold_reason: str | None = None,
     ) -> OpenableSymbol:
         total_score = int(row["total_score"])
+        previous_total_score = (
+            int(row["previous_total_score"])
+            if row["previous_total_score"] is not None
+            else None
+        )
         ratio = float(row["stop_loss_distance_ratio"]) if row["stop_loss_distance_ratio"] is not None else None
         threshold = self.distance_threshold_for_total(total_score)
         distance_tier = self.stop_loss_distance_tier_for_ratio(ratio)
@@ -266,7 +306,8 @@ class OpenableSymbolModule:
             and threshold is not None
             and 0 < ratio <= threshold
         )
-        qualified = distance_qualified
+        previous_score_band_lower = self.is_previous_score_band_lower(previous_total_score, total_score)
+        qualified = distance_qualified and not previous_score_band_lower
         if threshold is None:
             reason = "total_score_not_in_openable_distance_band"
         elif ratio is None:
@@ -275,6 +316,8 @@ class OpenableSymbolModule:
             reason = "stop_loss_distance_negative"
         elif zero_distance:
             reason = "zero_distance_ratio_not_openable"
+        elif previous_score_band_lower:
+            reason = "previous_score_band_lower_than_current"
         elif distance_qualified:
             reason = threshold_reason or "total_score_not_cooldown_and_stop_loss_distance_qualified"
         else:
@@ -293,6 +336,12 @@ class OpenableSymbolModule:
             qualified=qualified,
             reason=reason,
             evaluated_at=evaluated_at,
+            previous_total_score=previous_total_score,
+            previous_score_band=(
+                self.score_band_for_total(previous_total_score)
+                if previous_total_score is not None
+                else "NA"
+            ),
         )
 
     def _save_rows(self, conn: sqlite3.Connection, rows: list[OpenableSymbol]) -> None:
@@ -301,13 +350,16 @@ class OpenableSymbolModule:
         conn.executemany(
             f"""
             INSERT INTO {self.TABLE_NAME}
-            (symbol, decision_round_ts, total_score, score_band, stop_loss_distance_ratio,
+            (symbol, decision_round_ts, total_score, score_band, previous_total_score,
+             previous_score_band, stop_loss_distance_ratio,
              distance_threshold, stop_loss_distance_tier, opening_leverage, distance_qualified,
              qualified, reason, evaluated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
                 total_score=excluded.total_score,
                 score_band=excluded.score_band,
+                previous_total_score=excluded.previous_total_score,
+                previous_score_band=excluded.previous_score_band,
                 stop_loss_distance_ratio=excluded.stop_loss_distance_ratio,
                 distance_threshold=excluded.distance_threshold,
                 stop_loss_distance_tier=excluded.stop_loss_distance_tier,
@@ -323,6 +375,8 @@ class OpenableSymbolModule:
                     row.decision_round_ts,
                     row.total_score,
                     row.score_band,
+                    row.previous_total_score,
+                    row.previous_score_band,
                     row.stop_loss_distance_ratio,
                     row.distance_threshold,
                     row.stop_loss_distance_tier,
@@ -350,6 +404,7 @@ class OpenableSymbolModule:
             rows = conn.execute(
                 f"""
                 SELECT symbol, decision_round_ts, total_score, score_band,
+                       previous_total_score, previous_score_band,
                        stop_loss_distance_ratio, distance_threshold, stop_loss_distance_tier,
                        opening_leverage, distance_qualified, qualified, reason, evaluated_at
                 FROM {self.TABLE_NAME}
@@ -378,4 +433,10 @@ class OpenableSymbolModule:
             qualified=bool(row["qualified"]),
             reason=str(row["reason"]),
             evaluated_at=int(row["evaluated_at"]),
+            previous_total_score=(
+                int(row["previous_total_score"])
+                if row["previous_total_score"] is not None
+                else None
+            ),
+            previous_score_band=str(row["previous_score_band"]),
         )
