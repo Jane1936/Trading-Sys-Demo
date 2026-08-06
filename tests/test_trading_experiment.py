@@ -348,15 +348,20 @@ class TradingExperimentSymbolTests(unittest.TestCase):
             ["/fapi/v1/leverage", "/fapi/v1/order", "/fapi/v1/algoOrder", "/fapi/v1/algoOrder"],
         )
         order_types = [params.get("type", "LEVERAGE") for _, params in fake_account.signed_posts]
-        self.assertEqual(order_types, ["LEVERAGE", "MARKET", "STOP", "TAKE_PROFIT"])
+        self.assertEqual(order_types, ["LEVERAGE", "MARKET", "STOP_MARKET", "TAKE_PROFIT_MARKET"])
         self.assertEqual(fake_account.signed_posts[1][1]["quantity"], "1000")
         stop_loss_params = fake_account.signed_posts[2][1]
-        self.assertEqual(stop_loss_params["type"], "STOP")
-        self.assertEqual(stop_loss_params["price"], "0.99")
+        self.assertEqual(stop_loss_params["type"], "STOP_MARKET")
+        self.assertNotIn("price", stop_loss_params)
         self.assertEqual(stop_loss_params["triggerPrice"], "0.99")
         self.assertEqual(stop_loss_params["algoType"], "CONDITIONAL")
-        self.assertEqual(stop_loss_params["timeInForce"], "GTC")
+        self.assertNotIn("timeInForce", stop_loss_params)
         self.assertEqual(stop_loss_params["reduceOnly"], "true")
+        take_profit_params = fake_account.signed_posts[3][1]
+        self.assertEqual(take_profit_params["type"], "TAKE_PROFIT_MARKET")
+        self.assertEqual(take_profit_params["triggerPrice"], "1.055")
+        self.assertNotIn("price", take_profit_params)
+        self.assertNotIn("timeInForce", take_profit_params)
         self.assertEqual(trade_rows[0].take_profit_price, "1.055")
         self.assertEqual(trade_rows[0].take_profit_order_id, "4")
         self.assertIn("max_loss=10", trade_rows[0].stop_loss_calculation)
@@ -571,8 +576,8 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         order_params = fake_account.signed_posts[1][1]
         stop_loss_params = fake_account.signed_posts[2][1]
         self.assertEqual(order_params["quantity"], "497")
-        self.assertEqual(stop_loss_params["type"], "STOP")
-        self.assertEqual(stop_loss_params["price"], "0.979879")
+        self.assertEqual(stop_loss_params["type"], "STOP_MARKET")
+        self.assertNotIn("price", stop_loss_params)
         self.assertEqual(stop_loss_params["triggerPrice"], "0.979879")
         self.assertEqual(stop_loss_params["algoType"], "CONDITIONAL")
         self.assertIn("quantity=497", rows[0].stop_loss_calculation)
@@ -651,7 +656,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
             rows = experiment.recent_trade_records()
 
         stop_loss_params = fake_account.signed_posts[2][1]
-        self.assertEqual(stop_loss_params["price"], "0.00853")
+        self.assertNotIn("price", stop_loss_params)
         self.assertEqual(stop_loss_params["triggerPrice"], "0.00853")
         self.assertIn("entry_price=0.00864", rows[0].stop_loss_calculation)
         self.assertIn(
@@ -722,9 +727,9 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(result["status"], "opened")
         self.assertEqual(trade_rows[0].status, "opened")
         self.assertEqual(trade_rows[0].take_profit_price, "1.055")
-        self.assertEqual(trade_rows[0].take_profit_order_id, "4")
+        self.assertEqual(trade_rows[0].take_profit_order_id, "")
         self.assertEqual(trade_rows[0].stop_loss_order_id, "3")
-        self.assertEqual(error_rows, [])
+        self.assertEqual(error_rows[0].operation, "place_hard_take_profit:BANKUSDT")
 
     def test_exit_order_does_not_place_take_profit_after_stop_loss(self):
         fake_account = MissingPositionOnceAccountManager()
@@ -755,13 +760,16 @@ class TradingExperimentSymbolTests(unittest.TestCase):
             error_rows = experiment.recent_error_records()
 
         self.assertEqual(result["status"], "opened")
-        self.assertEqual(fake_account.take_profit_failures, 0)
+        self.assertEqual(fake_account.take_profit_failures, 1)
         self.assertEqual(
             fake_account.position_risk_requests,
-            [("/fapi/v3/positionRisk", {"symbol": "BANKUSDT"})],
+            [
+                ("/fapi/v3/positionRisk", {"symbol": "BANKUSDT"}),
+                ("/fapi/v3/positionRisk", {"symbol": "BANKUSDT"}),
+            ],
         )
         self.assertEqual(trade_rows[0].take_profit_price, "1.055")
-        self.assertEqual(trade_rows[0].take_profit_order_id, "4")
+        self.assertEqual(trade_rows[0].take_profit_order_id, "5")
         self.assertEqual(trade_rows[0].stop_loss_order_id, "3")
         self.assertEqual(error_rows, [])
 
@@ -1397,12 +1405,14 @@ def test_reconcile_missing_exit_orders_recreates_missing_take_profit_only(tmp_pa
     assert result["checked"] == 1
     assert result["created"] == 1
     assert result["errors"] == 0
-    take_profit_posts = [params for endpoint, params in account.signed_posts if endpoint == "/fapi/v1/algoOrder" and params.get("type") == "TAKE_PROFIT"]
+    take_profit_posts = [params for endpoint, params in account.signed_posts if endpoint == "/fapi/v1/algoOrder" and params.get("type") == "TAKE_PROFIT_MARKET"]
     stop_posts = [params for endpoint, params in account.signed_posts if endpoint == "/fapi/v1/algoOrder" and params.get("type") == "STOP"]
     assert len(take_profit_posts) == 1
     assert take_profit_posts[0]["symbol"] == "BANKUSDT"
     assert take_profit_posts[0]["quantity"] == "50"
     assert take_profit_posts[0]["triggerPrice"] == "2.1"
+    assert "price" not in take_profit_posts[0]
+    assert "timeInForce" not in take_profit_posts[0]
     assert stop_posts == []
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(f"SELECT take_profit_order_id, stop_loss_order_id FROM {TradingExperiment.TRADES_TABLE}").fetchone()

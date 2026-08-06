@@ -112,8 +112,8 @@ class TradingExperiment:
       and leverage: base margin = (equity * 1%) / (distance_ratio * leverage);
     * required margin uses the full formula result, and planned notional is margin * leverage;
     * stop-loss price distance remains capped by min(entry * 10%, equity * 1% / quantity);
-    * new entries place a hard take-profit order that closes when position PnL reaches 55 USDT;
-    * stop-loss is also placed for the full visible position;
+    * new entries place a market-triggered hard take-profit order that closes when position PnL reaches 55 USDT;
+    * a market-triggered stop-loss is also placed for the full visible position;
     * candidates come from the latest qualified openable-symbol round and are
       processed by total_score descending, then symbol ascending.
     """
@@ -527,11 +527,9 @@ class TradingExperiment:
                 {
                     "symbol": trading_symbol,
                     "side": "SELL",
-                    "type": "STOP",
+                    "type": "STOP_MARKET",
                     "quantity": self._fmt_decimal(stop_loss_quantity),
-                    "price": self._fmt_decimal(stop_loss_price),
                     "stopPrice": self._fmt_decimal(stop_loss_price),
-                    "timeInForce": "GTC",
                     "reduceOnly": "true",
                     "workingType": "MARK_PRICE",
                 },
@@ -546,11 +544,9 @@ class TradingExperiment:
                 {
                     "symbol": trading_symbol,
                     "side": "SELL",
-                    "type": "TAKE_PROFIT",
+                    "type": "TAKE_PROFIT_MARKET",
                     "quantity": self._fmt_decimal(take_profit_quantity),
-                    "price": self._fmt_decimal(take_profit_price),
                     "stopPrice": self._fmt_decimal(take_profit_price),
-                    "timeInForce": "GTC",
                     "reduceOnly": "true",
                     "workingType": "MARK_PRICE",
                 },
@@ -836,11 +832,9 @@ class TradingExperiment:
                         endpoint, params = self._exit_order_request({
                             "symbol": exchange_symbol,
                             "side": side,
-                            "type": "TAKE_PROFIT",
+                            "type": "TAKE_PROFIT_MARKET",
                             "quantity": self._fmt_decimal(quantity),
-                            "price": self._fmt_decimal(take_profit_price),
                             "stopPrice": self._fmt_decimal(take_profit_price),
-                            "timeInForce": "GTC",
                             "reduceOnly": "true",
                             "workingType": "MARK_PRICE",
                         })
@@ -853,11 +847,9 @@ class TradingExperiment:
                     endpoint, params = self._exit_order_request({
                         "symbol": exchange_symbol,
                         "side": side,
-                        "type": "STOP",
+                        "type": "STOP_MARKET",
                         "quantity": self._fmt_decimal(quantity),
-                        "price": self._fmt_decimal(stop_loss_price),
                         "stopPrice": self._fmt_decimal(stop_loss_price),
-                        "timeInForce": "GTC",
                         "reduceOnly": "true",
                         "workingType": "MARK_PRICE",
                     })
