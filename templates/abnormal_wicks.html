@@ -1082,7 +1082,7 @@
         {% if open_block_notice %}
           <div class="open-block-notice">本轮禁止新开仓：<span>{{ open_block_notice }}</span></div>
         {% endif %}
-        <div class="tip">可开仓基础条件：本轮总分 ≥ {{ openable_min_total_score }}，且不在冷却期。止损距离筛查使用规则18的 distance_ratio：{{ score_distance_threshold_text }}；止损距离档位：0&lt;distance_ratio≤2% 为A档，2%&lt;distance_ratio≤3% 为B档，3%&lt;distance_ratio≤4% 为C档，distance_ratio&gt;4% 为D档。杠杆评定：所有单子 distance_ratio 为0时，杠杆统一为NA，且最终不可开仓；其他情况按总分区间和止损距离档位映射（{{ score_leverage_mapping_text }}）。下表展示基础条件命中的symbol及其止损距离筛查结果与本轮开仓杠杆倍数。</div>
+        <div class="tip">可开仓基础条件：本轮总分 ≥ {{ openable_min_total_score }}，且不在冷却期；若有上一轮评分档位，且上一轮评分档位低于本轮评分档位，则本轮最终不可开仓。止损距离筛查使用规则18的 distance_ratio：{{ score_distance_threshold_text }}；止损距离档位：0&lt;distance_ratio≤2% 为A档，2%&lt;distance_ratio≤3% 为B档，3%&lt;distance_ratio≤4% 为C档，distance_ratio&gt;4% 为D档。杠杆评定：所有单子 distance_ratio 为0时，杠杆统一为NA，且最终不可开仓；其他情况按总分区间和止损距离档位映射（{{ score_leverage_mapping_text }}）。下表展示基础条件命中的symbol及其止损距离筛查结果与本轮开仓杠杆倍数。</div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -1091,6 +1091,8 @@
                 <th>decision_round_ts</th>
                 <th>total_score</th>
                 <th>评分档位</th>
+                <th>上一轮总分</th>
+                <th>上一轮评分档位</th>
                 <th>distance_ratio</th>
                 <th>止损距离档位</th>
                 <th>杠杆大小</th>
@@ -1108,6 +1110,8 @@
                 <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
                 <td>{{ row.total_score }}</td>
                 <td><span class="score-band-badge {{ 'score-band-strong-trend' if row.score_band == '确定性强趋势单' else 'score-band-trend-standard' if row.score_band == '趋势标准单' else 'score-band-standard-trial' if row.score_band == '标准试错单' else 'score-band-low-trial' if row.score_band == '低档试错单' else 'score-band-na' }}">{{ row.score_band }}</span></td>
+                <td>{{ row.previous_total_score if row.previous_total_score is not none else '-' }}</td>
+                <td><span class="score-band-badge {{ 'score-band-strong-trend' if row.previous_score_band == '确定性强趋势单' else 'score-band-trend-standard' if row.previous_score_band == '趋势标准单' else 'score-band-standard-trial' if row.previous_score_band == '标准试错单' else 'score-band-low-trial' if row.previous_score_band == '低档试错单' else 'score-band-na' }}">{{ row.previous_score_band }}</span></td>
                 <td>{{ '%.4f%%'|format(row.stop_loss_distance_ratio * 100) if row.stop_loss_distance_ratio is not none else '-' }}</td>
                 <td><span class="tier-badge {{ 'tier-a' if row.stop_loss_distance_tier == 'A档' else 'tier-b' if row.stop_loss_distance_tier == 'B档' else 'tier-c' if row.stop_loss_distance_tier == 'C档' else 'tier-d' if row.stop_loss_distance_tier == 'D档' else 'tier-na' }}">{{ row.stop_loss_distance_tier }}</span></td>
                 <td><span class="leverage-badge {{ 'leverage-very-high' if row.opening_leverage in ['10x', '12x'] else 'leverage-high' if row.opening_leverage in ['7x', '8x'] else 'leverage-mid' if row.opening_leverage in ['4x', '5x', '6x'] else 'leverage-low' if row.opening_leverage in ['1x', '2x', '3x'] else 'leverage-na' }}">{{ row.opening_leverage }}</span></td>
@@ -1118,7 +1122,7 @@
                 <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
               </tr>
               {% else %}
-              <tr><td class="empty" colspan="12">暂无本轮可开仓symbol候选</td></tr>
+              <tr><td class="empty" colspan="14">暂无本轮可开仓symbol候选</td></tr>
               {% endfor %}
             </tbody>
           </table>

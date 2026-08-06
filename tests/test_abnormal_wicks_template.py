@@ -456,6 +456,20 @@ def test_openable_section_highlights_current_round_open_block_notice():
     assert notice_index < text_index < table_index
 
 
+def test_openable_table_shows_previous_round_score_before_distance_ratio():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    section = template[template.index('id="strategy-openable"'):]
+
+    previous_score_index = section.index("<th>上一轮总分</th>")
+    previous_band_index = section.index("<th>上一轮评分档位</th>")
+    distance_ratio_index = section.index("<th>distance_ratio</th>")
+
+    assert previous_score_index < previous_band_index < distance_ratio_index
+    assert "row.previous_total_score" in section
+    assert "row.previous_score_band" in section
+    assert "上一轮评分档位低于本轮评分档位，则本轮最终不可开仓" in section
+
+
 def test_market_filter_includes_dynamic_add_position_threshold_ui():
     template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
     section_index = template.index('id="tab-market-filter"')
