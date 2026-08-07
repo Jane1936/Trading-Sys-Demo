@@ -761,6 +761,54 @@ def test_position_reduction_rule2_skips_when_recent_trend_weakening_triggered():
     assert second_checks[0].rule_name == ""
     assert second_checks[0].reason == "rule2_skipped_recent_trend_weakening_within_90m; rule5_missing_open_entry_price"
 
+
+def test_position_reduction_rule2_retry_does_not_erase_cooldown_trigger():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, open REAL, high REAL, close REAL)")
+            conn.execute("CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER)")
+            conn.execute("CREATE TABLE trading_experiment_trades (symbol TEXT, status TEXT, total_score INTEGER, created_at INTEGER)")
+            conn.execute("CREATE TABLE ema_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ema16 REAL, ema21 REAL)")
+            conn.execute("CREATE TABLE macd_indicators (symbol TEXT, interval TEXT, open_time INTEGER, macd REAL)")
+            conn.executemany(
+                "INSERT INTO klines_15m (symbol, open_time, open, high, close) VALUES (?, ?, ?, ?, ?)",
+                [("ORDER", 3000, 10, 8, 8), ("ORDER", 2000, 9, 8, 8), ("ORDER", 1000, 8, 8, 8)],
+            )
+            conn.executemany(
+                "INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)",
+                [("ORDER", 5000, 53), ("ORDER", 4000, 53), ("ORDER", 3000, 70)],
+            )
+            conn.executemany(
+                "INSERT INTO ema_indicators (symbol, interval, open_time, ema16, ema21) VALUES (?, ?, ?, ?, ?)",
+                [("ORDER", "15m", 4000, 9, 12), ("ORDER", "15m", 5000, 9, 12)],
+            )
+            conn.executemany(
+                "INSERT INTO macd_indicators (symbol, interval, open_time, macd) VALUES (?, ?, ?, ?)",
+                [("ORDER", "15m", 4000, -1), ("ORDER", "15m", 3000, 0), ("ORDER", "15m", 2000, 1)],
+            )
+            conn.execute(
+                "INSERT INTO trading_experiment_trades (symbol, status, total_score, created_at) VALUES (?, ?, ?, ?)",
+                ("ORDER", "opened", 80, 1000),
+            )
+
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        positions = [{"symbol": "ORDERUSDT", "positionAmt": "2", "leverage": "5"}]
+        first = scoring.evaluate_reduction_conditions(positions=positions, decision_round_ts=4000, checked_at=1_000_000)
+        retry = scoring.evaluate_reduction_conditions(positions=positions, decision_round_ts=4000, checked_at=1_001_000)
+        next_round = scoring.evaluate_reduction_conditions(
+            positions=positions,
+            decision_round_ts=5000,
+            checked_at=1_000_000 + 15 * 60 * 1000,
+        )
+
+    assert first[0].triggered is True
+    assert retry[0].triggered is False
+    assert retry[0].tag == "90分钟内已触发趋势走弱"
+    assert next_round[0].triggered is False
+    assert next_round[0].tag == "90分钟内已触发趋势走弱"
+
 def test_position_reduction_no_longer_triggers_on_removed_rule_four_score_danger_zone():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
