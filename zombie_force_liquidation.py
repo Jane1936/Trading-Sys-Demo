@@ -1,10 +1,10 @@
 """Zombie-position force liquidation for stale experiment positions.
 
 Every 15-minute custom execution round scans existing Binance Futures positions.
-If a position has been held for more than 48 hours and no submitted break-even
-stop-loss record exists for the current position lifecycle, the module cancels
-all open stop-loss/take-profit orders for that symbol and closes the full
-position with a reduce-only market order.
+As soon as a position has been held for 24 hours, the module cancels all open
+stop-loss/take-profit orders for that symbol and closes the full position with
+a reduce-only market order. Break-even protection does not exempt a stale
+position from this hard holding-time limit.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from decimal import Decimal
 from typing import Any
 
 from binance_account_manager import BinanceAccountManager
-from break_even_take_profit import BreakEvenTakeProfitStrategy
 from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
 from trading_experiment import ExperimentConfig, TradingExperiment
 
@@ -55,11 +54,11 @@ class ZombieForceLiquidationRecord:
 
 
 class ZombieForceLiquidationModule:
-    """Force-close positions older than 48h without lifecycle break-even protection."""
+    """Force-close every position as soon as it reaches the 24-hour limit."""
 
     CHECKS_TABLE = "zombie_force_liquidation_checks"
     RECORDS_TABLE = "zombie_force_liquidation_records"
-    HOLDING_THRESHOLD_MS = 48 * 60 * 60 * 1000
+    HOLDING_THRESHOLD_MS = 24 * 60 * 60 * 1000
 
     def __init__(
         self,
@@ -76,9 +75,6 @@ class ZombieForceLiquidationModule:
         conn = db_config.connect_sqlite(self.core_db_path, row_factory=sqlite3.Row)
         db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
         return conn
-
-    def _trading_connect(self) -> sqlite3.Connection:
-        return db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
 
     def init_tables(self) -> None:
         db_dir = os.path.dirname(self.core_db_path)
@@ -129,8 +125,6 @@ class ZombieForceLiquidationModule:
     def run_round(self, checked_at: int | None = None) -> dict[str, Any]:
         self.account_manager.validate_config()
         self.init_tables()
-        break_even = BreakEvenTakeProfitStrategy(db_path=self.db_path, account_manager=self.account_manager, config=self.config)
-        break_even.init_tables()
         helper = TradingExperiment(db_path=self.db_path, account_manager=self.account_manager, config=self.config)
         helper.init_tables()
         positions = helper._fetch_and_store_positions()
@@ -154,18 +148,14 @@ class ZombieForceLiquidationModule:
         opened_at = self._latest_opened_at(symbol, now)
         holding_ms = max(0, now - opened_at) if opened_at is not None else 0
         holding_hours = Decimal(holding_ms) / Decimal(60 * 60 * 1000)
-        has_break_even = self._has_lifecycle_break_even_record(symbol, opened_at)
         if opened_at is None:
-            self._insert_check(symbol, now, None, holding_hours, amount, entry_price, has_break_even, False, "opened_at_missing")
+            self._insert_check(symbol, now, None, holding_hours, amount, entry_price, False, False, "opened_at_missing")
             return False
-        if holding_ms <= self.HOLDING_THRESHOLD_MS:
-            self._insert_check(symbol, now, opened_at, holding_hours, amount, entry_price, has_break_even, False, "holding_time_lte_48h")
-            return False
-        if has_break_even:
-            self._insert_check(symbol, now, opened_at, holding_hours, amount, entry_price, True, False, "break_even_record_found_in_lifecycle")
+        if holding_ms < self.HOLDING_THRESHOLD_MS:
+            self._insert_check(symbol, now, opened_at, holding_hours, amount, entry_price, False, False, "holding_time_lt_24h")
             return False
 
-        self._insert_check(symbol, now, opened_at, holding_hours, amount, entry_price, False, True, "holding_time_gt_48h_without_break_even_record")
+        self._insert_check(symbol, now, opened_at, holding_hours, amount, entry_price, False, True, "holding_time_gte_24h")
         self._force_close(helper, exchange_symbol, symbol, amount, entry_price, opened_at, now)
         return True
 
@@ -184,8 +174,13 @@ class ZombieForceLiquidationModule:
             return
         try:
             for endpoint, label in (("/fapi/v1/allOpenOrders", "open_orders_cancel"), ("/fapi/v1/algoOpenOrders", "algo_orders_cancel")):
-                response = self.account_manager._signed_delete(endpoint, {"symbol": exchange_symbol})
-                raw_parts.append(str({label: response}))
+                try:
+                    response = self.account_manager._signed_delete(endpoint, {"symbol": exchange_symbol})
+                    raw_parts.append(str({label: response}))
+                except Exception as exc:
+                    # A stale protective order must not prevent the mandatory
+                    # market close; record the cleanup error and keep going.
+                    raw_parts.append(str({f"{label}_failed": f"{type(exc).__name__}: {exc}"}))
             exchange_info = helper._exchange_symbol_info(exchange_symbol)
             quantity = TradingExperiment._floor_to_step(abs(amount), exchange_info["step_size"])
             if quantity <= 0:
@@ -206,8 +201,11 @@ class ZombieForceLiquidationModule:
             order_id = str(response.get("orderId", "")) if isinstance(response, dict) else ""
             raw_parts.append(str({"market_close": response}))
             for endpoint, label in (("/fapi/v1/allOpenOrders", "post_close_open_orders_cancel"), ("/fapi/v1/algoOpenOrders", "post_close_algo_orders_cancel")):
-                cancel_response = self.account_manager._signed_delete(endpoint, {"symbol": exchange_symbol})
-                raw_parts.append(str({label: cancel_response}))
+                try:
+                    cancel_response = self.account_manager._signed_delete(endpoint, {"symbol": exchange_symbol})
+                    raw_parts.append(str({label: cancel_response}))
+                except Exception as exc:
+                    raw_parts.append(str({f"{label}_failed": f"{type(exc).__name__}: {exc}"}))
         except Exception as exc:
             status = "failed"
             reason_parts.append(f"zombie_force_liquidation_failed: {type(exc).__name__}: {exc}")
@@ -226,20 +224,6 @@ class ZombieForceLiquidationModule:
                 (symbol, now),
             ).fetchone()
         return int(row["created_at"]) if row else None
-
-    def _has_lifecycle_break_even_record(self, symbol: str, opened_at: int | None) -> bool:
-        if opened_at is None:
-            return False
-        with self._trading_connect() as conn:
-            row = conn.execute(
-                f"""
-                SELECT 1 FROM {BreakEvenTakeProfitStrategy.RECORDS_TABLE}
-                WHERE symbol = ? AND status = 'submitted' AND checked_at >= ?
-                LIMIT 1
-                """,
-                (symbol, opened_at),
-            ).fetchone()
-        return row is not None
 
     def _insert_check(self, symbol: str, checked_at: int, opened_at: int | None, holding_hours: Decimal, amount: Decimal, entry_price: Decimal, has_break_even: bool, triggered: bool, reason: str) -> None:
         with self._connect() as conn:

@@ -37,14 +37,20 @@ class ZombieAccountManager:
         return {"orderId": 123, "executedQty": params.get("quantity", "0"), "cumQuote": "18"}
 
 
+class CancelFailureAccountManager(ZombieAccountManager):
+    def _signed_delete(self, endpoint, params=None):
+        self.deleted.append((endpoint, dict(params or {})))
+        raise RuntimeError("cancel unavailable")
+
+
 class ZombieForceLiquidationTests(unittest.TestCase):
-    def test_closes_position_older_than_48h_without_break_even_record(self):
+    def test_closes_position_as_soon_as_it_reaches_24h(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = str(Path(tmpdir) / "klines.db")
             account = ZombieAccountManager()
             TradingExperiment(db_path=db_path, account_manager=account).init_tables()
             opened_at = 1_000
-            checked_at = opened_at + 49 * 60 * 60 * 1000
+            checked_at = opened_at + 24 * 60 * 60 * 1000
             with sqlite3.connect(db_path) as conn:
                 conn.execute(
                     f"""
@@ -75,14 +81,20 @@ class ZombieForceLiquidationTests(unittest.TestCase):
                 record = conn.execute(f"SELECT order_id FROM {ZombieForceLiquidationModule.RECORDS_TABLE}").fetchone()
             self.assertEqual(record["order_id"], "123")
 
-    def test_skips_old_position_with_lifecycle_break_even_record(self):
+            with sqlite3.connect(db_path) as conn:
+                check = conn.execute(
+                    f"SELECT triggered, reason FROM {ZombieForceLiquidationModule.CHECKS_TABLE}"
+                ).fetchone()
+            self.assertEqual(check, (1, "holding_time_gte_24h"))
+
+    def test_break_even_record_does_not_exempt_position_at_24h(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = str(Path(tmpdir) / "klines.db")
             account = ZombieAccountManager()
             TradingExperiment(db_path=db_path, account_manager=account).init_tables()
             BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=account).init_tables()
             opened_at = 1_000
-            checked_at = opened_at + 49 * 60 * 60 * 1000
+            checked_at = opened_at + 24 * 60 * 60 * 1000
             with sqlite3.connect(db_path) as conn:
                 conn.execute(
                     f"INSERT INTO {TradingExperiment.TRADES_TABLE} (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt, required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity, notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation, take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at) VALUES ('BANK', 1, 'LONG', 'opened', 80, 5, '100', '20', '1000', '10', '10', '2', '20', '37.5', '7', '', 'tp-1', 'sl-1', '', '', ?, ?)",
@@ -96,9 +108,52 @@ class ZombieForceLiquidationTests(unittest.TestCase):
             result = ZombieForceLiquidationModule(db_path=db_path, account_manager=account).run_round(checked_at=checked_at)
 
             self.assertEqual(result["checked"], 1)
+            self.assertEqual(result["triggered"], 1)
+            self.assertEqual(account.posts[-1][1]["type"], "MARKET")
+
+    def test_skips_position_just_before_24h(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "klines.db")
+            account = ZombieAccountManager()
+            TradingExperiment(db_path=db_path, account_manager=account).init_tables()
+            opened_at = 1_000
+            checked_at = opened_at + 24 * 60 * 60 * 1000 - 1
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    f"INSERT INTO {TradingExperiment.TRADES_TABLE} (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt, required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity, notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation, take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at) VALUES ('BANK', 1, 'LONG', 'opened', 80, 5, '100', '20', '1000', '10', '10', '2', '20', '37.5', '7', '', 'tp-1', 'sl-1', '', '', ?, ?)",
+                    (opened_at, opened_at),
+                )
+
+            result = ZombieForceLiquidationModule(db_path=db_path, account_manager=account).run_round(checked_at=checked_at)
+
             self.assertEqual(result["triggered"], 0)
             self.assertEqual(account.deleted, [])
             self.assertEqual(account.posts, [])
+
+    def test_cancel_failure_does_not_block_mandatory_market_close(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "klines.db")
+            account = CancelFailureAccountManager()
+            TradingExperiment(db_path=db_path, account_manager=account).init_tables()
+            opened_at = 1_000
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    f"INSERT INTO {TradingExperiment.TRADES_TABLE} (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt, required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity, notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation, take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at) VALUES ('BANK', 1, 'LONG', 'opened', 80, 5, '100', '20', '1000', '10', '10', '2', '20', '37.5', '7', '', 'tp-1', 'sl-1', '', '', ?, ?)",
+                    (opened_at, opened_at),
+                )
+
+            result = ZombieForceLiquidationModule(db_path=db_path, account_manager=account).run_round(
+                checked_at=opened_at + 24 * 60 * 60 * 1000
+            )
+
+            self.assertEqual(result["triggered"], 1)
+            self.assertEqual(account.posts[-1][1]["type"], "MARKET")
+            with sqlite3.connect(db_path) as conn:
+                status, raw_response = conn.execute(
+                    f"SELECT status, raw_response FROM {ZombieForceLiquidationModule.RECORDS_TABLE}"
+                ).fetchone()
+            self.assertEqual(status, "submitted")
+            self.assertIn("open_orders_cancel_failed", raw_response)
 
 
 if __name__ == "__main__":
