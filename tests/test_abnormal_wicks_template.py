@@ -93,6 +93,14 @@ def test_zombie_force_liquidation_records_hide_raw_response_column():
     assert "row.raw_response" not in zombie_section
     assert 'colspan="10"' in zombie_section
 
+
+def test_zombie_force_liquidation_copy_describes_24h_hard_limit():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+
+    assert "持仓时间一旦达到24小时" in template
+    assert "无论是否已有保本止盈保护" in template
+    assert "reduceOnly 市价单将当前持仓全部平仓" in template
+
 def test_experiment_equity_trend_chart_renders_under_equity_metric():
     template = Path("templates/abnormal_wicks.html").read_text()
 
@@ -476,6 +484,16 @@ def test_market_filter_includes_dynamic_add_position_threshold_ui():
     module_index = template.index("动态加仓阈值（每15分钟执行）", section_index)
     assert "2R成功率 = 触发笔数 / 样本笔数" in template[module_index:]
     assert "dynamic_add_position_threshold_results" in template[module_index:]
+
+
+def test_increase_condition_copy_uses_dynamic_round_threshold():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    section = template[template.index('aria-label="加仓条件模块"'):]
+
+    assert "条件1：当前未变现盈利 ≥ 本轮加仓阈值" in section
+    assert "加仓模块每轮执行前" in section
+    assert "动态加仓阈值（每15分钟执行）" in section
+    assert "当前未变现盈利 ≥ 1.3R" not in section
 
 
 def test_market_filter_highlights_latest_decisions_and_permission_statuses():

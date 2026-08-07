@@ -1338,7 +1338,7 @@ def test_position_increase_does_not_mark_pretrigger_when_reduction_condition3_fa
 
     assert checks[0].triggered is False
     assert checks[0].tag == ""
-    assert checks[0].reason == "condition1_unrealized_pnl_lt_1_3r; condition3_current_price_lt_latest_reduction_price"
+    assert checks[0].reason == "condition1_unrealized_pnl_lt_dynamic_threshold_2.3r; condition3_current_price_lt_latest_reduction_price"
 
 
 def test_position_increase_marks_pretrigger_when_reduction_condition2_and3_met_but_condition1_fails():
@@ -1353,7 +1353,7 @@ def test_position_increase_marks_pretrigger_when_reduction_condition2_and3_met_b
 
     assert checks[0].triggered is False
     assert checks[0].tag == "预触发"
-    assert checks[0].reason == "condition1_unrealized_pnl_lt_1_3r"
+    assert checks[0].reason == "condition1_unrealized_pnl_lt_dynamic_threshold_2.3r"
 
 
 def test_position_increase_marks_pretrigger_without_reduction_when_condition2_met_but_condition1_fails():
@@ -1369,7 +1369,29 @@ def test_position_increase_marks_pretrigger_without_reduction_when_condition2_me
     assert checks[0].triggered is False
     assert checks[0].tag == "预触发"
     assert checks[0].latest_reduction_price == ""
-    assert checks[0].reason == "condition1_unrealized_pnl_lt_1_3r"
+    assert checks[0].reason == "condition1_unrealized_pnl_lt_dynamic_threshold_2.3r"
+
+
+def test_position_increase_condition1_uses_current_dynamic_threshold():
+    fake_account = RefreshingMarkAccountManager(mark_price="10")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        _seed_increase_pretrigger_db(db_path, scoring)
+        position = {"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "10", "unRealizedProfit": "89.99", "leverage": "5"}
+
+        below = scoring._evaluate_increase_rules(
+            position, "BANK", 3000, Decimal("5000"), Decimal("50"), 4000, Decimal("1.8")
+        )
+        position["unRealizedProfit"] = "90"
+        reached = scoring._evaluate_increase_rules(
+            position, "BANK", 3000, Decimal("5000"), Decimal("50"), 4000, Decimal("1.8")
+        )
+
+    assert below.triggered is False
+    assert below.reason == "condition1_unrealized_pnl_lt_dynamic_threshold_1.8r"
+    assert reached.triggered is True
+    assert reached.reason == "first_increase_conditions_met"
 
 
 def test_refresh_pretrigger_waits_until_condition1_is_met():
@@ -1395,7 +1417,7 @@ def test_refresh_pretrigger_waits_until_condition1_is_met():
     assert result["triggered"] == 0
     assert result["records"] == 0
     assert checks[0]["tag"] == "预触发"
-    assert checks[0]["reason"] == "condition1_unrealized_pnl_lt_1_3r"
+    assert checks[0]["reason"] == "condition1_unrealized_pnl_lt_dynamic_threshold_2.3r"
     assert records == []
 
 def test_refresh_pretrigger_updates_mark_price_and_executes_first_add():

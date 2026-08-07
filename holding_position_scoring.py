@@ -1404,18 +1404,30 @@ class HoldingPositionScoringSystem:
         active_positions = positions if positions is not None else self._active_positions()
         equity = TradingExperiment(self.db_path, account_manager=self.account_manager)._fetch_experiment_usdt_equity()
         one_r = equity * Decimal("0.01")
+        threshold_r_multiple = self._current_increase_threshold_r_multiple(round_ts, now_ms)
         checks: list[PositionIncreaseCheck] = []
         for position in active_positions:
             symbol = self._base_symbol(str(position.get("symbol", "")))
             amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
             if not symbol or amount == 0:
                 continue
-            check = self._evaluate_increase_rules(position, symbol, round_ts, equity, one_r, now_ms)
+            check = self._evaluate_increase_rules(
+                position, symbol, round_ts, equity, one_r, now_ms, threshold_r_multiple
+            )
             self._save_increase_check(check)
             checks.append(check)
         return checks
 
-    def _evaluate_increase_rules(self, position: dict[str, Any], symbol: str, round_ts: int, equity: Decimal, one_r: Decimal, now_ms: int) -> PositionIncreaseCheck:
+    def _evaluate_increase_rules(
+        self,
+        position: dict[str, Any],
+        symbol: str,
+        round_ts: int,
+        equity: Decimal,
+        one_r: Decimal,
+        now_ms: int,
+        threshold_r_multiple: Decimal | None = None,
+    ) -> PositionIncreaseCheck:
         exchange_symbol = self._exchange_symbol(position, symbol)
         current_price = self._current_symbol_price(exchange_symbol, position)
         unrealized_pnl = self._position_unrealized_pnl(position)
@@ -1428,6 +1440,8 @@ class HoldingPositionScoringSystem:
         reasons: list[str] = []
         triggered = False
         tag = ""
+        if threshold_r_multiple is None:
+            threshold_r_multiple = self._current_increase_threshold_r_multiple(round_ts, now_ms)
         if open_trade_created_at == "":
             reasons.append("missing_open_trade_lifecycle")
         elif self._has_first_increase_record_since(symbol, lifecycle_started_at):
@@ -1436,13 +1450,16 @@ class HoldingPositionScoringSystem:
         elif one_r <= 0:
             reasons.append("non_positive_one_r")
         else:
-            condition1_met = unrealized_pnl >= one_r * Decimal("1.3")
+            increase_threshold = one_r * threshold_r_multiple
+            condition1_met = unrealized_pnl >= increase_threshold
             condition2_met = latest_score != "" and previous_score != "" and self._decimal_from(latest_score, Decimal("0")) >= self._decimal_from(previous_score, Decimal("0")) - Decimal("5")
             has_reduction_record = latest_reduction_price != ""
             condition3_met = not has_reduction_record or current_price >= self._decimal_from(latest_reduction_price, Decimal("0"))
 
             if not condition1_met:
-                reasons.append("condition1_unrealized_pnl_lt_1_3r")
+                reasons.append(
+                    f"condition1_unrealized_pnl_lt_dynamic_threshold_{self._fmt_decimal(threshold_r_multiple)}r"
+                )
             if latest_score == "" or previous_score == "":
                 reasons.append("condition2_missing_latest_or_previous_total_score")
             elif not condition2_met:
@@ -1482,6 +1499,7 @@ class HoldingPositionScoringSystem:
         ]
         equity = TradingExperiment(self.db_path, account_manager=self.account_manager)._fetch_experiment_usdt_equity()
         one_r = equity * Decimal("0.01")
+        threshold_r_multiple = self._current_increase_threshold_r_multiple(int(round_ts), checked_at)
         refreshed_checks: list[PositionIncreaseCheck] = []
         for position in positions:
             symbol = self._base_symbol(str(position.get("symbol", "")))
@@ -1490,7 +1508,15 @@ class HoldingPositionScoringSystem:
             refreshed_position = dict(position)
             if latest_mark_price > 0:
                 refreshed_position["markPrice"] = self._fmt_decimal(latest_mark_price)
-            check = self._evaluate_increase_rules(refreshed_position, symbol, int(round_ts), equity, one_r, checked_at)
+            check = self._evaluate_increase_rules(
+                refreshed_position,
+                symbol,
+                int(round_ts),
+                equity,
+                one_r,
+                checked_at,
+                threshold_r_multiple,
+            )
             if check.tag in {self.INCREASE_TAG_PRE_TRIGGER, self.INCREASE_TAG_FIRST} or check.symbol in pretrigger_symbols:
                 self._save_increase_check(check)
                 refreshed_checks.append(check)
@@ -1693,22 +1719,14 @@ class HoldingPositionScoringSystem:
 
 
     def _current_increase_threshold_r_multiple(self, decision_round_ts: int, evaluated_at: int | None = None) -> Decimal:
-        """Return this round's dynamic add-position margin cap in R multiples."""
+        """Run the dynamic module and return this round's add threshold in R."""
         try:
             result = DynamicAddPositionThresholdModule(self.db_path).run_round(
                 decision_round_ts=decision_round_ts, evaluated_at=evaluated_at
             )
-            success_rate = result.success_rate
+            return Decimal(str(result.threshold_r_multiple))
         except Exception:
-            success_rate = None
-        if success_rate is None:
             return self.DEFAULT_INCREASE_THRESHOLD_R_MULTIPLE
-        rate = Decimal(str(success_rate))
-        if rate > Decimal("0.4"):
-            return Decimal("1.3")
-        if rate >= Decimal("0.2"):
-            return Decimal("1.8")
-        return self.DEFAULT_INCREASE_THRESHOLD_R_MULTIPLE
 
     def _save_increase_check(self, check: PositionIncreaseCheck) -> None:
         with self._connect() as conn:
