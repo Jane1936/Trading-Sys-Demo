@@ -2211,11 +2211,16 @@ class HoldingPositionScoringSystem:
                     second_macd=excluded.second_macd,
                     third_macd=excluded.third_macd,
                     open_entry_price=excluded.open_entry_price,
-                    rule_name=excluded.rule_name,
-                    triggered=excluded.triggered,
-                    tag=excluded.tag,
-                    reason=excluded.reason,
-                    checked_at=excluded.checked_at
+                    -- A decision round can be evaluated more than once (for
+                    -- example after a worker retry).  Do not let the retry's
+                    -- cooldown result erase the rule-2 trigger that started
+                    -- the cooldown window.  Otherwise the following 15m round
+                    -- cannot find that trigger and reduces the position again.
+                    rule_name=CASE WHEN triggered = 1 AND excluded.triggered = 0 THEN rule_name ELSE excluded.rule_name END,
+                    triggered=MAX(triggered, excluded.triggered),
+                    tag=CASE WHEN triggered = 1 AND excluded.triggered = 0 THEN tag ELSE excluded.tag END,
+                    reason=CASE WHEN triggered = 1 AND excluded.triggered = 0 THEN reason ELSE excluded.reason END,
+                    checked_at=CASE WHEN triggered = 1 AND excluded.triggered = 0 THEN checked_at ELSE excluded.checked_at END
                 """,
                 (check.symbol, check.decision_round_ts, check.highest_15m_high, check.current_price, check.atr14, check.ema16, check.ema21, check.price_drawdown_ratio, check.account_equity_usdt, check.two_r_usdt, check.one_r_usdt, check.unrealized_pnl, check.open_total_score, check.latest_total_score, check.score_drawdown, check.latest_15m_open, check.latest_15m_close, check.second_15m_open, check.second_15m_close, check.third_15m_open, check.third_15m_close, check.previous_total_score, check.recent_score_drawdown, check.latest_macd, check.second_macd, check.third_macd, check.open_entry_price, check.rule_name, int(check.triggered), check.tag, check.reason, check.checked_at),
             )
