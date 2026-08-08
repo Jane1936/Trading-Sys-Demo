@@ -413,6 +413,14 @@ def test_trailing_stop_action_records_show_atr_and_volatility_without_total_scor
     assert "total_score" not in section
     assert "row.atr14" in section
     assert "row.volatility" in section
+    assert "row.price_drawdown }} / {{ row.drawdown_threshold" in section
+    assert "row.current_profit_drawdown" not in section
+
+    renderer_start = template.index("function renderTrailingStopRecords(rows)")
+    renderer_end = template.index("function renderTrailingStopSummary(payload)", renderer_start)
+    renderer = template[renderer_start:renderer_end]
+    assert "row.price_drawdown)} / ${escapeHtml(row.drawdown_threshold)" in renderer
+    assert "row.current_profit_drawdown" not in renderer
 
 
 def test_web_page_creates_missing_db_parent_directory():
