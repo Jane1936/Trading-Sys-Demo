@@ -62,7 +62,14 @@ def test_15m_ma20_readiness_reports_ready_and_missing_symbols(tmp_path):
             "CREATE TABLE ma20_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ma20 REAL)"
         )
         conn.execute(
+            "CREATE TABLE ema_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ema20 REAL)"
+        )
+        conn.execute(
             "INSERT INTO ma20_indicators (symbol, interval, open_time, ma20) VALUES (?, ?, ?, ?)",
+            ("BTCUSDT", "15m", 900_000, 100.0),
+        )
+        conn.execute(
+            "INSERT INTO ema_indicators (symbol, interval, open_time, ema20) VALUES (?, ?, ?, ?)",
             ("BTCUSDT", "15m", 900_000, 100.0),
         )
         conn.execute(
@@ -92,6 +99,9 @@ def test_ma20_skip_record_round_trips_missing_symbols(tmp_path):
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             "CREATE TABLE ma20_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ma20 REAL)"
+        )
+        conn.execute(
+            "CREATE TABLE ema_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ema20 REAL)"
         )
     readiness = scoring.get_15m_ma20_readiness_for_round(
         decision_round_ts=1_800_000,
@@ -124,7 +134,14 @@ def test_wait_for_15m_ma20_readiness_does_not_retry_by_default(tmp_path, monkeyp
             "CREATE TABLE ma20_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ma20 REAL)"
         )
         conn.execute(
+            "CREATE TABLE ema_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ema20 REAL)"
+        )
+        conn.execute(
             "INSERT INTO ma20_indicators (symbol, interval, open_time, ma20) VALUES (?, ?, ?, ?)",
+            ("BTCUSDT", "15m", 900_000, 100.0),
+        )
+        conn.execute(
+            "INSERT INTO ema_indicators (symbol, interval, open_time, ema20) VALUES (?, ?, ?, ?)",
             ("BTCUSDT", "15m", 900_000, 100.0),
         )
 
@@ -138,6 +155,10 @@ def test_wait_for_15m_ma20_readiness_does_not_retry_by_default(tmp_path, monkeyp
             with sqlite3.connect(db_path) as conn:
                 conn.execute(
                     "INSERT INTO ma20_indicators (symbol, interval, open_time, ma20) VALUES (?, ?, ?, ?)",
+                    ("ETHUSDT", "15m", 900_000, 100.0),
+                )
+                conn.execute(
+                    "INSERT INTO ema_indicators (symbol, interval, open_time, ema20) VALUES (?, ?, ?, ?)",
                     ("ETHUSDT", "15m", 900_000, 100.0),
                 )
         calls += 1
@@ -164,7 +185,14 @@ def test_wait_for_15m_ma20_readiness_can_retry_when_explicitly_requested(tmp_pat
             "CREATE TABLE ma20_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ma20 REAL)"
         )
         conn.execute(
+            "CREATE TABLE ema_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ema20 REAL)"
+        )
+        conn.execute(
             "INSERT INTO ma20_indicators (symbol, interval, open_time, ma20) VALUES (?, ?, ?, ?)",
+            ("BTCUSDT", "15m", 900_000, 100.0),
+        )
+        conn.execute(
+            "INSERT INTO ema_indicators (symbol, interval, open_time, ema20) VALUES (?, ?, ?, ?)",
             ("BTCUSDT", "15m", 900_000, 100.0),
         )
 
@@ -178,6 +206,10 @@ def test_wait_for_15m_ma20_readiness_can_retry_when_explicitly_requested(tmp_pat
             with sqlite3.connect(db_path) as conn:
                 conn.execute(
                     "INSERT INTO ma20_indicators (symbol, interval, open_time, ma20) VALUES (?, ?, ?, ?)",
+                    ("ETHUSDT", "15m", 900_000, 100.0),
+                )
+                conn.execute(
+                    "INSERT INTO ema_indicators (symbol, interval, open_time, ema20) VALUES (?, ?, ?, ?)",
                     ("ETHUSDT", "15m", 900_000, 100.0),
                 )
         calls += 1
@@ -231,6 +263,9 @@ def test_ma20_skip_record_for_round_only_returns_requested_round(tmp_path):
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             "CREATE TABLE ma20_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ma20 REAL)"
+        )
+        conn.execute(
+            "CREATE TABLE ema_indicators (symbol TEXT, interval TEXT, open_time INTEGER, ema20 REAL)"
         )
     older = scoring.get_15m_ma20_readiness_for_round(
         decision_round_ts=1_800_000,
@@ -389,6 +424,10 @@ def test_round_snapshot_bulk_loads_and_caps_each_symbol_window(tmp_path, monkeyp
             "CREATE TABLE ma20_indicators "
             "(symbol TEXT, interval TEXT, open_time INTEGER, ma20 REAL)"
         )
+        conn.execute(
+            "CREATE TABLE ema_indicators "
+            "(symbol TEXT, interval TEXT, open_time INTEGER, ema20 REAL)"
+        )
         for symbol in ("AAA", "BBB", "IGNORED"):
             conn.executemany(
                 "INSERT INTO klines_1m VALUES (?, ?, ?, ?)",
@@ -411,6 +450,10 @@ def test_round_snapshot_bulk_loads_and_caps_each_symbol_window(tmp_path, monkeyp
                     "INSERT INTO ma20_indicators VALUES (?, ?, ?, ?)",
                     [(symbol, interval, i, 100.0 + i) for i in range(5)],
                 )
+            conn.executemany(
+                "INSERT INTO ema_indicators VALUES (?, '15m', ?, ?)",
+                [(symbol, i, 100.0 + i) for i in range(5)],
+            )
 
     monkeypatch.setattr(db_config, "BASE_DB_PATH", str(base_path))
     scoring = ScoringSystem(db_path=str(tmp_path / "scoring.db"))
@@ -422,6 +465,7 @@ def test_round_snapshot_bulk_loads_and_caps_each_symbol_window(tmp_path, monkeyp
     assert len(snapshot["klines_1h"]) == 48
     assert len(snapshot["open_interest_1m"]) == 480
     assert len(snapshot["ma20_indicators"]) == 12
+    assert len(snapshot["ema_indicators"]) == 2
     assert {row["symbol"] for rows in snapshot.values() for row in rows} == {"AAA", "BBB"}
     assert snapshot["klines_1m"][0]["open_time"] == 64
 

@@ -165,7 +165,7 @@ def test_save_indicator_results_persists_round_in_one_connection(tmp_path, monke
         data_processor.MACalcResult(
             symbol=symbol, interval="15m", open_time=1, close_time=2,
             close=10.0, ma20=9.0, ema12=9.1, ema16=9.2,
-            ema21=9.3, ema26=9.4, macd_dif=-0.3, macd_dea=-0.2,
+            ema20=9.25, ema21=9.3, ema26=9.4, macd_dif=-0.3, macd_dea=-0.2,
             macd_histogram=-0.2,
         )
         for symbol in ("BTC", "ETH")

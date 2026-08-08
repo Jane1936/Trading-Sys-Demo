@@ -452,13 +452,13 @@
       {% endif %}
       {% if scoring_ma20_skip_record %}
       <div class="score-ma20-warning" role="status" aria-live="polite">
-        <strong>MA20缺失跳过提示：</strong>
+        <strong>15m MA20/EMA20缺失跳过提示：</strong>
         最近一轮评分在 {{ scoring_ma20_skip_record.decision_round_ts|fmt_ms_datetime }} 轮次（实际检查时间：{{ scoring_ma20_skip_record.created_at|fmt_ms_datetime }}）发现
         {{ scoring_ma20_skip_record.missing_count }} / {{ scoring_ma20_skip_record.universe_count }}
-        个 universe symbol 缺失本轮 15m MA20（目标 open_time：
+        个 universe symbol 缺失本轮同一 open_time 的 15m MA20 或 EMA20（目标 open_time：
         <code>{{ scoring_ma20_skip_record.target_open_time|fmt_ms_datetime }}</code>）。
         系统已跳过这些缺失 symbol，并继续对
-        {{ scoring_ma20_skip_record.ready_count }} 个 MA20 已准备好的 symbol 评分，避免卡住整个评分系统。
+        {{ scoring_ma20_skip_record.ready_count }} 个 MA20 与 EMA20 均已收敛的 symbol 评分，避免卡住整个评分系统。
         <div class="missing-symbols">
           缺失symbol：
           {% for skipped_symbol in scoring_ma20_skip_record.missing_symbols[:30] %}
@@ -474,13 +474,13 @@
         <div class="score-tab-group trend">
           <span class="score-tab-group-label">趋势评分</span>
           <button class="tab-btn score-rule-tab" data-score-tab="score-rule-1" style="width:auto;">规则1：15m MA20三连降（{{ rule_score_weights[1] }}分）</button>
-        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-2" style="width:auto;">规则2：1m收盘&gt;15m MA20（{{ rule_score_weights[2] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-2" style="width:auto;">规则2：1m收盘&gt;15m MA20且低于EMA20上方6%（{{ rule_score_weights[2] }}分）</button>
         <button class="tab-btn score-rule-tab" data-score-tab="score-rule-3" style="width:auto;">规则3：最近1h收盘&gt;前1h收盘（{{ rule_score_weights[3] }}分）</button>
         <button class="tab-btn score-rule-tab" data-score-tab="score-rule-4" style="width:auto;">规则4：最近4条15m中≥3条收涨（{{ rule_score_weights[4] }}分）</button>
         <button class="tab-btn score-rule-tab" data-score-tab="score-rule-5" style="width:auto;">规则5：最近4条15m收盘至少3条递增（{{ rule_score_weights[5] }}分）</button>
         <button class="tab-btn score-rule-tab" data-score-tab="score-rule-6" style="width:auto;">规则6：1m收盘&gt;5m MA20（{{ rule_score_weights[6] }}分）</button>
-        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-7" style="width:auto;">规则7：最近4条15m有≥2条收盘位置≥0.55（{{ rule_score_weights[7] }}分）</button>
-        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-8" style="width:auto;">规则8：最近1条1h最高价&gt;前24条最高价（{{ rule_score_weights[8] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-7" style="width:auto;">规则7：最近4条15m有≥2条收盘位置≥0.65（{{ rule_score_weights[7] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-8" style="width:auto;">规则8：最近1条15m最高价&gt;前24条1h最高价（{{ rule_score_weights[8] }}分）</button>
         </div>
         <div class="score-tab-group oi">
           <span class="score-tab-group-label">OI/资金费率评分</span>
@@ -524,16 +524,16 @@
 
       <div id="score-rule-2" class="score-rule-panel">
         {% if score_rule2_round_ts %}
-        <div class="tip">规则2轮次：{{ score_rule2_round_ts|fmt_ms_datetime }}</div>
+        <div class="tip">规则2轮次：{{ score_rule2_round_ts|fmt_ms_datetime }}。等待同一轮15m MA20与EMA20收敛后执行；1m close须高于15m MA20，且(close - EMA20) / EMA20 &lt; 6%，全部满足才得分。</div>
         {% endif %}
         <div class="table-wrap">
           <table>
-            <thead><tr><th>symbol</th><th>score</th><th>latest_1m_close</th><th>latest_15m_ma20</th><th>reason</th><th>updated_at</th></tr></thead>
+            <thead><tr><th>symbol</th><th>score</th><th>latest_1m_close</th><th>latest_15m_ma20</th><th>latest_15m_ema20</th><th>EMA20距离</th><th>reason</th><th>updated_at</th></tr></thead>
             <tbody>
               {% for r in round_scores_rule2 %}
-              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_1m_close) }}</td><td>{{ '%.6f'|format(r.latest_15m_ma20) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_1m_close) }}</td><td>{{ '%.6f'|format(r.latest_15m_ma20) }}</td><td>{{ '%.6f'|format(r.latest_15m_ema20) }}</td><td>{{ '%.2f%%'|format(r.ema20_distance_ratio * 100) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
               {% else %}
-              <tr><td class="empty" colspan="6">暂无规则2评分数据</td></tr>
+              <tr><td class="empty" colspan="8">暂无规则2评分数据</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -616,7 +616,7 @@
 
       <div id="score-rule-7" class="score-rule-panel">
         {% if score_rule7_round_ts %}
-        <div class="tip">规则7轮次：{{ score_rule7_round_ts|fmt_ms_datetime }}</div>
+        <div class="tip">规则7轮次：{{ score_rule7_round_ts|fmt_ms_datetime }}。最近4条15m中至少2条的收盘位置 (close-low)/(high-low) ≥ 0.65。</div>
         {% endif %}
         <div class="table-wrap">
           <table>
@@ -634,11 +634,11 @@
 
       <div id="score-rule-8" class="score-rule-panel">
         {% if score_rule8_round_ts %}
-        <div class="tip">规则8轮次：{{ score_rule8_round_ts|fmt_ms_datetime }}</div>
+        <div class="tip">规则8轮次：{{ score_rule8_round_ts|fmt_ms_datetime }}。最近1条15m最高价须严格高于此前24条1h K线最高价的最大值。</div>
         {% endif %}
         <div class="table-wrap">
           <table>
-            <thead><tr><th>symbol</th><th>score</th><th>latest_high</th><th>prev_24_max_high</th><th>reason</th><th>updated_at</th></tr></thead>
+            <thead><tr><th>symbol</th><th>score</th><th>latest_15m_high</th><th>prev_24_1h_max_high</th><th>reason</th><th>updated_at</th></tr></thead>
             <tbody>
               {% for r in round_scores_rule8 %}
               <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_high) }}</td><td>{{ '%.6f'|format(r.prev_24_max_high) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>

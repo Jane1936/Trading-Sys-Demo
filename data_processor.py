@@ -25,6 +25,7 @@ class MACalcResult:
     ma20: Optional[float]
     ema12: Optional[float] = None
     ema16: Optional[float] = None
+    ema20: Optional[float] = None
     ema21: Optional[float] = None
     ema26: Optional[float] = None
     macd_dif: Optional[float] = None
@@ -52,7 +53,7 @@ class MA20Processor:
         average close of latest 20 candles
 
     15m EMA definition:
-        pandas ewm(span=N, adjust=False).mean() on close prices, for N=12, 16, 21, and 26
+        pandas ewm(span=N, adjust=False).mean() on close prices, for N=12, 16, 20, 21, and 26
 
     15m MACD definition:
         DIF = EMA12 - EMA26, DEA = EMA9(DIF), MACD histogram = 2 * (DIF - DEA).
@@ -105,6 +106,7 @@ class MA20Processor:
         series: List[MACalcResult] = []
         ema12: Optional[float] = None
         ema16: Optional[float] = None
+        ema20: Optional[float] = None
         ema21: Optional[float] = None
         ema26: Optional[float] = None
         macd_dea: Optional[float] = None
@@ -112,6 +114,7 @@ class MA20Processor:
         macd_histogram: Optional[float] = None
         ema12_alpha = 2 / (12 + 1)
         ema16_alpha = 2 / (16 + 1)
+        ema20_alpha = 2 / (20 + 1)
         ema21_alpha = 2 / (21 + 1)
         ema26_alpha = 2 / (26 + 1)
         macd_dea_alpha = 2 / (9 + 1)
@@ -131,6 +134,11 @@ class MA20Processor:
                     close_price
                     if ema16 is None
                     else (close_price * ema16_alpha) + (ema16 * (1 - ema16_alpha))
+                )
+                ema20 = (
+                    close_price
+                    if ema20 is None
+                    else (close_price * ema20_alpha) + (ema20 * (1 - ema20_alpha))
                 )
                 ema21 = (
                     close_price
@@ -160,6 +168,7 @@ class MA20Processor:
                     ma20=ma20,
                     ema12=ema12 if interval == "15m" else None,
                     ema16=ema16 if interval == "15m" else None,
+                    ema20=ema20 if interval == "15m" else None,
                     ema21=ema21 if interval == "15m" else None,
                     ema26=ema26 if interval == "15m" else None,
                     macd_dif=macd_dif if interval == "15m" else None,
@@ -303,7 +312,7 @@ def init_ma20_table(db_path: str = "data/klines.db") -> None:
 
 
 def init_ema_table(db_path: str = "data/klines.db") -> None:
-    """Create table for persisted EMA12/EMA16/EMA21/EMA26 15m values."""
+    """Create table for persisted 15m EMA values, including scoring EMA20."""
     with db_config.sqlite_schema_lock(db_path):
         with db_config.connect_sqlite(db_path) as conn:
             conn.execute("""
@@ -315,6 +324,7 @@ def init_ema_table(db_path: str = "data/klines.db") -> None:
                     close REAL NOT NULL,
                     ema12 REAL,
                     ema16 REAL NOT NULL,
+                    ema20 REAL NOT NULL,
                     ema21 REAL NOT NULL,
                     ema26 REAL,
                     updated_at INTEGER NOT NULL,
@@ -327,6 +337,8 @@ def init_ema_table(db_path: str = "data/klines.db") -> None:
             }
             if "ema12" not in columns:
                 conn.execute("ALTER TABLE ema_indicators ADD COLUMN ema12 REAL")
+            if "ema20" not in columns:
+                conn.execute("ALTER TABLE ema_indicators ADD COLUMN ema20 REAL")
             if "ema26" not in columns:
                 conn.execute("ALTER TABLE ema_indicators ADD COLUMN ema26 REAL")
             conn.execute(
@@ -366,11 +378,12 @@ def save_ma20_result(db_path: str, result: MACalcResult) -> None:
 
 
 def save_ema_result(db_path: str, result: MACalcResult) -> None:
-    """Upsert one 15m EMA12/EMA16/EMA21/EMA26 record to ema_indicators table."""
+    """Upsert one set of 15m EMA values to ema_indicators table."""
     if (
         result.interval != "15m"
         or result.ema12 is None
         or result.ema16 is None
+        or result.ema20 is None
         or result.ema21 is None
         or result.ema26 is None
     ):
@@ -381,13 +394,14 @@ def save_ema_result(db_path: str, result: MACalcResult) -> None:
         conn.execute(
             """
             INSERT INTO ema_indicators
-            (symbol, interval, open_time, close_time, close, ema12, ema16, ema21, ema26, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (symbol, interval, open_time, close_time, close, ema12, ema16, ema20, ema21, ema26, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(symbol, interval, open_time) DO UPDATE SET
                 close_time=excluded.close_time,
                 close=excluded.close,
                 ema12=excluded.ema12,
                 ema16=excluded.ema16,
+                ema20=excluded.ema20,
                 ema21=excluded.ema21,
                 ema26=excluded.ema26,
                 updated_at=excluded.updated_at
@@ -400,6 +414,7 @@ def save_ema_result(db_path: str, result: MACalcResult) -> None:
                 result.close,
                 result.ema12,
                 result.ema16,
+                result.ema20,
                 result.ema21,
                 result.ema26,
                 now_ms,
@@ -486,6 +501,7 @@ def save_indicator_results(db_path: str, results: List[MACalcResult]) -> dict[st
         if result.interval == "15m"
         and result.ema12 is not None
         and result.ema16 is not None
+        and result.ema20 is not None
         and result.ema21 is not None
         and result.ema26 is not None
     ]
@@ -519,17 +535,18 @@ def save_indicator_results(db_path: str, results: List[MACalcResult]) -> dict[st
         conn.executemany(
             """
             INSERT INTO ema_indicators
-            (symbol, interval, open_time, close_time, close, ema12, ema16, ema21, ema26, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (symbol, interval, open_time, close_time, close, ema12, ema16, ema20, ema21, ema26, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(symbol, interval, open_time) DO UPDATE SET
                 close_time=excluded.close_time, close=excluded.close,
                 ema12=excluded.ema12, ema16=excluded.ema16,
+                ema20=excluded.ema20,
                 ema21=excluded.ema21, ema26=excluded.ema26,
                 updated_at=excluded.updated_at
             """,
             [
                 (r.symbol, r.interval, r.open_time, r.close_time, r.close,
-                 r.ema12, r.ema16, r.ema21, r.ema26, now_ms)
+                 r.ema12, r.ema16, r.ema20, r.ema21, r.ema26, now_ms)
                 for r in ema_rows
             ],
         )
