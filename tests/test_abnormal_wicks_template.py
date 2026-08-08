@@ -408,6 +408,8 @@ def test_trailing_stop_action_records_show_atr_and_volatility_without_total_scor
 
     assert "<th>ATR(14)</th>" in section
     assert "<th>波动率</th>" in section
+    assert "<th>价格回撤 / 阈值</th>" in section
+    assert "盈利回撤幅度" not in section
     assert "total_score" not in section
     assert "row.atr14" in section
     assert "row.volatility" in section
