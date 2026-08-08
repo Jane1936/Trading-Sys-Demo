@@ -400,7 +400,7 @@ def run_scoring_round_worker(
         if len(readiness.missing_symbols) > 10:
             missing_preview += ",..."
         print(
-            f"⚠️ scoring round={decision_round_ts} skipping symbols missing 15m MA20 "
+            f"⚠️ scoring round={decision_round_ts} skipping symbols missing converged 15m MA20/EMA20 "
             f"target_open_time={readiness.target_open_time} "
             f"ready={len(readiness.ready_symbols)} "
             f"missing={len(readiness.missing_symbols)} "

@@ -36,13 +36,13 @@ DEFAULT_RULE_SCORE_WEIGHTS: dict[int, int] = {
 RULE_SCORE_WEIGHT_MAX = 100
 RULE_SCORE_NAMES: dict[int, str] = {
     1: "15m MA20 连续上升",
-    2: "1h 收盘价高于 MA20",
+    2: "1m 收盘高于15m MA20且低于15m EMA20上方6%",
     3: "1h 收盘价高于前值",
     4: "15m 最近4根至少3根阳线",
     5: "15m 收盘价连续走高",
     6: "1m 收盘价高于5m MA20",
     7: "15m 收盘价接近最高价",
-    8: "1h 最新价创24根新高",
+    8: "15m 最新高价突破前24根1h高价",
     9: "15m 回落并配合 OI",
     10: "1m 涨幅并配合 OI",
     11: "当前 OI 不低于 240m 前",
@@ -491,6 +491,16 @@ class ScoringSystem:
                         ).fetchall()
                     )
             snapshot["ma20_indicators"] = ma20_rows
+            ema_rows: list[sqlite3.Row] = []
+            for symbol in symbols:
+                ema_rows.extend(
+                    conn.execute(
+                        "SELECT * FROM ema_indicators WHERE symbol = ? AND interval = '15m' "
+                        "ORDER BY open_time DESC LIMIT 1",
+                        (symbol,),
+                    ).fetchall()
+                )
+            snapshot["ema_indicators"] = ema_rows
         return snapshot
 
     @staticmethod
@@ -506,6 +516,7 @@ class ScoringSystem:
             "klines_1h": ("symbol", "open_time", "high", "close", "volume"),
             "open_interest_1m": ("symbol", "snapshot_time", "open_interest"),
             "ma20_indicators": ("symbol", "interval", "open_time", "ma20"),
+            "ema_indicators": ("symbol", "interval", "open_time", "ema20"),
         }
         for table, columns in table_columns.items():
             definitions = ", ".join(f'"{column}"' for column in columns)
@@ -550,6 +561,8 @@ class ScoringSystem:
                     reason TEXT NOT NULL,
                     latest_1m_close REAL NOT NULL,
                     latest_15m_ma20 REAL NOT NULL,
+                    latest_15m_ema20 REAL NOT NULL DEFAULT 0,
+                    ema20_distance_ratio REAL NOT NULL DEFAULT 0,
                     updated_at INTEGER NOT NULL,
                     PRIMARY KEY(symbol, decision_round_ts)
                 )
@@ -558,6 +571,13 @@ class ScoringSystem:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_symbol_scores_close_gt_ma20_round ON symbol_scores_close_gt_ma20(decision_round_ts DESC)"
             )
+            rule2_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(symbol_scores_close_gt_ma20)")
+            }
+            if "latest_15m_ema20" not in rule2_columns:
+                conn.execute("ALTER TABLE symbol_scores_close_gt_ma20 ADD COLUMN latest_15m_ema20 REAL NOT NULL DEFAULT 0")
+            if "ema20_distance_ratio" not in rule2_columns:
+                conn.execute("ALTER TABLE symbol_scores_close_gt_ma20 ADD COLUMN ema20_distance_ratio REAL NOT NULL DEFAULT 0")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS symbol_scores_1m_close_gt_5m_ma20 (
@@ -1121,9 +1141,14 @@ class ScoringSystem:
         with self._round_connection() as conn:
             rows = conn.execute(
                 f"""
-                SELECT DISTINCT symbol
-                FROM ma20_indicators
-                WHERE interval = '15m' AND open_time = ? AND symbol IN ({placeholders})
+                SELECT DISTINCT ma.symbol
+                FROM ma20_indicators AS ma
+                JOIN ema_indicators AS ema
+                  ON ema.symbol = ma.symbol AND ema.interval = ma.interval
+                 AND ema.open_time = ma.open_time
+                WHERE ma.interval = '15m' AND ma.open_time = ?
+                  AND ma.symbol IN ({placeholders})
+                  AND ma.ma20 IS NOT NULL AND ema.ema20 IS NOT NULL
                 """,
                 [target_open_time, *symbol_list],
             ).fetchall()
@@ -1276,7 +1301,7 @@ class ScoringSystem:
         round_ts = int(row["ts"])
         return round_ts, self.get_symbol_errors_for_round(round_ts)
 
-    def _latest_1m_close_and_15m_ma20(self, symbol: str) -> tuple[float, float] | None:
+    def _latest_1m_close_and_15m_indicators(self, symbol: str) -> tuple[float, float, float] | None:
         with self._round_connection() as conn:
             close_row = conn.execute(
                 """
@@ -1298,32 +1323,44 @@ class ScoringSystem:
                 """,
                 (symbol,),
             ).fetchone()
-        if not close_row or not ma20_row:
+            ema20_row = conn.execute(
+                "SELECT ema20 FROM ema_indicators WHERE symbol = ? AND interval = '15m' "
+                "ORDER BY open_time DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
+        if not close_row or not ma20_row or not ema20_row:
             return None
-        return float(close_row["close"]), float(ma20_row["ma20"])
+        return float(close_row["close"]), float(ma20_row["ma20"]), float(ema20_row["ema20"])
 
     def _save_close_gt_ma20_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
-        values = self._latest_1m_close_and_15m_ma20(symbol)
+        values = self._latest_1m_close_and_15m_indicators(symbol)
         if values is None:
             return
-        close_1m, ma20_15m = values
-        hit = close_1m > ma20_15m
+        close_1m, ma20_15m, ema20_15m = values
+        ema20_distance_ratio = (close_1m - ema20_15m) / ema20_15m if ema20_15m else float("inf")
+        hit = close_1m > ma20_15m and ema20_15m > 0 and ema20_distance_ratio < 0.06
         score = self._score_weight(2) if hit else 0
-        reason = "close_1m_gt_15m_ma20" if hit else "close_1m_rule_not_met"
+        reason = (
+            "close_1m_gt_15m_ma20_and_ema20_distance_lt_0.06"
+            if hit
+            else "close_1m_ma20_ema20_rule_not_met"
+        )
         with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_close_gt_ma20
-                (symbol, decision_round_ts, score, reason, latest_1m_close, latest_15m_ma20, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (symbol, decision_round_ts, score, reason, latest_1m_close, latest_15m_ma20, latest_15m_ema20, ema20_distance_ratio, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
                     score=excluded.score,
                     reason=excluded.reason,
                     latest_1m_close=excluded.latest_1m_close,
                     latest_15m_ma20=excluded.latest_15m_ma20,
+                    latest_15m_ema20=excluded.latest_15m_ema20,
+                    ema20_distance_ratio=excluded.ema20_distance_ratio,
                     updated_at=excluded.updated_at
                 """,
-                (symbol, decision_round_ts, score, reason, close_1m, ma20_15m, updated_at),
+                (symbol, decision_round_ts, score, reason, close_1m, ma20_15m, ema20_15m, ema20_distance_ratio, updated_at),
             )
 
 
@@ -1535,11 +1572,11 @@ class ScoringSystem:
         for _, high, low, close in rows:
             if high == low:
                 continue
-            if (close - low) / (high - low) >= 0.55:
+            if (close - low) / (high - low) >= 0.65:
                 qualified_count += 1
         hit = qualified_count >= 2
         score = self._score_weight(7) if hit else 0
-        reason = "close_pos_15m_ge_0.55_2of4" if hit else "close_pos_15m_rule_not_met"
+        reason = "close_pos_15m_ge_0.65_2of4" if hit else "close_pos_15m_rule_not_met"
         with self._round_connection() as conn:
             conn.execute(
                 """
@@ -1555,8 +1592,12 @@ class ScoringSystem:
                 (symbol, decision_round_ts, score, reason, qualified_count, updated_at),
             )
 
-    def _latest_24_1h_high(self, symbol: str) -> list[float] | None:
+    def _latest_15m_high_and_previous_24_1h_highs(self, symbol: str) -> tuple[float, list[float]] | None:
         with self._round_connection() as conn:
+            latest_15m = conn.execute(
+                "SELECT high FROM klines_15m WHERE symbol = ? ORDER BY open_time DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
             rows = conn.execute(
                 """
                 SELECT high
@@ -1567,19 +1608,19 @@ class ScoringSystem:
                 """,
                 (symbol,),
             ).fetchall()
-        if len(rows) < 24:
+        if latest_15m is None or len(rows) < 24:
             return None
-        return [float(r["high"]) for r in rows]
+        return float(latest_15m["high"]), [float(r["high"]) for r in rows]
 
     def _save_1h_latest_highest_24_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
-        highs = self._latest_24_1h_high(symbol)
-        if highs is None:
+        values = self._latest_15m_high_and_previous_24_1h_highs(symbol)
+        if values is None:
             return
-        latest_high = highs[0]
-        prev_23_max_high = max(highs[1:])
+        latest_high, previous_1h_highs = values
+        prev_23_max_high = max(previous_1h_highs)
         hit = latest_high > prev_23_max_high
         score = self._score_weight(8) if hit else 0
-        reason = "latest_1h_high_gt_prev_23_high" if hit else "latest_1h_high_rule_not_met"
+        reason = "latest_15m_high_gt_prev_24_1h_high" if hit else "latest_15m_high_rule_not_met"
         with self._round_connection() as conn:
             conn.execute(
                 """
@@ -2781,7 +2822,8 @@ class ScoringSystem:
             round_ts = int(row["ts"])
             rows = conn.execute(
                 """
-                SELECT symbol, decision_round_ts, score, reason, latest_1m_close, latest_15m_ma20, updated_at
+                SELECT symbol, decision_round_ts, score, reason, latest_1m_close, latest_15m_ma20,
+                       latest_15m_ema20, ema20_distance_ratio, updated_at
                 FROM symbol_scores_close_gt_ma20
                 WHERE decision_round_ts = ?
                 ORDER BY score DESC, symbol ASC
@@ -2794,7 +2836,8 @@ class ScoringSystem:
         with self._connect() as conn:
             return conn.execute(
                 """
-                SELECT symbol, decision_round_ts, score, reason, latest_1m_close, latest_15m_ma20, updated_at
+                SELECT symbol, decision_round_ts, score, reason, latest_1m_close, latest_15m_ma20,
+                       latest_15m_ema20, ema20_distance_ratio, updated_at
                 FROM symbol_scores_close_gt_ma20
                 WHERE decision_round_ts = ?
                 ORDER BY symbol ASC
