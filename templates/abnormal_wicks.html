@@ -2060,7 +2060,8 @@
                 <th>symbol</th>
                 <th>position_amt</th>
                 <th>entry_price</th>
-                <th>total_score / 阈值</th>
+                <th>ATR(14)</th>
+                <th>波动率</th>
                 <th>当下 / 最大未变现盈利</th>
                 <th>盈利回撤幅度</th>
                 <th>cancel_take_profit_order_id / status</th>
@@ -2076,7 +2077,8 @@
                 <td>{{ row.symbol }}</td>
                 <td>{{ row.position_amt }}</td>
                 <td>{{ row.entry_price }}</td>
-                <td>{{ row.total_score if row.total_score is not none else '-' }} / {{ row.drawdown_threshold }}</td>
+                <td>{{ row.atr14 }}</td>
+                <td>{{ row.volatility or '-' }}</td>
                 <td>{{ row.unrealized_pnl_at_high }} / {{ row.max_unrealized_pnl }}</td>
                 <td>{{ row.current_profit_drawdown }}</td>
                 <td>{{ row.cancel_take_profit_order_id or '-' }} / {{ row.cancel_status }}</td>
@@ -2085,7 +2087,7 @@
                 <td>{{ row.reason }}</td>
               </tr>
               {% else %}
-              <tr><td class="empty" colspan="11">暂无移动追踪止盈操作记录</td></tr>
+              <tr><td class="empty" colspan="12">暂无移动追踪止盈操作记录</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -3252,7 +3254,7 @@
       const rowsEl = document.getElementById('trailing-stop-records-body');
       if (!rowsEl) return;
       if (!rows.length) {
-        rowsEl.innerHTML = '<tr><td class="empty" colspan="11">暂无移动追踪止盈操作记录</td></tr>';
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="12">暂无移动追踪止盈操作记录</td></tr>';
         return;
       }
       rowsEl.innerHTML = rows.map((row, index) => `
@@ -3261,7 +3263,8 @@
           <td>${escapeHtml(row.symbol)}</td>
           <td>${escapeHtml(row.position_amt)}</td>
           <td>${escapeHtml(row.entry_price)}</td>
-          <td>${row.total_score ?? '-'} / ${escapeHtml(row.drawdown_threshold)}</td>
+          <td>${escapeHtml(row.atr14)}</td>
+          <td>${escapeHtml(row.volatility || '-')}</td>
           <td>${escapeHtml(row.unrealized_pnl_at_high)} / ${escapeHtml(row.max_unrealized_pnl)}</td>
           <td>${escapeHtml(row.current_profit_drawdown)}</td>
           <td>${escapeHtml(row.cancel_take_profit_order_id || '-')} / ${escapeHtml(row.cancel_status)}</td>

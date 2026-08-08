@@ -400,6 +400,19 @@ def test_dynamic_profit_protection_has_scoped_refresh_button():
     assert endpoint_index > button_index
 
 
+def test_trailing_stop_action_records_show_atr_and_volatility_without_total_score():
+    template = Path("templates/abnormal_wicks.html").read_text()
+    section_start = template.index("<strong>移动追踪止盈操作记录</strong>")
+    section_end = template.index("</table>", section_start)
+    section = template[section_start:section_end]
+
+    assert "<th>ATR(14)</th>" in section
+    assert "<th>波动率</th>" in section
+    assert "total_score" not in section
+    assert "row.atr14" in section
+    assert "row.volatility" in section
+
+
 def test_web_page_creates_missing_db_parent_directory():
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "nested" / "missing" / "klines.db"
