@@ -187,15 +187,15 @@ class TrailingStopTracker:
             pretriggered, pretrigger_reason, latest_15m_low = self._is_pretriggered(symbol)
             high, close = self._latest_1m_high_close(symbol)
             pnl = self._unrealized_pnl_at_high(amount, entry_price, high)
-            previous = self._previous_max(symbol, entry_price)
+            open_time = self._latest_open_trade_created_at(symbol)
+            previous = self._previous_max(symbol, entry_price, open_time)
             if previous and previous[0] >= pnl:
                 max_pnl, max_at = previous
                 reason = "max_unrealized_pnl_unchanged"
             else:
                 max_pnl, max_at = pnl, now
                 reason = "max_unrealized_pnl_updated"
-            open_time = self._latest_open_trade_created_at(symbol)
-            highest_since_open = max(self._previous_highest_since_open(symbol, entry_price), self._highest_1m_high_since(symbol, open_time), high)
+            highest_since_open = max(self._previous_highest_since_open(symbol, entry_price, open_time), self._highest_1m_high_since(symbol, open_time), high)
             atr14 = self._latest_atr14(symbol)
             volatility = self._trailing_stop_volatility(symbol, atr14)
             atr_multiple = self._atr_multiple_for_volatility(volatility)
@@ -229,7 +229,8 @@ class TrailingStopTracker:
             self._insert_check(symbol, now, entry_price, amount, high, pnl, max_pnl, drawdown, max_at, None, threshold, close, latest_15m_low, False, should_trigger, cancel_order_id, cancel_status, close_quantity, close_order_id, close_status, True, reason, latest_1m_close=close, highest_since_open=highest_since_open, atr14=atr14, volatility=volatility, price_drawdown=price_drawdown, pretriggered=pretriggered, tag=tag)
             return True
         except Exception as exc:
-            previous = self._previous_max(symbol, entry_price)
+            open_time = self._latest_open_trade_created_at(symbol)
+            previous = self._previous_max(symbol, entry_price, open_time)
             max_pnl, max_at = previous if previous else (Decimal("0"), now)
             drawdown = self._current_profit_drawdown(Decimal("0"), max_pnl)
             self._insert_check(symbol, now, entry_price, amount, Decimal("0"), Decimal("0"), max_pnl, drawdown, max_at, None, Decimal("0"), Decimal("0"), Decimal("0"), False, False, "", "not_required", Decimal("0"), "", "not_required", True, f"trailing_stop_tracker_failed: {type(exc).__name__}: {exc}", latest_1m_close=Decimal("0"), highest_since_open=Decimal("0"), atr14=Decimal("0"), volatility=Decimal("0"), price_drawdown=Decimal("0"), pretriggered=False, tag="")
@@ -441,21 +442,21 @@ class TrailingStopTracker:
         drawdown = (max_pnl - pnl) / max_pnl
         return max(drawdown, Decimal("0"))
 
-    def _previous_max(self, symbol: str, entry_price: Decimal) -> tuple[Decimal, int] | None:
+    def _previous_max(self, symbol: str, entry_price: Decimal, open_time: int = 0) -> tuple[Decimal, int] | None:
         with self._connect() as conn:
             row = conn.execute(
-                f"SELECT max_unrealized_pnl, max_unrealized_pnl_at FROM {self.CHECKS_TABLE} WHERE symbol = ? AND entry_price = ? AND eligible = 1 ORDER BY checked_at DESC, id DESC LIMIT 1",
-                (symbol, self._fmt_decimal(entry_price)),
+                f"SELECT max_unrealized_pnl, max_unrealized_pnl_at FROM {self.CHECKS_TABLE} WHERE symbol = ? AND entry_price = ? AND eligible = 1 AND checked_at >= ? ORDER BY checked_at DESC, id DESC LIMIT 1",
+                (symbol, self._fmt_decimal(entry_price), int(open_time)),
             ).fetchone()
         if not row:
             return None
         return self._decimal_from(row["max_unrealized_pnl"], Decimal("0")), int(row["max_unrealized_pnl_at"] or 0)
 
-    def _previous_highest_since_open(self, symbol: str, entry_price: Decimal) -> Decimal:
+    def _previous_highest_since_open(self, symbol: str, entry_price: Decimal, open_time: int = 0) -> Decimal:
         with self._connect() as conn:
             row = conn.execute(
-                f"SELECT highest_since_open FROM {self.CHECKS_TABLE} WHERE symbol = ? AND entry_price = ? AND eligible = 1 ORDER BY checked_at DESC, id DESC LIMIT 1",
-                (symbol, self._fmt_decimal(entry_price)),
+                f"SELECT highest_since_open FROM {self.CHECKS_TABLE} WHERE symbol = ? AND entry_price = ? AND eligible = 1 AND checked_at >= ? ORDER BY checked_at DESC, id DESC LIMIT 1",
+                (symbol, self._fmt_decimal(entry_price), int(open_time)),
             ).fetchone()
         return self._decimal_from(row["highest_since_open"], Decimal("0")) if row and "highest_since_open" in row.keys() else Decimal("0")
 
@@ -494,7 +495,8 @@ class TrailingStopTracker:
         entry_price = self._decimal_from(check.entry_price, self._decimal_from(position.get("entryPrice"), Decimal("0")))
         high, close = self._latest_1m_high_close(symbol)
         open_time = self._latest_open_trade_created_at(symbol)
-        highest_since_open = max(self._decimal_from(check.highest_since_open, Decimal("0")), self._highest_1m_high_since(symbol, open_time), high)
+        persisted_high = self._decimal_from(check.highest_since_open, Decimal("0")) if check.checked_at >= open_time else Decimal("0")
+        highest_since_open = max(persisted_high, self._highest_1m_high_since(symbol, open_time), high)
         atr14 = self._latest_atr14(symbol)
         volatility = self._trailing_stop_volatility(symbol, atr14)
         atr_multiple = self._atr_multiple_for_volatility(volatility)

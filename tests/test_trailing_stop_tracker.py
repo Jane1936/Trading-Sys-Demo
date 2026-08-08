@@ -433,3 +433,33 @@ def test_trailing_stop_tracker_reads_migrated_open_trade_from_trading_core_db(tm
     assert checks[0].close_status == "submitted"
     assert action_records[0].close_order_id == "456"
     assert fake_account.signed_posts[0][1]["type"] == "MARKET"
+
+
+def test_highest_since_open_excludes_a_previous_position_lifecycle():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        _insert_partial_take_profit_record(db_path)
+        _insert_open_trade(db_path)
+        _insert_atr14(db_path, atr14=1)
+        _insert_1m_kline(db_path, high=99, open_time=900, close=99)
+        _insert_1m_kline(db_path, high=13, open_time=1000, close=12.5)
+        for open_time in (1000, 2000, 3000):
+            _insert_15m_kline(db_path, low=13, open_time=open_time)
+        _insert_15m_kline(db_path, low=13, open_time=4000, close=12)
+        tracker = TrailingStopTracker(db_path=db_path, account_manager=fake_account)
+        tracker.init_tables()
+        with tracker._connect() as conn:
+            conn.execute(
+                f"""INSERT INTO {tracker.CHECKS_TABLE}
+                (symbol, checked_at, entry_price, position_amt, kline_high,
+                 unrealized_pnl_at_high, max_unrealized_pnl, max_unrealized_pnl_at,
+                 highest_since_open, eligible, reason)
+                VALUES ('BANK', 900, '10', '10', '99', '890', '890', 900, '99', 1, 'previous lifecycle')"""
+            )
+
+        tracker.run_round()
+        _, checks = tracker.get_latest_round_checks()
+
+    assert checks[0].highest_since_open == "13"
+    assert checks[0].max_unrealized_pnl == "30"
