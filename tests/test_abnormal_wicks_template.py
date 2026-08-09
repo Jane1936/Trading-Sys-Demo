@@ -400,6 +400,16 @@ def test_dynamic_profit_protection_has_scoped_refresh_button():
     assert endpoint_index > button_index
 
 
+def test_dynamic_profit_protection_displays_updated_profit_tiers():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    assert "浮盈到达过(2R, 3R] 回撤≥40%" in template
+    assert "浮盈到达过(3R, 4R] 回撤≥30%" in template
+    assert "浮盈到达过4R以上 回撤≥20%" in template
+    assert "浮盈到达过(2R, 4R]" not in template
+    assert "浮盈到达过7R以上" not in template
+
+
 def test_trailing_stop_action_records_show_atr_and_volatility_without_total_score():
     template = Path("templates/abnormal_wicks.html").read_text()
     section_start = template.index("<strong>移动追踪止盈操作记录</strong>")

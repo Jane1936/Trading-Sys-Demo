@@ -1,5 +1,6 @@
 import sqlite3
 import tempfile
+from decimal import Decimal
 from pathlib import Path
 
 from dynamic_profit_protection import DynamicProfitProtection
@@ -44,7 +45,7 @@ def _seed_db(db_path, close, high=20):
         conn.execute(f"INSERT INTO {TradingExperiment.TRADES_TABLE} (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt, required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity, notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation, take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at) VALUES ('BANK', 1, 'LONG', 'opened', 80, 5, '100', '20', '5000', '50', '10', '10', '100', '18', '8', '', 'tp-1', 'sl-1', '', '', 1, 1)")
 
 
-def test_dynamic_profit_protection_closes_when_2r_to_4r_profit_draws_down_40_percent():
+def test_dynamic_profit_protection_closes_when_2r_to_3r_profit_draws_down_40_percent():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = str(Path(tmp) / "k.db")
         _seed_db(db_path, close=11.8, high=13)
@@ -56,7 +57,7 @@ def test_dynamic_profit_protection_closes_when_2r_to_4r_profit_draws_down_40_per
     assert result["triggered"] == 1
     assert checks[0].triggered is True
     assert checks[0].drawdown_threshold == "0.4"
-    assert checks[0].current_tier == "(2R, 4R]"
+    assert checks[0].current_tier == "(2R, 3R]"
     assert account.signed_posts[-1][1]["type"] == "MARKET"
     assert account.signed_posts[-1][1]["quantity"] == "10"
 
@@ -85,10 +86,21 @@ def test_dynamic_profit_protection_uses_highest_reached_tier_priority_over_curre
         _, checks = tracker.get_latest_round_checks()
 
     assert result["triggered"] == 1
-    assert checks[0].current_tier == "7R以上"
+    assert checks[0].current_tier == "4R以上"
     assert checks[0].drawdown_threshold == "0.2"
-    assert "tier=7R以上" in checks[0].reason
+    assert "tier=4R以上" in checks[0].reason
     assert account.signed_posts[-1][1]["type"] == "MARKET"
+
+
+def test_dynamic_profit_protection_tier_boundaries():
+    tier_for = DynamicProfitProtection._tier_and_threshold_for_reached_r_multiple
+
+    assert tier_for(Decimal("2")) == ("未达档", Decimal("0"))
+    assert tier_for(Decimal("2.0001")) == ("(2R, 3R]", Decimal("0.40"))
+    assert tier_for(Decimal("3")) == ("(2R, 3R]", Decimal("0.40"))
+    assert tier_for(Decimal("3.0001")) == ("(3R, 4R]", Decimal("0.30"))
+    assert tier_for(Decimal("4")) == ("(3R, 4R]", Decimal("0.30"))
+    assert tier_for(Decimal("4.0001")) == ("4R以上", Decimal("0.20"))
 
 
 def test_dynamic_profit_protection_resets_highest_for_latest_open_trade_with_same_entry_price():

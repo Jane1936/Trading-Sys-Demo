@@ -1932,7 +1932,7 @@
           </div>
           <div class="muted">后台每分钟自动扫描，且执行顺序在“移动追踪止盈规则”之前。</div>
           {% if dynamic_profit_protection_round_ts %}
-            <div id="dynamic-profit-protection-round-note" class="muted">最近判断轮次：{{ dynamic_profit_protection_round_ts|fmt_ms_datetime }}。每分钟读取最新1分钟K线 high/close，维护“开仓以来最高价”；按浮盈历史最高到达档位动态保护：浮盈到达过(2R, 4R] 回撤≥40%、浮盈到达过(4R, 7R] 回撤≥30%、浮盈到达过7R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓；三档按优先级递增，仅触发最高命中的一个条件。</div>
+            <div id="dynamic-profit-protection-round-note" class="muted">最近判断轮次：{{ dynamic_profit_protection_round_ts|fmt_ms_datetime }}。每分钟读取最新1分钟K线 high/close，维护“开仓以来最高价”；按浮盈历史最高到达档位动态保护：浮盈到达过(2R, 3R] 回撤≥40%、浮盈到达过(3R, 4R] 回撤≥30%、浮盈到达过4R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓；三档按优先级递增，仅触发最高命中的一个条件。</div>
           {% else %}
             <div id="dynamic-profit-protection-round-note" class="muted">暂无动态利润保护扫描结果。</div>
           {% endif %}
@@ -2639,7 +2639,7 @@
     let btcChart = null;
     let scoreTrendChart = null;
     let experimentEquityTrendChart = null;
-    const DYNAMIC_PROFIT_PROTECTION_RULE_NOTE = '每分钟读取最新1分钟K线 high/close，维护“开仓以来最高价”；按浮盈历史最高到达档位动态保护：浮盈到达过(2R, 4R] 回撤≥40%、浮盈到达过(4R, 7R] 回撤≥30%、浮盈到达过7R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓；三档按优先级递增，仅触发最高命中的一个条件。';
+    const DYNAMIC_PROFIT_PROTECTION_RULE_NOTE = '每分钟读取最新1分钟K线 high/close，维护“开仓以来最高价”；按浮盈历史最高到达档位动态保护：浮盈到达过(2R, 3R] 回撤≥40%、浮盈到达过(3R, 4R] 回撤≥30%、浮盈到达过4R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓；三档按优先级递增，仅触发最高命中的一个条件。';
     const TRAILING_STOP_RULE_NOTE = '仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；先用最近4条15分钟K线判断“预触发移动追踪止盈”（最近第1条close < 最近第2/3/4条low的最小值）；对本轮预触发symbol每分钟读取 klines_1m 最新 high/close，维护“开仓以来最高价”，计算“波动率”=最新 ATR(14) / 最近第2条15分钟K线 close；若波动率 > 0.03，则当最新close相对开仓以来最高价回撤 > 2 × ATR(14) 时打上“移动追踪止盈”tag，否则回撤 > 2.5 × ATR(14) 时打上“移动追踪止盈”tag，并调用市价单接口全部平仓。';
 
     function escapeHtml(value) {

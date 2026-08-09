@@ -13,8 +13,18 @@ def test_profit_task_runs_protection_strategies_in_order_each_loop():
     dynamic_profit_protection_index = source.index(
         "dynamic_result = dynamic_profit_protection.run_round()"
     )
+    trailing_stop_flag_index = source.index(
+        "feature_flags.is_feature_enabled(feature_flags.TRAILING_STOP)"
+    )
+    trailing_stop_index = source.index("trailing_result = trailing_stop_tracker.run_round()")
 
-    assert break_even_index < partial_take_profit_index < dynamic_profit_protection_index
+    assert (
+        break_even_index
+        < partial_take_profit_index
+        < dynamic_profit_protection_index
+        < trailing_stop_flag_index
+        < trailing_stop_index
+    )
     assert "time.sleep(60)" in source
 
 

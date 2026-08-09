@@ -12,6 +12,7 @@ BASE_DATA_COLLECTION = "base_data_collection"
 SCORING_SYSTEM = "scoring_system"
 TRADING_SYSTEM = "trading_system"
 MARKET_FILTER = "market_filter"
+TRAILING_STOP = "trailing_stop"
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,11 @@ FEATURE_FLAG_DEFINITIONS: tuple[FeatureFlagDefinition, ...] = (
         key=MARKET_FILTER,
         name="市场行情过滤",
         description="控制独立市场行情过滤模块及新开仓前的市场过滤拦截。",
+    ),
+    FeatureFlagDefinition(
+        key=TRAILING_STOP,
+        name="移动追踪止盈规则",
+        description="控制移动追踪止盈的每分钟扫描及平仓操作；关闭后不再执行该规则。",
     ),
 )
 
@@ -142,10 +148,11 @@ def list_feature_flags(db_path: str | None = None) -> list[FeatureFlag]:
                 WHEN ? THEN 2
                 WHEN ? THEN 3
                 WHEN ? THEN 4
+                WHEN ? THEN 5
                 ELSE 99
             END, key
             """,
-            (BASE_DATA_COLLECTION, SCORING_SYSTEM, TRADING_SYSTEM, MARKET_FILTER),
+            (BASE_DATA_COLLECTION, SCORING_SYSTEM, TRADING_SYSTEM, MARKET_FILTER, TRAILING_STOP),
         ).fetchall()
     return [
         FeatureFlag(
