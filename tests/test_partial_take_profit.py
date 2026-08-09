@@ -193,6 +193,32 @@ def test_partial_take_profit_updates_trade_in_routed_core_database(monkeypatch, 
     assert trade_table is None
 
 
+def test_partial_take_profit_initializes_routed_core_trade_table(monkeypatch, tmp_path):
+    trading_db = str(tmp_path / "trading.db")
+    core_db = str(tmp_path / "trading_core.db")
+    monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
+    monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", core_db)
+
+    strategy = PartialTakeProfitStrategy(
+        db_path=trading_db, account_manager=FakeAccountManager()
+    )
+    strategy.init_tables()
+
+    with sqlite3.connect(core_db) as conn:
+        core_trade_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (TradingExperiment.TRADES_TABLE,),
+        ).fetchone()
+    with sqlite3.connect(trading_db) as conn:
+        trading_trade_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (TradingExperiment.TRADES_TABLE,),
+        ).fetchone()
+
+    assert core_trade_table == (1,)
+    assert trading_trade_table is None
+
+
 def test_partial_take_profit_skips_when_unrealized_pnl_below_2r():
     fake_account = FakeAccountManager(unrealized_profit="19.99")
     with tempfile.TemporaryDirectory() as tmpdir:

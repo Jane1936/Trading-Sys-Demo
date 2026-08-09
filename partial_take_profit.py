@@ -25,7 +25,7 @@ from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
 from trading_experiment import ExperimentConfig, TradingExperiment
 from weak_market_profit_adjustment import WeakMarketProfitAdjustmentModule
 
-_initialized_table_paths: dict[str, int | None] = {}
+_initialized_table_paths: dict[str, tuple[int | None, int | None]] = {}
 _initialized_table_paths_lock = threading.Lock()
 
 
@@ -124,8 +124,23 @@ class PartialTakeProfitStrategy:
         normalized_path = os.path.abspath(self.db_path)
         with _initialized_table_paths_lock:
             db_inode = _database_inode(self.db_path)
-            if db_inode is not None and _initialized_table_paths.get(normalized_path) == db_inode:
+            core_db_inode = _database_inode(self.core_db_path)
+            database_identity = (db_inode, core_db_inode)
+            if (
+                db_inode is not None
+                and core_db_inode is not None
+                and _initialized_table_paths.get(normalized_path) == database_identity
+            ):
                 return
+            # This strategy reads and updates the experiment lifecycle row after
+            # recreating the remaining exit orders.  Since that table moved to
+            # trading_core.db, initialize its schema here as well instead of
+            # relying on another worker to have initialized the split DB first.
+            TradingExperiment(
+                db_path=self.db_path,
+                account_manager=self.account_manager,
+                config=self.config,
+            ).init_core_tables()
             db_dir = os.path.dirname(self.db_path)
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
@@ -208,7 +223,10 @@ class PartialTakeProfitStrategy:
                 conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
                 conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_checked ON {self.RECORDS_TABLE}(checked_at DESC, symbol ASC)")
                 conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.ERRORS_TABLE}_occurred ON {self.ERRORS_TABLE}(occurred_at DESC, symbol ASC)")
-            _initialized_table_paths[normalized_path] = _database_inode(self.db_path)
+            _initialized_table_paths[normalized_path] = (
+                _database_inode(self.db_path),
+                _database_inode(self.core_db_path),
+            )
 
     def run_round(self, decision_round_ts: int | None = None) -> dict[str, Any]:
         self.init_tables()
