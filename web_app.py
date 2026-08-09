@@ -921,6 +921,8 @@ def trailing_stop_summary_api():
 
 @app.post("/api/trailing-stop/refresh-pretrigger")
 def trailing_stop_refresh_pretrigger_api():
+    if not feature_flags.is_feature_enabled(feature_flags.TRAILING_STOP, BASE_DB_PATH):
+        return jsonify({"error": "移动追踪止盈规则功能开关已关闭"}), 409
     try:
         return jsonify(TrailingStopTracker(db_path=_trading_db_path()).refresh_pretriggered_symbols())
     except BinanceAccountConfigError as exc:

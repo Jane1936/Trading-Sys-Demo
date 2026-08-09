@@ -624,16 +624,19 @@ def start_break_even_take_profit_task() -> None:
                 recover_after_worker_error(exc)
                 print(f"⚠️ dynamic profit protection failed: {exc}")
 
-            try:
-                trailing_result = trailing_stop_tracker.run_round()
-                print(
-                    f"🟢 trailing stop tracker checked={trailing_result.get('checked', 0)} "
-                    f"eligible={trailing_result.get('eligible', 0)} "
-                    f"updated={trailing_result.get('updated', 0)}"
-                )
-            except Exception as exc:
-                recover_after_worker_error(exc)
-                print(f"⚠️ trailing stop tracker failed: {exc}")
+            if feature_flags.is_feature_enabled(feature_flags.TRAILING_STOP):
+                try:
+                    trailing_result = trailing_stop_tracker.run_round()
+                    print(
+                        f"🟢 trailing stop tracker checked={trailing_result.get('checked', 0)} "
+                        f"eligible={trailing_result.get('eligible', 0)} "
+                        f"updated={trailing_result.get('updated', 0)}"
+                    )
+                except Exception as exc:
+                    recover_after_worker_error(exc)
+                    print(f"⚠️ trailing stop tracker failed: {exc}")
+            else:
+                print("⏸️ trailing stop tracker skipped: feature flag disabled")
 
         time.sleep(60)
 

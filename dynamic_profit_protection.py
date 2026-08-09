@@ -183,12 +183,12 @@ class DynamicProfitProtection:
 
     @staticmethod
     def _tier_and_threshold_for_reached_r_multiple(r_multiple: Decimal) -> tuple[str, Decimal]:
-        if r_multiple > Decimal("7"):
-            return "7R以上", Decimal("0.20")
-        if Decimal("4") < r_multiple <= Decimal("7"):
-            return "(4R, 7R]", Decimal("0.30")
-        if Decimal("2") < r_multiple <= Decimal("4"):
-            return "(2R, 4R]", Decimal("0.40")
+        if r_multiple > Decimal("4"):
+            return "4R以上", Decimal("0.20")
+        if Decimal("3") < r_multiple <= Decimal("4"):
+            return "(3R, 4R]", Decimal("0.30")
+        if Decimal("2") < r_multiple <= Decimal("3"):
+            return "(2R, 3R]", Decimal("0.40")
         return "未达档", Decimal("0")
 
     def _execute_close(self, exchange_symbol: str, symbol: str, amount: Decimal, now: int) -> tuple[Decimal, str, str, str]:

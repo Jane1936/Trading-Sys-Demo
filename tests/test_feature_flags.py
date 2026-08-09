@@ -16,6 +16,7 @@ def test_feature_flags_seed_enabled_by_default(tmp_path):
         feature_flags.SCORING_SYSTEM,
         feature_flags.TRADING_SYSTEM,
         feature_flags.MARKET_FILTER,
+        feature_flags.TRAILING_STOP,
     ]
     assert all(flag.enabled for flag in flags)
     assert all(flag.updated_at > 0 for flag in flags)
@@ -31,6 +32,16 @@ def test_set_feature_flag_persists_status_and_updates_timestamp(tmp_path, monkey
     assert updated.enabled is False
     assert updated.updated_at == 2000
     assert feature_flags.is_feature_enabled(feature_flags.TRADING_SYSTEM, db_path) is False
+
+
+def test_trailing_stop_flag_can_be_disabled(tmp_path):
+    db_path = str(tmp_path / "base_data.db")
+
+    updated = feature_flags.set_feature_flag(feature_flags.TRAILING_STOP, False, db_path)
+
+    assert updated.name == "移动追踪止盈规则"
+    assert updated.enabled is False
+    assert feature_flags.is_feature_enabled(feature_flags.TRAILING_STOP, db_path) is False
 
 
 def test_unknown_feature_flag_rejected(tmp_path):
