@@ -48,16 +48,16 @@ def test_rule7_uses_point_sixty_five_close_position(tmp_path):
     assert rows[0]["score"] == scoring.rule_score_weights[7]
 
 
-def test_rule8_compares_latest_15m_high_with_previous_96_15m_highs(tmp_path):
+def test_rule8_compares_latest_15m_close_with_previous_96_15m_highs(tmp_path):
     scoring, path = _scoring(tmp_path)
     with sqlite3.connect(path) as conn:
         conn.executemany(
-            "INSERT INTO klines_15m VALUES ('BTC', ?, 0, ?, 0, 0)",
-            [(i, float(i)) for i in range(1, 98)],
+            "INSERT INTO klines_15m VALUES ('BTC', ?, 0, ?, 0, ?)",
+            [(i, float(i), 97.0 if i == 97 else 0.0) for i in range(1, 98)],
         )
     scoring._save_15m_latest_highest_prev_96_score("BTC", 1, 2)
     _, rows = scoring.get_latest_round_scores_15m_latest_highest_prev_96()
-    assert rows[0]["latest_high"] == 97
+    assert rows[0]["latest_close"] == 97
     assert rows[0]["prev_96_max_high"] == 96
     assert rows[0]["score"] == scoring.rule_score_weights[8]
 
@@ -66,8 +66,8 @@ def test_rule8_requires_strict_breakout_and_97_15m_bars(tmp_path):
     scoring, path = _scoring(tmp_path)
     with sqlite3.connect(path) as conn:
         conn.executemany(
-            "INSERT INTO klines_15m VALUES ('BTC', ?, 0, ?, 0, 0)",
-            [(i, 100.0 if i in (1, 97) else float(i)) for i in range(1, 98)],
+            "INSERT INTO klines_15m VALUES ('BTC', ?, 0, ?, 0, ?)",
+            [(i, 100.0 if i == 1 else float(i), 100.0 if i == 97 else 0.0) for i in range(1, 98)],
         )
         conn.executemany(
             "INSERT INTO klines_15m VALUES ('ETH', ?, 0, 200, 0, 0)",
@@ -80,5 +80,21 @@ def test_rule8_requires_strict_breakout_and_97_15m_bars(tmp_path):
 
     assert len(rows) == 1
     assert rows[0]["symbol"] == "BTC"
-    assert rows[0]["latest_high"] == rows[0]["prev_96_max_high"] == 100
+    assert rows[0]["latest_close"] == rows[0]["prev_96_max_high"] == 100
+    assert rows[0]["score"] == 0
+
+
+def test_rule8_uses_close_not_latest_high_for_breakout(tmp_path):
+    scoring, path = _scoring(tmp_path)
+    with sqlite3.connect(path) as conn:
+        conn.executemany(
+            "INSERT INTO klines_15m VALUES ('BTC', ?, 0, ?, 0, ?)",
+            [(i, 200.0 if i == 97 else 100.0, 99.0) for i in range(1, 98)],
+        )
+
+    scoring._save_15m_latest_highest_prev_96_score("BTC", 1, 2)
+    _, rows = scoring.get_latest_round_scores_15m_latest_highest_prev_96()
+
+    assert rows[0]["latest_close"] == 99
+    assert rows[0]["prev_96_max_high"] == 100
     assert rows[0]["score"] == 0

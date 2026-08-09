@@ -458,7 +458,9 @@ class ScoringSystem:
             return {}
         specs = {
             "klines_1m": ("open_time", 60),
-            "klines_15m": ("open_time", 24),
+            # Rule 8 compares the latest closed candle with the highs of the
+            # previous 96 candles, so its immutable round snapshot needs 97.
+            "klines_15m": ("open_time", 97),
             "klines_1h": ("open_time", 24),
             "open_interest_1m": ("snapshot_time", 240),
         }
@@ -1592,11 +1594,11 @@ class ScoringSystem:
                 (symbol, decision_round_ts, score, reason, qualified_count, updated_at),
             )
 
-    def _latest_15m_high_and_previous_96_15m_highs(self, symbol: str) -> tuple[float, list[float]] | None:
+    def _latest_15m_close_and_previous_96_15m_highs(self, symbol: str) -> tuple[float, list[float]] | None:
         with self._round_connection() as conn:
             rows = conn.execute(
                 """
-                SELECT high
+                SELECT high, close
                 FROM klines_15m
                 WHERE symbol = ?
                 ORDER BY open_time DESC
@@ -1606,17 +1608,17 @@ class ScoringSystem:
             ).fetchall()
         if len(rows) < 97:
             return None
-        return float(rows[0]["high"]), [float(r["high"]) for r in rows[1:]]
+        return float(rows[0]["close"]), [float(r["high"]) for r in rows[1:]]
 
     def _save_15m_latest_highest_prev_96_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
-        values = self._latest_15m_high_and_previous_96_15m_highs(symbol)
+        values = self._latest_15m_close_and_previous_96_15m_highs(symbol)
         if values is None:
             return
-        latest_high, previous_15m_highs = values
+        latest_close, previous_15m_highs = values
         prev_96_max_high = max(previous_15m_highs)
-        hit = latest_high > prev_96_max_high
+        hit = latest_close > prev_96_max_high
         score = self._score_weight(8) if hit else 0
-        reason = "latest_15m_high_gt_prev_96_15m_high" if hit else "latest_15m_high_rule_not_met"
+        reason = "latest_15m_close_gt_prev_96_15m_high" if hit else "latest_15m_close_rule_not_met"
         with self._round_connection() as conn:
             conn.execute(
                 """
@@ -1630,7 +1632,9 @@ class ScoringSystem:
                     prev_96_max_high=excluded.prev_96_max_high,
                     updated_at=excluded.updated_at
                 """,
-                (symbol, decision_round_ts, score, reason, latest_high, prev_96_max_high, updated_at),
+                # Keep using the legacy latest_high column to avoid an online
+                # database migration; it now stores the latest close for rule 8.
+                (symbol, decision_round_ts, score, reason, latest_close, prev_96_max_high, updated_at),
             )
 
     def get_latest_round_scores_15m_close_near_high_2of4(self) -> tuple[int | None, list[sqlite3.Row]]:
@@ -1659,7 +1663,7 @@ class ScoringSystem:
                 return None, []
             round_ts = int(row["ts"])
             rows = conn.execute(
-                "SELECT symbol, decision_round_ts, score, reason, latest_high, prev_96_max_high, updated_at FROM symbol_scores_15m_latest_highest_prev_96 WHERE decision_round_ts = ? ORDER BY score DESC, symbol ASC",
+                "SELECT symbol, decision_round_ts, score, reason, latest_high AS latest_close, prev_96_max_high, updated_at FROM symbol_scores_15m_latest_highest_prev_96 WHERE decision_round_ts = ? ORDER BY score DESC, symbol ASC",
                 (round_ts,),
             ).fetchall()
         return round_ts, rows
@@ -2756,7 +2760,7 @@ class ScoringSystem:
     def _get_round_scores_15m_latest_highest_prev_96(self, round_ts: int) -> list[sqlite3.Row]:
         with self._round_connection() as conn:
             return conn.execute(
-                "SELECT symbol, decision_round_ts, score, reason, latest_high, prev_96_max_high, updated_at FROM symbol_scores_15m_latest_highest_prev_96 WHERE decision_round_ts = ? ORDER BY symbol ASC",
+                "SELECT symbol, decision_round_ts, score, reason, latest_high AS latest_close, prev_96_max_high, updated_at FROM symbol_scores_15m_latest_highest_prev_96 WHERE decision_round_ts = ? ORDER BY symbol ASC",
                 (round_ts,),
             ).fetchall()
 
