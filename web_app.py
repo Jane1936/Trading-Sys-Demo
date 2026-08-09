@@ -1161,7 +1161,7 @@ def abnormal_wicks():
     score_rule5_round_ts, round_scores_rule5 = load_module("评分规则5 rule5", scoring.get_latest_round_scores_15m_close_increasing_3of4, (0, []))
     score_rule6_round_ts, round_scores_rule6 = load_module("评分规则6 rule6", scoring.get_latest_round_scores_1m_close_gt_5m_ma20, (0, []))
     score_rule7_round_ts, round_scores_rule7 = load_module("评分规则7 rule7", scoring.get_latest_round_scores_15m_close_near_high_2of4, (0, []))
-    score_rule8_round_ts, round_scores_rule8 = load_module("评分规则8 rule8", scoring.get_latest_round_scores_1h_latest_highest_24, (0, []))
+    score_rule8_round_ts, round_scores_rule8 = load_module("评分规则8 rule8", scoring.get_latest_round_scores_15m_latest_highest_prev_96, (0, []))
     score_rule9_round_ts, round_scores_rule9 = load_module("评分规则9 rule9", scoring.get_latest_round_scores_15m_close_desc_3_with_oi_45m, (0, []))
     score_rule10_round_ts, round_scores_rule10 = load_module("评分规则10 rule10", scoring.get_latest_round_scores_1m_close_gt_60m_open_with_oi_60m, (0, []))
     score_rule11_round_ts, round_scores_rule11 = load_module("评分规则11 rule11", scoring.get_latest_round_scores_oi_loss_rate_240m, (0, []))

@@ -481,7 +481,7 @@
         <button class="tab-btn score-rule-tab" data-score-tab="score-rule-5" style="width:auto;">规则5：最近4条15m收盘至少3条递增（{{ rule_score_weights[5] }}分）</button>
         <button class="tab-btn score-rule-tab" data-score-tab="score-rule-6" style="width:auto;">规则6：1m收盘&gt;5m MA20（{{ rule_score_weights[6] }}分）</button>
         <button class="tab-btn score-rule-tab" data-score-tab="score-rule-7" style="width:auto;">规则7：最近4条15m有≥2条收盘位置≥0.65（{{ rule_score_weights[7] }}分）</button>
-        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-8" style="width:auto;">规则8：最近1条15m最高价&gt;前24条1h最高价（{{ rule_score_weights[8] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-8" style="width:auto;">规则8：最近1条15m最高价&gt;此前96条15m最高价（{{ rule_score_weights[8] }}分）</button>
         </div>
         <div class="score-tab-group oi">
           <span class="score-tab-group-label">OI/资金费率评分</span>
@@ -635,14 +635,14 @@
 
       <div id="score-rule-8" class="score-rule-panel">
         {% if score_rule8_round_ts %}
-        <div class="tip">规则8轮次：{{ score_rule8_round_ts|fmt_ms_datetime }}。最近1条15m最高价须严格高于此前24条1h K线最高价的最大值。</div>
+        <div class="tip">规则8轮次：{{ score_rule8_round_ts|fmt_ms_datetime }}。最近1条15m最高价须严格高于此前96条（不包括本轮次，即最近第97条至最近第2条）15分钟K线最高价的最大值。</div>
         {% endif %}
         <div class="table-wrap">
           <table>
-            <thead><tr><th>symbol</th><th>score</th><th>latest_15m_high</th><th>prev_24_1h_max_high</th><th>reason</th><th>updated_at</th></tr></thead>
+            <thead><tr><th>symbol</th><th>score</th><th>latest_15m_high</th><th>prev_96_15m_max_high</th><th>reason</th><th>updated_at</th></tr></thead>
             <tbody>
               {% for r in round_scores_rule8 %}
-              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_high) }}</td><td>{{ '%.6f'|format(r.prev_24_max_high) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_high) }}</td><td>{{ '%.6f'|format(r.prev_96_max_high) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
               {% else %}
               <tr><td class="empty" colspan="6">暂无规则8评分数据</td></tr>
               {% endfor %}
