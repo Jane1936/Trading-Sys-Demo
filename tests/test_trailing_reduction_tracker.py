@@ -1,7 +1,6 @@
 import sqlite3
 from decimal import Decimal
 
-import db_config
 from trailing_reduction_tracker import TrailingReductionTracker
 
 
@@ -67,7 +66,7 @@ def test_trailing_reduction_marks_pretrigger_structure_break(tmp_path, monkeypat
     assert tracker.summary_payload()["checks"][0]["latest_pretrigger_round_ts"] == 2000
 
 
-def test_trailing_reduction_skips_symbol_after_lifecycle_partial_take_profit(tmp_path, monkeypatch):
+def test_trailing_reduction_continues_after_partial_take_profit(tmp_path, monkeypatch):
     db_path = tmp_path / "klines.db"
     _create_klines(db_path)
     monkeypatch.setattr("trailing_reduction_tracker.TradingExperiment", FakeTradingExperiment)
@@ -92,33 +91,10 @@ def test_trailing_reduction_skips_symbol_after_lifecycle_partial_take_profit(tmp
     _, checks = tracker.get_latest_round_checks()
 
     assert result["checked"] == 1
-    assert result["eligible"] == 0
-    assert result["pretriggered"] == 0
-    assert checks[0].tag == "已触发过分批止盈"
-    assert checks[0].reason == "partial_take_profit_already_triggered_in_current_open_lifecycle"
-
-
-def test_partial_take_profit_guard_reads_trading_db_when_core_db_is_split(tmp_path, monkeypatch):
-    trading_db = str(tmp_path / "trading.db")
-    core_db = str(tmp_path / "trading_core.db")
-    monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
-    monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", core_db)
-    with sqlite3.connect(trading_db) as conn:
-        conn.execute(
-            "CREATE TABLE partial_take_profit_records "
-            "(symbol TEXT, checked_at INTEGER, status TEXT)"
-        )
-        conn.execute(
-            "INSERT INTO partial_take_profit_records VALUES ('BTC', 1600, 'submitted')"
-        )
-    with sqlite3.connect(core_db) as conn:
-        conn.execute("CREATE TABLE unrelated_core_data (id INTEGER)")
-
-    tracker = TrailingReductionTracker(
-        db_path=trading_db, account_manager=FakeAccountManager()
-    )
-
-    assert tracker._has_partial_take_profit_record_since("BTC", 1000) is True
+    assert result["eligible"] == 1
+    assert result["pretriggered"] == 1
+    assert checks[0].tag == "预触发结构破位"
+    assert checks[0].reason == "current_price_lt_lowest_recent_two_15m_lows"
 
 
 def test_summary_payload_includes_recent_7_day_records(tmp_path, monkeypatch):

@@ -3,52 +3,9 @@ import tempfile
 from decimal import Decimal
 from pathlib import Path
 
-import db_config
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
 from holding_position_scoring import HoldingPositionScoringSystem, PositionIncreaseCheck, PositionReductionCheck
 from trading_experiment import TradingExperiment
-
-
-def test_partial_take_profit_guard_is_scoped_to_current_open_lifecycle(tmp_path):
-    db_path = str(tmp_path / "trading.db")
-    scoring = HoldingPositionScoringSystem(db_path=db_path)
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "CREATE TABLE partial_take_profit_records "
-            "(symbol TEXT, checked_at INTEGER, status TEXT)"
-        )
-        conn.executemany(
-            "INSERT INTO partial_take_profit_records VALUES (?, ?, ?)",
-            [("BTC", 900, "submitted"), ("BTC", 1500, "failed")],
-        )
-
-    assert scoring._has_partial_take_profit_record_since("BTC", 1000) is False
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "INSERT INTO partial_take_profit_records VALUES ('BTC', 1600, 'submitted')"
-        )
-    assert scoring._has_partial_take_profit_record_since("BTC", 1000) is True
-
-
-def test_partial_take_profit_guard_reads_trading_db_when_core_db_is_split(tmp_path, monkeypatch):
-    trading_db = str(tmp_path / "trading.db")
-    core_db = str(tmp_path / "trading_core.db")
-    monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
-    monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", core_db)
-    with sqlite3.connect(trading_db) as conn:
-        conn.execute(
-            "CREATE TABLE partial_take_profit_records "
-            "(symbol TEXT, checked_at INTEGER, status TEXT)"
-        )
-        conn.execute(
-            "INSERT INTO partial_take_profit_records VALUES ('BTC', 1600, 'submitted')"
-        )
-    with sqlite3.connect(core_db) as conn:
-        conn.execute("CREATE TABLE unrelated_core_data (id INTEGER)")
-
-    scoring = HoldingPositionScoringSystem(db_path=trading_db)
-
-    assert scoring._has_partial_take_profit_record_since("BTC", 1000) is True
 
 
 def test_lock_busy_records_allow_holding_action_retry(tmp_path):
@@ -733,6 +690,13 @@ def test_position_reduction_rule2_tags_trend_weakening_with_descending_macd():
             conn.execute(
                 "INSERT INTO trading_experiment_trades (symbol, status, total_score, created_at) VALUES (?, ?, ?, ?)",
                 ("BANK", "opened", 80, 1000),
+            )
+            conn.execute(
+                "CREATE TABLE partial_take_profit_records "
+                "(symbol TEXT, checked_at INTEGER, status TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO partial_take_profit_records VALUES ('BANK', 1500, 'submitted')"
             )
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
