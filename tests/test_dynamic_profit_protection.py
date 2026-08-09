@@ -87,6 +87,7 @@ def test_dynamic_profit_protection_uses_highest_reached_tier_priority_over_curre
 
     assert result["triggered"] == 1
     assert checks[0].current_tier == "4R以上"
+    assert checks[0].highest_unrealized_pnl == "400"
     assert checks[0].drawdown_threshold == "0.2"
     assert "tier=4R以上" in checks[0].reason
     assert account.signed_posts[-1][1]["type"] == "MARKET"
