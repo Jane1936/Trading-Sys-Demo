@@ -8,6 +8,27 @@ from holding_position_scoring import HoldingPositionScoringSystem, PositionIncre
 from trading_experiment import TradingExperiment
 
 
+def test_partial_take_profit_guard_is_scoped_to_current_open_lifecycle(tmp_path):
+    db_path = str(tmp_path / "trading.db")
+    scoring = HoldingPositionScoringSystem(db_path=db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE partial_take_profit_records "
+            "(symbol TEXT, checked_at INTEGER, status TEXT)"
+        )
+        conn.executemany(
+            "INSERT INTO partial_take_profit_records VALUES (?, ?, ?)",
+            [("BTC", 900, "submitted"), ("BTC", 1500, "failed")],
+        )
+
+    assert scoring._has_partial_take_profit_record_since("BTC", 1000) is False
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO partial_take_profit_records VALUES ('BTC', 1600, 'submitted')"
+        )
+    assert scoring._has_partial_take_profit_record_since("BTC", 1000) is True
+
+
 def test_lock_busy_records_allow_holding_action_retry(tmp_path):
     scoring = HoldingPositionScoringSystem(db_path=str(tmp_path / "trading.db"))
     scoring.init_tables()

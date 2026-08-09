@@ -60,6 +60,7 @@ class TrailingReductionTracker:
     TRIGGER_R_MULTIPLE = Decimal("2")
     STRUCTURE_REDUCTION_FRACTION = Decimal("0.3")
     TAG_STRUCTURE_BREAK = "结构破位"
+    TAG_PARTIAL_TAKE_PROFIT_TRIGGERED = "已触发过分批止盈"
     RECORDS_TABLE = "trailing_reduction_records"
 
     def __init__(
@@ -176,6 +177,12 @@ class TrailingReductionTracker:
         pretriggered = False
         tag = ""
         reason = "unrealized_pnl_gte_2r"
+        lifecycle_started_at = self._latest_open_trade_created_at(symbol)
+        if lifecycle_started_at and self._has_partial_take_profit_record_since(symbol, lifecycle_started_at):
+            tag = self.TAG_PARTIAL_TAKE_PROFIT_TRIGGERED
+            reason = "partial_take_profit_already_triggered_in_current_open_lifecycle"
+            self._insert_check(symbol, round_ts, now, equity, r_value, trigger_r, unrealized_pnl, current_price, latest_low, second_low, lowest, entry_price, amount, False, False, tag, reason)
+            return False, False
         if eligible:
             try:
                 latest_low, second_low = self._latest_two_15m_lows(symbol)
@@ -244,6 +251,16 @@ class TrailingReductionTracker:
     def _refresh_one(self, check: TrailingReductionCheck, position: dict[str, Any]) -> bool:
         now = int(time.time() * 1000)
         symbol = check.symbol
+        lifecycle_started_at = self._latest_open_trade_created_at(symbol)
+        if lifecycle_started_at and self._has_partial_take_profit_record_since(symbol, lifecycle_started_at):
+            with self._connect() as conn:
+                conn.execute(
+                    f"UPDATE {self.CHECKS_TABLE} SET checked_at = ?, eligible = 0, pretriggered = 0, "
+                    "structure_break_triggered = 0, tag = ?, reason = ? WHERE id = ?",
+                    (now, self.TAG_PARTIAL_TAKE_PROFIT_TRIGGERED,
+                     "partial_take_profit_already_triggered_in_current_open_lifecycle", check.id),
+                )
+            return False
         atr14 = self._latest_atr14(symbol)
         high, close = self._latest_1m_high_close(symbol)
         open_time = self._latest_open_trade_created_at(symbol)
@@ -388,6 +405,18 @@ class TrailingReductionTracker:
             return int(row["created_at"]) if row and row["created_at"] is not None else 0
         except Exception:
             return 0
+
+    def _has_partial_take_profit_record_since(self, symbol: str, lifecycle_started_at: int) -> bool:
+        try:
+            with db_config.connect_sqlite(db_config.trading_core_path(self.db_path), row_factory=sqlite3.Row) as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM partial_take_profit_records "
+                    "WHERE symbol = ? AND checked_at >= ? AND status = 'submitted' LIMIT 1",
+                    (symbol, int(lifecycle_started_at)),
+                ).fetchone()
+            return row is not None
+        except sqlite3.Error:
+            return False
 
     @staticmethod
     def _check_from_row(row: sqlite3.Row) -> TrailingReductionCheck:

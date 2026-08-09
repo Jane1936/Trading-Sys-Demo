@@ -220,6 +220,7 @@ class HoldingPositionScoringSystem:
     REDUCTION_TAG_MEDIUM_DANGER_PRICE_CONFIRMATION = "中危险区+价格确认"
     REDUCTION_TAG_DEEP_WEAKNESS = "深度弱势"
     REDUCTION_TAG_DEEP_WEAKNESS_TRIGGERED = "已触发深度弱势"
+    REDUCTION_TAG_PARTIAL_TAKE_PROFIT_TRIGGERED = "已触发过分批止盈"
     DEFAULT_INCREASE_THRESHOLD_R_MULTIPLE = Decimal("2.3")
 
     def __init__(
@@ -745,6 +746,16 @@ class HoldingPositionScoringSystem:
         open_score = self._latest_open_trade_total_score(symbol)
         open_entry_price = self._latest_open_trade_entry_price(symbol)
         open_trade_created_at = self._latest_open_trade_created_at(symbol)
+        if open_trade_created_at != "" and self._has_partial_take_profit_record_since(symbol, int(open_trade_created_at)):
+            return PositionReductionCheck(
+                symbol, round_ts, self._fmt_decimal(highest), self._fmt_decimal(current_price),
+                self._fmt_decimal(atr14), "", "", self._fmt_decimal(drawdown),
+                self._fmt_decimal(equity), self._fmt_decimal(two_r), self._fmt_decimal(one_r),
+                self._fmt_decimal(unrealized_pnl), "", "", "", "", "", "", "", "", "",
+                "", "", "", "", "", "", "", "", "", False,
+                self.REDUCTION_TAG_PARTIAL_TAKE_PROFIT_TRIGGERED,
+                "partial_take_profit_already_triggered_in_current_open_lifecycle", now_ms,
+            )
         score_drawdown = (
             self._decimal_from(open_score, Decimal("0")) - self._decimal_from(latest_score, Decimal("0"))
             if open_score != "" and latest_score != ""
@@ -1367,6 +1378,19 @@ class HoldingPositionScoringSystem:
                 f"SELECT 1 FROM {self.REDUCTION_RECORDS_TABLE} WHERE symbol = ? AND matched_rule LIKE ? AND created_at >= ? LIMIT 1",
                 (symbol, "%规则五%", lifecycle_started_at),
             ).fetchone()
+        return row is not None
+
+    def _has_partial_take_profit_record_since(self, symbol: str, lifecycle_started_at: int) -> bool:
+        """Return whether this open lifecycle already completed a partial take profit."""
+        try:
+            with self._trading_core_connect() as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM partial_take_profit_records "
+                    "WHERE symbol = ? AND checked_at >= ? AND status = 'submitted' LIMIT 1",
+                    (symbol, int(lifecycle_started_at)),
+                ).fetchone()
+        except sqlite3.Error:
+            return False
         return row is not None
 
     def _has_recent_rule2_trigger(self, symbol: str, now_ms: int) -> bool:

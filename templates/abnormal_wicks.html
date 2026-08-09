@@ -113,6 +113,7 @@
     .reduction-tag-stale-pretrigger { background:#f1f5f9; color:#64748b; border-color:#cbd5e1; }
     .reduction-tag-trailing-pretrigger { background:#f1f5f9; color:#64748b; border-color:#cbd5e1; }
     .reduction-tag-trailing-pretrigger-current { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+    .reduction-tag-partial-take-profit { background:#f1f5f9; color:#64748b; border-color:#cbd5e1; }
     .reduction-tag-increase-completed { background:#dcfce7; color:#166534; border-color:#86efac; }
     .score-delta { display:inline-flex; align-items:center; justify-content:center; min-width:58px; padding:3px 8px; border-radius:999px; font-weight:900; border:1px solid transparent; }
     .score-delta-negative { color:#dc2626; background:#fee2e2; border-color:#fca5a5; }
@@ -1259,7 +1260,7 @@
           <div class="symbol-strip">
             <div><strong>减仓条件模块：本轮执行结果</strong></div>
             {% if holding_reduction_round_ts %}
-              <div class="muted">最近判断轮次：{{ holding_reduction_round_ts|fmt_ms_datetime }}。该15分钟定时任务会等待本轮EMA/MACD数据计算完成后，才在“持仓评分系统：止损规则判断结果”完成并落库后执行；规则二检查当前价格低于15分钟EMA16、未变现盈利小于0.5R、最近3条MACD连续走弱且最近第1条MACD小于0，规则五检查当前价格低于15分钟EMA21、当前价格≤开仓价，且最近3条15分钟K线中至少2条收盘价低于开盘价；满足后标记“深度弱势”，且每个新开仓生命周期内仅触发一次；原规则三与原规则四（最新总分&lt;40即触发“评分进入危险区”）已删除，不再作为减仓触发条件。</div>
+              <div class="muted">最近判断轮次：{{ holding_reduction_round_ts|fmt_ms_datetime }}。每个 symbol 会先检查最近一次开仓后的“分批止盈卖出记录”；如已有成功记录，则标记灰色 tag“已触发过分批止盈”，并跳过减仓条件规则检查。其余 symbol 才继续检查规则二与规则五。</div>
             {% else %}
               <div class="muted">暂无减仓条件模块执行结果。</div>
             {% endif %}
@@ -1267,7 +1268,7 @@
             {% if triggered_reduction_checks %}
               <div class="chips">
                 {% for row in triggered_reduction_checks %}
-                  <span class="reduction-tags" title="{{ row.reason }}"><span class="chip">{{ row.symbol }}</span>{% for tag in row.tag.split('、') %}{% if tag == '已触发深度弱势' %}<span class="reduction-tag reduction-tag-rule5-triggered">{{ tag }}</span>{% elif tag == '90分钟内已触发趋势走弱' %}<span class="reduction-tag reduction-tag-rule2-cooldown">{{ tag }}</span>{% elif tag == '趋势走弱' or tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>{% elif tag == '绝对分数大幅回撤' %}<span class="reduction-tag reduction-tag-rule3">{{ tag }}</span>{% elif tag == '评分进入危险区' %}<span class="reduction-tag reduction-tag-rule4">{{ tag }}</span>{% elif tag == '中危险区+价格确认' or tag == '深度弱势' %}<span class="reduction-tag reduction-tag-rule5">{{ tag }}</span>{% else %}<span class="reduction-tag reduction-tag-default">{{ tag }}</span>{% endif %}{% endfor %}</span>
+                  <span class="reduction-tags" title="{{ row.reason }}"><span class="chip">{{ row.symbol }}</span>{% for tag in row.tag.split('、') %}{% if tag == '已触发过分批止盈' %}<span class="reduction-tag reduction-tag-partial-take-profit">{{ tag }}</span>{% elif tag == '已触发深度弱势' %}<span class="reduction-tag reduction-tag-rule5-triggered">{{ tag }}</span>{% elif tag == '90分钟内已触发趋势走弱' %}<span class="reduction-tag reduction-tag-rule2-cooldown">{{ tag }}</span>{% elif tag == '趋势走弱' or tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>{% elif tag == '绝对分数大幅回撤' %}<span class="reduction-tag reduction-tag-rule3">{{ tag }}</span>{% elif tag == '评分进入危险区' %}<span class="reduction-tag reduction-tag-rule4">{{ tag }}</span>{% elif tag == '中危险区+价格确认' or tag == '深度弱势' %}<span class="reduction-tag reduction-tag-rule5">{{ tag }}</span>{% else %}<span class="reduction-tag reduction-tag-default">{{ tag }}</span>{% endif %}{% endfor %}</span>
                 {% endfor %}
               </div>
             {% else %}
@@ -1307,7 +1308,7 @@
                   <td>{% if row.tag %}
                     <span class="reduction-tags">
                       {% for tag in row.tag.split('、') %}
-                        {% if tag == '已触发深度弱势' %}<span class="reduction-tag reduction-tag-rule5-triggered">{{ tag }}</span>{% elif tag == '90分钟内已触发趋势走弱' %}<span class="reduction-tag reduction-tag-rule2-cooldown">{{ tag }}</span>{% elif tag == '趋势走弱' or tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>
+                        {% if tag == '已触发过分批止盈' %}<span class="reduction-tag reduction-tag-partial-take-profit">{{ tag }}</span>{% elif tag == '已触发深度弱势' %}<span class="reduction-tag reduction-tag-rule5-triggered">{{ tag }}</span>{% elif tag == '90分钟内已触发趋势走弱' %}<span class="reduction-tag reduction-tag-rule2-cooldown">{{ tag }}</span>{% elif tag == '趋势走弱' or tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>
                         {% elif tag == '绝对分数大幅回撤' %}<span class="reduction-tag reduction-tag-rule3">{{ tag }}</span>
                         {% elif tag == '评分进入危险区' %}<span class="reduction-tag reduction-tag-rule4">{{ tag }}</span>
                         {% elif tag == '中危险区+价格确认' or tag == '深度弱势' %}<span class="reduction-tag reduction-tag-rule5">{{ tag }}</span>
@@ -1852,7 +1853,7 @@
           <button id="refresh-trailing-reduction" class="btn btn-primary btn-small" type="button">刷新</button>
           <span id="trailing-reduction-refresh-status" class="muted">针对本轮“预触发结构破位”symbol更新回撤幅度与开仓以来最高价</span>
           {% if trailing_reduction_round_ts %}
-            <div id="trailing-reduction-round-note" class="muted">最近判断轮次：{{ trailing_reduction_round_ts|fmt_ms_datetime }}。该模块在每轮 ATR(14) 计算完成后、减仓条件模块之后执行：15分钟扫描先识别“预触发结构破位”；随后后台每分钟读取数据库 klines_1m 最新 high/close，维护“开仓以来最高价”，当最新收盘价相对开仓以来最高价的回撤 &gt; 2 × ATR(14) 时打上“结构破位”tag，立即市价单结构减仓30%，并按减仓后的剩余仓位重建止盈单/止损单。</div>
+            <div id="trailing-reduction-round-note" class="muted">最近判断轮次：{{ trailing_reduction_round_ts|fmt_ms_datetime }}。每个 symbol 会先检查最近一次开仓后的“分批止盈卖出记录”；如已有成功记录，则标记灰色 tag“已触发过分批止盈”，并跳过预触发、结构破位及减仓检查。其余 symbol 才继续执行移动追踪减仓逻辑。</div>
           {% else %}
             <div id="trailing-reduction-round-note" class="muted">暂无移动追踪减仓扫描结果。</div>
           {% endif %}
@@ -1877,7 +1878,7 @@
             <tbody id="trailing-reduction-checks-body">
               {% for row in trailing_reduction_checks %}
               <tr>
-                <td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{% if row.latest_pretrigger_round_ts %}<span class="reduction-tag {{ 'reduction-tag-trailing-pretrigger-current' if row.latest_pretrigger_round_ts == row.decision_round_ts else 'reduction-tag-trailing-pretrigger' }}">触发轮次 {{ row.latest_pretrigger_round_ts|fmt_ms_datetime }} 预触发结构破位</span>{% elif row.tag %}<span class="reduction-tag reduction-tag-trailing-pretrigger">{{ row.tag }}</span>{% else %}-{% endif %}</td><td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }}</td><td>{{ row.unrealized_pnl }}</td><td>{% set current_price_decimal = row.current_price|float %}{% set lowest_15m_low_decimal = row.lowest_15m_low|float %}<span class="{{ 'reduction-current-price-danger' if lowest_15m_low_decimal > 0 and current_price_decimal < lowest_15m_low_decimal else '' }}">{{ row.current_price }}</span></td><td>{{ row.latest_15m_low }} / {{ row.second_15m_low }}</td><td>{{ row.lowest_15m_low }}</td><td>{{ row.atr14 or '-' }}</td><td>{{ (row.latest_1m_high or '-') ~ ' / ' ~ (row.latest_1m_close or '-') }}</td><td>{{ row.highest_since_open or '-' }}</td><td>{{ row.price_drawdown or '-' }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.pretriggered else 'status-fail' }}">{{ '是' if row.pretriggered else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.structure_break_triggered else 'status-fail' }}">{{ '是' if row.structure_break_triggered else '否' }}</span></td><td>{{ row.reason }}</td>
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{% if row.tag == '已触发过分批止盈' %}<span class="reduction-tag reduction-tag-partial-take-profit">{{ row.tag }}</span>{% elif row.latest_pretrigger_round_ts %}<span class="reduction-tag {{ 'reduction-tag-trailing-pretrigger-current' if row.latest_pretrigger_round_ts == row.decision_round_ts else 'reduction-tag-trailing-pretrigger' }}">触发轮次 {{ row.latest_pretrigger_round_ts|fmt_ms_datetime }} 预触发结构破位</span>{% elif row.tag %}<span class="reduction-tag reduction-tag-trailing-pretrigger">{{ row.tag }}</span>{% else %}-{% endif %}</td><td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }}</td><td>{{ row.unrealized_pnl }}</td><td>{% set current_price_decimal = row.current_price|float %}{% set lowest_15m_low_decimal = row.lowest_15m_low|float %}<span class="{{ 'reduction-current-price-danger' if lowest_15m_low_decimal > 0 and current_price_decimal < lowest_15m_low_decimal else '' }}">{{ row.current_price }}</span></td><td>{{ row.latest_15m_low }} / {{ row.second_15m_low }}</td><td>{{ row.lowest_15m_low }}</td><td>{{ row.atr14 or '-' }}</td><td>{{ (row.latest_1m_high or '-') ~ ' / ' ~ (row.latest_1m_close or '-') }}</td><td>{{ row.highest_since_open or '-' }}</td><td>{{ row.price_drawdown or '-' }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.pretriggered else 'status-fail' }}">{{ '是' if row.pretriggered else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.structure_break_triggered else 'status-fail' }}">{{ '是' if row.structure_break_triggered else '否' }}</span></td><td>{{ row.reason }}</td>
               </tr>
               {% else %}
               <tr><td class="empty" colspan="18">暂无移动追踪减仓扫描结果</td></tr>
@@ -3396,16 +3397,22 @@
       renderHoldingIncreaseRecords(records);
     }
 
-    const TRAILING_REDUCTION_RULE_NOTE = '该模块在每轮 ATR(14) 计算完成后、减仓条件模块之后执行：15分钟扫描先识别“预触发结构破位”；随后后台每分钟读取数据库 klines_1m 最新 high/close，维护“开仓以来最高价”，当最新收盘价相对开仓以来最高价的回撤 > 2 × ATR(14) 时打上“结构破位”tag，立即市价单结构减仓30%，并按减仓后的剩余仓位重建止盈单/止损单。';
+    const TRAILING_REDUCTION_RULE_NOTE = '每个 symbol 会先检查最近一次开仓后的“分批止盈卖出记录”；如已有成功记录，则标记灰色 tag“已触发过分批止盈”，并跳过预触发、结构破位及减仓检查。其余 symbol 才继续执行移动追踪减仓逻辑。';
 
     function trailingReductionTagCell(row) {
+      if (row.tag === '已触发过分批止盈') {
+        return `<span class="reduction-tag reduction-tag-partial-take-profit">${escapeHtml(row.tag)}</span>`;
+      }
       if (row.latest_pretrigger_round_ts) {
         const tagClass = Number(row.latest_pretrigger_round_ts) === Number(row.decision_round_ts)
           ? 'reduction-tag-trailing-pretrigger-current'
           : 'reduction-tag-trailing-pretrigger';
         return `<span class="reduction-tag ${tagClass}">触发轮次 ${formatMsDatetime(row.latest_pretrigger_round_ts)} 预触发结构破位</span>`;
       }
-      if (row.tag) return `<span class="reduction-tag reduction-tag-trailing-pretrigger">${escapeHtml(row.tag)}</span>`;
+      if (row.tag) {
+        const tagClass = row.tag === '已触发过分批止盈' ? 'reduction-tag-partial-take-profit' : 'reduction-tag-trailing-pretrigger';
+        return `<span class="reduction-tag ${tagClass}">${escapeHtml(row.tag)}</span>`;
+      }
       return '-';
     }
 
