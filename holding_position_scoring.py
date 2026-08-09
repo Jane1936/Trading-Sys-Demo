@@ -1355,7 +1355,10 @@ class HoldingPositionScoringSystem:
     def _has_partial_take_profit_record_since(self, symbol: str, lifecycle_started_at: int) -> bool:
         """Return whether this open lifecycle already completed a partial take profit."""
         try:
-            with self._trading_core_connect() as conn:
+            # Partial-take-profit execution records belong to trading.db, not
+            # trading_core.db.  Custom/test databases route both sets of tables
+            # to one file, which previously hid this production-only mismatch.
+            with db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row) as conn:
                 row = conn.execute(
                     "SELECT 1 FROM partial_take_profit_records "
                     "WHERE symbol = ? AND checked_at >= ? AND status = 'submitted' LIMIT 1",

@@ -1,6 +1,7 @@
 import sqlite3
 from decimal import Decimal
 
+import db_config
 from trailing_reduction_tracker import TrailingReductionTracker
 
 
@@ -95,6 +96,29 @@ def test_trailing_reduction_skips_symbol_after_lifecycle_partial_take_profit(tmp
     assert result["pretriggered"] == 0
     assert checks[0].tag == "已触发过分批止盈"
     assert checks[0].reason == "partial_take_profit_already_triggered_in_current_open_lifecycle"
+
+
+def test_partial_take_profit_guard_reads_trading_db_when_core_db_is_split(tmp_path, monkeypatch):
+    trading_db = str(tmp_path / "trading.db")
+    core_db = str(tmp_path / "trading_core.db")
+    monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
+    monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", core_db)
+    with sqlite3.connect(trading_db) as conn:
+        conn.execute(
+            "CREATE TABLE partial_take_profit_records "
+            "(symbol TEXT, checked_at INTEGER, status TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO partial_take_profit_records VALUES ('BTC', 1600, 'submitted')"
+        )
+    with sqlite3.connect(core_db) as conn:
+        conn.execute("CREATE TABLE unrelated_core_data (id INTEGER)")
+
+    tracker = TrailingReductionTracker(
+        db_path=trading_db, account_manager=FakeAccountManager()
+    )
+
+    assert tracker._has_partial_take_profit_record_since("BTC", 1000) is True
 
 
 def test_summary_payload_includes_recent_7_day_records(tmp_path, monkeypatch):
