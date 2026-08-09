@@ -408,7 +408,9 @@ class TrailingReductionTracker:
 
     def _has_partial_take_profit_record_since(self, symbol: str, lifecycle_started_at: int) -> bool:
         try:
-            with db_config.connect_sqlite(db_config.trading_core_path(self.db_path), row_factory=sqlite3.Row) as conn:
+            # Partial-take-profit records stay in trading.db even when core
+            # trade lifecycle data is split into trading_core.db.
+            with db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row) as conn:
                 row = conn.execute(
                     "SELECT 1 FROM partial_take_profit_records "
                     "WHERE symbol = ? AND checked_at >= ? AND status = 'submitted' LIMIT 1",
