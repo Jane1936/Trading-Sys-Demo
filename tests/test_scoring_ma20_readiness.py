@@ -435,7 +435,7 @@ def test_round_snapshot_bulk_loads_and_caps_each_symbol_window(tmp_path, monkeyp
             )
             conn.executemany(
                 "INSERT INTO klines_15m VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                [(symbol, i, 1.0, 2.0, 0.5, 1.5, 10.0, 0.0002) for i in range(30)],
+                [(symbol, i, 1.0, 2.0, 0.5, 1.5, 10.0, 0.0002) for i in range(100)],
             )
             conn.executemany(
                 "INSERT INTO klines_1h VALUES (?, ?, ?, ?, ?)",
@@ -461,7 +461,7 @@ def test_round_snapshot_bulk_loads_and_caps_each_symbol_window(tmp_path, monkeyp
     snapshot = scoring._load_round_snapshot(["AAA", "BBB"])
 
     assert len(snapshot["klines_1m"]) == 120
-    assert len(snapshot["klines_15m"]) == 48
+    assert len(snapshot["klines_15m"]) == 194
     assert len(snapshot["klines_1h"]) == 48
     assert len(snapshot["open_interest_1m"]) == 480
     assert len(snapshot["ma20_indicators"]) == 12
