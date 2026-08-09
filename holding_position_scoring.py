@@ -220,6 +220,7 @@ class HoldingPositionScoringSystem:
     REDUCTION_TAG_MEDIUM_DANGER_PRICE_CONFIRMATION = "中危险区+价格确认"
     REDUCTION_TAG_DEEP_WEAKNESS = "深度弱势"
     REDUCTION_TAG_DEEP_WEAKNESS_TRIGGERED = "已触发深度弱势"
+    REDUCTION_TAG_PARTIAL_TAKE_PROFIT_TRIGGERED = "已触发过分批止盈"
     DEFAULT_INCREASE_THRESHOLD_R_MULTIPLE = Decimal("2.3")
 
     def __init__(
@@ -745,6 +746,20 @@ class HoldingPositionScoringSystem:
         open_score = self._latest_open_trade_total_score(symbol)
         open_entry_price = self._latest_open_trade_entry_price(symbol)
         open_trade_created_at = self._latest_open_trade_created_at(symbol)
+        if open_trade_created_at != "" and self._has_partial_take_profit_record_since(symbol, int(open_trade_created_at)):
+            return PositionReductionCheck(
+                symbol=symbol, decision_round_ts=round_ts,
+                highest_15m_high=self._fmt_decimal(highest), current_price=self._fmt_decimal(current_price),
+                atr14=self._fmt_decimal(atr14), ema16="", ema21="", price_drawdown_ratio=self._fmt_decimal(drawdown),
+                account_equity_usdt=self._fmt_decimal(equity), two_r_usdt=self._fmt_decimal(two_r),
+                one_r_usdt=self._fmt_decimal(one_r), unrealized_pnl=self._fmt_decimal(unrealized_pnl),
+                open_total_score="", latest_total_score="", score_drawdown="", latest_15m_open="",
+                latest_15m_close="", second_15m_open="", second_15m_close="", third_15m_open="",
+                third_15m_close="", previous_total_score="", recent_score_drawdown="", latest_macd="",
+                second_macd="", third_macd="", open_entry_price="", rule_name="", triggered=False,
+                tag=self.REDUCTION_TAG_PARTIAL_TAKE_PROFIT_TRIGGERED,
+                reason="partial_take_profit_already_triggered_in_current_open_lifecycle", checked_at=now_ms,
+            )
         score_drawdown = (
             self._decimal_from(open_score, Decimal("0")) - self._decimal_from(latest_score, Decimal("0"))
             if open_score != "" and latest_score != ""
@@ -1339,6 +1354,21 @@ class HoldingPositionScoringSystem:
                 f"SELECT 1 FROM {self.REDUCTION_RECORDS_TABLE} WHERE symbol = ? AND matched_rule LIKE ? AND created_at >= ? LIMIT 1",
                 (symbol, "%规则五%", lifecycle_started_at),
             ).fetchone()
+        return row is not None
+
+    def _has_partial_take_profit_record_since(self, symbol: str, lifecycle_started_at: int) -> bool:
+        """Return whether this open lifecycle has a submitted partial take profit."""
+        try:
+            # Execution records remain in trading.db after lifecycle rows move to
+            # trading_core.db, so query the strategy database explicitly.
+            with db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row) as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM partial_take_profit_records "
+                    "WHERE symbol = ? AND checked_at >= ? AND status = 'submitted' LIMIT 1",
+                    (symbol, int(lifecycle_started_at)),
+                ).fetchone()
+        except sqlite3.Error:
+            return False
         return row is not None
 
     def _has_recent_rule2_trigger(self, symbol: str, now_ms: int) -> bool:
