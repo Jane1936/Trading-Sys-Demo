@@ -427,6 +427,14 @@ def test_dynamic_profit_protection_displays_highest_profit_time():
     assert "formatMsDatetime(row.highest_profit_at)" in template
 
 
+def test_dynamic_profit_protection_displays_historical_highest_profit_before_time():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    assert template.count("历史最高浮盈") >= 2
+    assert template.count("<th>历史最高浮盈</th><th>最高浮盈出现时间</th>") == 2
+    assert "row.highest_unrealized_pnl" in template
+
+
 def test_trailing_stop_action_records_show_atr_and_volatility_without_total_score():
     template = Path("templates/abnormal_wicks.html").read_text()
     section_start = template.index("<strong>移动追踪止盈操作记录</strong>")

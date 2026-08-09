@@ -38,6 +38,7 @@ class DynamicProfitProtectionCheck:
     latest_1m_high: str
     latest_1m_close: str
     highest_since_open: str
+    highest_unrealized_pnl: str
     highest_profit_at: int
     profit_drawdown_ratio: str
     drawdown_threshold: str
@@ -325,6 +326,12 @@ class DynamicProfitProtection:
         values = dict(row)
         values["triggered"] = bool(row["triggered"])
         values["eligible"] = bool(row["eligible"])
+        entry_price = DynamicProfitProtection._decimal_from(row["entry_price"], Decimal("0"))
+        position_amt = DynamicProfitProtection._decimal_from(row["position_amt"], Decimal("0"))
+        highest_since_open = DynamicProfitProtection._decimal_from(row["highest_since_open"], Decimal("0"))
+        values["highest_unrealized_pnl"] = DynamicProfitProtection._fmt_decimal(
+            max(Decimal("0"), (highest_since_open - entry_price) * position_amt)
+        )
         fields = DynamicProfitProtectionCheck.__dataclass_fields__
         return DynamicProfitProtectionCheck(**{key: value for key, value in values.items() if key in fields})
 
