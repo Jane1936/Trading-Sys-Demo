@@ -400,6 +400,15 @@ def test_dynamic_profit_protection_has_scoped_refresh_button():
     assert endpoint_index > button_index
 
 
+def test_partial_take_profit_displays_merged_error_records():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+
+    assert "分批止盈卖出错误记录" in template
+    assert 'id="partial-take-profit-errors-body"' in template
+    assert "renderPartialTakeProfitErrors(payload.errors || [])" in template
+    assert "row.source" in template
+
+
 def test_dynamic_profit_protection_displays_updated_profit_tiers():
     template = Path("templates/abnormal_wicks.html").read_text()
 
