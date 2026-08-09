@@ -3,9 +3,41 @@ import tempfile
 from decimal import Decimal
 from pathlib import Path
 
+import db_config
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
 from holding_position_scoring import HoldingPositionScoringSystem, PositionIncreaseCheck, PositionReductionCheck
 from trading_experiment import TradingExperiment
+
+
+def test_partial_take_profit_guard_is_scoped_to_current_open_lifecycle(tmp_path):
+    db_path = str(tmp_path / "trading.db")
+    scoring = HoldingPositionScoringSystem(db_path=db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE partial_take_profit_records (symbol TEXT, checked_at INTEGER, status TEXT)")
+        conn.executemany(
+            "INSERT INTO partial_take_profit_records VALUES (?, ?, ?)",
+            [("BTC", 900, "submitted"), ("BTC", 1500, "failed")],
+        )
+
+    assert scoring._has_partial_take_profit_record_since("BTC", 1000) is False
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("INSERT INTO partial_take_profit_records VALUES ('BTC', 1600, 'submitted')")
+    assert scoring._has_partial_take_profit_record_since("BTC", 1000) is True
+
+
+def test_partial_take_profit_guard_reads_trading_db_when_core_db_is_split(tmp_path, monkeypatch):
+    trading_db = str(tmp_path / "trading.db")
+    core_db = str(tmp_path / "trading_core.db")
+    monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
+    monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", core_db)
+    with sqlite3.connect(trading_db) as conn:
+        conn.execute("CREATE TABLE partial_take_profit_records (symbol TEXT, checked_at INTEGER, status TEXT)")
+        conn.execute("INSERT INTO partial_take_profit_records VALUES ('BTC', 1600, 'submitted')")
+    with sqlite3.connect(core_db) as conn:
+        conn.execute("CREATE TABLE unrelated_core_data (id INTEGER)")
+
+    scoring = HoldingPositionScoringSystem(db_path=trading_db)
+    assert scoring._has_partial_take_profit_record_since("BTC", 1000) is True
 
 
 def test_lock_busy_records_allow_holding_action_retry(tmp_path):
@@ -654,7 +686,7 @@ def test_position_reduction_rule3_absolute_score_large_drawdown_is_removed():
     assert checks[0]["score_drawdown"] == "28"
     assert checks[0]["recent_score_drawdown"] == "18"
 
-def test_position_reduction_rule2_tags_trend_weakening_with_descending_macd():
+def test_position_reduction_skips_rules_after_partial_take_profit():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
@@ -704,23 +736,13 @@ def test_position_reduction_rule2_tags_trend_weakening_with_descending_macd():
         round_ts, checks = scoring.get_latest_reduction_checks()
 
     assert result["reduction_checked"] == 1
-    assert result["reduction_triggered"] == 1
+    assert result["reduction_triggered"] == 0
     assert round_ts == 4000
     assert checks[0]["symbol"] == "BANK"
-    assert checks[0]["triggered"] == 1
-    assert checks[0]["tag"] == "趋势走弱"
-    assert checks[0]["reason"] == "trend_weakening"
-    assert checks[0]["latest_15m_open"] == "10"
-    assert checks[0]["latest_15m_close"] == "8"
-    assert checks[0]["open_total_score"] == "80"
-    assert checks[0]["latest_total_score"] == "53"
-    assert checks[0]["previous_total_score"] == "70"
-    assert checks[0]["score_drawdown"] == "27"
-    assert checks[0]["recent_score_drawdown"] == "17"
-    assert checks[0]["latest_macd"] == "-1"
-    assert checks[0]["second_macd"] == "0"
-    assert checks[0]["third_macd"] == "1"
-    assert checks[0]["rule_name"] == "规则二"
+    assert checks[0]["triggered"] == 0
+    assert checks[0]["tag"] == "已触发过分批止盈"
+    assert checks[0]["reason"] == "partial_take_profit_already_triggered_in_current_open_lifecycle"
+    assert checks[0]["rule_name"] == ""
 
 def test_position_reduction_rule2_skips_when_recent_trend_weakening_triggered():
     fake_account = FakeAccountManager()

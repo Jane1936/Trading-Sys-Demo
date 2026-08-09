@@ -66,7 +66,7 @@ def test_trailing_reduction_marks_pretrigger_structure_break(tmp_path, monkeypat
     assert tracker.summary_payload()["checks"][0]["latest_pretrigger_round_ts"] == 2000
 
 
-def test_trailing_reduction_continues_after_partial_take_profit(tmp_path, monkeypatch):
+def test_trailing_reduction_skips_symbol_after_lifecycle_partial_take_profit(tmp_path, monkeypatch):
     db_path = tmp_path / "klines.db"
     _create_klines(db_path)
     monkeypatch.setattr("trailing_reduction_tracker.TradingExperiment", FakeTradingExperiment)
@@ -91,10 +91,10 @@ def test_trailing_reduction_continues_after_partial_take_profit(tmp_path, monkey
     _, checks = tracker.get_latest_round_checks()
 
     assert result["checked"] == 1
-    assert result["eligible"] == 1
-    assert result["pretriggered"] == 1
-    assert checks[0].tag == "预触发结构破位"
-    assert checks[0].reason == "current_price_lt_lowest_recent_two_15m_lows"
+    assert result["eligible"] == 0
+    assert result["pretriggered"] == 0
+    assert checks[0].tag == "已触发过分批止盈"
+    assert checks[0].reason == "partial_take_profit_already_triggered_in_current_open_lifecycle"
 
 
 def test_summary_payload_includes_recent_7_day_records(tmp_path, monkeypatch):
