@@ -66,6 +66,37 @@ def test_trailing_reduction_marks_pretrigger_structure_break(tmp_path, monkeypat
     assert tracker.summary_payload()["checks"][0]["latest_pretrigger_round_ts"] == 2000
 
 
+def test_trailing_reduction_skips_symbol_after_lifecycle_partial_take_profit(tmp_path, monkeypatch):
+    db_path = tmp_path / "klines.db"
+    _create_klines(db_path)
+    monkeypatch.setattr("trailing_reduction_tracker.TradingExperiment", FakeTradingExperiment)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE trading_experiment_trades "
+            "(id INTEGER PRIMARY KEY, symbol TEXT, status TEXT, created_at INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO trading_experiment_trades VALUES (1, 'BTC', 'opened', 1000)"
+        )
+        conn.execute(
+            "CREATE TABLE partial_take_profit_records "
+            "(symbol TEXT, checked_at INTEGER, status TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO partial_take_profit_records VALUES ('BTC', 1500, 'submitted')"
+        )
+
+    tracker = TrailingReductionTracker(db_path=str(db_path), account_manager=FakeAccountManager())
+    result = tracker.run_round(decision_round_ts=2000)
+    _, checks = tracker.get_latest_round_checks()
+
+    assert result["checked"] == 1
+    assert result["eligible"] == 0
+    assert result["pretriggered"] == 0
+    assert checks[0].tag == "已触发过分批止盈"
+    assert checks[0].reason == "partial_take_profit_already_triggered_in_current_open_lifecycle"
+
+
 def test_summary_payload_includes_recent_7_day_records(tmp_path, monkeypatch):
     db_path = tmp_path / "klines.db"
     _create_klines(db_path)
