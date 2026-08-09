@@ -858,10 +858,12 @@ def _partial_take_profit_payload() -> dict:
     strategy = PartialTakeProfitStrategy(db_path=_trading_db_path())
     round_ts, checks = strategy.get_latest_round_checks()
     records = strategy.recent_records(limit=100)
+    errors = strategy.recent_errors(limit=100)
     return {
         "round_ts": round_ts,
         "checks": [asdict(row) for row in checks],
         "records": [asdict(row) for row in records],
+        "errors": errors,
     }
 
 
@@ -1245,6 +1247,7 @@ def abnormal_wicks():
     partial_take_profit_strategy = PartialTakeProfitStrategy(db_path=_trading_db_path())
     partial_take_profit_round_ts, partial_take_profit_checks = load_module("分批止盈检查", partial_take_profit_strategy.get_latest_round_checks, (0, []))
     partial_take_profit_records = load_module("分批止盈记录", lambda: partial_take_profit_strategy.recent_records(limit=100), [])
+    partial_take_profit_errors = load_module("分批止盈错误记录", lambda: partial_take_profit_strategy.recent_errors(limit=100), [])
     trailing_reduction_payload = load_module("移动追踪减仓", _trailing_reduction_payload, {"round_ts": 0, "checks": [], "records": []})
     trailing_reduction_round_ts = trailing_reduction_payload["round_ts"]
     trailing_reduction_checks = trailing_reduction_payload["checks"]
@@ -1357,6 +1360,7 @@ def abnormal_wicks():
         partial_take_profit_round_ts=partial_take_profit_round_ts,
         partial_take_profit_checks=partial_take_profit_checks,
         partial_take_profit_records=partial_take_profit_records,
+        partial_take_profit_errors=partial_take_profit_errors,
         trailing_reduction_round_ts=trailing_reduction_round_ts,
         trailing_reduction_checks=trailing_reduction_checks,
         trailing_reduction_records=trailing_reduction_records,

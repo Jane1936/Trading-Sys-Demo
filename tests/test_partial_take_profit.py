@@ -1,5 +1,6 @@
 import tempfile
 import sqlite3
+import pytest
 from decimal import Decimal
 from pathlib import Path
 
@@ -276,3 +277,62 @@ def test_partial_take_profit_does_not_cancel_orders_when_no_stop_price_exists():
     assert "remaining_stop_loss_not_recreated_missing_price" in record.reason
     assert fake_account.signed_deletes == []
     assert fake_account.signed_posts == []
+
+
+def test_failed_trade_attempt_is_authoritative_error_source():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        _insert_open_trade(db_path)
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(f"UPDATE {TradingExperiment.TRADES_TABLE} SET stop_loss_price = '0'")
+        strategy = PartialTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+
+        strategy.run_round(decision_round_ts=1234)
+        errors = strategy.recent_errors()
+
+    assert len(errors) == 1
+    assert errors[0]["source"] == PartialTakeProfitStrategy.RECORDS_TABLE
+    assert errors[0]["stage"] == "trade_attempt"
+    assert "remaining_stop_loss_not_recreated_missing_price" in errors[0]["error_message"]
+
+
+def test_error_before_trade_attempt_uses_dedicated_error_table(monkeypatch):
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        strategy = PartialTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+
+        def fail_evaluation(*args, **kwargs):
+            raise RuntimeError("evaluation exploded")
+
+        monkeypatch.setattr(strategy, "_evaluate_position", fail_evaluation)
+        result = strategy.run_round(decision_round_ts=1234)
+        errors = strategy.recent_errors()
+
+    assert result["checked"] == 1
+    assert result["records"] == 0
+    assert len(errors) == 1
+    assert errors[0]["source"] == PartialTakeProfitStrategy.ERRORS_TABLE
+    assert errors[0]["stage"] == "evaluate_position"
+    assert errors[0]["symbol"] == "BANK"
+    assert errors[0]["error_message"] == "evaluation exploded"
+
+
+def test_round_error_before_position_scan_is_persisted():
+    class InvalidAccountManager(FakeAccountManager):
+        def validate_config(self):
+            raise ValueError("invalid credentials")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        strategy = PartialTakeProfitStrategy(
+            db_path=str(Path(tmpdir) / "klines.db"),
+            account_manager=InvalidAccountManager(),
+        )
+        with pytest.raises(ValueError, match="invalid credentials"):
+            strategy.run_round(decision_round_ts=1234)
+        errors = strategy.recent_errors()
+
+    assert errors[0]["source"] == PartialTakeProfitStrategy.ERRORS_TABLE
+    assert errors[0]["stage"] == "validate_config"
+    assert errors[0]["decision_round_ts"] == 1234

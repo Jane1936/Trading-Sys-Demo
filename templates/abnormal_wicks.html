@@ -1844,6 +1844,14 @@
           </table>
         </div>
         </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header"><div><div><strong>分批止盈卖出错误记录</strong></div><div class="muted">合并展示交易尝试失败与尚未形成交易尝试记录的扫描异常；source 标明权威数据来源。</div></div><button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button></div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整错误记录。</div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>occurred_at</th><th>symbol</th><th>source</th><th>stage</th><th>error_type</th><th>仓位 / 开仓价</th><th>R / 触发R / 未变现盈亏</th><th>error_message</th></tr></thead>
+            <tbody id="partial-take-profit-errors-body">{% for row in partial_take_profit_errors %}<tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}"><td>{{ row.occurred_at|fmt_ms_datetime }}</td><td>{{ row.symbol or '-' }}</td><td>{{ row.source }}</td><td>{{ row.stage }}</td><td>{{ row.error_type }}</td><td>{{ row.position_amt or '-' }} / {{ row.entry_price or '-' }}</td><td>{{ row.r_usdt or '-' }} / {{ row.trigger_r_usdt or '-' }} / {{ row.unrealized_pnl or '-' }}</td><td>{{ row.error_message }}</td></tr>{% else %}<tr><td class="empty" colspan="8">暂无分批止盈卖出错误记录</td></tr>{% endfor %}</tbody>
+          </table></div>
+        </div>
         </div>
 
         <div id="holding-module-trailing-reduction" class="holding-module-panel" role="tabpanel">
@@ -3135,6 +3143,23 @@
       `).join('');
     }
 
+    function renderPartialTakeProfitErrors(rows) {
+      const rowsEl = document.getElementById('partial-take-profit-errors-body');
+      if (!rowsEl) return;
+      if (!rows.length) {
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="8">暂无分批止盈卖出错误记录</td></tr>';
+        return;
+      }
+      rowsEl.innerHTML = rows.map((row, index) => `
+        <tr class="${index >= 10 ? 'collapsed-extra' : ''}">
+          <td>${formatMsDatetime(row.occurred_at)}</td><td>${escapeHtml(row.symbol || '-')}</td>
+          <td>${escapeHtml(row.source)}</td><td>${escapeHtml(row.stage)}</td><td>${escapeHtml(row.error_type)}</td>
+          <td>${escapeHtml(row.position_amt || '-')} / ${escapeHtml(row.entry_price || '-')}</td>
+          <td>${escapeHtml(row.r_usdt || '-')} / ${escapeHtml(row.trigger_r_usdt || '-')} / ${escapeHtml(row.unrealized_pnl || '-')}</td>
+          <td>${escapeHtml(row.error_message)}</td>
+        </tr>`).join('');
+    }
+
     function renderPartialTakeProfitSummary(payload) {
       const roundNoteEl = document.getElementById('partial-take-profit-round-note');
       if (roundNoteEl) roundNoteEl.textContent = payload.round_ts ? `最近判断轮次：${formatMsDatetime(payload.round_ts)}。${PARTIAL_TAKE_PROFIT_RULE_NOTE}` : '暂无分批止盈扫描结果。';
@@ -3145,6 +3170,7 @@
       }
       renderPartialTakeProfitChecks(payload.checks || []);
       renderPartialTakeProfitRecords(payload.records || []);
+      renderPartialTakeProfitErrors(payload.errors || []);
     }
 
     (function initPartialTakeProfitRefresh() {
@@ -3160,7 +3186,7 @@
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
           renderPartialTakeProfitSummary(payload);
-          if (statusEl) statusEl.textContent = `刷新完成：扫描结果 ${payload.checks?.length || 0} 条，卖出记录 ${payload.records?.length || 0} 条。`;
+          if (statusEl) statusEl.textContent = `刷新完成：扫描结果 ${payload.checks?.length || 0} 条，卖出记录 ${payload.records?.length || 0} 条，错误记录 ${payload.errors?.length || 0} 条。`;
         } catch (error) {
           if (statusEl) statusEl.textContent = `刷新失败：${error.message}`;
         } finally {

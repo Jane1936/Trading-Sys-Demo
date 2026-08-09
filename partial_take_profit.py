@@ -9,6 +9,7 @@ submitted take-profit operation.
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import sqlite3
@@ -70,11 +71,29 @@ class PartialTakeProfitRecord:
     raw_response: str
 
 
+@dataclass(frozen=True)
+class PartialTakeProfitErrorRecord:
+    id: int
+    occurred_at: int
+    decision_round_ts: int
+    symbol: str
+    stage: str
+    error_type: str
+    error_message: str
+    entry_price: str
+    position_amt: str
+    unrealized_pnl: str
+    r_usdt: str
+    trigger_r_usdt: str
+    raw_context: str
+
+
 class PartialTakeProfitStrategy:
     """Sell 30% of profitable experiment positions after unrealized PnL reaches 2R."""
 
     CHECKS_TABLE = "partial_take_profit_checks"
     RECORDS_TABLE = "partial_take_profit_records"
+    ERRORS_TABLE = "partial_take_profit_error_records"
     TAKE_PROFIT_FRACTION = Decimal("0.3")
     TRIGGER_R_MULTIPLE = Decimal("2")
     TRIGGER_LABEL_2R = "已触发2R分批止盈"
@@ -131,6 +150,25 @@ class PartialTakeProfitStrategy:
                 )
                 conn.execute(
                     f"""
+                    CREATE TABLE IF NOT EXISTS {self.ERRORS_TABLE} (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        occurred_at INTEGER NOT NULL,
+                        decision_round_ts INTEGER NOT NULL,
+                        symbol TEXT NOT NULL DEFAULT '',
+                        stage TEXT NOT NULL,
+                        error_type TEXT NOT NULL,
+                        error_message TEXT NOT NULL,
+                        entry_price TEXT NOT NULL DEFAULT '',
+                        position_amt TEXT NOT NULL DEFAULT '',
+                        unrealized_pnl TEXT NOT NULL DEFAULT '',
+                        r_usdt TEXT NOT NULL DEFAULT '',
+                        trigger_r_usdt TEXT NOT NULL DEFAULT '',
+                        raw_context TEXT NOT NULL DEFAULT ''
+                    )
+                    """
+                )
+                conn.execute(
+                    f"""
                     CREATE TABLE IF NOT EXISTS {self.RECORDS_TABLE} (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         symbol TEXT NOT NULL,
@@ -169,34 +207,77 @@ class PartialTakeProfitStrategy:
                 )
                 conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
                 conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_checked ON {self.RECORDS_TABLE}(checked_at DESC, symbol ASC)")
+                conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.ERRORS_TABLE}_occurred ON {self.ERRORS_TABLE}(occurred_at DESC, symbol ASC)")
             _initialized_table_paths[normalized_path] = _database_inode(self.db_path)
 
     def run_round(self, decision_round_ts: int | None = None) -> dict[str, Any]:
-        self.account_manager.validate_config()
         self.init_tables()
+        round_ts = int(decision_round_ts or time.time() * 1000)
+        now = int(time.time() * 1000)
+        try:
+            self.account_manager.validate_config()
+        except Exception as exc:
+            self._insert_error(now, round_ts, "", "validate_config", exc)
+            raise
         helper = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)
-        equity = helper._fetch_experiment_usdt_equity()
+        try:
+            equity = helper._fetch_experiment_usdt_equity()
+        except Exception as exc:
+            self._insert_error(now, round_ts, "", "fetch_equity", exc)
+            raise
         r_value = equity * self.config.risk_fraction
         market_round = WeakMarketProfitAdjustmentModule.decision_round_ts(decision_round_ts)
-        adjustment = (
-            WeakMarketProfitAdjustmentModule().latest_result_for_round(market_round)
-            if os.path.exists(db_config.MARKET_DB_PATH)
-            else None
-        )
+        try:
+            adjustment = (
+                WeakMarketProfitAdjustmentModule().latest_result_for_round(market_round)
+                if os.path.exists(db_config.MARKET_DB_PATH)
+                else None
+            )
+        except Exception as exc:
+            self._insert_error(now, round_ts, "", "load_market_adjustment", exc, r_value=r_value)
+            raise
         trigger_multiple = Decimal(str(adjustment.trigger_r_multiple)) if adjustment else self.TRIGGER_R_MULTIPLE
         take_profit_fraction = Decimal(str(adjustment.take_profit_fraction)) if adjustment else self.TAKE_PROFIT_FRACTION
         trigger_r = r_value * trigger_multiple
-        positions = helper._fetch_and_store_positions()
+        try:
+            positions = helper._fetch_and_store_positions()
+        except Exception as exc:
+            self._insert_error(now, round_ts, "", "fetch_positions", exc, r_value=r_value, trigger_r=trigger_r)
+            raise
         active_positions = [row for row in positions if self._decimal_from(row.get("positionAmt"), Decimal("0")) != 0]
-        now = int(time.time() * 1000)
         checked = triggered = records = 0
         for position in active_positions:
             checked += 1
-            result = self._evaluate_position(position, equity, r_value, trigger_r, now, trigger_multiple, take_profit_fraction)
+            try:
+                result = self._evaluate_position(position, equity, r_value, trigger_r, now, trigger_multiple, take_profit_fraction)
+            except Exception as exc:
+                self._record_unattempted_position_error(position, now, round_ts, exc, r_value, trigger_r)
+                continue
             if result:
                 triggered += 1
                 records += 1
         return {"checked": checked, "triggered": triggered, "records": records, "r_usdt": self._fmt_decimal(r_value), "trigger_r_usdt": self._fmt_decimal(trigger_r), "trigger_r_multiple": self._fmt_decimal(trigger_multiple), "take_profit_fraction": self._fmt_decimal(take_profit_fraction)}
+
+    def _record_unattempted_position_error(self, position: dict[str, Any], occurred_at: int, decision_round_ts: int, exc: Exception, r_value: Decimal, trigger_r: Decimal) -> None:
+        exchange_symbol = str(position.get("symbol", "")).upper()
+        symbol = self._base_symbol(exchange_symbol)
+        # A failed execution record is authoritative.  Only use the dedicated
+        # error table when evaluation escaped before such a record was formed.
+        with self._connect() as conn:
+            attempted = conn.execute(
+                f"SELECT 1 FROM {self.RECORDS_TABLE} WHERE symbol = ? AND checked_at = ? LIMIT 1",
+                (symbol, occurred_at),
+            ).fetchone()
+        if attempted:
+            return
+        self._insert_error(
+            occurred_at, decision_round_ts, symbol, "evaluate_position", exc,
+            entry=self._decimal_from(position.get("entryPrice"), Decimal("0")),
+            amount=self._decimal_from(position.get("positionAmt"), Decimal("0")),
+            pnl=self._decimal_from(position.get("unRealizedProfit", position.get("unrealizedProfit")), Decimal("0")),
+            r_value=r_value, trigger_r=trigger_r,
+            context={"exchange_symbol": exchange_symbol},
+        )
 
     def _evaluate_position(self, position: dict[str, Any], equity: Decimal, r_value: Decimal, trigger_r: Decimal, now: int, trigger_multiple: Decimal | None = None, take_profit_fraction: Decimal | None = None) -> bool:
         trigger_multiple = trigger_multiple or self.TRIGGER_R_MULTIPLE
@@ -469,6 +550,42 @@ class PartialTakeProfitStrategy:
         with self._connect() as conn:
             conn.execute(f"INSERT INTO {self.RECORDS_TABLE} (symbol, checked_at, side, position_amt, take_profit_quantity, entry_price, account_equity_usdt, r_usdt, trigger_r_usdt, unrealized_pnl, take_profit_order_id, trigger_label, status, reason, raw_response) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, side, self._fmt_decimal(amount), self._fmt_decimal(quantity), self._fmt_decimal(entry), self._fmt_decimal(equity), self._fmt_decimal(r_value), self._fmt_decimal(trigger_r), self._fmt_decimal(pnl), order_id, trigger_label, status, reason, raw))
 
+    def _insert_error(
+        self,
+        occurred_at: int,
+        decision_round_ts: int,
+        symbol: str,
+        stage: str,
+        exc: Exception,
+        *,
+        entry: Decimal | None = None,
+        amount: Decimal | None = None,
+        pnl: Decimal | None = None,
+        r_value: Decimal | None = None,
+        trigger_r: Decimal | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {self.ERRORS_TABLE}
+                (occurred_at, decision_round_ts, symbol, stage, error_type,
+                 error_message, entry_price, position_amt, unrealized_pnl,
+                 r_usdt, trigger_r_usdt, raw_context)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    occurred_at, decision_round_ts, symbol, stage,
+                    type(exc).__name__, str(exc),
+                    self._fmt_decimal(entry) if entry is not None else "",
+                    self._fmt_decimal(amount) if amount is not None else "",
+                    self._fmt_decimal(pnl) if pnl is not None else "",
+                    self._fmt_decimal(r_value) if r_value is not None else "",
+                    self._fmt_decimal(trigger_r) if trigger_r is not None else "",
+                    json.dumps(context or {}, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+
     @classmethod
     def _trigger_label(cls, trigger_multiple: Decimal) -> str:
         if trigger_multiple == Decimal("1.4"):
@@ -490,6 +607,34 @@ class PartialTakeProfitStrategy:
         with self._connect() as conn:
             rows = conn.execute(f"SELECT * FROM {self.RECORDS_TABLE} ORDER BY checked_at DESC, id DESC LIMIT ?", (int(limit),)).fetchall()
         return [PartialTakeProfitRecord(**dict(row)) for row in rows]
+
+    def recent_errors(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Merge authoritative failed attempts with pre-attempt strategy errors."""
+        self.init_tables()
+        with self._connect() as conn:
+            failed_attempts = conn.execute(
+                f"SELECT * FROM {self.RECORDS_TABLE} WHERE status != 'submitted' ORDER BY checked_at DESC, id DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+            unattempted = conn.execute(
+                f"SELECT * FROM {self.ERRORS_TABLE} ORDER BY occurred_at DESC, id DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+        errors = [
+            {
+                **dict(row),
+                "occurred_at": row["checked_at"],
+                "decision_round_ts": row["checked_at"],
+                "source": self.RECORDS_TABLE,
+                "stage": "trade_attempt",
+                "error_type": "ExecutionFailed",
+                "error_message": row["reason"],
+            }
+            for row in failed_attempts
+        ]
+        errors.extend({**dict(row), "source": self.ERRORS_TABLE} for row in unattempted)
+        errors.sort(key=lambda row: (int(row["occurred_at"]), int(row["id"])), reverse=True)
+        return errors[: int(limit)]
 
     @staticmethod
     def _base_symbol(symbol: Any) -> str:
