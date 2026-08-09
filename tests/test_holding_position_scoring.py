@@ -1071,7 +1071,18 @@ def test_reduction_action_uses_highest_rule_replaces_limit_and_market_reduces():
         "/fapi/v1/order",
         {"symbol": "BANKUSDT", "side": "SELL", "type": "MARKET", "quantity": "1", "reduceOnly": "true", "newOrderRespType": "RESULT"},
     ) in fake_account.signed_posts
-    assert any(endpoint == "/fapi/v1/algoOrder" and params.get("type") == "STOP" and params.get("quantity") == "1" for endpoint, params in fake_account.signed_posts)
+    stop_posts = [
+        (endpoint, params)
+        for endpoint, params in fake_account.signed_posts
+        if endpoint == "/fapi/v1/algoOrder" and params.get("type") == "STOP"
+    ]
+    assert len(stop_posts) == 1
+    assert stop_posts[0][1]["quantity"] == "1"
+    assert fake_account.signed_posts.index(stop_posts[0]) > next(
+        index
+        for index, (endpoint, params) in enumerate(fake_account.signed_posts)
+        if endpoint == "/fapi/v1/order" and params.get("type") == "MARKET"
+    )
 
 def test_reduction_action_skips_replacement_stop_that_would_immediately_trigger_and_still_reduces():
     fake_account = FakeAccountManager()
@@ -1251,7 +1262,25 @@ def test_reduction_recreates_hard_take_profit_from_actual_remaining_position():
     assert result["reduction_records"] == 1
     assert records[0]["status"] == "submitted"
     assert any(params.get("type") == "TAKE_PROFIT" and params.get("quantity") == "1.5" and params.get("price") == "46.67" for _, params in fake_account.signed_posts)
-    assert any(endpoint == "/fapi/v1/algoOrder" and params.get("type") == "STOP" and params.get("quantity") == "1.5" and params.get("price") == "7" and params.get("triggerPrice") == "7" for endpoint, params in fake_account.signed_posts)
+    stop_posts = [
+        params
+        for endpoint, params in fake_account.signed_posts
+        if endpoint == "/fapi/v1/algoOrder" and params.get("type") == "STOP"
+    ]
+    assert stop_posts == [
+        {
+            "symbol": "BANKUSDT",
+            "side": "SELL",
+            "type": "STOP",
+            "quantity": "1.5",
+            "price": "7",
+            "triggerPrice": "7",
+            "timeInForce": "GTC",
+            "reduceOnly": "true",
+            "workingType": "MARK_PRICE",
+            "algoType": "CONDITIONAL",
+        }
+    ]
     assert trade["take_profit_price"] == "46.67"
     assert trade["take_profit_order_id"] != "old-tp-1"
     assert trade["stop_loss_price"] == "7"

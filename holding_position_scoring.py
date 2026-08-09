@@ -900,39 +900,11 @@ class HoldingPositionScoringSystem:
                     raise RuntimeError("reduction_remaining_quantity_rounded_to_zero")
                 if reduced_quantity <= 0:
                     raise RuntimeError("reduction_market_quantity_rounded_to_zero")
-                if not limit_price or self._decimal_from(limit_price, Decimal("0")) <= 0:
-                    raise RuntimeError("reduction_limit_price_missing")
-                stop_trigger = self._decimal_from(limit_price, Decimal("0"))
-                current_mark_price = self._decimal_from(check.current_price, Decimal("0"))
-                if current_mark_price <= 0:
-                    current_mark_price = self._current_symbol_price(exchange_symbol, position)
-                skip_reason = self._replacement_stop_immediate_trigger_reason(side, stop_trigger, current_mark_price)
-                if skip_reason:
-                    reason_parts.append(skip_reason)
-                else:
-                    endpoint, params = TradingExperiment._exit_order_request({
-                        "symbol": exchange_symbol,
-                        "side": side,
-                        "type": "STOP",
-                        "quantity": self._fmt_decimal(remaining_quantity),
-                        "price": limit_price,
-                        "stopPrice": limit_price,
-                        "timeInForce": "GTC",
-                        "reduceOnly": "true",
-                        "workingType": "MARK_PRICE",
-                    })
-                    try:
-                        new_limit_response = self.account_manager._signed_post(endpoint, params)
-                    except Exception as exc:
-                        if not self._is_order_would_immediately_trigger(exc):
-                            raise
-                        reason_parts.append(f"reduction_replacement_stop_skipped_immediate_trigger: side={side}; stop_price={self._fmt_decimal(stop_trigger)}; current_mark_price={self._fmt_decimal(current_mark_price)}")
-                    else:
-                        raw_parts.append(str({"new_limit_order": new_limit_response}))
-                        new_limit_order_id = TradingExperiment._exit_order_id(new_limit_response if isinstance(new_limit_response, dict) else None)
-                        if not new_limit_order_id:
-                            raise RuntimeError(f"reduction_new_limit_order_id_missing: response={new_limit_response}")
-                        self._update_latest_open_trade_stop_loss(check.symbol, new_limit_order_id, stop_trigger)
+                # Recreate protection only after the reduction fill and position
+                # refresh below.  Placing a stop here and then calling
+                # _replace_stop_loss_for_position created two identical stops
+                # whenever cancellation of this short-lived order lagged or
+                # failed at the exchange.
             market_response = self.account_manager._signed_post("/fapi/v1/order", self._market_close_order_params(exchange_symbol, side, reduced_quantity))
             raw_parts.append(str({"market_order": market_response}))
             market_order_id = str(market_response.get("orderId", "")) if isinstance(market_response, dict) else ""
