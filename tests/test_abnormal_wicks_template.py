@@ -419,6 +419,14 @@ def test_dynamic_profit_protection_displays_updated_profit_tiers():
     assert "浮盈到达过7R以上" not in template
 
 
+def test_dynamic_profit_protection_displays_highest_profit_time():
+    template = Path("templates/abnormal_wicks.html").read_text()
+
+    assert template.count("最高浮盈出现时间") >= 2
+    assert "row.highest_profit_at|fmt_ms_datetime" in template
+    assert "formatMsDatetime(row.highest_profit_at)" in template
+
+
 def test_trailing_stop_action_records_show_atr_and_volatility_without_total_score():
     template = Path("templates/abnormal_wicks.html").read_text()
     section_start = template.index("<strong>移动追踪止盈操作记录</strong>")

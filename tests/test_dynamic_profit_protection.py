@@ -124,8 +124,47 @@ def test_dynamic_profit_protection_resets_highest_for_latest_open_trade_with_sam
         _, checks = tracker.get_latest_round_checks()
 
     assert checks[0].highest_since_open == "13"
+    assert checks[0].highest_profit_at == 2000
     assert checks[0].opened_at == 2000
     assert checks[0].open_trade_id > 0
+
+
+def test_dynamic_profit_protection_records_first_time_of_equal_post_open_high():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = str(Path(tmp) / "k.db")
+        _seed_db(db_path, close=12, high=13)
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT INTO klines_1m VALUES ('BANK', 2000, 12, 13, 11, 12, 100, 61999)")
+
+        tracker = DynamicProfitProtection(db_path=db_path, account_manager=FakeAccountManager(unrealized_profit="20"))
+        tracker.run_round()
+        _, checks = tracker.get_latest_round_checks()
+
+    assert checks[0].highest_since_open == "13"
+    assert checks[0].highest_profit_at == 1000
+
+
+def test_dynamic_profit_protection_migrates_legacy_high_timestamp_name():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = str(Path(tmp) / "k.db")
+        tracker = DynamicProfitProtection(db_path=db_path, account_manager=FakeAccountManager())
+        tracker.init_tables()
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                f"ALTER TABLE {tracker.CHECKS_TABLE} "
+                "ADD COLUMN highest_since_open_at INTEGER NOT NULL DEFAULT 0"
+            )
+            conn.execute(
+                f"INSERT INTO {tracker.CHECKS_TABLE} "
+                "(symbol, checked_at, opened_at, entry_price, position_amt, highest_since_open, "
+                "highest_profit_at, highest_since_open_at, reason) "
+                "VALUES ('BANK', 3000, 1000, '10', '2', '13', 0, 2000, 'legacy')"
+            )
+
+        tracker.init_tables()
+        _, checks = tracker.get_latest_round_checks()
+
+    assert checks[0].highest_profit_at == 2000
 
 
 def test_latest_open_trade_falls_back_to_rowid_when_legacy_id_is_null():
