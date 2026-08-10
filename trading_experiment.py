@@ -18,6 +18,7 @@ from typing import Any, Iterable
 
 from binance_account_manager import BinanceAccountManager
 from openable_symbol_module import OpenableSymbol, OpenableSymbolModule
+from trade_action_lock import acquire_trade_action_lock
 
 
 @dataclass(frozen=True)
@@ -458,6 +459,50 @@ class TradingExperiment:
         return cls._parse_leverage(candidate.opening_leverage) > 0
 
     def _open_long(
+        self,
+        candidate: OpenableSymbol,
+        account_equity: Decimal,
+        max_loss: Decimal,
+        trade_plan: TradePlan | None = None,
+    ) -> dict[str, Any]:
+        """Open a long position after an atomic, live duplicate-position check.
+
+        The position snapshot used by :meth:`run_round` is intentionally only a
+        planning cache.  Another scheduler/web worker can open the same symbol
+        after that snapshot was read, so the actual order path must serialize
+        per-symbol actions and query Binance again while holding the lock.
+        """
+        trading_symbol = self._binance_symbol(candidate.symbol)
+        lock_manager, lock_handle, lock_reason = acquire_trade_action_lock(
+            self.db_path,
+            candidate.symbol,
+            f"trading_experiment:{os.getpid()}:{id(self)}",
+            "open_long",
+        )
+        if lock_handle is None:
+            self._record_skip(candidate, account_equity, max_loss, lock_reason)
+            return {"status": "skipped"}
+
+        try:
+            live_positions = self.account_manager._signed_get(
+                "/fapi/v3/positionRisk", {"symbol": trading_symbol}
+            )
+            if isinstance(live_positions, list) and self._has_open_position(
+                trading_symbol,
+                (row for row in live_positions if isinstance(row, dict)),
+            ):
+                self._record_skip(
+                    candidate,
+                    account_equity,
+                    max_loss,
+                    "symbol_position_already_open_live_check",
+                )
+                return {"status": "skipped"}
+            return self._open_long_locked(candidate, account_equity, max_loss, trade_plan)
+        finally:
+            lock_manager.release(lock_handle)
+
+    def _open_long_locked(
         self,
         candidate: OpenableSymbol,
         account_equity: Decimal,
