@@ -53,7 +53,12 @@ class FakeAccountManager:
             return [{"asset": "USDT", "balance": "5000"}]
         if endpoint == "/fapi/v3/positionRisk":
             if params and "symbol" in params:
-                return [{"symbol": params["symbol"], "positionAmt": "50"}]
+                has_market_buy = any(
+                    posted_endpoint == "/fapi/v1/order"
+                    and posted_params.get("side") == "BUY"
+                    for posted_endpoint, posted_params in self.signed_posts
+                )
+                return [{"symbol": params["symbol"], "positionAmt": "50" if has_market_buy else "0"}]
             return []
         raise AssertionError(f"unexpected signed endpoint {endpoint}")
 
@@ -113,6 +118,15 @@ class ExistingBankPositionAccountManager(FakeAccountManager):
     def _signed_get(self, endpoint, params=None):
         if endpoint == "/fapi/v3/positionRisk" and not params:
             return [{"symbol": "BANKUSDT", "positionAmt": "3", "leverage": "5"}]
+        return super()._signed_get(endpoint, params)
+
+
+class PositionOpenedAfterSnapshotAccountManager(FakeAccountManager):
+    """Simulate another worker opening BANK after the bulk snapshot is read."""
+
+    def _signed_get(self, endpoint, params=None):
+        if endpoint == "/fapi/v3/positionRisk" and params and params.get("symbol") == "BANKUSDT":
+            return [{"symbol": "BANKUSDT", "positionAmt": "3", "positionSide": "LONG"}]
         return super()._signed_get(endpoint, params)
 
 
@@ -250,7 +264,14 @@ class PositionEntryPriceAccountManager(FakeAccountManager):
 
     def _signed_get(self, endpoint, params=None):
         if endpoint == "/fapi/v3/positionRisk" and params and "symbol" in params:
-            return [{"symbol": params["symbol"], "positionAmt": "70867", "entryPrice": "0.00864"}]
+            has_market_buy = any(
+                posted_endpoint == "/fapi/v1/order"
+                and posted_params.get("side") == "BUY"
+                for posted_endpoint, posted_params in self.signed_posts
+            )
+            if has_market_buy:
+                return [{"symbol": params["symbol"], "positionAmt": "70867", "entryPrice": "0.00864"}]
+            return [{"symbol": params["symbol"], "positionAmt": "0", "entryPrice": "0"}]
         return super()._signed_get(endpoint, params)
 
 class DelayedPositionAccountManager(FakeAccountManager):
@@ -766,6 +787,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
             [
                 ("/fapi/v3/positionRisk", {"symbol": "BANKUSDT"}),
                 ("/fapi/v3/positionRisk", {"symbol": "BANKUSDT"}),
+                ("/fapi/v3/positionRisk", {"symbol": "BANKUSDT"}),
             ],
         )
         self.assertEqual(trade_rows[0].take_profit_price, "1.055")
@@ -1025,6 +1047,40 @@ class TradingExperimentSymbolTests(unittest.TestCase):
             if endpoint == "/fapi/v1/order" and params.get("side") == "BUY"
         ]
         self.assertEqual([row["symbol"] for row in market_orders], ["COINUSDT"])
+
+    def test_live_position_check_blocks_position_opened_after_initial_snapshot(self):
+        fake_account = PositionOpenedAfterSnapshotAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "klines.db")
+            experiment = TradingExperiment(db_path=db_path, account_manager=fake_account)
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=95,
+                score_band="确定性强趋势单",
+                stop_loss_distance_ratio=0.10,
+                distance_threshold=0.08,
+                stop_loss_distance_tier="A档",
+                opening_leverage="10x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            result = experiment.run_round([candidate])
+            with sqlite3.connect(experiment.db_path) as conn:
+                row = conn.execute(
+                    f"SELECT status, reason FROM {TradingExperiment.TRADES_TABLE}"
+                ).fetchone()
+
+        self.assertEqual(result, {"opened": 0, "skipped": 1, "reason": "completed"})
+        self.assertEqual(row, ("skipped", "symbol_position_already_open_live_check"))
+        market_orders = [
+            params for endpoint, params in fake_account.signed_posts
+            if endpoint == "/fapi/v1/order" and params.get("side") == "BUY"
+        ]
+        self.assertEqual(market_orders, [])
 
     def test_opening_is_not_blocked_by_existing_position_count_when_balance_is_enough(self):
         fake_account = TenExistingPositionsAccountManager()
