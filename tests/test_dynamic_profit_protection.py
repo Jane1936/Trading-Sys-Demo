@@ -104,7 +104,7 @@ def test_dynamic_profit_protection_tier_boundaries():
     assert tier_for(Decimal("4.0001")) == ("4R以上", Decimal("0.20"))
 
 
-def test_dynamic_profit_protection_resets_highest_for_latest_open_trade_with_same_entry_price():
+def test_dynamic_profit_protection_resets_highest_for_latest_open_trade_even_if_old_trade_still_opened():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = str(Path(tmp) / "k.db")
         _seed_db(db_path, close=49, high=50)
@@ -113,7 +113,6 @@ def test_dynamic_profit_protection_resets_highest_for_latest_open_trade_with_sam
         tracker.run_round()
 
         with sqlite3.connect(db_path) as conn:
-            conn.execute(f"UPDATE {TradingExperiment.TRADES_TABLE} SET status = 'closed'")
             conn.execute(
                 f"INSERT INTO {TradingExperiment.TRADES_TABLE} "
                 "(symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt, required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity, notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation, take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at) "
@@ -128,6 +127,17 @@ def test_dynamic_profit_protection_resets_highest_for_latest_open_trade_with_sam
     assert checks[0].highest_profit_at == 2000
     assert checks[0].opened_at == 2000
     assert checks[0].open_trade_id > 0
+
+
+def test_dynamic_profit_protection_rejects_high_candidates_before_latest_open():
+    highest, highest_at = DynamicProfitProtection._newer_open_highest(
+        2_000,
+        (Decimal("50"), 1_000),
+        (Decimal("13"), 2_000),
+    )
+
+    assert highest == Decimal("13")
+    assert highest_at == 2_000
 
 
 def test_dynamic_profit_protection_records_first_time_of_equal_post_open_high():
