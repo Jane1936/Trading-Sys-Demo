@@ -166,7 +166,9 @@ class DynamicProfitProtection:
             previous_highest, previous_highest_at = self._previous_highest_since_open(symbol, open_trade_id, open_time)
             kline_highest, kline_highest_at = self._highest_1m_high_since(symbol, open_time)
             highest, highest_at = self._newer_open_highest(
-                (previous_highest, previous_highest_at), (kline_highest, kline_highest_at)
+                open_time,
+                (previous_highest, previous_highest_at),
+                (kline_highest, kline_highest_at),
             )
             highest_profit = max(Decimal("0"), (highest - entry_price) * amount)
             highest_r_multiple = highest_profit / r_value if r_value > 0 else Decimal("0")
@@ -291,10 +293,26 @@ class DynamicProfitProtection:
         return self._decimal_from(row["highest_since_open"], Decimal("0")), highest_at
 
     @staticmethod
-    def _newer_open_highest(*candidates: tuple[Decimal, int]) -> tuple[Decimal, int]:
-        """Return the highest valid post-open candidate and its first occurrence."""
-        valid = [candidate for candidate in candidates if candidate[0] > 0 and candidate[1] > 0]
-        return max(valid, key=lambda candidate: (candidate[0], -candidate[1])) if valid else (Decimal("0"), 0)
+    def _newer_open_highest(
+        opened_at: int, *candidates: tuple[Decimal, int]
+    ) -> tuple[Decimal, int]:
+        """Return the highest candidate belonging to the latest open lifecycle.
+
+        Both the persisted rolling high and the kline query normally enforce
+        this boundary independently.  Keep the boundary here as the final
+        invariant as well, so a stale/migrated check can never leak a high (or
+        its timestamp) from an earlier position into a newly opened position.
+        """
+        valid = [
+            candidate
+            for candidate in candidates
+            if candidate[0] > 0 and candidate[1] >= int(opened_at)
+        ]
+        return (
+            max(valid, key=lambda candidate: (candidate[0], -candidate[1]))
+            if valid
+            else (Decimal("0"), 0)
+        )
 
     def _insert_check(self, symbol: str, checked_at: int, open_trade_id: int, opened_at: int, entry: Decimal, amount: Decimal, equity: Decimal, r_value: Decimal, pnl: Decimal, r_multiple: Decimal, high: Decimal, close: Decimal, highest: Decimal, highest_at: int, drawdown: Decimal, threshold: Decimal, current_tier: str, triggered: bool, close_quantity: Decimal, close_order_id: str, close_status: str, eligible: bool, reason: str) -> None:
         with self._connect() as conn:
