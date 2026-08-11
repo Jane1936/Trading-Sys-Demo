@@ -1,4 +1,5 @@
 from openable_symbol_module import OpenableSymbolModule
+from openable_symbol_settings import DEFAULT_SETTINGS, _validate
 
 
 def test_low_trial_band_starts_at_67():
@@ -26,6 +27,21 @@ def test_zero_distance_ratio_has_no_default_leverage_for_any_openable_band():
     assert OpenableSymbolModule.stop_loss_distance_tier_for_ratio(0) == "NA"
     assert OpenableSymbolModule.opening_leverage_for_total_and_distance(67, 0, "A档") == "NA"
     assert OpenableSymbolModule.opening_leverage_for_total_and_distance(81, 0, "A档") == "NA"
+
+
+def test_a_tier_lower_limit_is_configurable(monkeypatch):
+    settings = _validate({**DEFAULT_SETTINGS, "tier_min_percent": 1.0})
+    monkeypatch.setattr("openable_symbol_module.get_settings", lambda _path: settings)
+    module = OpenableSymbolModule()
+
+    assert module._configured_tier(0.01) == "NA"
+    assert module._configured_tier(0.0101) == "A档"
+
+
+def test_legacy_settings_default_a_tier_lower_limit_to_zero():
+    legacy_settings = {key: value for key, value in DEFAULT_SETTINGS.items() if key != "tier_min_percent"}
+
+    assert _validate(legacy_settings)["tier_min_percent"] == 0
 
 
 def test_zero_distance_ratio_is_not_final_openable_for_low_trial(tmp_path):

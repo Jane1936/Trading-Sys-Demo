@@ -115,8 +115,11 @@ class OpenableSymbolModule:
     def _configured_tier(self, ratio: float | None) -> str:
         if ratio is None or ratio <= 0:
             return "NA"
-        limits = get_settings(db_config.BASE_DB_PATH)["tier_max_percent"]
+        settings = get_settings(db_config.BASE_DB_PATH)
+        limits = settings["tier_max_percent"]
         percent = ratio * 100
+        if percent <= settings["tier_min_percent"]:
+            return "NA"
         return next((tier for tier in ("A档", "B档", "C档") if percent <= limits[tier]), "D档")
 
     def _connect(self) -> sqlite3.Connection:
@@ -326,10 +329,11 @@ class OpenableSymbolModule:
         distance_tier = self._configured_tier(ratio)
         opening_leverage = band.tier_leverages.get(distance_tier, "NA") if band and ratio and ratio > 0 else "NA"
         zero_distance = ratio == 0
+        tier_min_ratio = get_settings(db_config.BASE_DB_PATH)["tier_min_percent"] / 100
         distance_qualified = (
             ratio is not None
             and threshold is not None
-            and 0 < ratio <= threshold
+            and tier_min_ratio < ratio <= threshold
         )
         previous_band = self._configured_band(previous_total_score) if previous_total_score is not None else None
         previous_score_band_lower = bool(previous_band and band and self.configured_score_bands().index(previous_band) < self.configured_score_bands().index(band))
