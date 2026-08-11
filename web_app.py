@@ -584,23 +584,40 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
     return "硬止盈" if realized_pnl > 0 else "硬止损"
 
 
-def _filled_order_open_score(
-    conn: sqlite3.Connection, order: dict, *, core_schema: str = "main"
-) -> tuple[int | None, str]:
-    """Return the latest local experiment opening score before a Binance fill."""
+def _filled_order_open_details(
+    conn: sqlite3.Connection,
+    order: dict,
+    *,
+    core_schema: str = "main",
+    scoring_schema: str = "main",
+) -> dict:
+    """Return experiment and per-rule scoring details for a Binance fill."""
+    empty = {
+        "open_total_score": None,
+        "open_leverage": None,
+        "open_score_matched_at": "",
+        **{f"open_rule{i}_score": None for i in range(1, 19)},
+    }
     if not _table_exists(conn, TradingExperiment.TRADES_TABLE, schema=core_schema):
-        return None, ""
+        return empty
     trades_table = _qualified_table(core_schema, TradingExperiment.TRADES_TABLE)
+    trade_columns = {
+        row["name"]
+        for row in conn.execute(f"PRAGMA {core_schema}.table_info({TradingExperiment.TRADES_TABLE})").fetchall()
+    }
     symbol = _base_symbol(str(order.get("symbol", "")))
     order_time = int(order.get("time") or 0)
     if not symbol or order_time <= 0:
-        return None, ""
+        return empty
+
+    optional_columns = [name for name in ("decision_round_ts", "leverage") if name in trade_columns]
+    selected_columns = ", ".join(["total_score", "created_at", *optional_columns])
 
     side = str(order.get("side", "")).upper()
     if side == "BUY":
         row = conn.execute(
             f"""
-            SELECT total_score, created_at
+            SELECT {selected_columns}
             FROM {trades_table}
             WHERE symbol = ?
               AND status = 'opened'
@@ -614,7 +631,7 @@ def _filled_order_open_score(
     else:
         row = conn.execute(
             f"""
-            SELECT total_score, created_at
+            SELECT {selected_columns}
             FROM {trades_table}
             WHERE symbol = ?
               AND status = 'opened'
@@ -626,8 +643,23 @@ def _filled_order_open_score(
             (symbol, order_time),
         ).fetchone()
     if row is None:
-        return None, ""
-    return int(row["total_score"]), str(row["created_at"] or "")
+        return empty
+
+    details = dict(empty)
+    details["open_total_score"] = int(row["total_score"])
+    details["open_leverage"] = row["leverage"] if "leverage" in optional_columns else None
+    details["open_score_matched_at"] = str(row["created_at"] or "")
+    decision_round_ts = row["decision_round_ts"] if "decision_round_ts" in optional_columns else None
+    if decision_round_ts is not None and _table_exists(conn, "symbol_total_scores", schema=scoring_schema):
+        score_row = conn.execute(
+            f"SELECT * FROM {_qualified_table(scoring_schema, 'symbol_total_scores')} "
+            "WHERE symbol = ? AND decision_round_ts = ? LIMIT 1",
+            (symbol, int(decision_round_ts)),
+        ).fetchone()
+        if score_row is not None:
+            for rule_id in range(1, 19):
+                details[f"open_rule{rule_id}_score"] = int(score_row[f"rule{rule_id}_score"])
+    return details
 
 
 def _score_band_label(total_score: int | None) -> str:
@@ -650,6 +682,12 @@ def _annotate_filled_order_exit_reasons(payload: dict) -> dict:
             if os.path.realpath(core_db_path) != os.path.realpath(trading_db_path):
                 db_config.attach_databases(conn, [("trading_core", core_db_path)])
                 core_schema = "trading_core"
+            scoring_db_path = _scoring_db_path()
+            if os.path.realpath(scoring_db_path) != os.path.realpath(trading_db_path):
+                db_config.attach_databases(conn, [("scoring", scoring_db_path)])
+                scoring_schema = "scoring"
+            else:
+                scoring_schema = "main"
             for order in orders:
                 if not isinstance(order, dict):
                     continue
@@ -658,12 +696,11 @@ def _annotate_filled_order_exit_reasons(payload: dict) -> dict:
                 )
                 order["exit_reason"] = _filled_order_exit_reason_label(order, matches)
                 order["exit_reason_matches"] = matches
-                open_score, matched_at = _filled_order_open_score(
-                    conn, order, core_schema=core_schema
+                open_details = _filled_order_open_details(
+                    conn, order, core_schema=core_schema, scoring_schema=scoring_schema
                 )
-                order["open_total_score"] = open_score
-                order["open_score_band"] = _score_band_label(open_score)
-                order["open_score_matched_at"] = matched_at
+                order.update(open_details)
+                order["open_score_band"] = _score_band_label(open_details["open_total_score"])
     except sqlite3.DatabaseError:
         for order in orders:
             if isinstance(order, dict):
@@ -673,6 +710,9 @@ def _annotate_filled_order_exit_reasons(payload: dict) -> dict:
                 order.setdefault("open_total_score", None)
                 order.setdefault("open_score_band", "")
                 order.setdefault("open_score_matched_at", "")
+                order.setdefault("open_leverage", None)
+                for rule_id in range(1, 19):
+                    order.setdefault(f"open_rule{rule_id}_score", None)
     return payload
 
 @app.get("/")
@@ -748,6 +788,7 @@ FILLED_ORDER_EXPORT_COLUMNS = (
     ("成交时间", "time"),
     ("symbol", "symbol"),
     ("开仓评分档位", "open_score_band"),
+    ("开仓杠杆大小", "open_leverage"),
     ("开仓总分", "open_total_score"),
     ("止盈/止损原因", "exit_reason"),
     ("方向", "side"),
@@ -757,6 +798,7 @@ FILLED_ORDER_EXPORT_COLUMNS = (
     ("成交额", "quote_quantity"),
     ("已实现盈亏", "realized_pnl"),
     ("手续费", "commission"),
+    *((f"评分规则{i}", f"open_rule{i}_score") for i in range(1, 19)),
     ("手续费资产", "commission_asset"),
     ("maker", "maker"),
     ("trade_id", "trade_id"),
@@ -765,6 +807,13 @@ FILLED_ORDER_EXPORT_COLUMNS = (
 
 def _filled_orders_excel(orders: list[dict]) -> BytesIO:
     """Build an Excel workbook containing the filled orders visible in the UI."""
+    def excel_column_name(number: int) -> str:
+        name = ""
+        while number:
+            number, remainder = divmod(number - 1, 26)
+            name = chr(65 + remainder) + name
+        return name
+
     rows = [[label for label, _ in FILLED_ORDER_EXPORT_COLUMNS]]
     for order in orders:
         values = []
@@ -786,7 +835,7 @@ def _filled_orders_excel(orders: list[dict]) -> BytesIO:
     for row_number, row in enumerate(rows, start=1):
         cells = []
         for column_number, value in enumerate(row, start=1):
-            column_name = chr(64 + column_number)
+            column_name = excel_column_name(column_number)
             style = ' s="1"' if row_number == 1 else ""
             safe_value = escape(str(value), {'"': "&quot;"})
             cells.append(

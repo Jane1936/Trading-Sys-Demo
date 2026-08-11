@@ -99,6 +99,7 @@
     .feature-flag-message.error { color:#991b1b; }
     .score-weight-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(245px, 1fr)); gap:12px; padding:16px 20px 20px; }
     .score-weight-item { display:grid; grid-template-columns:1fr 82px; align-items:center; gap:12px; padding:12px; border:1px solid var(--line); border-radius:10px; background:#f8fafc; }
+    .fixed-setting-value { display:inline-block; padding:7px 12px; border-radius:8px; background:#fef3c7; color:#92400e; font-weight:800; border:1px solid #f59e0b; }
     .score-weight-label { display:flex; flex-direction:column; gap:4px; font-weight:700; }
     .score-weight-label small { color:#64748b; font-weight:500; }
     .score-weight-input { width:100%; box-sizing:border-box; border:1px solid #94a3b8; border-radius:8px; padding:9px; text-align:center; font-weight:800; }
@@ -2225,6 +2226,7 @@
                 <th>成交时间</th>
                 <th>symbol</th>
                 <th>开仓评分档位</th>
+                <th>开仓杠杆大小</th>
                 <th>开仓总分</th>
                 <th>止盈/止损原因</th>
                 <th>方向</th>
@@ -2234,12 +2236,13 @@
                 <th>成交额</th>
                 <th>已实现盈亏</th>
                 <th>手续费</th>
+                {% for rule_id in range(1, 19) %}<th>评分规则{{ rule_id }}</th>{% endfor %}
                 <th>maker</th>
                 <th>trade_id</th>
               </tr>
             </thead>
             <tbody id="filled-sell-orders-rows">
-              <tr><td class="empty" colspan="14">点击“查询近7天已成交订单”后显示数据</td></tr>
+              <tr><td class="empty" colspan="33">点击“查询近7天已成交订单”后显示数据</td></tr>
             </tbody>
           </table>
         </div>
@@ -2650,12 +2653,13 @@
       <form id="openable-settings-form" style="padding:16px 20px">
         <h3>止损距离档位（%）</h3>
         <div class="score-weight-grid" style="padding:8px 0 16px">
+          <div class="score-weight-item"><span>A档下限</span><strong class="fixed-setting-value">0%</strong></div>
           {% for tier in ['A档','B档','C档'] %}<label class="score-weight-item"><span>{{ tier }}上限</span><input class="tier-limit-input" type="number" min="0.01" max="100" step="0.01" required data-tier="{{ tier }}" value="{{ openable_symbol_settings.tier_max_percent[tier] }}"></label>{% endfor %}
           <div class="score-weight-item"><span>D档</span><strong>高于 C 档上限</strong></div>
         </div>
         <h3>总分区间和止损距离档位映射</h3>
         <div class="table-wrap"><table><thead><tr><th>名称</th><th>最低分</th><th>最高分</th><th>筛查距离上限%</th><th>A档杠杆</th><th>B档杠杆</th><th>C档杠杆</th><th>D档杠杆</th></tr></thead><tbody>
-        {% for band in openable_symbol_settings.bands %}<tr class="mapping-band-row"><td><input data-field="label" required value="{{ band.label }}"></td><td><input data-field="lower" type="number" min="0" max="100" required value="{{ band.lower }}"></td><td><input data-field="upper" type="number" min="0" max="100" required value="{{ band.upper }}"></td><td><input data-field="distance_threshold_percent" type="number" min="0.01" max="100" step="0.01" required value="{{ band.distance_threshold_percent }}"></td>{% for tier in ['A档','B档','C档','D档'] %}<td><input data-leverage="{{ tier }}" type="number" min="1" max="125" required value="{{ band.leverages[tier] }}"></td>{% endfor %}</tr>{% endfor %}
+        {% for band in openable_symbol_settings.bands %}<tr class="mapping-band-row" data-label="{{ band.label }}"><td><strong class="fixed-setting-value">{{ band.label }}</strong></td><td><input data-field="lower" type="number" min="0" max="100" required value="{{ band.lower }}"></td><td><input data-field="upper" type="number" min="0" max="100" required value="{{ band.upper }}"></td><td><input data-field="distance_threshold_percent" type="number" min="0.01" max="100" step="0.01" required value="{{ band.distance_threshold_percent }}"></td>{% for tier in ['A档','B档','C档','D档'] %}<td><input data-leverage="{{ tier }}" type="number" min="1" max="125" required value="{{ band.leverages[tier] }}"></td>{% endfor %}</tr>{% endfor %}
         </tbody></table></div>
         <div class="score-weight-actions"><button class="btn btn-success" type="submit">保存止损距离与映射配置</button></div>
       </form>
@@ -2792,7 +2796,7 @@
         event.preventDefault(); if (!form.reportValidity()) return;
         const tier_max_percent = Object.fromEntries(Array.from(form.querySelectorAll('.tier-limit-input')).map(input => [input.dataset.tier, Number(input.value)]));
         const bands = Array.from(form.querySelectorAll('.mapping-band-row')).map(row => ({
-          label: row.querySelector('[data-field="label"]').value,
+          label: row.dataset.label,
           lower: Number(row.querySelector('[data-field="lower"]').value), upper: Number(row.querySelector('[data-field="upper"]').value),
           distance_threshold_percent: Number(row.querySelector('[data-field="distance_threshold_percent"]').value),
           leverages: Object.fromEntries(Array.from(row.querySelectorAll('[data-leverage]')).map(input => [input.dataset.leverage, Number(input.value)])),
@@ -3834,7 +3838,7 @@
       }
       if (!rowsEl) return;
       if (!orders.length) {
-        rowsEl.innerHTML = `<tr><td class="empty" colspan="14">${queriedRange}当前评分档位下暂无已成交订单</td></tr>`;
+        rowsEl.innerHTML = `<tr><td class="empty" colspan="33">${queriedRange}当前评分档位下暂无已成交订单</td></tr>`;
         renderFilledOrdersSummary({ completedCount: 0, totalProfit: 0, profitCount: 0, totalLoss: 0, lossCount: 0, averageProfit: 0, averageLoss: 0, profitLossRatio: 0, winRate: 0, expectancy: 0 });
         return;
       }
@@ -3849,6 +3853,7 @@
           <td>${formatMsDatetime(row.time)}</td>
           <td>${escapeHtml(row.symbol)}${groupLabel}</td>
           <td>${escapeHtml(row.open_score_band || '-')}</td>
+          <td>${escapeHtml(row.open_leverage ?? '-')}</td>
           <td>${row.open_total_score ?? '-'}</td>
           <td>${escapeHtml(row.exit_reason || '-')}</td>
           <td><span class="status-badge ${row.side === 'BUY' ? 'status-ok' : 'status-fail'}">${escapeHtml(row.side || '-')}</span></td>
@@ -3858,6 +3863,7 @@
           <td>${escapeHtml(row.quote_quantity)}</td>
           <td><span class="${pnlClass(row.realized_pnl)}">${escapeHtml(row.realized_pnl || '0')}</span></td>
           <td>${escapeHtml(row.commission || '0')} ${escapeHtml(row.commission_asset || '')}</td>
+          ${Array.from({ length: 18 }, (_, ruleIndex) => `<td>${escapeHtml(row[`open_rule${ruleIndex + 1}_score`] ?? '-')}</td>`).join('')}
           <td>${row.maker ? '是' : '否'}</td>
           <td>${escapeHtml(row.trade_id)}</td>
         </tr>`;
