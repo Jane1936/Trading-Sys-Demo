@@ -7,6 +7,7 @@ import time
 import db_config
 
 DEFAULT_SETTINGS = {
+    "tier_min_percent": 0.0,
     "tier_max_percent": {"A档": 2.0, "B档": 3.0, "C档": 4.0},
     "bands": [
         {"label": "低档试错单", "lower": 67, "upper": 72, "distance_threshold_percent": 5, "leverages": {"A档": 4, "B档": 3, "C档": 2, "D档": 1}},
@@ -22,10 +23,15 @@ def _validate(settings: dict) -> dict:
     bands = settings.get("bands")
     if not isinstance(tiers, dict) or not isinstance(bands, list) or len(bands) != 4:
         raise ValueError("止损距离档位和四个总分区间均为必填项")
+    tier_min = float(settings.get("tier_min_percent", 0))
     limits = [float(tiers.get(key, 0)) for key in ("A档", "B档", "C档")]
-    if not (0 < limits[0] < limits[1] < limits[2] <= 100):
-        raise ValueError("A/B/C 档上限必须依次递增，且在 0–100% 之间")
-    normalized = {"tier_max_percent": dict(zip(("A档", "B档", "C档"), limits)), "bands": []}
+    if not (0 <= tier_min < limits[0] < limits[1] < limits[2] <= 100):
+        raise ValueError("A 档下限及 A/B/C 档上限必须依次递增，且在 0–100% 之间")
+    normalized = {
+        "tier_min_percent": tier_min,
+        "tier_max_percent": dict(zip(("A档", "B档", "C档"), limits)),
+        "bands": [],
+    }
     previous_upper = None
     for raw in bands:
         lower, upper = int(raw["lower"]), int(raw["upper"])

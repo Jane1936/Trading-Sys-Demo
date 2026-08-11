@@ -1086,7 +1086,7 @@
         {% if open_block_notice %}
           <div class="open-block-notice">本轮禁止新开仓：<span>{{ open_block_notice }}</span></div>
         {% endif %}
-        <div class="tip">可开仓基础条件：本轮总分 ≥ {{ openable_min_total_score }}，且不在冷却期；若有上一轮评分档位，且上一轮评分档位低于本轮评分档位，则本轮最终不可开仓。止损距离筛查使用规则18的 distance_ratio：{{ score_distance_threshold_text }}；止损距离档位：0&lt;distance_ratio≤2% 为A档，2%&lt;distance_ratio≤3% 为B档，3%&lt;distance_ratio≤4% 为C档，distance_ratio&gt;4% 为D档。杠杆评定：所有单子 distance_ratio 为0时，杠杆统一为NA，且最终不可开仓；其他情况按总分区间和止损距离档位映射（{{ score_leverage_mapping_text }}）。下表展示基础条件命中的symbol及其止损距离筛查结果与本轮开仓杠杆倍数。</div>
+        <div class="tip">可开仓基础条件：本轮总分 ≥ {{ openable_min_total_score }}，且不在冷却期；若有上一轮评分档位，且上一轮评分档位低于本轮评分档位，则本轮最终不可开仓。止损距离筛查使用规则18的 distance_ratio：{{ score_distance_threshold_text }}；止损距离档位：{{ openable_symbol_settings.tier_min_percent }}%&lt;distance_ratio≤{{ openable_symbol_settings.tier_max_percent['A档'] }}% 为A档，{{ openable_symbol_settings.tier_max_percent['A档'] }}%&lt;distance_ratio≤{{ openable_symbol_settings.tier_max_percent['B档'] }}% 为B档，{{ openable_symbol_settings.tier_max_percent['B档'] }}%&lt;distance_ratio≤{{ openable_symbol_settings.tier_max_percent['C档'] }}% 为C档，distance_ratio&gt;{{ openable_symbol_settings.tier_max_percent['C档'] }}% 为D档。杠杆评定：不高于 A 档下限的 distance_ratio 杠杆统一为NA，且最终不可开仓；其他情况按总分区间和止损距离档位映射（{{ score_leverage_mapping_text }}）。下表展示基础条件命中的symbol及其止损距离筛查结果与本轮开仓杠杆倍数。</div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -2653,7 +2653,7 @@
       <form id="openable-settings-form" style="padding:16px 20px">
         <h3>止损距离档位（%）</h3>
         <div class="score-weight-grid" style="padding:8px 0 16px">
-          <div class="score-weight-item"><span>A档下限</span><strong class="fixed-setting-value">0%</strong></div>
+          <label class="score-weight-item"><span>A档下限</span><input id="tier-min-percent-input" type="number" min="0" max="100" step="0.01" required value="{{ openable_symbol_settings.tier_min_percent }}"></label>
           {% for tier in ['A档','B档','C档'] %}<label class="score-weight-item"><span>{{ tier }}上限</span><input class="tier-limit-input" type="number" min="0.01" max="100" step="0.01" required data-tier="{{ tier }}" value="{{ openable_symbol_settings.tier_max_percent[tier] }}"></label>{% endfor %}
           <div class="score-weight-item"><span>D档</span><strong>高于 C 档上限</strong></div>
         </div>
@@ -2794,6 +2794,7 @@
       if (!form) return;
       form.addEventListener('submit', async event => {
         event.preventDefault(); if (!form.reportValidity()) return;
+        const tier_min_percent = Number(form.querySelector('#tier-min-percent-input').value);
         const tier_max_percent = Object.fromEntries(Array.from(form.querySelectorAll('.tier-limit-input')).map(input => [input.dataset.tier, Number(input.value)]));
         const bands = Array.from(form.querySelectorAll('.mapping-band-row')).map(row => ({
           label: row.dataset.label,
@@ -2803,7 +2804,7 @@
         }));
         message.textContent = '正在保存配置…'; message.classList.remove('error');
         try {
-          const response = await fetch('/api/openable-symbol-settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tier_max_percent, bands})});
+          const response = await fetch('/api/openable-symbol-settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tier_min_percent, tier_max_percent, bands})});
           const payload = await response.json(); if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
           message.textContent = '止损距离档位与总分映射已保存，将从下一轮可开仓评估开始生效。';
         } catch (err) { message.textContent = `配置保存失败：${err.message || err}`; message.classList.add('error'); }
