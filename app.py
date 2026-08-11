@@ -57,9 +57,24 @@ _universe_last_refresh_ts = 0.0
 DATABASE_HEALTH_CHECK_INTERVAL_SEC = 5 * 60
 
 
+def _initialize_base_database() -> None:
+    """Recreate the complete base schema after startup or file recovery.
+
+    ``collector.init_db`` owns the candle tables, but the indicator tables are
+    owned by ``data_processor``.  A recovered base database must initialize
+    both sets before the recovery fence is removed; otherwise the processor and
+    scoring child can observe a healthy SQLite file with no MA20 table.
+    """
+    collector.init_db()
+    init_ma20_table(db_path=db_config.BASE_DB_PATH)
+    init_ema_table(db_path=db_config.BASE_DB_PATH)
+    init_macd_table(db_path=db_config.BASE_DB_PATH)
+    feature_flags.init_feature_flags(db_config.BASE_DB_PATH)
+
+
 def _database_initializers() -> dict[str, Callable[[], None]]:
     return {
-        db_config.BASE_DB_PATH: collector.init_db,
+        db_config.BASE_DB_PATH: _initialize_base_database,
         db_config.SCORING_DB_PATH: lambda: (
             PreSafetyModule(db_path=db_config.SCORING_DB_PATH).init_table(),
             CooldownModule(db_path=db_config.SCORING_DB_PATH).init_table(),
@@ -326,8 +341,9 @@ def _reap_or_timeout_scoring_worker(
 
     if not process.is_alive():
         process.join(timeout=0)
+        status = "✅" if process.exitcode == 0 else "❌"
         print(
-            f"✅ scoring worker finished round={round_ts} "
+            f"{status} scoring worker finished round={round_ts} "
             f"exitcode={process.exitcode}"
         )
         return None, None, None, None
