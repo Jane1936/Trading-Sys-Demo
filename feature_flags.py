@@ -13,6 +13,16 @@ SCORING_SYSTEM = "scoring_system"
 TRADING_SYSTEM = "trading_system"
 MARKET_FILTER = "market_filter"
 TRAILING_STOP = "trailing_stop"
+STOP_LOSS_RULE = "stop_loss_rule"
+REDUCTION_CONDITIONS = "reduction_conditions"
+INCREASE_CONDITIONS = "increase_conditions"
+PORTFOLIO_RISK = "portfolio_risk"
+BREAK_EVEN_TAKE_PROFIT = "break_even_take_profit"
+PARTIAL_TAKE_PROFIT = "partial_take_profit"
+TRAILING_REDUCTION = "trailing_reduction"
+DYNAMIC_PROFIT_PROTECTION = "dynamic_profit_protection"
+
+PRIMARY_FEATURE_FLAGS = frozenset({BASE_DATA_COLLECTION, SCORING_SYSTEM, TRADING_SYSTEM, MARKET_FILTER})
 
 
 @dataclass(frozen=True)
@@ -57,6 +67,14 @@ FEATURE_FLAG_DEFINITIONS: tuple[FeatureFlagDefinition, ...] = (
         name="移动追踪止盈规则",
         description="控制移动追踪止盈的每分钟扫描及平仓操作；关闭后不再执行该规则。",
     ),
+    FeatureFlagDefinition(STOP_LOSS_RULE, "止损规则", "控制持仓结构止损判断及平仓操作。"),
+    FeatureFlagDefinition(REDUCTION_CONDITIONS, "减仓条件模块", "控制持仓评分减仓条件判断及减仓操作。"),
+    FeatureFlagDefinition(INCREASE_CONDITIONS, "加仓条件模块", "控制持仓评分加仓条件判断及加仓操作。"),
+    FeatureFlagDefinition(PORTFOLIO_RISK, "组合风险约束", "控制持仓组合风险计算与约束数据更新。"),
+    FeatureFlagDefinition(BREAK_EVEN_TAKE_PROFIT, "保本止盈策略", "控制保本止盈的每分钟扫描及平仓操作。"),
+    FeatureFlagDefinition(PARTIAL_TAKE_PROFIT, "分批止盈规则", "控制分批止盈的每分钟扫描及减仓操作。"),
+    FeatureFlagDefinition(TRAILING_REDUCTION, "移动追踪减仓", "控制移动追踪减仓判断、刷新及减仓操作。"),
+    FeatureFlagDefinition(DYNAMIC_PROFIT_PROTECTION, "动态利润保护模块", "控制动态利润保护的每分钟扫描及平仓操作。"),
 )
 
 _DEFINITIONS_BY_KEY = {definition.key: definition for definition in FEATURE_FLAG_DEFINITIONS}
@@ -144,15 +162,14 @@ def list_feature_flags(db_path: str | None = None) -> list[FeatureFlag]:
             SELECT key, name, description, enabled, updated_at
             FROM feature_flags
             ORDER BY CASE key
-                WHEN ? THEN 1
-                WHEN ? THEN 2
-                WHEN ? THEN 3
-                WHEN ? THEN 4
-                WHEN ? THEN 5
-                ELSE 99
-            END, key
+                WHEN 'base_data_collection' THEN 1 WHEN 'scoring_system' THEN 2
+                WHEN 'trading_system' THEN 3 WHEN 'market_filter' THEN 4
+                WHEN 'stop_loss_rule' THEN 5 WHEN 'reduction_conditions' THEN 6
+                WHEN 'increase_conditions' THEN 7 WHEN 'portfolio_risk' THEN 8
+                WHEN 'break_even_take_profit' THEN 9 WHEN 'partial_take_profit' THEN 10
+                WHEN 'trailing_reduction' THEN 11 WHEN 'trailing_stop' THEN 12
+                WHEN 'dynamic_profit_protection' THEN 13 ELSE 99 END, key
             """,
-            (BASE_DATA_COLLECTION, SCORING_SYSTEM, TRADING_SYSTEM, MARKET_FILTER, TRAILING_STOP),
         ).fetchall()
     return [
         FeatureFlag(
@@ -208,6 +225,7 @@ def flags_to_dict(flags: Iterable[FeatureFlag]) -> list[dict]:
             "description": flag.description,
             "enabled": flag.enabled,
             "updated_at": flag.updated_at,
+            "primary": flag.key in PRIMARY_FEATURE_FLAGS,
         }
         for flag in flags
     ]

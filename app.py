@@ -256,7 +256,13 @@ def run_first_experiment_after_openable_round(
             try:
                 holding_result = HoldingPositionScoringSystem(
                     db_path=db_config.TRADING_DB_PATH
-                ).run_round(decision_round_ts=round_ts)
+                ).run_round(
+                    decision_round_ts=round_ts,
+                    enable_stop_loss=feature_flags.is_feature_enabled(feature_flags.STOP_LOSS_RULE),
+                    enable_reduction=feature_flags.is_feature_enabled(feature_flags.REDUCTION_CONDITIONS),
+                    enable_increase=feature_flags.is_feature_enabled(feature_flags.INCREASE_CONDITIONS),
+                    enable_portfolio_risk=feature_flags.is_feature_enabled(feature_flags.PORTFOLIO_RISK),
+                )
                 print(
                     f"📊 holding scoring refreshed after open round={round_ts} "
                     f"checked={holding_result.get('checked', 0)} "
@@ -450,7 +456,13 @@ def run_scoring_round_worker(
             db_config.trading_core_path(db_config.TRADING_DB_PATH),
             row_factory=sqlite3.Row,
         ):
-            holding_result = holding_scoring.run_round(decision_round_ts=decision_round_ts)
+            holding_result = holding_scoring.run_round(
+                decision_round_ts=decision_round_ts,
+                enable_stop_loss=feature_flags.is_feature_enabled(feature_flags.STOP_LOSS_RULE),
+                enable_reduction=feature_flags.is_feature_enabled(feature_flags.REDUCTION_CONDITIONS),
+                enable_increase=feature_flags.is_feature_enabled(feature_flags.INCREASE_CONDITIONS),
+                enable_portfolio_risk=feature_flags.is_feature_enabled(feature_flags.PORTFOLIO_RISK),
+            )
             print(
                 f"📊 holding scoring round={decision_round_ts} "
                 f"checked={holding_result.get('checked', 0)} "
@@ -465,16 +477,17 @@ def run_scoring_round_worker(
                 stage="after_holding_scoring",
             ):
                 return
-            trailing_reduction_result = trailing_reduction.run_round(
-                decision_round_ts=decision_round_ts
-            )
-            print(
-                f"🧭 trailing reduction round={decision_round_ts} "
-                f"checked={trailing_reduction_result.get('checked', 0)} "
-                f"eligible={trailing_reduction_result.get('eligible', 0)} "
-                f"pretriggered={trailing_reduction_result.get('pretriggered', 0)} "
-                f"2R={trailing_reduction_result.get('trigger_r_usdt', '')}"
-            )
+            if not feature_flags.is_feature_enabled(feature_flags.TRAILING_REDUCTION):
+                print("⏸️ trailing reduction skipped: feature flag disabled")
+            else:
+                trailing_reduction_result = trailing_reduction.run_round(decision_round_ts=decision_round_ts)
+                print(
+                    f"🧭 trailing reduction round={decision_round_ts} "
+                    f"checked={trailing_reduction_result.get('checked', 0)} "
+                    f"eligible={trailing_reduction_result.get('eligible', 0)} "
+                    f"pretriggered={trailing_reduction_result.get('pretriggered', 0)} "
+                    f"2R={trailing_reduction_result.get('trigger_r_usdt', '')}"
+                )
     except Exception as exc:
         recover_after_worker_error(exc)
         print(f"⚠️ holding scoring failed round={decision_round_ts}: {exc}")
@@ -578,14 +591,15 @@ def start_break_even_take_profit_task() -> None:
                 recover_after_worker_error(exc)
                 print(f"⚠️ exit-order reconcile failed: {exc}")
 
-            try:
+            if feature_flags.is_feature_enabled(feature_flags.BREAK_EVEN_TAKE_PROFIT):
+              try:
                 result = strategy.run_round()
                 print(
                     f"🟢 break-even take-profit checked={result.get('checked', 0)} "
                     f"triggered={result.get('triggered', 0)} "
                     f"records={result.get('records', 0)} R={result.get('r_usdt', '')}"
                 )
-            except Exception as exc:
+              except Exception as exc:
                 recover_after_worker_error(exc)
                 print(f"⚠️ break-even take-profit failed: {exc}")
 
@@ -603,7 +617,7 @@ def start_break_even_take_profit_task() -> None:
                             break
                         print(f"⏳ weak-market profit adjustment round={market_round_ts} waiting: {convergence_reason}")
                         time.sleep(2)
-                partial_result = partial_strategy.run_round(decision_round_ts=scan_ms)
+                partial_result = partial_strategy.run_round(decision_round_ts=scan_ms) if feature_flags.is_feature_enabled(feature_flags.PARTIAL_TAKE_PROFIT) else {"checked": 0, "triggered": 0, "records": 0}
                 print(
                     f"🟢 partial take-profit checked={partial_result.get('checked', 0)} "
                     f"triggered={partial_result.get('triggered', 0)} "
@@ -613,14 +627,15 @@ def start_break_even_take_profit_task() -> None:
                 recover_after_worker_error(exc)
                 print(f"⚠️ partial take-profit failed: {exc}")
 
-            try:
+            if feature_flags.is_feature_enabled(feature_flags.DYNAMIC_PROFIT_PROTECTION):
+              try:
                 dynamic_result = dynamic_profit_protection.run_round()
                 print(
                     f"🟢 dynamic profit protection checked={dynamic_result.get('checked', 0)} "
                     f"eligible={dynamic_result.get('eligible', 0)} "
                     f"triggered={dynamic_result.get('triggered', 0)} R={dynamic_result.get('r_usdt', '')}"
                 )
-            except Exception as exc:
+              except Exception as exc:
                 recover_after_worker_error(exc)
                 print(f"⚠️ dynamic profit protection failed: {exc}")
 
@@ -820,6 +835,10 @@ def start_increase_pretrigger_refresh_task() -> None:
     holding_scoring.init_tables()
     print("🟣 Increase pre-trigger refresh task started")
     while True:
+        if not feature_flags.is_feature_enabled(feature_flags.INCREASE_CONDITIONS):
+            print("⏸️ increase pretrigger refresh skipped: feature flag disabled")
+            time.sleep(60)
+            continue
         try:
             with db_config.sqlite_connection_scope(
                 db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
@@ -934,6 +953,9 @@ def start_atr_15m_task(symbols: List[str]) -> None:
             return
         ensure_universe()
         collector.atr_15m_job()
+        if not feature_flags.is_feature_enabled(feature_flags.TRAILING_REDUCTION):
+            print("⏸️ trailing reduction after ATR skipped: feature flag disabled")
+            return
         try:
             with db_config.sqlite_connection_scope(
                 db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
@@ -964,6 +986,9 @@ def start_trailing_reduction_refresh_task() -> None:
     scheduler = collector.BlockingScheduler()
 
     def _job():
+        if not feature_flags.is_feature_enabled(feature_flags.TRAILING_REDUCTION):
+            print("⏸️ trailing reduction refresh skipped: feature flag disabled")
+            return
         try:
             with db_config.sqlite_connection_scope(
                 db_config.TRADING_DB_PATH, row_factory=sqlite3.Row

@@ -172,7 +172,7 @@ def test_completed_scoring_round_publishes_holding_result_after_deadline(
     run_calls = []
 
     class RecordingTradingModule(FakeTradingOwnedModule):
-        def run_round(self, decision_round_ts):
+        def run_round(self, decision_round_ts, **kwargs):
             run_calls.append(decision_round_ts)
             return {}
 

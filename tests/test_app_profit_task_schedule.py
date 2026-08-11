@@ -62,7 +62,7 @@ def test_first_experiment_refreshes_holding_scoring_after_open(monkeypatch):
         def __init__(self, db_path):
             pass
 
-        def run_round(self, decision_round_ts):
+        def run_round(self, decision_round_ts, **kwargs):
             calls.append(("holding", decision_round_ts))
             return {"checked": 2, "risk_position_count": 2}
 

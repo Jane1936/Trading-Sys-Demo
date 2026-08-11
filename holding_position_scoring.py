@@ -548,7 +548,15 @@ class HoldingPositionScoringSystem:
                 f"ON {self.INCREASE_RECORDS_TABLE}(created_at DESC, symbol ASC)"
             )
 
-    def run_round(self, decision_round_ts: int | None = None) -> dict[str, Any]:
+    def run_round(
+        self,
+        decision_round_ts: int | None = None,
+        *,
+        enable_stop_loss: bool = True,
+        enable_reduction: bool = True,
+        enable_increase: bool = True,
+        enable_portfolio_risk: bool = True,
+    ) -> dict[str, Any]:
         """Run one 15m holding-position round.
 
         The round is intentionally sequenced so the position-reduction module
@@ -563,16 +571,24 @@ class HoldingPositionScoringSystem:
         # not carry the empty/stale snapshot from a previous module across the
         # whole round: an earlier stop-loss or reduction action (or an external
         # trade) may have changed the account positions in the meantime.
-        stop_loss_positions = self._active_positions()
-        stop_loss_result = self._run_stop_loss_rule_round(positions=stop_loss_positions, decision_round_ts=round_ts, checked_at=now_ms)
-        reduction_positions = self._active_positions()
-        reduction_checks = self.evaluate_reduction_conditions(positions=reduction_positions, decision_round_ts=round_ts, checked_at=now_ms)
-        reduction_records = self._execute_reduction_actions(reduction_checks, reduction_positions, now_ms)
-        increase_positions = self._active_positions()
-        increase_checks = self.evaluate_increase_conditions(positions=increase_positions, decision_round_ts=round_ts, checked_at=now_ms)
-        increase_records = self._record_increase_actions(increase_checks, increase_positions, now_ms)
-        portfolio_positions = self._active_positions()
-        portfolio_risk = self.calculate_portfolio_risk(positions=portfolio_positions, decision_round_ts=round_ts, calculated_at=now_ms)
+        stop_loss_result = {"checked": 0, "triggered": 0, "records": 0}
+        if enable_stop_loss:
+            stop_loss_positions = self._active_positions()
+            stop_loss_result = self._run_stop_loss_rule_round(positions=stop_loss_positions, decision_round_ts=round_ts, checked_at=now_ms)
+        reduction_checks, reduction_records = [], []
+        if enable_reduction:
+            reduction_positions = self._active_positions()
+            reduction_checks = self.evaluate_reduction_conditions(positions=reduction_positions, decision_round_ts=round_ts, checked_at=now_ms)
+            reduction_records = self._execute_reduction_actions(reduction_checks, reduction_positions, now_ms)
+        increase_checks, increase_records = [], []
+        if enable_increase:
+            increase_positions = self._active_positions()
+            increase_checks = self.evaluate_increase_conditions(positions=increase_positions, decision_round_ts=round_ts, checked_at=now_ms)
+            increase_records = self._record_increase_actions(increase_checks, increase_positions, now_ms)
+        portfolio_risk = None
+        if enable_portfolio_risk:
+            portfolio_positions = self._active_positions()
+            portfolio_risk = self.calculate_portfolio_risk(positions=portfolio_positions, decision_round_ts=round_ts, calculated_at=now_ms)
         return {
             "decision_round_ts": round_ts,
             "checked": stop_loss_result["checked"],
@@ -584,8 +600,8 @@ class HoldingPositionScoringSystem:
             "increase_checked": len(increase_checks),
             "increase_triggered": sum(1 for row in increase_checks if row.triggered),
             "increase_records": increase_records,
-            "total_risk": portfolio_risk.total_risk,
-            "risk_position_count": portfolio_risk.position_count,
+            "total_risk": portfolio_risk.total_risk if portfolio_risk else "",
+            "risk_position_count": portfolio_risk.position_count if portfolio_risk else 0,
             "portfolio_risk_action": "",
         }
 

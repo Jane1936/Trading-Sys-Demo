@@ -93,6 +93,8 @@
     .feature-flag-status { display:inline-flex; align-items:center; min-width:52px; justify-content:center; padding:4px 10px; border-radius:999px; font-weight:800; font-size:12px; border:1px solid transparent; }
     .feature-flag-status.enabled { background:#dcfce7; color:#166534; border-color:#86efac; }
     .feature-flag-status.disabled { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+    .primary-feature-row { background:linear-gradient(90deg,#fef3c7,#fffbeb); box-shadow:inset 4px 0 #f59e0b; }
+    .primary-feature-row td:first-child strong { color:#92400e; font-size:15px; }
     .feature-flag-message { padding:0 20px 14px; color:#4b5563; font-size:13px; }
     .feature-flag-message.error { color:#991b1b; }
     .score-weight-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(245px, 1fr)); gap:12px; padding:16px 20px 20px; }
@@ -2584,7 +2586,7 @@
           </thead>
           <tbody id="feature-flag-rows">
             {% for flag in feature_flags %}
-            <tr data-feature-key="{{ flag.key }}">
+            <tr data-feature-key="{{ flag.key }}" class="{{ 'primary-feature-row' if flag.key in ['base_data_collection','scoring_system','trading_system','market_filter'] else '' }}">
               <td><strong>{{ flag.name }}</strong></td>
               <td>
                 <span class="feature-flag-status {{ 'enabled' if flag.enabled else 'disabled' }}">
@@ -2639,6 +2641,23 @@
           <button id="reset-score-weights" class="btn" type="button">恢复文件默认值</button>
           <span class="muted">为避免部分规则使用新旧权重，18 条规则会一次性校验并保存。</span>
         </div>
+      </form>
+    </div>
+    <div class="card">
+      <div class="header"><h2>止损距离档位与总分映射</h2></div>
+      <div class="tip">配置“本轮可开仓symbol情况”使用的止损距离档位上限、总分区间、距离筛查上限，以及各总分区间对应 A/B/C/D 档的开仓杠杆。保存后从下一轮可开仓评估开始生效。</div>
+      <div id="openable-settings-message" class="feature-flag-message" role="status"></div>
+      <form id="openable-settings-form" style="padding:16px 20px">
+        <h3>止损距离档位（%）</h3>
+        <div class="score-weight-grid" style="padding:8px 0 16px">
+          {% for tier in ['A档','B档','C档'] %}<label class="score-weight-item"><span>{{ tier }}上限</span><input class="tier-limit-input" type="number" min="0.01" max="100" step="0.01" required data-tier="{{ tier }}" value="{{ openable_symbol_settings.tier_max_percent[tier] }}"></label>{% endfor %}
+          <div class="score-weight-item"><span>D档</span><strong>高于 C 档上限</strong></div>
+        </div>
+        <h3>总分区间和止损距离档位映射</h3>
+        <div class="table-wrap"><table><thead><tr><th>名称</th><th>最低分</th><th>最高分</th><th>筛查距离上限%</th><th>A档杠杆</th><th>B档杠杆</th><th>C档杠杆</th><th>D档杠杆</th></tr></thead><tbody>
+        {% for band in openable_symbol_settings.bands %}<tr class="mapping-band-row"><td><input data-field="label" required value="{{ band.label }}"></td><td><input data-field="lower" type="number" min="0" max="100" required value="{{ band.lower }}"></td><td><input data-field="upper" type="number" min="0" max="100" required value="{{ band.upper }}"></td><td><input data-field="distance_threshold_percent" type="number" min="0.01" max="100" step="0.01" required value="{{ band.distance_threshold_percent }}"></td>{% for tier in ['A档','B档','C档','D档'] %}<td><input data-leverage="{{ tier }}" type="number" min="1" max="125" required value="{{ band.leverages[tier] }}"></td>{% endfor %}</tr>{% endfor %}
+        </tbody></table></div>
+        <div class="score-weight-actions"><button class="btn btn-success" type="submit">保存止损距离与映射配置</button></div>
       </form>
     </div>
   </section>
@@ -2762,6 +2781,28 @@
         } finally {
           saveButton.disabled = false;
         }
+      });
+    })();
+
+    (function initOpenableSettingsForm() {
+      const form = document.getElementById('openable-settings-form');
+      const message = document.getElementById('openable-settings-message');
+      if (!form) return;
+      form.addEventListener('submit', async event => {
+        event.preventDefault(); if (!form.reportValidity()) return;
+        const tier_max_percent = Object.fromEntries(Array.from(form.querySelectorAll('.tier-limit-input')).map(input => [input.dataset.tier, Number(input.value)]));
+        const bands = Array.from(form.querySelectorAll('.mapping-band-row')).map(row => ({
+          label: row.querySelector('[data-field="label"]').value,
+          lower: Number(row.querySelector('[data-field="lower"]').value), upper: Number(row.querySelector('[data-field="upper"]').value),
+          distance_threshold_percent: Number(row.querySelector('[data-field="distance_threshold_percent"]').value),
+          leverages: Object.fromEntries(Array.from(row.querySelectorAll('[data-leverage]')).map(input => [input.dataset.leverage, Number(input.value)])),
+        }));
+        message.textContent = '正在保存配置…'; message.classList.remove('error');
+        try {
+          const response = await fetch('/api/openable-symbol-settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tier_max_percent, bands})});
+          const payload = await response.json(); if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          message.textContent = '止损距离档位与总分映射已保存，将从下一轮可开仓评估开始生效。';
+        } catch (err) { message.textContent = `配置保存失败：${err.message || err}`; message.classList.add('error'); }
       });
     })();
 
