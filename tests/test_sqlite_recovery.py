@@ -211,6 +211,24 @@ def test_worker_database_health_check_interval_is_five_minutes():
     assert worker_app.DATABASE_HEALTH_CHECK_INTERVAL_SEC == 5 * 60
 
 
+def test_base_database_recovery_recreates_indicator_tables(tmp_path, monkeypatch):
+    base_db = str(tmp_path / "base_data.db")
+    monkeypatch.setattr(db_config, "BASE_DB_PATH", base_db)
+    monkeypatch.setattr(collector, "DB_PATH", base_db)
+    monkeypatch.setattr(collector, "DATA_DIR", str(tmp_path))
+
+    worker_app._database_initializers()[base_db]()
+
+    with sqlite3.connect(base_db) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+    assert {"ma20_indicators", "ema_indicators", "macd_indicators"} <= tables
+
+
 def test_trading_core_recovery_recreates_holding_risk_tables(tmp_path, monkeypatch):
     trading_db = str(tmp_path / "trading.db")
     trading_core_db = str(tmp_path / "trading_core.db")
