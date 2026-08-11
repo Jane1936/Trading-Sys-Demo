@@ -26,6 +26,8 @@
 
 当 Web 页面或 worker 捕获到 `database disk image is malformed` 或 `file is not a database` 时，会先为故障库创建 recovery marker。所有主库连接和 `ATTACH` 连接都要持有跨进程共享访问锁；marker 出现后新业务连接会被拒绝。worker 再等待已有连接关闭、取得独占锁，将主库与 WAL/SHM 隔离，重建 schema 并通过 `quick_check` 后才移除 marker。这样既可在线自动恢复，又不会让旧 inode 和新数据库同时被业务访问。
 
+每次 worker 巡检、运行时异常或 collector 初始化发现损坏时，系统都会在移动旧文件之前写入一份独立的 JSON 事故记录。默认目录为 `logs/sqlite-recovery/`（可通过 `SQLITE_RECOVERY_LOG_DIR` 修改，Docker 部署会持久化到 `HOST_LOGS_DIR`）。记录包含发现时间、来源、进程、原始异常和 traceback、故障库 quick-check、主库/WAL/SHM 的大小/mtime/inode、磁盘与挂载信息，以及最终隔离文件列表和恢复成功或失败状态。即使新库重建成功，原始故障证据仍会保留。
+
 ## 本次系统化排查结论
 
 目前代码层面最高风险不是 `sqlite-web`，而是旧版“自动恢复”：worker 每 30 分钟巡检、业务异常处理器及 Web 请求异常处理器都可能在其他线程或容器仍持有连接时，把主库和 sidecar 逐个重命名。这三个文件的移动也不是一个原子操作。一天多次、且停止 `sqlite-web` 后仍出现，和这个并发窗口高度吻合。

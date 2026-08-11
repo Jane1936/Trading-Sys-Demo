@@ -46,6 +46,8 @@ from dynamic_open_threshold import DynamicOpenThresholdModule
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
 from zombie_force_liquidation import ZombieForceLiquidationModule
 from sqlite_recovery import (
+    create_sqlite_failure_record,
+    finish_sqlite_failure_record,
     is_malformed_database_error,
     quarantine_sqlite_database,
     quick_check_sqlite_database,
@@ -153,7 +155,9 @@ def _database_initializers() -> dict[str, Callable[[], None]]:
     }
 
 
-def check_worker_databases() -> dict[str, list[str]]:
+def check_worker_databases(
+    *, source: str = "periodic_health_check", trigger_exception: BaseException | None = None
+) -> dict[str, list[str]]:
     """Fence, drain, replace, and initialize each malformed database."""
     recovered: dict[str, list[str]] = {}
     for db_path, initialize in _database_initializers().items():
@@ -170,6 +174,10 @@ def check_worker_databases() -> dict[str, list[str]]:
             # healthy database merely because quick_check exhausted its timeout.
             print(f"⚠️ SQLite health check deferred db={db_path}; detail={detail}")
             continue
+        failure_record = create_sqlite_failure_record(
+            db_path, detail=detail, source=source, exc=trigger_exception
+        )
+        quarantined: list[str] = []
         marker = Path(db_config.database_recovery_marker(db_path))
         marker.write_text(f"pid={os.getpid()} detail={detail}\n", encoding="utf-8")
         # The marker rejects new connections. EX waits until every managed main
@@ -184,13 +192,22 @@ def check_worker_databases() -> dict[str, list[str]]:
                 raise sqlite3.DatabaseError(
                     f"SQLite recovery verification failed db={db_path}: {verify_detail}"
                 )
-        except Exception:
+        except Exception as exc:
             # Keep the marker in place: business access must remain fenced if
             # creation or verification failed.
+            finish_sqlite_failure_record(
+                failure_record,
+                status="recovery_failed",
+                quarantined_files=quarantined,
+                error=exc,
+            )
             raise
         else:
             marker.unlink(missing_ok=True)
             recovered[db_path] = quarantined
+            finish_sqlite_failure_record(
+                failure_record, status="recovered", quarantined_files=quarantined
+            )
             print(f"✅ SQLite recovered db={db_path}; quarantined={quarantined}")
     return recovered
 
@@ -203,7 +220,7 @@ def recover_after_worker_error(exc: BaseException) -> bool:
     # owned by the current round when a nested strategy reports corruption.
     for db_path in db_config.DB_LABELS.values():
         db_config.close_scoped_connection(db_path)
-    check_worker_databases()
+    check_worker_databases(source="runtime_exception", trigger_exception=exc)
     return True
 
 
@@ -626,12 +643,22 @@ def start_break_even_take_profit_task() -> None:
     partial_strategy = PartialTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH)
     dynamic_profit_protection = DynamicProfitProtection(db_path=db_config.TRADING_DB_PATH)
     trailing_stop_tracker = TrailingStopTracker(db_path=db_config.TRADING_DB_PATH)
-    strategy.init_tables()
-    partial_strategy.init_tables()
-    dynamic_profit_protection.init_tables()
-    trailing_stop_tracker.init_tables()
     weak_market_adjustment = WeakMarketProfitAdjustmentModule(db_path=db_config.MARKET_DB_PATH)
-    weak_market_adjustment.init_table()
+    while True:
+        try:
+            strategy.init_tables()
+            partial_strategy.init_tables()
+            dynamic_profit_protection.init_tables()
+            trailing_stop_tracker.init_tables()
+            weak_market_adjustment.init_table()
+            break
+        except Exception as exc:
+            # This is a daemon thread.  Letting a transient startup DB lock or a
+            # recovery fence escape here kills every minute-level profit module
+            # permanently while the rest of the worker keeps running.
+            recover_after_worker_error(exc)
+            print(f"⚠️ profit protection task initialization failed; retrying in 5s: {exc}")
+            time.sleep(5)
     print("🟢 Break-even, partial take-profit, dynamic profit protection and trailing stop tracker task started")
     while True:
         with db_config.sqlite_connection_scope(

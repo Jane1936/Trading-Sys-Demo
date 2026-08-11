@@ -70,6 +70,16 @@ def test_profit_task_runs_protection_strategies_in_order_each_loop():
     assert "time.sleep(60)" in source
 
 
+def test_profit_task_retries_initialization_instead_of_silently_dying():
+    source = inspect.getsource(app.start_break_even_take_profit_task)
+
+    initialization_index = source.index("strategy.init_tables()")
+    started_index = source.index("profit protection and trailing stop tracker task started")
+    assert source.rfind("while True:", 0, initialization_index) >= 0
+    assert "profit protection task initialization failed; retrying in 5s" in source
+    assert initialization_index < started_index
+
+
 def test_first_experiment_refreshes_holding_scoring_after_open(monkeypatch):
     calls = []
 

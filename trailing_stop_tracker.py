@@ -154,14 +154,16 @@ class TrailingStopTracker:
         self.init_tables()
         helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
         positions = helper._fetch_and_store_positions()
+        # Evaluate every open position instead of filtering here.  The evaluator
+        # persists ``partial_take_profit_not_triggered`` for ineligible symbols,
+        # which makes each minute's heartbeat visible in the dashboard.  The old
+        # pre-filter made that branch unreachable and left the latest scan time
+        # frozen whenever no position had an exact matching 2R record, making a
+        # healthy tracker look stopped.
         active_positions = [
             row
             for row in positions
             if self._decimal_from(row.get("positionAmt"), Decimal("0")) != 0
-            and self._has_2r_partial_take_profit_record(
-                self._base_symbol(str(row.get("symbol", "")).upper()),
-                self._decimal_from(row.get("entryPrice"), Decimal("0")),
-            )
         ]
         now = int(time.time() * 1000)
         checked = eligible = updated = 0

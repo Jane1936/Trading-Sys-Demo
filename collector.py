@@ -4,6 +4,8 @@ import sqlite3
 import threading
 
 from sqlite_recovery import (
+    create_sqlite_failure_record,
+    finish_sqlite_failure_record,
     ensure_sqlite_database_usable,
     is_malformed_database_error,
     quarantine_sqlite_database,
@@ -108,12 +110,28 @@ def init_db():
     except sqlite3.DatabaseError as exc:
         if not is_malformed_database_error(exc):
             raise
+        failure_record = create_sqlite_failure_record(
+            DB_PATH, detail=str(exc), source="collector_initialization", exc=exc
+        )
         quarantined = quarantine_sqlite_database(DB_PATH)
         print(
             "⚠️ malformed SQLite database quarantined during init: "
             f"{', '.join(quarantined) or DB_PATH}"
         )
-        _init_db_schema()
+        try:
+            _init_db_schema()
+        except Exception as recovery_exc:
+            finish_sqlite_failure_record(
+                failure_record,
+                status="recovery_failed",
+                quarantined_files=quarantined,
+                error=recovery_exc,
+            )
+            raise
+        else:
+            finish_sqlite_failure_record(
+                failure_record, status="recovered", quarantined_files=quarantined
+            )
 
 
 def _init_db_schema():

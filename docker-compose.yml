@@ -5,6 +5,7 @@ x-app-env: &app-env
   TRADING_DB_PATH: "${TRADING_DB_PATH:-data/trading.db}"
   TRADING_CORE_DB_PATH: "${TRADING_CORE_DB_PATH:-data/trading_core.db}"
   MARKET_DB_PATH: "${MARKET_DB_PATH:-data/market.db}"
+  SQLITE_RECOVERY_LOG_DIR: "${SQLITE_RECOVERY_LOG_DIR:-logs/sqlite-recovery}"
   # Never let delayed market aggregation block minute-level position protection indefinitely.
   PROFIT_MARKET_CONVERGENCE_TIMEOUT_SEC: "${PROFIT_MARKET_CONVERGENCE_TIMEOUT_SEC:-10}"
   BINANCE_TESTNET: "${BINANCE_TESTNET:-true}"
