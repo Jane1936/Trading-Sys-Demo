@@ -2,13 +2,101 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import time
+import traceback
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
 _checked_database_paths: set[str] = set()
+
+
+def create_sqlite_failure_record(
+    db_path: str,
+    *,
+    detail: str,
+    source: str,
+    exc: BaseException | None = None,
+) -> str:
+    """Persist evidence before a damaged database is moved or rebuilt.
+
+    One JSON document is created for every detected failure.  It lives outside
+    the database directory by default, so replacing a database cannot erase the
+    evidence operators need for root-cause analysis.
+    """
+    from sqlite_diagnostics import inspect_database
+
+    captured_at = datetime.now(timezone.utc)
+    log_dir = Path(os.getenv("SQLITE_RECOVERY_LOG_DIR", "logs/sqlite-recovery"))
+    log_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(db_path).name.replace(os.sep, "_") or "sqlite"
+    record_path = log_dir / (
+        f"{captured_at.strftime('%Y%m%dT%H%M%S.%fZ')}-{safe_name}-{uuid.uuid4().hex[:8]}.json"
+    )
+    try:
+        database_evidence = inspect_database(db_path)
+    except Exception as evidence_exc:
+        database_evidence = {
+            "path": str(Path(db_path).resolve()),
+            "evidence_collection_error": {
+                "type": type(evidence_exc).__name__,
+                "message": str(evidence_exc),
+            },
+        }
+    record = {
+        "captured_at_utc": captured_at.isoformat(),
+        "source": source,
+        "status": "detected",
+        "pid": os.getpid(),
+        "detail": detail,
+        "exception": (
+            {
+                "type": type(exc).__name__,
+                "message": str(exc),
+                "traceback": "".join(traceback.format_exception(exc)),
+            }
+            if exc is not None
+            else None
+        ),
+        "database": database_evidence,
+        "quarantined_files": [],
+    }
+    _write_failure_record(record_path, record)
+    return str(record_path)
+
+
+def finish_sqlite_failure_record(
+    record_path: str,
+    *,
+    status: str,
+    quarantined_files: Sequence[str] = (),
+    error: BaseException | None = None,
+) -> None:
+    """Add the recovery outcome to an existing incident document."""
+    path = Path(record_path)
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["status"] = status
+    record["finished_at_utc"] = datetime.now(timezone.utc).isoformat()
+    record["quarantined_files"] = list(quarantined_files)
+    if error is not None:
+        record["recovery_error"] = {
+            "type": type(error).__name__,
+            "message": str(error),
+            "traceback": "".join(traceback.format_exception(error)),
+        }
+    _write_failure_record(path, record)
+
+
+def _write_failure_record(path: Path, record: dict[str, object]) -> None:
+    temporary = path.with_suffix(f"{path.suffix}.tmp-{os.getpid()}-{uuid.uuid4().hex}")
+    temporary.write_text(
+        json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    temporary.replace(path)
 
 
 def is_malformed_database_error(exc: BaseException) -> bool:

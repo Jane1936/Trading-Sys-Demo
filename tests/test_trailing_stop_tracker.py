@@ -188,8 +188,10 @@ def test_trailing_stop_tracker_ignores_1_4r_partial_take_profit_record():
         _, checks = tracker.get_latest_round_checks()
 
     assert result["eligible"] == 0
-    assert result["checked"] == 0
-    assert checks == []
+    assert result["checked"] == 1
+    assert len(checks) == 1
+    assert checks[0].eligible is False
+    assert checks[0].reason == "partial_take_profit_not_triggered"
 
 
 def test_trailing_stop_tracker_updates_max_after_partial_take_profit():
@@ -229,8 +231,10 @@ def test_trailing_stop_tracker_requires_partial_take_profit_record():
         _, checks = tracker.get_latest_round_checks()
 
     assert result["eligible"] == 0
-    assert result["checked"] == 0
-    assert checks == []
+    assert result["checked"] == 1
+    assert len(checks) == 1
+    assert checks[0].eligible is False
+    assert checks[0].reason == "partial_take_profit_not_triggered"
 
 
 def test_trailing_stop_tracker_closes_position_when_drawdown_threshold_hit():

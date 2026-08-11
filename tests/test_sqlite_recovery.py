@@ -1,4 +1,5 @@
 import sqlite3
+import json
 import sys
 import threading
 import time
@@ -152,6 +153,8 @@ def test_worker_health_check_fences_and_replaces_malformed_database(tmp_path, mo
             conn.execute("CREATE TABLE healthy (value INTEGER)")
     damaged_path = db_paths[2]
     damaged_path.write_bytes(b"not a sqlite database")
+    incident_dir = tmp_path / "incidents"
+    monkeypatch.setenv("SQLITE_RECOVERY_LOG_DIR", str(incident_dir))
 
     def initialize():
         with db_config.connect_sqlite(str(damaged_path)) as conn:
@@ -169,6 +172,14 @@ def test_worker_health_check_fences_and_replaces_malformed_database(tmp_path, mo
         assert conn.execute("SELECT 1 FROM recovered").fetchall() == []
     assert list(tmp_path.glob(f"{damaged_path.name}.corrupt-*"))
     assert not Path(db_config.database_recovery_marker(str(damaged_path))).exists()
+    records = list(incident_dir.glob("*.json"))
+    assert len(records) == 1
+    incident = json.loads(records[0].read_text(encoding="utf-8"))
+    assert incident["status"] == "recovered"
+    assert incident["source"] == "periodic_health_check"
+    assert incident["database"]["path"] == str(damaged_path.resolve())
+    assert incident["database"]["health"]["status"] == "error"
+    assert incident["quarantined_files"]
 
 
 @pytest.mark.parametrize("detail", ["database is locked", "database is busy"])
@@ -196,15 +207,18 @@ def test_worker_health_check_does_not_replace_contended_database(
 def test_worker_malformed_error_triggers_immediate_health_check(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        worker_app, "check_worker_databases", lambda: calls.append(True)
+        worker_app,
+        "check_worker_databases",
+        lambda **kwargs: calls.append(kwargs),
     )
 
     assert worker_app.recover_after_worker_error(
         sqlite3.DatabaseError("database disk image is malformed")
     )
-    assert calls == [True]
+    assert calls[0]["source"] == "runtime_exception"
+    assert isinstance(calls[0]["trigger_exception"], sqlite3.DatabaseError)
     assert not worker_app.recover_after_worker_error(sqlite3.DatabaseError("database is locked"))
-    assert calls == [True]
+    assert len(calls) == 1
 
 
 def test_worker_database_health_check_interval_is_five_minutes():
