@@ -15,7 +15,9 @@ def test_filled_orders_export_downloads_current_rows_as_xlsx():
                     "time": 1710000000000,
                     "symbol": "BTCUSDT",
                     "open_score_band": "强趋势",
+                    "open_leverage": 8,
                     "open_total_score": 82,
+                    "open_rule1_score": 5,
                     "exit_reason": "分批止盈",
                     "side": "SELL",
                     "order_id": "123",
@@ -43,8 +45,10 @@ def test_filled_orders_export_downloads_current_rows_as_xlsx():
         label for label, _ in web_app.FILLED_ORDER_EXPORT_COLUMNS
     ]
     assert rows[1][1].find("x:is/x:t", namespace).text == "BTCUSDT"
-    assert rows[1][4].find("x:is/x:t", namespace).text == "分批止盈"
-    assert rows[1][13].find("x:is/x:t", namespace).text == "是"
+    assert rows[1][3].find("x:is/x:t", namespace).text == "8"
+    assert rows[1][5].find("x:is/x:t", namespace).text == "分批止盈"
+    assert rows[1][13].find("x:is/x:t", namespace).text == "5"
+    assert rows[1][32].find("x:is/x:t", namespace).text == "是"
 
 
 def test_filled_orders_export_rejects_empty_rows():

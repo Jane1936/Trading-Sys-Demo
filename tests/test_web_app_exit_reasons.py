@@ -405,6 +405,39 @@ def test_filled_order_annotation_adds_open_score_from_latest_trade_record(tmp_pa
     assert annotated["orders"][0]["open_score_matched_at"] == "1100"
 
 
+def test_filled_order_annotation_adds_leverage_and_rule_scores(tmp_path, monkeypatch):
+    db_path = tmp_path / "scores.db"
+    monkeypatch.setattr(web_app, "DB_PATH", str(db_path))
+    rule_columns = ", ".join(f"rule{i}_score INTEGER NOT NULL" for i in range(1, 19))
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"CREATE TABLE {web_app.TradingExperiment.TRADES_TABLE} "
+            "(id INTEGER PRIMARY KEY, symbol TEXT, status TEXT, total_score INTEGER, "
+            "decision_round_ts INTEGER, leverage INTEGER, created_at INTEGER)"
+        )
+        conn.execute(
+            f"CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, "
+            f"{rule_columns}, total_score INTEGER)"
+        )
+        conn.execute(
+            f"INSERT INTO {web_app.TradingExperiment.TRADES_TABLE} VALUES "
+            "(1, 'BANK', 'opened', 82, 900, 8, 950)"
+        )
+        scores = tuple(range(1, 19))
+        placeholders = ", ".join("?" for _ in range(21))
+        conn.execute(
+            f"INSERT INTO symbol_total_scores VALUES ({placeholders})",
+            ("BANK", 900, *scores, sum(scores)),
+        )
+
+    annotated = web_app._annotate_filled_order_exit_reasons(
+        {"orders": [{"symbol": "BANKUSDT", "side": "BUY", "time": 1000, "quantity": "1"}]}
+    )["orders"][0]
+
+    assert annotated["open_leverage"] == 8
+    assert [annotated[f"open_rule{i}_score"] for i in range(1, 19)] == list(range(1, 19))
+
+
 def test_filled_order_annotation_reads_migrated_records_from_trading_core_db(
     tmp_path, monkeypatch
 ):
