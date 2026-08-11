@@ -12,6 +12,7 @@ import db_config
 import time
 from dataclasses import dataclass
 from typing import List
+from openable_symbol_settings import get_settings
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,29 @@ class OpenableSymbolModule:
 
     def __init__(self, db_path: str = "data/klines.db") -> None:
         self.db_path = db_path
+
+    def configured_score_bands(self) -> tuple[ScoreBandConfig, ...]:
+        settings = get_settings(db_config.BASE_DB_PATH)
+        styles = self.SCORE_BANDS
+        return tuple(
+            ScoreBandConfig(
+                label=raw["label"], lower=raw["lower"], upper=raw["upper"],
+                distance_threshold=raw["distance_threshold_percent"] / 100,
+                tier_leverages={key: f"{value}x" for key, value in raw["leverages"].items()},
+                css_class=styles[index].css_class, chart_color=styles[index].chart_color,
+                chart_border_color=styles[index].chart_border_color,
+            ) for index, raw in enumerate(settings["bands"])
+        )
+
+    def _configured_band(self, total_score: int) -> ScoreBandConfig | None:
+        return next((band for band in self.configured_score_bands() if band.lower <= total_score <= band.upper), None)
+
+    def _configured_tier(self, ratio: float | None) -> str:
+        if ratio is None or ratio <= 0:
+            return "NA"
+        limits = get_settings(db_config.BASE_DB_PATH)["tier_max_percent"]
+        percent = ratio * 100
+        return next((tier for tier in ("A档", "B档", "C档") if percent <= limits[tier]), "D档")
 
     def _connect(self) -> sqlite3.Connection:
         conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
@@ -297,16 +321,18 @@ class OpenableSymbolModule:
             else None
         )
         ratio = float(row["stop_loss_distance_ratio"]) if row["stop_loss_distance_ratio"] is not None else None
-        threshold = self.distance_threshold_for_total(total_score)
-        distance_tier = self.stop_loss_distance_tier_for_ratio(ratio)
-        opening_leverage = self.opening_leverage_for_total_and_distance(total_score, ratio, distance_tier)
+        band = self._configured_band(total_score)
+        threshold = band.distance_threshold if band else None
+        distance_tier = self._configured_tier(ratio)
+        opening_leverage = band.tier_leverages.get(distance_tier, "NA") if band and ratio and ratio > 0 else "NA"
         zero_distance = ratio == 0
         distance_qualified = (
             ratio is not None
             and threshold is not None
             and 0 < ratio <= threshold
         )
-        previous_score_band_lower = self.is_previous_score_band_lower(previous_total_score, total_score)
+        previous_band = self._configured_band(previous_total_score) if previous_total_score is not None else None
+        previous_score_band_lower = bool(previous_band and band and self.configured_score_bands().index(previous_band) < self.configured_score_bands().index(band))
         qualified = distance_qualified and not previous_score_band_lower
         if threshold is None:
             reason = "total_score_not_in_openable_distance_band"
@@ -327,7 +353,7 @@ class OpenableSymbolModule:
             symbol=str(row["symbol"]),
             decision_round_ts=int(row["decision_round_ts"]),
             total_score=total_score,
-            score_band=self.score_band_for_total(total_score),
+            score_band=band.label if band else "NA",
             stop_loss_distance_ratio=ratio,
             distance_threshold=threshold,
             stop_loss_distance_tier=distance_tier,

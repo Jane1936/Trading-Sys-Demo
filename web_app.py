@@ -25,6 +25,7 @@ import db_config
 import feature_flags
 from cooldown_module import CooldownModule
 from openable_symbol_module import OpenableSymbolModule
+from openable_symbol_settings import get_settings as get_openable_symbol_settings, set_settings as set_openable_symbol_settings
 from pre_safety_module import PreSafetyModule
 from partial_take_profit import PartialTakeProfitStrategy
 from dynamic_profit_protection import DynamicProfitProtection
@@ -161,6 +162,7 @@ def _safe_page_module(label: str, loader, default):
         return default, {"label": label, "error": error_text}
 
 def _score_band_context() -> tuple[list[dict], str, str, int]:
+    module = OpenableSymbolModule(db_path=_scoring_db_path())
     bands = [
         {
             "label": band.label,
@@ -172,7 +174,7 @@ def _score_band_context() -> tuple[list[dict], str, str, int]:
             "chart_color": band.chart_color,
             "chart_border_color": band.chart_border_color,
         }
-        for band in OpenableSymbolModule.SCORE_BANDS
+        for band in module.configured_score_bands()
     ]
     threshold_text = "，".join(
         f"{band['lower']}-{band['upper']}分≤{band['distance_threshold'] * 100:.0f}%" for band in bands
@@ -183,7 +185,7 @@ def _score_band_context() -> tuple[list[dict], str, str, int]:
         f"{band['tier_leverages']['C档']}/{band['tier_leverages']['D档']}"
         for band in bands
     )
-    return bands, threshold_text, leverage_text, OpenableSymbolModule.MIN_TOTAL_SCORE
+    return bands, threshold_text, leverage_text, min(band["lower"] for band in bands)
 
 
 def _table_exists(
@@ -1091,6 +1093,19 @@ def update_scoring_rule_weights_api():
     return jsonify({"rules": rules})
 
 
+@app.get("/api/openable-symbol-settings")
+def openable_symbol_settings_api():
+    return jsonify(get_openable_symbol_settings(BASE_DB_PATH))
+
+
+@app.put("/api/openable-symbol-settings")
+def update_openable_symbol_settings_api():
+    try:
+        return jsonify(set_openable_symbol_settings(request.get_json(silent=True) or {}, BASE_DB_PATH))
+    except (KeyError, TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
 @app.post("/api/trading-experiment/run")
 def trading_experiment_run_api():
     try:
@@ -1386,6 +1401,7 @@ def abnormal_wicks():
         btc_total_pages=btc_total_pages,
         feature_flags=feature_flags.list_feature_flags(BASE_DB_PATH),
         scoring_rule_weight_settings=get_rule_score_weight_settings(BASE_DB_PATH),
+        openable_symbol_settings=get_openable_symbol_settings(BASE_DB_PATH),
     )
 
 

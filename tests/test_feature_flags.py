@@ -16,7 +16,15 @@ def test_feature_flags_seed_enabled_by_default(tmp_path):
         feature_flags.SCORING_SYSTEM,
         feature_flags.TRADING_SYSTEM,
         feature_flags.MARKET_FILTER,
+        feature_flags.STOP_LOSS_RULE,
+        feature_flags.REDUCTION_CONDITIONS,
+        feature_flags.INCREASE_CONDITIONS,
+        feature_flags.PORTFOLIO_RISK,
+        feature_flags.BREAK_EVEN_TAKE_PROFIT,
+        feature_flags.PARTIAL_TAKE_PROFIT,
+        feature_flags.TRAILING_REDUCTION,
         feature_flags.TRAILING_STOP,
+        feature_flags.DYNAMIC_PROFIT_PROTECTION,
     ]
     assert all(flag.enabled for flag in flags)
     assert all(flag.updated_at > 0 for flag in flags)
