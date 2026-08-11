@@ -3,6 +3,48 @@ import inspect
 import app
 
 
+class _NeverConvergedAdjustment:
+    def __init__(self):
+        self.calls = 0
+
+    def is_data_converged_for_round(self, decision_round_ts):
+        self.calls += 1
+        return False, "waiting_allusdt_15m_convergence"
+
+
+def test_profit_market_convergence_wait_is_bounded():
+    adjustment = _NeverConvergedAdjustment()
+
+    converged, reason = app.wait_for_profit_market_convergence(
+        adjustment, 123_000, timeout_sec=0, poll_sec=0.01
+    )
+
+    assert converged is False
+    assert reason == "waiting_allusdt_15m_convergence"
+    assert adjustment.calls == 1
+
+
+def test_profit_market_convergence_returns_as_soon_as_inputs_are_ready(monkeypatch):
+    responses = iter(
+        [
+            (False, "waiting_allusdt_15m_convergence"),
+            (True, "data_converged"),
+        ]
+    )
+
+    class Adjustment:
+        def is_data_converged_for_round(self, decision_round_ts):
+            return next(responses)
+
+    monkeypatch.setattr(app.time, "sleep", lambda seconds: None)
+    converged, reason = app.wait_for_profit_market_convergence(
+        Adjustment(), 123_000, timeout_sec=10, poll_sec=0.01
+    )
+
+    assert converged is True
+    assert reason == "data_converged"
+
+
 def test_profit_task_runs_protection_strategies_in_order_each_loop():
     source = inspect.getsource(app.start_break_even_take_profit_task)
 

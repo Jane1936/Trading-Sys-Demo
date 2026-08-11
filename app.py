@@ -55,6 +55,49 @@ _universe_lock = threading.Lock()
 _universe_refresh_interval_sec = 12 * 60 * 60
 _universe_last_refresh_ts = 0.0
 DATABASE_HEALTH_CHECK_INTERVAL_SEC = 5 * 60
+PROFIT_MARKET_CONVERGENCE_TIMEOUT_SEC = float(
+    os.getenv("PROFIT_MARKET_CONVERGENCE_TIMEOUT_SEC", "10")
+)
+PROFIT_MARKET_CONVERGENCE_POLL_SEC = float(
+    os.getenv("PROFIT_MARKET_CONVERGENCE_POLL_SEC", "2")
+)
+
+
+def wait_for_profit_market_convergence(
+    adjustment: WeakMarketProfitAdjustmentModule,
+    decision_round_ts: int,
+    *,
+    timeout_sec: float | None = None,
+    poll_sec: float | None = None,
+) -> tuple[bool, str]:
+    """Wait briefly for market inputs without starving position protection.
+
+    A missing ALLUSDT candle previously left the minute-level profit worker in
+    an unbounded loop.  Consequently every strategy scheduled after partial
+    take-profit (including trailing stop) appeared disabled even when its
+    feature flag was on.  On timeout, callers use the latest available market
+    inputs and continue through all position-protection strategies.
+    """
+    timeout = max(
+        0.0,
+        PROFIT_MARKET_CONVERGENCE_TIMEOUT_SEC
+        if timeout_sec is None
+        else float(timeout_sec),
+    )
+    poll = max(
+        0.01,
+        PROFIT_MARKET_CONVERGENCE_POLL_SEC if poll_sec is None else float(poll_sec),
+    )
+    deadline = time.monotonic() + timeout
+    while True:
+        converged, reason = adjustment.is_data_converged_for_round(decision_round_ts)
+        if converged:
+            return True, reason
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False, reason
+        print(f"⏳ weak-market profit adjustment round={decision_round_ts} waiting: {reason}")
+        time.sleep(min(poll, remaining))
 
 
 def _initialize_base_database() -> None:
@@ -625,14 +668,17 @@ def start_break_even_take_profit_task() -> None:
                 # The first minute-level scan observed in every quarter-hour must
                 # not overtake the adjustment, even when this worker started late.
                 if weak_market_adjustment.latest_result_for_round(market_round_ts) is None:
-                    while True:
-                        converged, convergence_reason = weak_market_adjustment.is_data_converged_for_round(market_round_ts)
-                        if converged:
-                            adjustment = weak_market_adjustment.run_round(market_round_ts)
-                            print(f"📉 weak-market profit adjustment round={market_round_ts} weak={adjustment.weak_market} trigger={adjustment.trigger_r_multiple}R fraction={adjustment.take_profit_fraction}")
-                            break
-                        print(f"⏳ weak-market profit adjustment round={market_round_ts} waiting: {convergence_reason}")
-                        time.sleep(2)
+                    converged, convergence_reason = wait_for_profit_market_convergence(
+                        weak_market_adjustment, market_round_ts
+                    )
+                    if not converged:
+                        print(
+                            f"⚠️ weak-market profit adjustment round={market_round_ts} "
+                            f"convergence timeout ({convergence_reason}); using latest data "
+                            "so position-protection strategies can continue"
+                        )
+                    adjustment = weak_market_adjustment.run_round(market_round_ts)
+                    print(f"📉 weak-market profit adjustment round={market_round_ts} weak={adjustment.weak_market} trigger={adjustment.trigger_r_multiple}R fraction={adjustment.take_profit_fraction}")
                 partial_result = partial_strategy.run_round(decision_round_ts=scan_ms) if feature_flags.is_feature_enabled(feature_flags.PARTIAL_TAKE_PROFIT) else {"checked": 0, "triggered": 0, "records": 0}
                 print(
                     f"🟢 partial take-profit checked={partial_result.get('checked', 0)} "
