@@ -15,7 +15,11 @@ import app as worker_app
 import web_app
 from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
-from sqlite_recovery import ensure_sqlite_database_usable, is_malformed_database_error
+from sqlite_recovery import (
+    ensure_sqlite_database_usable,
+    is_malformed_database_error,
+    is_sqlite_integrity_failure,
+)
 
 
 def test_connect_sqlite_initializes_wal_once_per_database_file(tmp_path, monkeypatch):
@@ -122,6 +126,36 @@ def test_web_before_request_skips_quick_check_by_default(tmp_path, monkeypatch):
 def test_is_malformed_database_error_matches_sqlite_message():
     assert is_malformed_database_error(sqlite3.DatabaseError("database disk image is malformed"))
     assert not is_malformed_database_error(sqlite3.DatabaseError("database is locked"))
+
+
+@pytest.mark.parametrize("detail", ["disk I/O error", "database or disk is full"])
+def test_worker_health_check_does_not_quarantine_storage_failure(
+    tmp_path, monkeypatch, detail
+):
+    db_path = tmp_path / "scoring.db"
+    original = b"database evidence must remain in place"
+    db_path.write_bytes(original)
+    initialized = []
+    monkeypatch.setattr(
+        worker_app,
+        "_database_initializers",
+        lambda: {str(db_path): lambda: initialized.append(True)},
+    )
+    monkeypatch.setattr(
+        worker_app, "quick_check_sqlite_database", lambda _path: (False, detail)
+    )
+
+    assert worker_app.check_worker_databases() == {}
+    assert db_path.read_bytes() == original
+    assert initialized == []
+    assert not list(tmp_path.glob("scoring.db.corrupt-*"))
+    assert not Path(db_config.database_recovery_marker(str(db_path))).exists()
+
+
+def test_integrity_failure_classifier_rejects_io_errors():
+    assert is_sqlite_integrity_failure("database disk image is malformed")
+    assert is_sqlite_integrity_failure("*** in database main ***\nPage 3 is never used")
+    assert not is_sqlite_integrity_failure("disk I/O error")
 
 
 def test_safe_page_module_does_not_quarantine_live_database(tmp_path, monkeypatch):

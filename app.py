@@ -49,6 +49,7 @@ from sqlite_recovery import (
     create_sqlite_failure_record,
     finish_sqlite_failure_record,
     is_malformed_database_error,
+    is_sqlite_integrity_failure,
     quarantine_sqlite_database,
     quick_check_sqlite_database,
 )
@@ -173,6 +174,16 @@ def check_worker_databases(
             # Contention is not corruption: quarantining here would discard a
             # healthy database merely because quick_check exhausted its timeout.
             print(f"⚠️ SQLite health check deferred db={db_path}; detail={detail}")
+            continue
+        if not is_sqlite_integrity_failure(detail):
+            # quick_check itself can fail because the filesystem/device is
+            # unhealthy.  Moving a database on that same storage loses the
+            # live filename and cannot repair the underlying I/O failure.
+            # Leave it untouched and retry on the next health-check cycle.
+            print(
+                f"⚠️ SQLite health check deferred without quarantine "
+                f"db={db_path}; detail={detail}"
+            )
             continue
         failure_record = create_sqlite_failure_record(
             db_path, detail=detail, source=source, exc=trigger_exception
