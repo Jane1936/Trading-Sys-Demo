@@ -105,6 +105,22 @@ def is_malformed_database_error(exc: BaseException) -> bool:
     return "database disk image is malformed" in message or "file is not a database" in message
 
 
+def is_sqlite_integrity_failure(detail: str) -> bool:
+    """Distinguish corruption findings from transient/storage probe failures.
+
+    ``PRAGMA quick_check`` can fail before it produces an integrity result (for
+    example with ``disk I/O error``).  Replacing a database in that situation
+    is both destructive and unlikely to succeed on the same unhealthy storage.
+    Actual quick-check findings are returned as text, commonly prefixed by
+    ``*** in database ... ***``; malformed headers are raised as exceptions.
+    """
+    normalized = detail.strip().lower()
+    return (
+        is_malformed_database_error(Exception(normalized))
+        or normalized.startswith("*** in database ")
+    )
+
+
 def quarantine_sqlite_database(db_path: str) -> list[str]:
     """Move a corrupt SQLite database and its WAL sidecar files out of the way.
 
@@ -212,7 +228,7 @@ def quarantine_malformed_sqlite_databases(
         detail_lower = detail.lower()
         if "database is locked" in detail_lower or "busy" in detail_lower:
             continue
-        if is_malformed_database_error(Exception(detail)) or detail:
+        if is_sqlite_integrity_failure(detail):
             quarantined = quarantine_sqlite_database(db_path)
             quarantined_by_path[db_path] = quarantined
     return quarantined_by_path
