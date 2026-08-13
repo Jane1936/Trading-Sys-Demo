@@ -32,6 +32,7 @@ class TrailingStopCheck:
     checked_at: int
     entry_price: str
     position_amt: str
+    holding_hours: str
     kline_high: str
     unrealized_pnl_at_high: str
     max_unrealized_pnl: str
@@ -93,6 +94,7 @@ class TrailingStopTracker:
                     checked_at INTEGER NOT NULL,
                     entry_price TEXT NOT NULL,
                     position_amt TEXT NOT NULL,
+                    holding_hours TEXT NOT NULL DEFAULT '0',
                     kline_high TEXT NOT NULL,
                     unrealized_pnl_at_high TEXT NOT NULL,
                     max_unrealized_pnl TEXT NOT NULL,
@@ -123,6 +125,7 @@ class TrailingStopTracker:
             )
             columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.CHECKS_TABLE})").fetchall()}
             migrations = {
+                "holding_hours": "TEXT NOT NULL DEFAULT '0'",
                 "current_profit_drawdown": "TEXT NOT NULL DEFAULT '0'",
                 "total_score": "INTEGER",
                 "drawdown_threshold": "TEXT NOT NULL DEFAULT '0'",
@@ -463,8 +466,10 @@ class TrailingStopTracker:
         return self._decimal_from(row["highest_since_open"], Decimal("0")) if row and "highest_since_open" in row.keys() else Decimal("0")
 
     def _insert_check(self, symbol: str, checked_at: int, entry: Decimal, amount: Decimal, high: Decimal, pnl: Decimal, max_pnl: Decimal, drawdown: Decimal, max_at: int, total_score: int | None, threshold: Decimal, current_mark_price: Decimal, latest_15m_low: Decimal, price_below_latest_15m_low: bool, trailing_triggered: bool, cancel_order_id: str, cancel_status: str, close_quantity: Decimal, close_order_id: str, close_status: str, eligible: bool, reason: str, *, latest_1m_close: Decimal, highest_since_open: Decimal, atr14: Decimal, volatility: Decimal, price_drawdown: Decimal, pretriggered: bool, tag: str) -> None:
+        open_time = self._latest_open_trade_created_at(symbol)
+        holding_hours = Decimal(max(checked_at - open_time, 0)) / Decimal("3600000") if open_time else Decimal("0")
         with self._connect() as conn:
-            conn.execute(f"INSERT INTO {self.CHECKS_TABLE} (symbol, checked_at, entry_price, position_amt, kline_high, unrealized_pnl_at_high, max_unrealized_pnl, current_profit_drawdown, max_unrealized_pnl_at, total_score, drawdown_threshold, current_mark_price, latest_15m_low, price_below_latest_15m_low, latest_1m_close, highest_since_open, atr14, volatility, price_drawdown, pretriggered, tag, trailing_stop_triggered, cancel_take_profit_order_id, cancel_status, close_quantity, close_order_id, close_status, eligible, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, self._fmt_decimal(entry), self._fmt_decimal(amount), self._fmt_decimal(high), self._fmt_decimal(pnl), self._fmt_decimal(max_pnl), self._fmt_decimal(drawdown), int(max_at), total_score, self._fmt_decimal(threshold), self._fmt_decimal(current_mark_price), self._fmt_decimal(latest_15m_low), int(price_below_latest_15m_low), self._fmt_decimal(latest_1m_close), self._fmt_decimal(highest_since_open), self._fmt_decimal(atr14), self._fmt_decimal(volatility), self._fmt_decimal(price_drawdown), int(pretriggered), tag, int(trailing_triggered), cancel_order_id, cancel_status, self._fmt_decimal(close_quantity), close_order_id, close_status, int(eligible), reason))
+            conn.execute(f"INSERT INTO {self.CHECKS_TABLE} (symbol, checked_at, entry_price, position_amt, holding_hours, kline_high, unrealized_pnl_at_high, max_unrealized_pnl, current_profit_drawdown, max_unrealized_pnl_at, total_score, drawdown_threshold, current_mark_price, latest_15m_low, price_below_latest_15m_low, latest_1m_close, highest_since_open, atr14, volatility, price_drawdown, pretriggered, tag, trailing_stop_triggered, cancel_take_profit_order_id, cancel_status, close_quantity, close_order_id, close_status, eligible, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, self._fmt_decimal(entry), self._fmt_decimal(amount), self._fmt_decimal(holding_hours.quantize(Decimal("0.01"))), self._fmt_decimal(high), self._fmt_decimal(pnl), self._fmt_decimal(max_pnl), self._fmt_decimal(drawdown), int(max_at), total_score, self._fmt_decimal(threshold), self._fmt_decimal(current_mark_price), self._fmt_decimal(latest_15m_low), int(price_below_latest_15m_low), self._fmt_decimal(latest_1m_close), self._fmt_decimal(highest_since_open), self._fmt_decimal(atr14), self._fmt_decimal(volatility), self._fmt_decimal(price_drawdown), int(pretriggered), tag, int(trailing_triggered), cancel_order_id, cancel_status, self._fmt_decimal(close_quantity), close_order_id, close_status, int(eligible), reason))
 
 
     def refresh_pretriggered_symbols(self) -> dict[str, Any]:
@@ -530,10 +535,11 @@ class TrailingStopTracker:
         else:
             reason = f"{reason}; drawdown_lte_{self._fmt_atr_multiple(atr_multiple)}atr"
         with self._connect() as conn:
+            holding_hours = Decimal(max(now - open_time, 0)) / Decimal("3600000") if open_time else Decimal("0")
             conn.execute(
                 f"""
                 UPDATE {self.CHECKS_TABLE}
-                SET checked_at = ?, kline_high = ?, current_mark_price = ?, latest_1m_close = ?,
+                SET checked_at = ?, holding_hours = ?, kline_high = ?, current_mark_price = ?, latest_1m_close = ?,
                     highest_since_open = ?, atr14 = ?, volatility = ?, price_drawdown = ?, drawdown_threshold = ?,
                     tag = ?, trailing_stop_triggered = ?, cancel_take_profit_order_id = ?, cancel_status = ?,
                     close_quantity = ?, close_order_id = ?, close_status = ?, reason = ?
@@ -541,6 +547,7 @@ class TrailingStopTracker:
                 """,
                 (
                     now,
+                    self._fmt_decimal(holding_hours.quantize(Decimal("0.01"))),
                     self._fmt_decimal(high),
                     self._fmt_decimal(close),
                     self._fmt_decimal(close),

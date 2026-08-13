@@ -237,7 +237,8 @@ def test_trailing_stop_tracker_requires_partial_take_profit_record():
     assert checks[0].reason == "partial_take_profit_not_triggered"
 
 
-def test_trailing_stop_tracker_closes_position_when_drawdown_threshold_hit():
+def test_trailing_stop_tracker_closes_position_when_drawdown_threshold_hit(monkeypatch):
+    monkeypatch.setattr("trailing_stop_tracker.time.time", lambda: 7200.001)
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
@@ -269,6 +270,7 @@ def test_trailing_stop_tracker_closes_position_when_drawdown_threshold_hit():
     assert checks[0].atr14 == "0.25"
     assert checks[0].volatility == "0.02083333333333333333333333333"
     assert checks[0].price_drawdown == "0.7"
+    assert checks[0].holding_hours == "2"
     assert checks[0].cancel_take_profit_order_id == "123"
     assert checks[0].cancel_status == "submitted"
     assert checks[0].close_quantity == "10"
