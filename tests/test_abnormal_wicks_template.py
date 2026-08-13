@@ -458,6 +458,17 @@ def test_trailing_stop_action_records_show_atr_and_volatility_without_total_scor
     assert "row.current_profit_drawdown" not in renderer
 
 
+def test_trailing_stop_checks_display_holding_hours():
+    template = Path("templates/abnormal_wicks.html").read_text()
+    section_start = template.index("<strong>移动追踪止盈规则：1分钟扫描结果</strong>")
+    section_end = template.index("<strong>移动追踪止盈操作记录</strong>", section_start)
+    section = template[section_start:section_end]
+
+    assert "<th>持仓时间（小时）</th>" in section
+    assert "row.holding_hours" in section
+    assert 'colspan="18">暂无移动追踪止盈扫描结果' in section
+
+
 def test_web_page_creates_missing_db_parent_directory():
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "nested" / "missing" / "klines.db"

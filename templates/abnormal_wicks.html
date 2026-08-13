@@ -2012,6 +2012,7 @@
                 <th>symbol</th>
                 <th>开仓价</th>
                 <th>持仓数量</th>
+                <th>持仓时间（小时）</th>
                 <th>1m high</th>
                 <th>1m close</th>
                 <th>开仓以来最高价</th>
@@ -2034,6 +2035,7 @@
                 <td>{{ row.symbol }}</td>
                 <td>{{ row.entry_price }}</td>
                 <td>{{ row.position_amt }}</td>
+                <td>{{ row.holding_hours }}</td>
                 <td>{{ row.kline_high }}</td>
                 <td>{{ row.latest_1m_close }}</td>
                 <td>{{ row.highest_since_open }}</td>
@@ -2049,7 +2051,7 @@
                 <td>{{ row.reason }}</td>
               </tr>
               {% else %}
-              <tr><td class="empty" colspan="17">暂无移动追踪止盈扫描结果</td></tr>
+              <tr><td class="empty" colspan="18">暂无移动追踪止盈扫描结果</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -3297,7 +3299,7 @@
       const rowsEl = document.getElementById('trailing-stop-checks-body');
       if (!rowsEl) return;
       if (!rows.length) {
-        rowsEl.innerHTML = '<tr><td class="empty" colspan="17">暂无移动追踪止盈扫描结果</td></tr>';
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="18">暂无移动追踪止盈扫描结果</td></tr>';
         return;
       }
       rowsEl.innerHTML = rows.map(row => `
@@ -3306,6 +3308,7 @@
           <td>${escapeHtml(row.symbol)}</td>
           <td>${escapeHtml(row.entry_price)}</td>
           <td>${escapeHtml(row.position_amt)}</td>
+          <td>${escapeHtml(row.holding_hours)}</td>
           <td>${escapeHtml(row.kline_high)}</td>
           <td>${escapeHtml(row.latest_1m_close)}</td>
           <td>${escapeHtml(row.highest_since_open)}</td>
