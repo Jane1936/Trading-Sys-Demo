@@ -2649,6 +2649,28 @@
       </form>
     </div>
     <div class="card">
+      <div class="header"><h2>评分规则选举</h2></div>
+      <div class="tip">“必须”规则需全部得分；“可选”规则中需至少 N 条同时得分；“无要求”不参与选举。选举条件会与现有总分、冷却期及止损距离条件共同决定是否允许开仓。</div>
+      <div id="score-election-message" class="feature-flag-message" role="status" aria-live="polite"></div>
+      <form id="score-election-form">
+        <div class="score-weight-grid">
+          {% for rule in scoring_rule_election_settings.rules %}
+          <label class="score-weight-item"><span>规则 {{ rule.rule_id }}：{{ rule.name }}</span>
+            <select class="score-election-select" data-rule-id="{{ rule.rule_id }}" aria-label="规则 {{ rule.rule_id }} 的选举状态">
+              <option value="required" {{ 'selected' if rule.status == 'required' else '' }}>必须</option>
+              <option value="optional" {{ 'selected' if rule.status == 'optional' else '' }}>可选</option>
+              <option value="ignored" {{ 'selected' if rule.status == 'ignored' else '' }}>无要求</option>
+            </select>
+          </label>
+          {% endfor %}
+        </div>
+        <div class="score-weight-actions">
+          <label>可选规则至少得分条数 N：<input id="score-election-optional-min" type="number" min="0" step="1" required value="{{ scoring_rule_election_settings.optional_min }}"></label>
+          <button id="save-score-election" class="btn btn-success" type="submit">保存评分规则选举</button>
+        </div>
+      </form>
+    </div>
+    <div class="card">
       <div class="header"><h2>止损距离档位与总分映射</h2></div>
       <div class="tip">配置“本轮可开仓symbol情况”使用的止损距离档位上限、总分区间、距离筛查上限，以及各总分区间对应 A/B/C/D 档的开仓杠杆。保存后从下一轮可开仓评估开始生效。</div>
       <div id="openable-settings-message" class="feature-flag-message" role="status"></div>
@@ -2787,6 +2809,40 @@
         } finally {
           saveButton.disabled = false;
         }
+      });
+    })();
+
+    (function initScoreElectionForm() {
+      const form = document.getElementById('score-election-form');
+      const message = document.getElementById('score-election-message');
+      const saveButton = document.getElementById('save-score-election');
+      if (!form) return;
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        const rules = Array.from(form.querySelectorAll('.score-election-select')).map(select => ({
+          rule_id: Number(select.dataset.ruleId), status: select.value,
+        }));
+        const optionalCount = rules.filter(rule => rule.status === 'optional').length;
+        const optional_min = Number(document.getElementById('score-election-optional-min').value);
+        if (optional_min > optionalCount) {
+          message.textContent = `N 不能大于当前可选规则数量 ${optionalCount}。`;
+          message.classList.add('error');
+          return;
+        }
+        saveButton.disabled = true;
+        message.textContent = '正在保存评分规则选举…'; message.classList.remove('error');
+        try {
+          const response = await fetch('/api/scoring-rule-election', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({rules, optional_min}),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          message.textContent = '评分规则选举已保存，将从下一轮可开仓检查开始生效。';
+        } catch (err) {
+          message.textContent = `评分规则选举保存失败：${err.message || err}`; message.classList.add('error');
+        } finally { saveButton.disabled = false; }
       });
     })();
 

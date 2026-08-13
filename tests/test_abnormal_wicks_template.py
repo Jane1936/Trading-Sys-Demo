@@ -595,3 +595,14 @@ def test_feature_flags_page_contains_all_rule_weight_controls_and_save_logic():
     assert 'data-rule-id="{{ rule.rule_id }}"' in section
     assert "保存全部权重" in section
     assert "fetch('/api/scoring-rule-weights'" in section
+
+
+def test_feature_flags_page_contains_scoring_rule_election_below_weights():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    section = template[template.index('id="tab-feature-flags"'):]
+
+    assert section.index("评分规则权重") < section.index("评分规则选举")
+    assert 'id="score-election-form"' in section
+    assert "必须" in section and "可选" in section and "无要求" in section
+    assert 'id="score-election-optional-min"' in section
+    assert "fetch('/api/scoring-rule-election'" in section

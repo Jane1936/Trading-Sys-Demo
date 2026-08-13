@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 from typing import List
 from openable_symbol_settings import get_settings
+from scoring_rule_election import get_settings as get_rule_election_settings
 
 
 @dataclass(frozen=True)
@@ -250,6 +251,7 @@ class OpenableSymbolModule:
             else self.MIN_TOTAL_SCORE
         )
         with self._connect() as conn:
+            election = get_rule_election_settings(db_config.BASE_DB_PATH)
             total_round = conn.execute(
                 "SELECT 1 FROM symbol_total_scores WHERE decision_round_ts = ? LIMIT 1",
                 (int(decision_round_ts),),
@@ -260,9 +262,7 @@ class OpenableSymbolModule:
             rows = conn.execute(
                 """
                 SELECT
-                    t.symbol,
-                    t.decision_round_ts,
-                    t.total_score,
+                    t.*,
                     (
                         SELECT previous.total_score
                         FROM symbol_total_scores AS previous
@@ -305,7 +305,9 @@ class OpenableSymbolModule:
                 )
 
             results = [
-                self._row_to_openable(row, evaluated_at, threshold_reason=threshold_reason)
+                self._row_to_openable(
+                    row, evaluated_at, threshold_reason=threshold_reason, election=election
+                )
                 for row in rows
             ]
             self._save_rows(conn, results)
@@ -316,6 +318,7 @@ class OpenableSymbolModule:
         row: sqlite3.Row,
         evaluated_at: int,
         threshold_reason: str | None = None,
+        election: dict | None = None,
     ) -> OpenableSymbol:
         total_score = int(row["total_score"])
         previous_total_score = (
@@ -337,7 +340,13 @@ class OpenableSymbolModule:
         )
         previous_band = self._configured_band(previous_total_score) if previous_total_score is not None else None
         previous_score_band_lower = bool(previous_band and band and self.configured_score_bands().index(previous_band) < self.configured_score_bands().index(band))
-        qualified = distance_qualified and not previous_score_band_lower
+        election = election or get_rule_election_settings(db_config.BASE_DB_PATH)
+        required_ids = [r["rule_id"] for r in election["rules"] if r["status"] == "required"]
+        optional_ids = [r["rule_id"] for r in election["rules"] if r["status"] == "optional"]
+        missing_required = [rule_id for rule_id in required_ids if int(row[f"rule{rule_id}_score"]) <= 0]
+        optional_hits = sum(int(row[f"rule{rule_id}_score"]) > 0 for rule_id in optional_ids)
+        election_qualified = not missing_required and optional_hits >= election["optional_min"]
+        qualified = distance_qualified and not previous_score_band_lower and election_qualified
         if threshold is None:
             reason = "total_score_not_in_openable_distance_band"
         elif ratio is None:
@@ -348,6 +357,10 @@ class OpenableSymbolModule:
             reason = "zero_distance_ratio_not_openable"
         elif previous_score_band_lower:
             reason = "previous_score_band_lower_than_current"
+        elif missing_required:
+            reason = "required_scoring_rules_not_hit:" + ",".join(map(str, missing_required))
+        elif optional_hits < election["optional_min"]:
+            reason = f"optional_scoring_rules_not_enough:{optional_hits}/{election['optional_min']}"
         elif distance_qualified:
             reason = threshold_reason or "total_score_not_cooldown_and_stop_loss_distance_qualified"
         else:
