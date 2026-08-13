@@ -37,6 +37,7 @@ from scoring_system import (
     get_rule_score_weight_settings,
     set_rule_score_weight_settings,
 )
+from scoring_rule_election import get_settings as get_rule_election_settings, set_settings as set_rule_election_settings
 from trading_experiment import TradingExperiment
 from market_filter_module import MarketFilterModule
 from weak_market_profit_adjustment import WeakMarketProfitAdjustmentModule
@@ -1142,6 +1143,19 @@ def update_scoring_rule_weights_api():
     return jsonify({"rules": rules})
 
 
+@app.get("/api/scoring-rule-election")
+def scoring_rule_election_api():
+    return jsonify(get_rule_election_settings(BASE_DB_PATH))
+
+
+@app.put("/api/scoring-rule-election")
+def update_scoring_rule_election_api():
+    try:
+        return jsonify(set_rule_election_settings(request.get_json(silent=True) or {}, BASE_DB_PATH))
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
 @app.get("/api/openable-symbol-settings")
 def openable_symbol_settings_api():
     return jsonify(get_openable_symbol_settings(BASE_DB_PATH))
@@ -1450,6 +1464,7 @@ def abnormal_wicks():
         btc_total_pages=btc_total_pages,
         feature_flags=feature_flags.list_feature_flags(BASE_DB_PATH),
         scoring_rule_weight_settings=get_rule_score_weight_settings(BASE_DB_PATH),
+        scoring_rule_election_settings=get_rule_election_settings(BASE_DB_PATH),
         openable_symbol_settings=get_openable_symbol_settings(BASE_DB_PATH),
     )
 
