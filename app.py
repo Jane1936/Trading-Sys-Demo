@@ -153,6 +153,12 @@ def _database_initializers() -> dict[str, Callable[[], None]]:
             ).init_tables(),
             ZombieForceLiquidationModule(db_path=db_config.TRADING_DB_PATH).init_tables(),
         ),
+        db_config.TRADING_INFO_DB_PATH: lambda: (
+            HoldingPositionScoringSystem(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            BreakEvenTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            PartialTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH).init_tables(),
+        ),
     }
 
 

@@ -74,6 +74,7 @@ class BreakEvenTakeProfitStrategy:
     ) -> None:
         self.db_path = db_path
         self.core_db_path = db_config.trading_core_path(db_path)
+        self.info_db_path = db_config.trading_info_path(db_path)
         self.account_manager = account_manager or BinanceAccountManager()
         self.config = config or ExperimentConfig()
 
@@ -86,6 +87,9 @@ class BreakEvenTakeProfitStrategy:
     def _core_connect(self) -> sqlite3.Connection:
         """Connect to the database that owns experiment trade lifecycle data."""
         return db_config.connect_sqlite(self.core_db_path, row_factory=sqlite3.Row)
+
+    def _info_connect(self) -> sqlite3.Connection:
+        return db_config.connect_sqlite(self.info_db_path, row_factory=sqlite3.Row)
 
     def init_tables(self) -> None:
         db_dir = os.path.dirname(self.db_path)
@@ -109,6 +113,8 @@ class BreakEvenTakeProfitStrategy:
                 )
                 """
             )
+            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
+        with self._info_connect() as conn:
             conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.RECORDS_TABLE} (
@@ -130,7 +136,6 @@ class BreakEvenTakeProfitStrategy:
                 )
                 """
             )
-            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
             conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_checked ON {self.RECORDS_TABLE}(checked_at DESC, symbol ASC)")
 
     def run_round(self) -> dict[str, Any]:
@@ -385,7 +390,7 @@ class BreakEvenTakeProfitStrategy:
         return str(row["stop_loss_order_id"]) if row else ""
 
     def _has_success_record(self, symbol: str, entry_price: Decimal) -> bool:
-        with self._connect() as conn:
+        with self._info_connect() as conn:
             row = conn.execute(
                 f"SELECT 1 FROM {self.RECORDS_TABLE} WHERE symbol = ? AND entry_price = ? AND status = 'submitted' LIMIT 1",
                 (symbol, self._fmt_decimal(entry_price)),
@@ -397,7 +402,7 @@ class BreakEvenTakeProfitStrategy:
             conn.execute(f"INSERT INTO {self.CHECKS_TABLE} (symbol, checked_at, account_equity_usdt, r_usdt, unrealized_pnl, entry_price, position_amt, triggered, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, self._fmt_decimal(equity), self._fmt_decimal(r_value), self._fmt_decimal(pnl), self._fmt_decimal(entry), self._fmt_decimal(amount), int(triggered), reason))
 
     def _insert_record(self, symbol: str, checked_at: int, side: str, amount: Decimal, entry: Decimal, equity: Decimal, r_value: Decimal, pnl: Decimal, old_id: str, new_id: str, stop_price: Decimal, status: str, reason: str, raw: str) -> None:
-        with self._connect() as conn:
+        with self._info_connect() as conn:
             conn.execute(f"INSERT INTO {self.RECORDS_TABLE} (symbol, checked_at, side, position_amt, entry_price, account_equity_usdt, r_usdt, unrealized_pnl, old_stop_loss_order_id, new_stop_loss_order_id, stop_loss_price, status, reason, raw_response) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, side, self._fmt_decimal(amount), self._fmt_decimal(entry), self._fmt_decimal(equity), self._fmt_decimal(r_value), self._fmt_decimal(pnl), old_id, new_id, self._fmt_decimal(stop_price), status, reason, raw))
 
     def get_latest_round_checks(self) -> tuple[int | None, list[BreakEvenTakeProfitCheck]]:
@@ -421,7 +426,7 @@ class BreakEvenTakeProfitStrategy:
 
     def recent_records(self, limit: int = 100) -> list[BreakEvenStopLossRecord]:
         self.init_tables()
-        with self._connect() as conn:
+        with self._info_connect() as conn:
             rows = conn.execute(f"SELECT * FROM {self.RECORDS_TABLE} ORDER BY checked_at DESC, id DESC LIMIT ?", (int(limit),)).fetchall()
         return [BreakEvenStopLossRecord(**dict(row)) for row in rows]
 

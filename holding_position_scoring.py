@@ -230,6 +230,7 @@ class HoldingPositionScoringSystem:
         realized_pnl_retry_delays: Iterable[float] = (1, 3, 5),
     ) -> None:
         self.db_path = db_path
+        self.info_db_path = db_config.trading_info_path(db_path)
         self.account_manager = account_manager or BinanceAccountManager()
         self.realized_pnl_retry_delays = tuple(realized_pnl_retry_delays)
 
@@ -242,6 +243,9 @@ class HoldingPositionScoringSystem:
         return db_config.connect_sqlite(
             db_config.trading_core_path(self.db_path), row_factory=sqlite3.Row
         )
+
+    def _trading_info_connect(self) -> sqlite3.Connection:
+        return db_config.connect_sqlite(self.info_db_path, row_factory=sqlite3.Row)
 
     @staticmethod
     def _ensure_upsert_key(
@@ -279,6 +283,12 @@ class HoldingPositionScoringSystem:
                 core_conn = trading_conn
             else:
                 core_conn = stack.enter_context(self._trading_core_connect())
+            if os.path.realpath(self.info_db_path) == os.path.realpath(self.db_path):
+                info_conn = trading_conn
+            elif os.path.realpath(self.info_db_path) == os.path.realpath(db_config.trading_core_path(self.db_path)):
+                info_conn = core_conn
+            else:
+                info_conn = stack.enter_context(self._trading_info_connect())
             core_conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.CHECKS_TABLE} (
@@ -447,7 +457,7 @@ class HoldingPositionScoringSystem:
                 )
                 """
             )
-            trading_conn.execute(
+            info_conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.INCREASE_RECORDS_TABLE} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -520,7 +530,7 @@ class HoldingPositionScoringSystem:
             }.items():
                 if column not in reduction_columns:
                     core_conn.execute(f"ALTER TABLE {self.REDUCTION_CHECKS_TABLE} ADD COLUMN {column} {ddl}")
-            increase_record_columns = {row["name"] for row in trading_conn.execute(f"PRAGMA table_info({self.INCREASE_RECORDS_TABLE})").fetchall()}
+            increase_record_columns = {row["name"] for row in info_conn.execute(f"PRAGMA table_info({self.INCREASE_RECORDS_TABLE})").fetchall()}
             for column, ddl in {
                 "original_quantity": "TEXT NOT NULL DEFAULT ''",
                 "increased_quantity": "TEXT NOT NULL DEFAULT ''",
@@ -530,7 +540,7 @@ class HoldingPositionScoringSystem:
                 "raw_response": "TEXT NOT NULL DEFAULT ''",
             }.items():
                 if column not in increase_record_columns:
-                    trading_conn.execute(f"ALTER TABLE {self.INCREASE_RECORDS_TABLE} ADD COLUMN {column} {ddl}")
+                    info_conn.execute(f"ALTER TABLE {self.INCREASE_RECORDS_TABLE} ADD COLUMN {column} {ddl}")
             core_conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_created "
                 f"ON {self.RECORDS_TABLE}(created_at DESC, symbol ASC)"
@@ -543,7 +553,7 @@ class HoldingPositionScoringSystem:
                 f"CREATE INDEX IF NOT EXISTS idx_{self.INCREASE_CHECKS_TABLE}_round "
                 f"ON {self.INCREASE_CHECKS_TABLE}(decision_round_ts DESC, triggered DESC, symbol ASC)"
             )
-            trading_conn.execute(
+            info_conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.INCREASE_RECORDS_TABLE}_created "
                 f"ON {self.INCREASE_RECORDS_TABLE}(created_at DESC, symbol ASC)"
             )
@@ -1375,9 +1385,9 @@ class HoldingPositionScoringSystem:
     def _has_partial_take_profit_record_since(self, symbol: str, lifecycle_started_at: int) -> bool:
         """Return whether this open lifecycle has a submitted partial take profit."""
         try:
-            # Execution records remain in trading.db after lifecycle rows move to
-            # trading_core.db, so query the strategy database explicitly.
-            with db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row) as conn:
+            # Execution records live in trading_info.db after lifecycle rows move
+            # to trading_core.db, so query the information database explicitly.
+            with db_config.connect_sqlite(self.info_db_path, row_factory=sqlite3.Row) as conn:
                 row = conn.execute(
                     "SELECT 1 FROM partial_take_profit_records "
                     "WHERE symbol = ? AND checked_at >= ? AND status = 'submitted' LIMIT 1",
@@ -1575,7 +1585,7 @@ class HoldingPositionScoringSystem:
         return str(row["price"]) if row and row["price"] is not None else ""
 
     def _has_first_increase_record_since(self, symbol: str, lifecycle_started_at: int) -> bool:
-        with self._connect() as conn:
+        with self._trading_info_connect() as conn:
             row = conn.execute(
                 f"SELECT 1 FROM {self.INCREASE_RECORDS_TABLE} WHERE symbol = ? AND action_name = ? AND status != ? AND created_at >= ? LIMIT 1",
                 (symbol, self.INCREASE_TAG_FIRST, "skipped", lifecycle_started_at),
@@ -1764,7 +1774,7 @@ class HoldingPositionScoringSystem:
             )
 
     def _save_increase_record(self, record: PositionIncreaseRecord) -> None:
-        with self._connect() as conn:
+        with self._trading_info_connect() as conn:
             conn.execute(
                 f"""
                 INSERT INTO {self.INCREASE_RECORDS_TABLE}
@@ -1775,7 +1785,7 @@ class HoldingPositionScoringSystem:
             )
 
     def _has_increase_record(self, symbol: str, decision_round_ts: int) -> bool:
-        with self._connect() as conn:
+        with self._trading_info_connect() as conn:
             row = conn.execute(f"SELECT 1 FROM {self.INCREASE_RECORDS_TABLE} WHERE symbol = ? AND decision_round_ts = ? LIMIT 1", (symbol, decision_round_ts)).fetchone()
         return row is not None
 
@@ -1809,7 +1819,7 @@ class HoldingPositionScoringSystem:
         self.init_tables()
         where = "WHERE created_at >= ?" if since_ms is not None else ""
         params: tuple[Any, ...] = (int(since_ms), limit) if since_ms is not None else (limit,)
-        with self._connect() as conn:
+        with self._trading_info_connect() as conn:
             return conn.execute(f"SELECT * FROM {self.INCREASE_RECORDS_TABLE} {where} ORDER BY created_at DESC, id DESC LIMIT ?", params).fetchall()
 
     def calculate_portfolio_risk(

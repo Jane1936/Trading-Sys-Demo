@@ -51,6 +51,7 @@ class DynamicAddPositionThresholdModule:
                 ("scoring", db_config.SCORING_DB_PATH),
                 ("market", db_config.MARKET_DB_PATH),
                 ("core", db_config.trading_core_path(self.db_path)),
+                ("info", db_config.trading_info_path(self.db_path)),
             ],
         )
         conn.execute("PRAGMA busy_timeout=30000;")
@@ -62,6 +63,13 @@ class DynamicAddPositionThresholdModule:
         ):
             return TradingExperiment.TRADES_TABLE
         return f"core.{TradingExperiment.TRADES_TABLE}"
+
+    def _partial_take_profit_records_table_name(self) -> str:
+        if os.path.realpath(db_config.trading_info_path(self.db_path)) == os.path.realpath(
+            self.db_path
+        ):
+            return PartialTakeProfitStrategy.RECORDS_TABLE
+        return f"info.{PartialTakeProfitStrategy.RECORDS_TABLE}"
 
     def init_table(self) -> None:
         TradingExperiment(self.db_path).init_tables()
@@ -102,6 +110,7 @@ class DynamicAddPositionThresholdModule:
         evaluated_ms = int(time.time() * 1000) if evaluated_at is None else int(evaluated_at)
         with self._connect() as conn:
             trades_table = self._trades_table_name()
+            partial_records_table = self._partial_take_profit_records_table_name()
             rows = conn.execute(
                 f"""
                 WITH recent_open_trades AS (
@@ -115,7 +124,7 @@ class DynamicAddPositionThresholdModule:
                     COUNT(*) AS sample_size,
                     COALESCE(SUM(CASE WHEN EXISTS (
                         SELECT 1
-                        FROM {PartialTakeProfitStrategy.RECORDS_TABLE} AS p
+                        FROM {partial_records_table} AS p
                         WHERE p.status = 'submitted'
                           AND UPPER(p.symbol) = UPPER(t.symbol)
                           AND p.entry_price = t.entry_price

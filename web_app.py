@@ -341,6 +341,7 @@ def _filled_order_exit_reason_matches(
     time_tolerance_ms: int = 5 * 60 * 1000,
     *,
     core_schema: str = "main",
+    info_schema: str = "main",
 ) -> list[dict[str, str]]:
     """Match a filled order to local strategy records.
 
@@ -476,11 +477,14 @@ def _filled_order_exit_reason_matches(
                 matches.append({"type": "减仓", "matched_at": str(row["matched_at"] or "")})
                 break
 
-    if _table_exists(conn, TrailingReductionTracker.RECORDS_TABLE):
+    if _table_exists(conn, TrailingReductionTracker.RECORDS_TABLE, schema=info_schema):
+        trailing_reduction_table = _qualified_table(
+            info_schema, TrailingReductionTracker.RECORDS_TABLE
+        )
         rows = conn.execute(
             f"""
             SELECT checked_at AS matched_at, reduced_quantity, market_order_id
-            FROM {TrailingReductionTracker.RECORDS_TABLE}
+            FROM {trailing_reduction_table}
             WHERE symbol = ?
               AND status = 'submitted'
               AND checked_at BETWEEN ? AND ?
@@ -531,11 +535,14 @@ def _filled_order_exit_reason_matches(
                 matches.append({"type": "移动追踪止盈", "matched_at": str(row["matched_at"] or "")})
                 break
 
-    if _table_exists(conn, PartialTakeProfitStrategy.RECORDS_TABLE):
+    if _table_exists(conn, PartialTakeProfitStrategy.RECORDS_TABLE, schema=info_schema):
+        partial_take_profit_table = _qualified_table(
+            info_schema, PartialTakeProfitStrategy.RECORDS_TABLE
+        )
         rows = conn.execute(
             f"""
             SELECT checked_at AS matched_at, take_profit_quantity
-            FROM {PartialTakeProfitStrategy.RECORDS_TABLE}
+            FROM {partial_take_profit_table}
             WHERE symbol = ?
               AND side = 'SELL'
               AND checked_at BETWEEN ? AND ?
@@ -677,12 +684,17 @@ def _annotate_filled_order_exit_reasons(payload: dict) -> dict:
     try:
         trading_db_path = _trading_db_path()
         core_db_path = db_config.trading_core_path(trading_db_path)
+        info_db_path = db_config.trading_info_path(trading_db_path)
         with db_config.connect_sqlite(trading_db_path) as conn:
             conn.row_factory = sqlite3.Row
             core_schema = "main"
             if os.path.realpath(core_db_path) != os.path.realpath(trading_db_path):
                 db_config.attach_databases(conn, [("trading_core", core_db_path)])
                 core_schema = "trading_core"
+            info_schema = "main"
+            if os.path.realpath(info_db_path) != os.path.realpath(trading_db_path):
+                db_config.attach_databases(conn, [("trading_info", info_db_path)])
+                info_schema = "trading_info"
             scoring_db_path = _scoring_db_path()
             if os.path.realpath(scoring_db_path) != os.path.realpath(trading_db_path):
                 db_config.attach_databases(conn, [("scoring", scoring_db_path)])
@@ -693,7 +705,7 @@ def _annotate_filled_order_exit_reasons(payload: dict) -> dict:
                 if not isinstance(order, dict):
                     continue
                 matches = _filled_order_exit_reason_matches(
-                    conn, order, core_schema=core_schema
+                    conn, order, core_schema=core_schema, info_schema=info_schema
                 )
                 order["exit_reason"] = _filled_order_exit_reason_label(order, matches)
                 order["exit_reason_matches"] = matches
