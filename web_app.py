@@ -499,11 +499,14 @@ def _filled_order_exit_reason_matches(
                 matches.append({"type": "移动追踪减仓", "matched_at": str(row["matched_at"] or "")})
                 break
 
-    if _table_exists(conn, DynamicProfitProtection.CHECKS_TABLE):
+    if _table_exists(conn, DynamicProfitProtection.RECORDS_TABLE, schema=info_schema):
+        dynamic_profit_table = _qualified_table(
+            info_schema, DynamicProfitProtection.RECORDS_TABLE
+        )
         rows = conn.execute(
             f"""
             SELECT checked_at AS matched_at, close_quantity
-            FROM {DynamicProfitProtection.CHECKS_TABLE}
+            FROM {dynamic_profit_table}
             WHERE symbol = ?
               AND triggered = 1
               AND close_status = 'submitted'
@@ -517,11 +520,14 @@ def _filled_order_exit_reason_matches(
             if _decimal_text_equal(row["close_quantity"], quantity):
                 matches.append({"type": "动态利润保护", "matched_at": str(row["matched_at"] or "")})
 
-    if _table_exists(conn, TrailingStopTracker.CHECKS_TABLE):
+    if _table_exists(conn, TrailingStopTracker.RECORDS_TABLE, schema=info_schema):
+        trailing_stop_table = _qualified_table(
+            info_schema, TrailingStopTracker.RECORDS_TABLE
+        )
         rows = conn.execute(
             f"""
             SELECT checked_at AS matched_at, close_quantity
-            FROM {TrailingStopTracker.CHECKS_TABLE}
+            FROM {trailing_stop_table}
             WHERE symbol = ?
               AND trailing_stop_triggered = 1
               AND close_status = 'submitted'

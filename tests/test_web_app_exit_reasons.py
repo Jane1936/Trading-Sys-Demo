@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import web_app
+from dynamic_profit_protection import DynamicProfitProtection
 from holding_position_scoring import HoldingPositionScoringSystem
 from partial_take_profit import PartialTakeProfitStrategy
 from trailing_reduction_tracker import TrailingReductionTracker
@@ -65,7 +66,19 @@ def _create_exit_reason_tables(db_path):
         )
         conn.execute(
             f"""
-            CREATE TABLE {TrailingStopTracker.CHECKS_TABLE} (
+            CREATE TABLE {DynamicProfitProtection.RECORDS_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                checked_at INTEGER NOT NULL,
+                close_quantity TEXT NOT NULL,
+                triggered INTEGER NOT NULL,
+                close_status TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            f"""
+            CREATE TABLE {TrailingStopTracker.RECORDS_TABLE} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL,
                 checked_at INTEGER NOT NULL,
@@ -312,7 +325,7 @@ def test_filled_sell_order_exit_reason_uses_trailing_stop_match(tmp_path, monkey
     _create_exit_reason_tables(db_path)
     with sqlite3.connect(db_path) as conn:
         conn.execute(
-            f"INSERT INTO {TrailingStopTracker.CHECKS_TABLE} (symbol, checked_at, close_quantity, trailing_stop_triggered, close_status) VALUES (?, ?, ?, ?, ?)",
+            f"INSERT INTO {TrailingStopTracker.RECORDS_TABLE} (symbol, checked_at, close_quantity, trailing_stop_triggered, close_status) VALUES (?, ?, ?, ?, ?)",
             ("BANK", 1000, "7", 1, "submitted"),
         )
     monkeypatch.setattr(web_app, "DB_PATH", str(db_path))
@@ -323,6 +336,23 @@ def test_filled_sell_order_exit_reason_uses_trailing_stop_match(tmp_path, monkey
 
     assert annotated["orders"][0]["exit_reason"] == "移动追踪止盈"
     assert annotated["orders"][0]["exit_reason_matches"] == [{"type": "移动追踪止盈", "matched_at": "1000"}]
+
+
+def test_filled_sell_order_exit_reason_uses_dynamic_profit_record(tmp_path, monkeypatch):
+    db_path = tmp_path / "orders.db"
+    _create_exit_reason_tables(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"INSERT INTO {DynamicProfitProtection.RECORDS_TABLE} (symbol, checked_at, close_quantity, triggered, close_status) VALUES (?, ?, ?, ?, ?)",
+            ("BANK", 1000, "7", 1, "submitted"),
+        )
+    monkeypatch.setattr(web_app, "DB_PATH", str(db_path))
+
+    payload = {"orders": [{"symbol": "BANKUSDT", "side": "SELL", "time": 1000, "quantity": "7.0", "realized_pnl": "3"}]}
+
+    annotated = web_app._annotate_filled_order_exit_reasons(payload)
+
+    assert annotated["orders"][0]["exit_reason"] == "动态利润保护"
 
 
 def test_filled_buy_order_exit_reason_uses_increase_match(tmp_path, monkeypatch):

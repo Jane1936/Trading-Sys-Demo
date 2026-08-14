@@ -58,6 +58,18 @@ class FakeAccountManager:
         self.signed_posts.append((endpoint, dict(params or {})))
         return {"orderId": 456}
 
+
+class FailingOnceAccountManager(FakeAccountManager):
+    def __init__(self):
+        super().__init__()
+        self.fail_next_post = True
+
+    def _signed_post(self, endpoint, params=None):
+        if self.fail_next_post:
+            self.fail_next_post = False
+            raise RuntimeError("temporary order failure")
+        return super()._signed_post(endpoint, params)
+
 def _insert_1m_kline(db_path, high, open_time, close=12):
     import sqlite3
 
@@ -287,6 +299,33 @@ def test_trailing_stop_tracker_closes_position_when_drawdown_threshold_hit(monke
     assert fake_account.signed_posts == [
         ("/fapi/v1/order", {"symbol": "BANKUSDT", "side": "SELL", "type": "MARKET", "quantity": "10", "reduceOnly": "true", "newOrderRespType": "RESULT"})
     ]
+
+
+def test_trailing_stop_tracker_updates_failed_action_record_on_retry(monkeypatch):
+    monkeypatch.setattr("trailing_stop_tracker.time.time", lambda: 7200.001)
+    account = FailingOnceAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        _insert_partial_take_profit_record(db_path)
+        _insert_open_trade(db_path)
+        _insert_atr14(db_path, atr14=0.25)
+        _insert_1m_kline(db_path, high=13, open_time=1000, close=12.3)
+        for open_time in (1000, 2000, 3000):
+            _insert_15m_kline(db_path, low=13, open_time=open_time)
+        _insert_15m_kline(db_path, low=13, open_time=4000, close=12)
+        tracker = TrailingStopTracker(db_path=db_path, account_manager=account)
+
+        assert tracker.run_round()["updated"] == 1
+        failed = tracker.recent_action_records()
+        assert len(failed) == 1
+        assert failed[0].close_status == "failed"
+
+        assert tracker.run_round()["updated"] == 1
+        records = tracker.recent_action_records()
+
+    assert len(records) == 1
+    assert records[0].close_status == "submitted"
+    assert records[0].close_order_id == "456"
 
 
 def test_trailing_stop_tracker_does_not_close_when_latest_close_is_below_long_entry():
