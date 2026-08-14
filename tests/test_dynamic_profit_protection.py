@@ -37,6 +37,18 @@ class FakeAccountManager:
         return {"orderId": 789}
 
 
+class FailingOnceAccountManager(FakeAccountManager):
+    def __init__(self, unrealized_profit="30"):
+        super().__init__(unrealized_profit)
+        self.fail_next_post = True
+
+    def _signed_post(self, endpoint, params=None):
+        if self.fail_next_post:
+            self.fail_next_post = False
+            raise RuntimeError("temporary order failure")
+        return super()._signed_post(endpoint, params)
+
+
 def _seed_db(db_path, close, high=20):
     TradingExperiment(db_path=db_path, account_manager=FakeAccountManager()).init_tables()
     with sqlite3.connect(db_path) as conn:
@@ -60,6 +72,26 @@ def test_dynamic_profit_protection_closes_when_2r_to_3r_profit_draws_down_40_per
     assert checks[0].current_tier == "(2R, 3R]"
     assert account.signed_posts[-1][1]["type"] == "MARKET"
     assert account.signed_posts[-1][1]["quantity"] == "10"
+
+
+def test_dynamic_profit_protection_updates_failed_action_record_on_retry():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = str(Path(tmp) / "k.db")
+        _seed_db(db_path, close=11.8, high=13)
+        account = FailingOnceAccountManager()
+        tracker = DynamicProfitProtection(db_path=db_path, account_manager=account)
+
+        assert tracker.run_round()["triggered"] == 0
+        failed = tracker.recent_action_records()
+        assert len(failed) == 1
+        assert failed[0].close_status == "failed"
+
+        assert tracker.run_round()["triggered"] == 1
+        records = tracker.recent_action_records()
+
+    assert len(records) == 1
+    assert records[0].close_status == "submitted"
+    assert records[0].close_order_id == "789"
 
 
 def test_dynamic_profit_protection_does_not_close_below_2r():

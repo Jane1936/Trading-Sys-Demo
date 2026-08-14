@@ -64,6 +64,7 @@ class TrailingStopTracker:
     """Maintain max high-based unrealized PnL after partial take-profit."""
 
     CHECKS_TABLE = "trailing_stop_profit_checks"
+    RECORDS_TABLE = "trailing_stop_records"
 
     def __init__(self, db_path: str = db_config.TRADING_DB_PATH, account_manager: BinanceAccountManager | None = None) -> None:
         self.db_path = db_path
@@ -155,6 +156,47 @@ class TrailingStopTracker:
                     conn.execute(f"ALTER TABLE {self.CHECKS_TABLE} ADD COLUMN {column} {definition}")
             conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
             conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_position ON {self.CHECKS_TABLE}(symbol ASC, entry_price ASC, checked_at DESC)")
+        with self._info_connect() as conn:
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.RECORDS_TABLE} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    record_key TEXT NOT NULL UNIQUE,
+                    opened_at INTEGER NOT NULL DEFAULT 0,
+                    symbol TEXT NOT NULL,
+                    checked_at INTEGER NOT NULL,
+                    entry_price TEXT NOT NULL,
+                    position_amt TEXT NOT NULL,
+                    holding_hours TEXT NOT NULL DEFAULT '0',
+                    kline_high TEXT NOT NULL,
+                    unrealized_pnl_at_high TEXT NOT NULL,
+                    max_unrealized_pnl TEXT NOT NULL,
+                    current_profit_drawdown TEXT NOT NULL DEFAULT '0',
+                    max_unrealized_pnl_at INTEGER NOT NULL,
+                    total_score INTEGER,
+                    drawdown_threshold TEXT NOT NULL DEFAULT '0',
+                    current_mark_price TEXT NOT NULL DEFAULT '0',
+                    latest_15m_low TEXT NOT NULL DEFAULT '0',
+                    price_below_latest_15m_low INTEGER NOT NULL DEFAULT 0,
+                    latest_1m_close TEXT NOT NULL DEFAULT '0',
+                    highest_since_open TEXT NOT NULL DEFAULT '0',
+                    atr14 TEXT NOT NULL DEFAULT '0',
+                    volatility TEXT NOT NULL DEFAULT '0',
+                    price_drawdown TEXT NOT NULL DEFAULT '0',
+                    pretriggered INTEGER NOT NULL DEFAULT 0,
+                    tag TEXT NOT NULL DEFAULT '',
+                    trailing_stop_triggered INTEGER NOT NULL DEFAULT 0,
+                    cancel_take_profit_order_id TEXT NOT NULL DEFAULT '',
+                    cancel_status TEXT NOT NULL DEFAULT 'not_required',
+                    close_quantity TEXT NOT NULL DEFAULT '0',
+                    close_order_id TEXT NOT NULL DEFAULT '',
+                    close_status TEXT NOT NULL DEFAULT 'not_required',
+                    eligible INTEGER NOT NULL,
+                    reason TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_checked ON {self.RECORDS_TABLE}(checked_at DESC, symbol ASC)")
 
     def run_round(self) -> dict[str, Any]:
         self.account_manager.validate_config()
@@ -276,9 +318,9 @@ class TrailingStopTracker:
         return Decimal("0.10")
 
     def _has_trailing_stop_close_record(self, symbol: str, entry_price: Decimal) -> bool:
-        with self._connect() as conn:
+        with self._info_connect() as conn:
             row = conn.execute(
-                f"SELECT 1 FROM {self.CHECKS_TABLE} WHERE symbol = ? AND entry_price = ? AND trailing_stop_triggered = 1 AND close_status = 'submitted' LIMIT 1",
+                f"SELECT 1 FROM {self.RECORDS_TABLE} WHERE symbol = ? AND entry_price = ? AND trailing_stop_triggered = 1 AND close_status = 'submitted' LIMIT 1",
                 (symbol, self._fmt_decimal(entry_price)),
             ).fetchone()
         return row is not None
@@ -474,6 +516,20 @@ class TrailingStopTracker:
         holding_hours = Decimal(max(checked_at - open_time, 0)) / Decimal("3600000") if open_time else Decimal("0")
         with self._connect() as conn:
             conn.execute(f"INSERT INTO {self.CHECKS_TABLE} (symbol, checked_at, entry_price, position_amt, holding_hours, kline_high, unrealized_pnl_at_high, max_unrealized_pnl, current_profit_drawdown, max_unrealized_pnl_at, total_score, drawdown_threshold, current_mark_price, latest_15m_low, price_below_latest_15m_low, latest_1m_close, highest_since_open, atr14, volatility, price_drawdown, pretriggered, tag, trailing_stop_triggered, cancel_take_profit_order_id, cancel_status, close_quantity, close_order_id, close_status, eligible, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, self._fmt_decimal(entry), self._fmt_decimal(amount), self._fmt_decimal(holding_hours.quantize(Decimal("0.01"))), self._fmt_decimal(high), self._fmt_decimal(pnl), self._fmt_decimal(max_pnl), self._fmt_decimal(drawdown), int(max_at), total_score, self._fmt_decimal(threshold), self._fmt_decimal(current_mark_price), self._fmt_decimal(latest_15m_low), int(price_below_latest_15m_low), self._fmt_decimal(latest_1m_close), self._fmt_decimal(highest_since_open), self._fmt_decimal(atr14), self._fmt_decimal(volatility), self._fmt_decimal(price_drawdown), int(pretriggered), tag, int(trailing_triggered), cancel_order_id, cancel_status, self._fmt_decimal(close_quantity), close_order_id, close_status, int(eligible), reason))
+        if cancel_status != "not_required" or close_status != "not_required":
+            self._upsert_action_record(symbol, checked_at, open_time, entry, amount, holding_hours, high, pnl, max_pnl, drawdown, max_at, total_score, threshold, current_mark_price, latest_15m_low, price_below_latest_15m_low, latest_1m_close, highest_since_open, atr14, volatility, price_drawdown, pretriggered, tag, trailing_triggered, cancel_order_id, cancel_status, close_quantity, close_order_id, close_status, eligible, reason)
+
+    def _upsert_action_record(self, symbol: str, checked_at: int, opened_at: int, entry: Decimal, amount: Decimal, holding_hours: Decimal, high: Decimal, pnl: Decimal, max_pnl: Decimal, drawdown: Decimal, max_at: int, total_score: int | None, threshold: Decimal, current_mark_price: Decimal, latest_15m_low: Decimal, price_below_latest_15m_low: bool, latest_1m_close: Decimal, highest_since_open: Decimal, atr14: Decimal, volatility: Decimal, price_drawdown: Decimal, pretriggered: bool, tag: str, trailing_triggered: bool, cancel_order_id: str, cancel_status: str, close_quantity: Decimal, close_order_id: str, close_status: str, eligible: bool, reason: str) -> None:
+        """Insert an action attempt, replacing only a prior unsuccessful result."""
+        record_key = f"{symbol}:{int(opened_at)}:close"
+        columns = "opened_at, symbol, checked_at, entry_price, position_amt, holding_hours, kline_high, unrealized_pnl_at_high, max_unrealized_pnl, current_profit_drawdown, max_unrealized_pnl_at, total_score, drawdown_threshold, current_mark_price, latest_15m_low, price_below_latest_15m_low, latest_1m_close, highest_since_open, atr14, volatility, price_drawdown, pretriggered, tag, trailing_stop_triggered, cancel_take_profit_order_id, cancel_status, close_quantity, close_order_id, close_status, eligible, reason"
+        values = (int(opened_at), symbol, checked_at, self._fmt_decimal(entry), self._fmt_decimal(amount), self._fmt_decimal(holding_hours.quantize(Decimal("0.01"))), self._fmt_decimal(high), self._fmt_decimal(pnl), self._fmt_decimal(max_pnl), self._fmt_decimal(drawdown), int(max_at), total_score, self._fmt_decimal(threshold), self._fmt_decimal(current_mark_price), self._fmt_decimal(latest_15m_low), int(price_below_latest_15m_low), self._fmt_decimal(latest_1m_close), self._fmt_decimal(highest_since_open), self._fmt_decimal(atr14), self._fmt_decimal(volatility), self._fmt_decimal(price_drawdown), int(pretriggered), tag, int(trailing_triggered), cancel_order_id, cancel_status, self._fmt_decimal(close_quantity), close_order_id, close_status, int(eligible), reason)
+        updates = ", ".join(f"{column}=excluded.{column}" for column in columns.split(", "))
+        with self._info_connect() as conn:
+            conn.execute(
+                f"INSERT INTO {self.RECORDS_TABLE} (record_key, {columns}) VALUES (?, {','.join('?' for _ in values)}) ON CONFLICT(record_key) DO UPDATE SET {updates} WHERE {self.RECORDS_TABLE}.close_status != 'submitted'",
+                (record_key, *values),
+            )
 
 
     def refresh_pretriggered_symbols(self) -> dict[str, Any]:
@@ -571,6 +627,18 @@ class TrailingStopTracker:
                     check.id,
                 ),
             )
+        if cancel_status != "not_required" or close_status != "not_required":
+            self._upsert_action_record(
+                symbol, now, open_time, entry_price, amount, holding_hours, high,
+                self._decimal_from(check.unrealized_pnl_at_high, Decimal("0")),
+                self._decimal_from(check.max_unrealized_pnl, Decimal("0")),
+                self._decimal_from(check.current_profit_drawdown, Decimal("0")),
+                check.max_unrealized_pnl_at, check.total_score, threshold, close,
+                self._decimal_from(check.latest_15m_low, Decimal("0")),
+                check.price_below_latest_15m_low, close, highest_since_open, atr14,
+                volatility, price_drawdown, True, tag, should_trigger, cancel_order_id,
+                cancel_status, close_quantity, close_order_id, close_status, True, reason,
+            )
         return should_trigger and close_status == "submitted"
 
     def summary_payload(self) -> dict[str, Any]:
@@ -590,13 +658,10 @@ class TrailingStopTracker:
 
     def recent_action_records(self, limit: int = 100) -> list[TrailingStopCheck]:
         self.init_tables()
-        with self._connect() as conn:
+        with self._info_connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT * FROM {self.CHECKS_TABLE}
-                WHERE trailing_stop_triggered = 1
-                   OR cancel_status != 'not_required'
-                   OR close_status != 'not_required'
+                SELECT * FROM {self.RECORDS_TABLE}
                 ORDER BY checked_at DESC, id DESC
                 LIMIT ?
                 """,
@@ -606,7 +671,10 @@ class TrailingStopTracker:
 
     @staticmethod
     def _check_from_row(row: sqlite3.Row) -> TrailingStopCheck:
-        return TrailingStopCheck(**{**dict(row), "eligible": bool(row["eligible"]), "price_below_latest_15m_low": bool(row["price_below_latest_15m_low"]), "pretriggered": bool(row["pretriggered"]), "trailing_stop_triggered": bool(row["trailing_stop_triggered"])})
+        values = dict(row)
+        values.update({"eligible": bool(row["eligible"]), "price_below_latest_15m_low": bool(row["price_below_latest_15m_low"]), "pretriggered": bool(row["pretriggered"]), "trailing_stop_triggered": bool(row["trailing_stop_triggered"])})
+        fields = TrailingStopCheck.__dataclass_fields__
+        return TrailingStopCheck(**{key: value for key, value in values.items() if key in fields})
 
     @staticmethod
     def _base_symbol(symbol: Any) -> str:

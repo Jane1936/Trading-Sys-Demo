@@ -2,10 +2,12 @@ import sqlite3
 from decimal import Decimal
 
 import db_config
+from dynamic_profit_protection import DynamicProfitProtection
 from break_even_take_profit import BreakEvenTakeProfitStrategy
 from holding_position_scoring import HoldingPositionScoringSystem
 from partial_take_profit import PartialTakeProfitStrategy
 from trailing_reduction_tracker import TrailingReductionTracker
+from trailing_stop_tracker import TrailingStopTracker
 
 
 INFO_TABLES = {
@@ -14,6 +16,8 @@ INFO_TABLES = {
     "partial_take_profit_error_records",
     "partial_take_profit_records",
     "trailing_reduction_records",
+    "dynamic_profit_protection_records",
+    "trailing_stop_records",
 }
 
 
@@ -42,9 +46,13 @@ def test_production_action_record_tables_route_to_trading_info_db(tmp_path, monk
     PartialTakeProfitStrategy(db_path=trading_db).init_tables()
     TrailingReductionTracker(db_path=trading_db).init_tables()
     HoldingPositionScoringSystem(db_path=trading_db).init_tables()
+    DynamicProfitProtection(db_path=trading_db).init_tables()
+    TrailingStopTracker(db_path=trading_db).init_tables()
 
     assert INFO_TABLES <= _table_names(info_db)
     assert INFO_TABLES.isdisjoint(_table_names(trading_db))
+    assert DynamicProfitProtection.CHECKS_TABLE in _table_names(trading_db)
+    assert TrailingStopTracker.CHECKS_TABLE in _table_names(trading_db)
 
 
 def test_cross_module_partial_take_profit_reads_use_trading_info_db(
