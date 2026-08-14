@@ -25,7 +25,7 @@ from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
 from trading_experiment import ExperimentConfig, TradingExperiment
 from weak_market_profit_adjustment import WeakMarketProfitAdjustmentModule
 
-_initialized_table_paths: dict[str, tuple[int | None, int | None]] = {}
+_initialized_table_paths: dict[str, tuple[int | None, int | None, int | None]] = {}
 _initialized_table_paths_lock = threading.Lock()
 
 
@@ -107,6 +107,7 @@ class PartialTakeProfitStrategy:
     ) -> None:
         self.db_path = db_path
         self.core_db_path = db_config.trading_core_path(db_path)
+        self.info_db_path = db_config.trading_info_path(db_path)
         self.account_manager = account_manager or BinanceAccountManager()
         self.config = config or ExperimentConfig()
 
@@ -120,15 +121,20 @@ class PartialTakeProfitStrategy:
         """Connect to the database that owns experiment trade lifecycle data."""
         return db_config.connect_sqlite(self.core_db_path, row_factory=sqlite3.Row)
 
+    def _info_connect(self) -> sqlite3.Connection:
+        return db_config.connect_sqlite(self.info_db_path, row_factory=sqlite3.Row)
+
     def init_tables(self) -> None:
         normalized_path = os.path.abspath(self.db_path)
         with _initialized_table_paths_lock:
             db_inode = _database_inode(self.db_path)
             core_db_inode = _database_inode(self.core_db_path)
-            database_identity = (db_inode, core_db_inode)
+            info_db_inode = _database_inode(self.info_db_path)
+            database_identity = (db_inode, core_db_inode, info_db_inode)
             if (
                 db_inode is not None
                 and core_db_inode is not None
+                and info_db_inode is not None
                 and _initialized_table_paths.get(normalized_path) == database_identity
             ):
                 return
@@ -163,6 +169,7 @@ class PartialTakeProfitStrategy:
                     )
                     """
                 )
+            with self._info_connect() as conn:
                 conn.execute(
                     f"""
                     CREATE TABLE IF NOT EXISTS {self.ERRORS_TABLE} (
@@ -220,12 +227,14 @@ class PartialTakeProfitStrategy:
                     """,
                     (self.TRIGGER_LABEL_1_4R, self.TRIGGER_LABEL_2R),
                 )
-                conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
                 conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_checked ON {self.RECORDS_TABLE}(checked_at DESC, symbol ASC)")
                 conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.ERRORS_TABLE}_occurred ON {self.ERRORS_TABLE}(occurred_at DESC, symbol ASC)")
+            with self._connect() as conn:
+                conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
             _initialized_table_paths[normalized_path] = (
                 _database_inode(self.db_path),
                 _database_inode(self.core_db_path),
+                _database_inode(self.info_db_path),
             )
 
     def run_round(self, decision_round_ts: int | None = None) -> dict[str, Any]:
@@ -281,7 +290,7 @@ class PartialTakeProfitStrategy:
         symbol = self._base_symbol(exchange_symbol)
         # A failed execution record is authoritative.  Only use the dedicated
         # error table when evaluation escaped before such a record was formed.
-        with self._connect() as conn:
+        with self._info_connect() as conn:
             attempted = conn.execute(
                 f"SELECT 1 FROM {self.RECORDS_TABLE} WHERE symbol = ? AND checked_at = ? LIMIT 1",
                 (symbol, occurred_at),
@@ -552,7 +561,7 @@ class PartialTakeProfitStrategy:
         return self._decimal_from(row["stop_loss_price"], Decimal("0")) if row else Decimal("0")
 
     def _has_success_record(self, symbol: str, entry_price: Decimal) -> bool:
-        with self._connect() as conn:
+        with self._info_connect() as conn:
             row = conn.execute(
                 f"SELECT 1 FROM {self.RECORDS_TABLE} WHERE symbol = ? AND entry_price = ? AND status = 'submitted' LIMIT 1",
                 (symbol, self._fmt_decimal(entry_price)),
@@ -565,7 +574,7 @@ class PartialTakeProfitStrategy:
 
     def _insert_record(self, symbol: str, checked_at: int, side: str, amount: Decimal, quantity: Decimal, entry: Decimal, equity: Decimal, r_value: Decimal, trigger_r: Decimal, pnl: Decimal, order_id: str, status: str, reason: str, raw: str, trigger_multiple: Decimal) -> None:
         trigger_label = self._trigger_label(trigger_multiple)
-        with self._connect() as conn:
+        with self._info_connect() as conn:
             conn.execute(f"INSERT INTO {self.RECORDS_TABLE} (symbol, checked_at, side, position_amt, take_profit_quantity, entry_price, account_equity_usdt, r_usdt, trigger_r_usdt, unrealized_pnl, take_profit_order_id, trigger_label, status, reason, raw_response) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, side, self._fmt_decimal(amount), self._fmt_decimal(quantity), self._fmt_decimal(entry), self._fmt_decimal(equity), self._fmt_decimal(r_value), self._fmt_decimal(trigger_r), self._fmt_decimal(pnl), order_id, trigger_label, status, reason, raw))
 
     def _insert_error(
@@ -583,7 +592,7 @@ class PartialTakeProfitStrategy:
         trigger_r: Decimal | None = None,
         context: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as conn:
+        with self._info_connect() as conn:
             conn.execute(
                 f"""
                 INSERT INTO {self.ERRORS_TABLE}
@@ -622,14 +631,14 @@ class PartialTakeProfitStrategy:
 
     def recent_records(self, limit: int = 100) -> list[PartialTakeProfitRecord]:
         self.init_tables()
-        with self._connect() as conn:
+        with self._info_connect() as conn:
             rows = conn.execute(f"SELECT * FROM {self.RECORDS_TABLE} ORDER BY checked_at DESC, id DESC LIMIT ?", (int(limit),)).fetchall()
         return [PartialTakeProfitRecord(**dict(row)) for row in rows]
 
     def recent_errors(self, limit: int = 100) -> list[dict[str, Any]]:
         """Merge authoritative failed attempts with pre-attempt strategy errors."""
         self.init_tables()
-        with self._connect() as conn:
+        with self._info_connect() as conn:
             failed_attempts = conn.execute(
                 f"SELECT * FROM {self.RECORDS_TABLE} WHERE status != 'submitted' ORDER BY checked_at DESC, id DESC LIMIT ?",
                 (int(limit),),

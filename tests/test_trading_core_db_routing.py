@@ -21,8 +21,10 @@ def _tables(path):
 def test_migrated_tables_are_initialized_in_trading_core_db(monkeypatch, tmp_path):
     trading_db = str(tmp_path / "trading.db")
     core_db = str(tmp_path / "trading_core.db")
+    info_db = str(tmp_path / "trading_info.db")
     monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
     monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", core_db)
+    monkeypatch.setattr(db_config, "TRADING_INFO_DB_PATH", info_db)
 
     TradingExperiment(db_path=trading_db).init_tables()
     ZombieForceLiquidationModule(db_path=trading_db).init_tables()
@@ -118,8 +120,10 @@ def test_dynamic_profit_protection_reads_open_trade_from_trading_core_db(monkeyp
 def test_holding_risk_tables_are_initialized_in_trading_core_db(monkeypatch, tmp_path):
     trading_db = str(tmp_path / "trading.db")
     core_db = str(tmp_path / "trading_core.db")
+    info_db = str(tmp_path / "trading_info.db")
     monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
     monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", core_db)
+    monkeypatch.setattr(db_config, "TRADING_INFO_DB_PATH", info_db)
 
     scoring = HoldingPositionScoringSystem(db_path=trading_db)
     scoring.init_tables()
@@ -134,10 +138,8 @@ def test_holding_risk_tables_are_initialized_in_trading_core_db(monkeypatch, tmp
     }
     assert migrated_tables <= _tables(core_db)
     assert not migrated_tables & _tables(trading_db)
-    assert {
-        scoring.INCREASE_CHECKS_TABLE,
-        scoring.INCREASE_RECORDS_TABLE,
-    } <= _tables(trading_db)
+    assert scoring.INCREASE_CHECKS_TABLE in _tables(trading_db)
+    assert scoring.INCREASE_RECORDS_TABLE in _tables(info_db)
 
 
 def test_custom_holding_database_path_keeps_all_tables_together(tmp_path):

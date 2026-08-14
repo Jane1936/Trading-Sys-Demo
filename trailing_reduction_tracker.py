@@ -70,6 +70,7 @@ class TrailingReductionTracker:
         config: ExperimentConfig | None = None,
     ) -> None:
         self.db_path = db_path
+        self.info_db_path = db_config.trading_info_path(db_path)
         self.account_manager = account_manager or BinanceAccountManager()
         self.config = config or ExperimentConfig()
 
@@ -77,6 +78,9 @@ class TrailingReductionTracker:
         conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
         db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
         return conn
+
+    def _info_connect(self) -> sqlite3.Connection:
+        return db_config.connect_sqlite(self.info_db_path, row_factory=sqlite3.Row)
 
     def init_tables(self) -> None:
         db_config.ensure_parent_dir(self.db_path)
@@ -118,6 +122,8 @@ class TrailingReductionTracker:
                 }.items():
                     if column not in columns:
                         conn.execute(f"ALTER TABLE {self.CHECKS_TABLE} ADD COLUMN {column} {ddl}")
+                conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
+            with self._info_connect() as conn:
                 conn.execute(
                     f"""
                     CREATE TABLE IF NOT EXISTS {self.RECORDS_TABLE} (
@@ -143,7 +149,6 @@ class TrailingReductionTracker:
                     )
                     """
                 )
-                conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.CHECKS_TABLE}_checked ON {self.CHECKS_TABLE}(checked_at DESC, symbol ASC)")
                 conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_created ON {self.RECORDS_TABLE}(checked_at DESC, symbol ASC)")
 
     def run_round(self, decision_round_ts: int | None = None) -> dict[str, Any]:
@@ -324,7 +329,7 @@ class TrailingReductionTracker:
         self._insert_record(symbol, round_ts, now, high, close, highest, atr14, drawdown, original, reduced, remaining, market_order_id, take_profit_order_id, stop_loss_order_id, status, "; ".join(reason_parts), " | ".join(raw_parts))
 
     def _insert_record(self, symbol, round_ts, now, high, close, highest, atr14, drawdown, original, reduced, remaining, market_order_id, take_profit_order_id, stop_loss_order_id, status, reason, raw):
-        with self._connect() as conn:
+        with self._info_connect() as conn:
             conn.execute(f"INSERT INTO {self.RECORDS_TABLE} (symbol, decision_round_ts, checked_at, latest_1m_high, latest_1m_close, highest_since_open, atr14, price_drawdown, reduction_percent, original_quantity, reduced_quantity, remaining_quantity, market_order_id, take_profit_order_id, stop_loss_order_id, status, reason, raw_response) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, int(round_ts), int(now), self._fmt_decimal(high), self._fmt_decimal(close), self._fmt_decimal(highest), self._fmt_decimal(atr14), self._fmt_decimal(drawdown), self._fmt_decimal(self.STRUCTURE_REDUCTION_FRACTION), self._fmt_decimal(original), self._fmt_decimal(reduced), self._fmt_decimal(remaining), market_order_id, take_profit_order_id, stop_loss_order_id, status, reason, raw))
 
     def summary_payload(self) -> dict[str, Any]:
@@ -352,7 +357,7 @@ class TrailingReductionTracker:
 
     def recent_action_records(self, limit: int = 100, decision_round_ts: int | None = None, days: int | None = None) -> list[sqlite3.Row]:
         self.init_tables()
-        with self._connect() as conn:
+        with self._info_connect() as conn:
             if days is not None:
                 since_ms = int(time.time() * 1000) - int(days) * 24 * 60 * 60 * 1000
                 if decision_round_ts is None:
@@ -372,7 +377,7 @@ class TrailingReductionTracker:
             ).fetchall()
 
     def _has_structure_record(self, symbol: str, round_ts: int) -> bool:
-        with self._connect() as conn:
+        with self._info_connect() as conn:
             return conn.execute(
                 f"""
                 SELECT 1 FROM {self.RECORDS_TABLE}
@@ -409,9 +414,9 @@ class TrailingReductionTracker:
     def _has_partial_take_profit_record_since(self, symbol: str, lifecycle_started_at: int) -> bool:
         """Return whether this open lifecycle has a submitted partial take profit."""
         try:
-            # Execution records remain in trading.db after lifecycle rows move to
-            # trading_core.db, so query the tracker database explicitly.
-            with db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row) as conn:
+            # Execution records live in trading_info.db after lifecycle rows move
+            # to trading_core.db, so query the information database explicitly.
+            with db_config.connect_sqlite(self.info_db_path, row_factory=sqlite3.Row) as conn:
                 row = conn.execute(
                     "SELECT 1 FROM partial_take_profit_records "
                     "WHERE symbol = ? AND checked_at >= ? AND status = 'submitted' LIMIT 1",

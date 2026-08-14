@@ -443,10 +443,12 @@ def test_filled_order_annotation_reads_migrated_records_from_trading_core_db(
 ):
     trading_db = tmp_path / "trading.db"
     core_db = tmp_path / "trading_core.db"
+    info_db = tmp_path / "trading_info.db"
     monkeypatch.setattr(web_app, "DB_PATH", web_app.BASE_DB_PATH)
     monkeypatch.setattr(web_app, "TRADING_DB_PATH", str(trading_db))
     monkeypatch.setattr(web_app.db_config, "TRADING_DB_PATH", str(trading_db))
     monkeypatch.setattr(web_app.db_config, "TRADING_CORE_DB_PATH", str(core_db))
+    monkeypatch.setattr(web_app.db_config, "TRADING_INFO_DB_PATH", str(info_db))
 
     with sqlite3.connect(trading_db) as conn:
         conn.execute("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)")
@@ -487,6 +489,23 @@ def test_filled_order_annotation_reads_migrated_records_from_trading_core_db(
             "(symbol, status, total_score, created_at) VALUES (?, ?, ?, ?)",
             ("BANK", "opened", 90, 900),
         )
+    with sqlite3.connect(info_db) as conn:
+        conn.execute(
+            f"""
+            CREATE TABLE {PartialTakeProfitStrategy.RECORDS_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                checked_at INTEGER NOT NULL,
+                side TEXT NOT NULL,
+                take_profit_quantity TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            f"INSERT INTO {PartialTakeProfitStrategy.RECORDS_TABLE} "
+            "(symbol, checked_at, side, take_profit_quantity) VALUES (?, ?, ?, ?)",
+            ("BANK", 1000, "SELL", "2"),
+        )
 
     payload = {
         "orders": [
@@ -505,3 +524,6 @@ def test_filled_order_annotation_reads_migrated_records_from_trading_core_db(
 
     assert annotated["orders"][0]["exit_reason"] == "僵尸强平"
     assert annotated["orders"][0]["open_total_score"] == 90
+    assert "分批止盈" in {
+        match["type"] for match in annotated["orders"][0]["exit_reason_matches"]
+    }

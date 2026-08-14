@@ -157,8 +157,10 @@ def test_partial_take_profit_sells_30_percent_when_unrealized_pnl_reaches_2r():
 def test_partial_take_profit_updates_trade_in_routed_core_database(monkeypatch, tmp_path):
     trading_db = str(tmp_path / "trading.db")
     core_db = str(tmp_path / "trading_core.db")
+    info_db = str(tmp_path / "trading_info.db")
     monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
     monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", core_db)
+    monkeypatch.setattr(db_config, "TRADING_INFO_DB_PATH", info_db)
     fake_account = FakeAccountManager()
     experiment = TradingExperiment(db_path=trading_db, account_manager=fake_account)
     experiment.init_tables()
@@ -196,8 +198,10 @@ def test_partial_take_profit_updates_trade_in_routed_core_database(monkeypatch, 
 def test_partial_take_profit_initializes_routed_core_trade_table(monkeypatch, tmp_path):
     trading_db = str(tmp_path / "trading.db")
     core_db = str(tmp_path / "trading_core.db")
+    info_db = str(tmp_path / "trading_info.db")
     monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
     monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", core_db)
+    monkeypatch.setattr(db_config, "TRADING_INFO_DB_PATH", info_db)
 
     strategy = PartialTakeProfitStrategy(
         db_path=trading_db, account_manager=FakeAccountManager()

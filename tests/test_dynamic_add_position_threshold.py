@@ -73,8 +73,10 @@ def test_dynamic_add_position_threshold_reads_trades_from_trading_core_db(
 ):
     trading_db = str(tmp_path / "trading.db")
     core_db = str(tmp_path / "trading_core.db")
+    info_db = str(tmp_path / "trading_info.db")
     monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
     monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", core_db)
+    monkeypatch.setattr(db_config, "TRADING_INFO_DB_PATH", info_db)
     module = DynamicAddPositionThresholdModule(db_path=trading_db)
     module.init_table()
 
@@ -87,6 +89,7 @@ def test_dynamic_add_position_threshold_reads_trades_from_trading_core_db(
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
         } & {TradingExperiment.TRADES_TABLE}
+    with sqlite3.connect(info_db) as conn:
         conn.execute(
             f"""
             INSERT INTO {PartialTakeProfitStrategy.RECORDS_TABLE}

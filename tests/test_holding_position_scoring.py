@@ -25,12 +25,14 @@ def test_partial_take_profit_guard_is_scoped_to_current_open_lifecycle(tmp_path)
     assert scoring._has_partial_take_profit_record_since("BTC", 1000) is True
 
 
-def test_partial_take_profit_guard_reads_trading_db_when_core_db_is_split(tmp_path, monkeypatch):
+def test_partial_take_profit_guard_reads_info_db_when_core_db_is_split(tmp_path, monkeypatch):
     trading_db = str(tmp_path / "trading.db")
     core_db = str(tmp_path / "trading_core.db")
+    info_db = str(tmp_path / "trading_info.db")
     monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
     monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", core_db)
-    with sqlite3.connect(trading_db) as conn:
+    monkeypatch.setattr(db_config, "TRADING_INFO_DB_PATH", info_db)
+    with sqlite3.connect(info_db) as conn:
         conn.execute("CREATE TABLE partial_take_profit_records (symbol TEXT, checked_at INTEGER, status TEXT)")
         conn.execute("INSERT INTO partial_take_profit_records VALUES ('BTC', 1600, 'submitted')")
     with sqlite3.connect(core_db) as conn:

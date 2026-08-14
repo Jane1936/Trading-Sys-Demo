@@ -166,7 +166,7 @@ def _insert_open_trade(db_path):
 def _insert_partial_take_profit_record(db_path, trigger_label="已触发2R分批止盈"):
     strategy = PartialTakeProfitStrategy(db_path=db_path, account_manager=FakeAccountManager())
     strategy.init_tables()
-    with strategy._connect() as conn:
+    with strategy._info_connect() as conn:
         conn.execute(
             f"""
             INSERT INTO {PartialTakeProfitStrategy.RECORDS_TABLE}
@@ -414,8 +414,10 @@ def test_trailing_stop_tracker_uses_2atr_threshold_when_volatility_is_high():
 def test_trailing_stop_tracker_reads_migrated_open_trade_from_trading_core_db(tmp_path, monkeypatch):
     trading_db = tmp_path / "trading.db"
     core_db = tmp_path / "trading_core.db"
+    info_db = tmp_path / "trading_info.db"
     monkeypatch.setattr("db_config.TRADING_DB_PATH", str(trading_db))
     monkeypatch.setattr("db_config.TRADING_CORE_DB_PATH", str(core_db))
+    monkeypatch.setattr("db_config.TRADING_INFO_DB_PATH", str(info_db))
     fake_account = FakeAccountManager()
 
     _insert_partial_take_profit_record(str(trading_db))
