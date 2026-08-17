@@ -660,8 +660,27 @@ class PartialTakeProfitStrategy:
             for row in failed_attempts
         ]
         errors.extend({**dict(row), "source": self.ERRORS_TABLE} for row in unattempted)
-        errors.sort(key=lambda row: (int(row["occurred_at"]), int(row["id"])), reverse=True)
+        # ``CREATE TABLE IF NOT EXISTS`` cannot add the NOT NULL constraints to
+        # an older table.  Some deployments therefore still contain legacy
+        # rows with a NULL timestamp (in particular after action records were
+        # copied into trading_info.db).  Treat those rows as oldest instead of
+        # letting the dashboard fail while converting None with ``int()``.
+        errors.sort(
+            key=lambda row: (
+                self._sortable_integer(row.get("occurred_at")),
+                self._sortable_integer(row.get("id")),
+            ),
+            reverse=True,
+        )
         return errors[: int(limit)]
+
+    @staticmethod
+    def _sortable_integer(value: Any) -> int:
+        """Return a stable integer sort key for nullable legacy DB values."""
+        try:
+            return int(value) if value is not None else 0
+        except (TypeError, ValueError, OverflowError):
+            return 0
 
     @staticmethod
     def _base_symbol(symbol: Any) -> str:
