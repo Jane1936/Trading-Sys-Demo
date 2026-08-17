@@ -366,3 +366,43 @@ def test_round_error_before_position_scan_is_persisted():
     assert errors[0]["source"] == PartialTakeProfitStrategy.ERRORS_TABLE
     assert errors[0]["stage"] == "validate_config"
     assert errors[0]["decision_round_ts"] == 1234
+
+
+def test_recent_errors_tolerates_nullable_legacy_rows():
+    """Split info DBs can retain rows created with the old nullable schema."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "legacy.db")
+        strategy = PartialTakeProfitStrategy(
+            db_path=db_path, account_manager=FakeAccountManager()
+        )
+        strategy.init_tables()
+        with sqlite3.connect(db_path) as conn:
+            # SQLite permits nullable PRIMARY KEY values for non-INTEGER legacy
+            # schemas; the timestamp is the value involved in the production
+            # error, while a nullable id verifies the secondary key as well.
+            conn.execute(
+                f"""
+                CREATE TABLE legacy_errors AS
+                SELECT * FROM {strategy.ERRORS_TABLE} WHERE 0
+                """
+            )
+            conn.execute(f"DROP TABLE {strategy.ERRORS_TABLE}")
+            conn.execute(
+                f"ALTER TABLE legacy_errors RENAME TO {strategy.ERRORS_TABLE}"
+            )
+            conn.execute(
+                f"""
+                INSERT INTO {strategy.ERRORS_TABLE}
+                (id, occurred_at, decision_round_ts, symbol, stage, error_type,
+                 error_message, entry_price, position_amt, unrealized_pnl,
+                 r_usdt, trigger_r_usdt, raw_context)
+                VALUES (NULL, NULL, NULL, 'BANK', 'legacy', 'LegacyError',
+                        'legacy nullable row', '', '', '', '', '', '{{}}')
+                """
+            )
+
+        errors = strategy.recent_errors()
+
+    assert len(errors) == 1
+    assert errors[0]["occurred_at"] is None
+    assert errors[0]["error_message"] == "legacy nullable row"
