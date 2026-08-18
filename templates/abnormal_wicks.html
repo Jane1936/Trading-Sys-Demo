@@ -1084,7 +1084,7 @@
           {% endif %}
         </div>
         {% if open_block_notice %}
-          <div class="open-block-notice">本轮禁止新开仓：<span>{{ open_block_notice }}</span></div>
+          <div class="open-block-notice">本轮开仓限制：<span>{{ open_block_notice }}</span></div>
         {% endif %}
         <div class="tip">可开仓基础条件：本轮总分 ≥ {{ openable_min_total_score }}，且不在冷却期；若有上一轮评分档位，且上一轮评分档位低于本轮评分档位，则本轮最终不可开仓。止损距离筛查使用规则18的 distance_ratio：{{ score_distance_threshold_text }}；止损距离档位：{{ openable_symbol_settings.tier_min_percent }}%&lt;distance_ratio≤{{ openable_symbol_settings.tier_max_percent['A档'] }}% 为A档，{{ openable_symbol_settings.tier_max_percent['A档'] }}%&lt;distance_ratio≤{{ openable_symbol_settings.tier_max_percent['B档'] }}% 为B档，{{ openable_symbol_settings.tier_max_percent['B档'] }}%&lt;distance_ratio≤{{ openable_symbol_settings.tier_max_percent['C档'] }}% 为C档，distance_ratio&gt;{{ openable_symbol_settings.tier_max_percent['C档'] }}% 为D档。杠杆评定：不高于 A 档下限的 distance_ratio 杠杆统一为NA，且最终不可开仓；其他情况按总分区间和止损距离档位映射（{{ score_leverage_mapping_text }}）。下表展示基础条件命中的symbol及其止损距离筛查结果与本轮开仓杠杆倍数。</div>
         <div class="table-wrap">

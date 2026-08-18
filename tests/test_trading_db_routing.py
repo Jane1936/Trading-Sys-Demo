@@ -164,12 +164,24 @@ def test_scoring_worker_should_stop_after_deadline():
     )
 
 
-def test_completed_scoring_round_publishes_holding_result_after_deadline(
+def test_completed_scoring_round_publishes_threshold_openable_and_holding_after_deadline(
     monkeypatch, tmp_path
 ):
     scoring_db = str(tmp_path / "scoring.db")
     trading_db = str(tmp_path / "trading.db")
     run_calls = []
+    threshold_calls = []
+    openable_calls = []
+
+    class RecordingThreshold(FakeDynamicOpenThresholdModule):
+        def run_round(self, **kwargs):
+            threshold_calls.append(kwargs)
+            return super().run_round(**kwargs)
+
+    class RecordingOpenable(FakeOpenableSymbolModule):
+        def run_round(self, **kwargs):
+            openable_calls.append(kwargs)
+            return []
 
     class RecordingTradingModule(FakeTradingOwnedModule):
         def run_round(self, decision_round_ts, **kwargs):
@@ -178,15 +190,14 @@ def test_completed_scoring_round_publishes_holding_result_after_deadline(
 
     monkeypatch.setattr(app.db_config, "TRADING_DB_PATH", trading_db)
     monkeypatch.setattr(app, "ScoringSystem", FakeScoringSystem)
-    monkeypatch.setattr(app, "OpenableSymbolModule", FakeOpenableSymbolModule)
-    monkeypatch.setattr(app, "DynamicOpenThresholdModule", FakeDynamicOpenThresholdModule)
+    monkeypatch.setattr(app, "OpenableSymbolModule", RecordingOpenable)
+    monkeypatch.setattr(app, "DynamicOpenThresholdModule", RecordingThreshold)
     monkeypatch.setattr(app, "HoldingPositionScoringSystem", RecordingTradingModule)
     monkeypatch.setattr(app, "TrailingReductionTracker", FakeTradingOwnedModule)
     monkeypatch.setattr(
         app,
         "_scoring_worker_should_stop",
-        lambda **kwargs: kwargs["stage"]
-        in {"after_score_round", "before_holding_scoring", "after_holding_scoring"},
+        lambda **kwargs: kwargs["stage"] == "before_first_experiment",
     )
 
     app.run_scoring_round_worker(
@@ -195,11 +206,22 @@ def test_completed_scoring_round_publishes_holding_result_after_deadline(
         symbols=["BTC"],
         abnormal_symbols=[],
         evaluated_at=456,
-        # The simulated deadline elapses immediately after score_round.
+        # The simulated deadline elapses after score_round publication but
+        # before the optional trading experiment.
         deadline_ts=1,
     )
 
     assert run_calls == [123]
+    assert threshold_calls == [{"decision_round_ts": 123, "evaluated_at": 456}]
+    assert openable_calls == [
+        {
+            "decision_round_ts": 123,
+            "evaluated_at": 456,
+            "min_total_score": 0,
+            "allow_new_positions": False,
+            "threshold_reason": "test",
+        }
+    ]
 
 
 class FakeActiveProcess:
