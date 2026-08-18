@@ -573,32 +573,83 @@ class HoldingPositionScoringSystem:
         only starts after the stop-loss rule has finished evaluating and
         persisting the current round's judgement results.
         """
+        pipeline_started = time.monotonic()
+
+        def log_module(module: str, status: str, **details: object) -> None:
+            detail_text = " ".join(f"{key}={value}" for key, value in details.items())
+            print(
+                f"🔎 holding pipeline round={decision_round_ts} module={module} "
+                f"status={status} elapsed_sec={time.monotonic() - pipeline_started:.3f}"
+                f"{f' {detail_text}' if detail_text else ''}",
+                flush=True,
+            )
+
+        log_module("initialization", "started")
         self.account_manager.validate_config()
         self.init_tables()
         round_ts = decision_round_ts if decision_round_ts is not None else self._current_decision_round_ts()
         now_ms = int(time.time() * 1000)
+        log_module("initialization", "completed", effective_round=round_ts)
         # Each module starts from a fresh exchange snapshot.  In particular, do
         # not carry the empty/stale snapshot from a previous module across the
         # whole round: an earlier stop-loss or reduction action (or an external
         # trade) may have changed the account positions in the meantime.
         stop_loss_result = {"checked": 0, "triggered": 0, "records": 0}
         if enable_stop_loss:
+            log_module("stop_loss", "started")
             stop_loss_positions = self._active_positions()
             stop_loss_result = self._run_stop_loss_rule_round(positions=stop_loss_positions, decision_round_ts=round_ts, checked_at=now_ms)
+            log_module(
+                "stop_loss",
+                "completed",
+                positions=len(stop_loss_positions),
+                **stop_loss_result,
+            )
+        else:
+            log_module("stop_loss", "skipped", reason="feature_flag_disabled")
         reduction_checks, reduction_records = [], []
         if enable_reduction:
+            log_module("reduction", "started")
             reduction_positions = self._active_positions()
             reduction_checks = self.evaluate_reduction_conditions(positions=reduction_positions, decision_round_ts=round_ts, checked_at=now_ms)
             reduction_records = self._execute_reduction_actions(reduction_checks, reduction_positions, now_ms)
+            log_module(
+                "reduction",
+                "completed",
+                positions=len(reduction_positions),
+                checked=len(reduction_checks),
+                records=reduction_records,
+            )
+        else:
+            log_module("reduction", "skipped", reason="feature_flag_disabled")
         increase_checks, increase_records = [], []
         if enable_increase:
+            log_module("increase", "started")
             increase_positions = self._active_positions()
             increase_checks = self.evaluate_increase_conditions(positions=increase_positions, decision_round_ts=round_ts, checked_at=now_ms)
             increase_records = self._record_increase_actions(increase_checks, increase_positions, now_ms)
+            log_module(
+                "increase",
+                "completed",
+                positions=len(increase_positions),
+                checked=len(increase_checks),
+                records=increase_records,
+            )
+        else:
+            log_module("increase", "skipped", reason="feature_flag_disabled")
         portfolio_risk = None
         if enable_portfolio_risk:
+            log_module("portfolio_risk", "started")
             portfolio_positions = self._active_positions()
             portfolio_risk = self.calculate_portfolio_risk(positions=portfolio_positions, decision_round_ts=round_ts, calculated_at=now_ms)
+            log_module(
+                "portfolio_risk",
+                "completed",
+                positions=len(portfolio_positions),
+                total_risk=portfolio_risk.total_risk,
+            )
+        else:
+            log_module("portfolio_risk", "skipped", reason="feature_flag_disabled")
         return {
             "decision_round_ts": round_ts,
             "checked": stop_loss_result["checked"],
