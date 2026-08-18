@@ -1264,7 +1264,8 @@ def start_trailing_reduction_refresh_task() -> None:
                 result = tracker.refresh_pretriggered_symbols()
             print(
                 f"🧭 trailing reduction refresh refreshed={result.get('refreshed', 0)} "
-                f"triggered={result.get('triggered', 0)} records={result.get('records', 0)}"
+                f"triggered={result.get('triggered', 0)} "
+                f"created_records={result.get('created_records', 0)}"
             )
         except Exception as exc:
             recover_after_worker_error(exc)

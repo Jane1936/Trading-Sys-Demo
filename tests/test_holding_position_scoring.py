@@ -172,7 +172,7 @@ def test_reduction_action_force_closes_when_post_reduction_stop_recreate_is_imme
     })
     monkeypatch.setattr(scoring, "_current_position_quantity_and_entry", lambda *args: (Decimal("1"), Decimal("8")))
     monkeypatch.setattr(scoring, "_replace_hard_take_profit_for_position", lambda *args: ("tp-1", Decimal("9"), "tp_recreated"))
-    monkeypatch.setattr(scoring, "_replace_stop_loss_for_position", lambda *args: (_ for _ in ()).throw(
+    monkeypatch.setattr(scoring, "_replace_stop_loss_for_position", lambda *args, **kwargs: (_ for _ in ()).throw(
         RuntimeError("reduction_replacement_stop_skipped_immediate_trigger: side=SELL")
     ))
     monkeypatch.setattr(scoring, "_record_reduction_error", lambda *args: None)
@@ -1295,6 +1295,8 @@ def test_reduction_recreates_hard_take_profit_from_actual_remaining_position():
     assert trade["take_profit_order_id"] != "old-tp-1"
     assert trade["stop_loss_price"] == "7"
     assert trade["stop_loss_order_id"] != "old-sl-1"
+    assert ("/fapi/v1/algoOrder", {"symbol": "BANKUSDT", "algoId": "old-sl-1"}) not in fake_account.signed_deletes
+    assert "stop_loss_cancel_skipped_already_cancelled_with_existing_exit_orders" in records[0]["reason"]
 
 
 def test_increase_cancels_and_recreates_hard_take_profit_from_actual_position():
