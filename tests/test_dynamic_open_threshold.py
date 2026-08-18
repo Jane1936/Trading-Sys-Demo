@@ -1,5 +1,10 @@
 import sqlite3
+import sys
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import dynamic_open_threshold
 from dynamic_open_threshold import DynamicOpenThresholdModule
 from openable_symbol_module import OpenableSymbolModule
 
@@ -42,6 +47,33 @@ def test_dynamic_open_threshold_policies(tmp_path):
     low = module.run_round(decision_round_ts=-1, evaluated_at=1)
     assert low.allow_new_positions is False
     assert low.policy == "no_new_positions"
+
+
+def test_dynamic_open_threshold_does_not_depend_on_companion_databases(
+    tmp_path, monkeypatch
+):
+    """A trading/base DB outage must not block a scoring-owned result."""
+    db_path = tmp_path / "scoring.db"
+    with sqlite3.connect(db_path) as conn:
+        _create_total_scores(conn)
+        conn.execute(
+            "INSERT INTO symbol_total_scores VALUES ('BTC', 900000, 86)"
+        )
+
+    def fail_if_attached(*args, **kwargs):
+        raise AssertionError("dynamic threshold attached an unrelated database")
+
+    monkeypatch.setattr(
+        dynamic_open_threshold.db_config, "attach_databases", fail_if_attached
+    )
+
+    result = DynamicOpenThresholdModule(db_path=str(db_path)).run_round(
+        decision_round_ts=900_000,
+        evaluated_at=901_000,
+    )
+
+    assert result.highest_total_score == 86
+    assert result.allow_new_positions is True
 
 
 def test_openable_respects_dynamic_threshold(tmp_path):
