@@ -12,6 +12,7 @@ import os
 import sqlite3
 import threading
 import time
+import traceback
 from pathlib import Path
 from typing import Callable, Iterable, List
 
@@ -494,17 +495,39 @@ def run_scoring_round_worker(
     The parent process owns scheduling, but the child exits only at explicit safe
     checkpoints so SQLite writes are not interrupted by forced termination.
     """
+    worker_started = time.monotonic()
+
+    def log_stage(stage: str, status: str, **details: object) -> None:
+        detail_text = " ".join(f"{key}={value}" for key, value in details.items())
+        print(
+            f"🔎 scoring pipeline round={decision_round_ts} pid={os.getpid()} "
+            f"stage={stage} status={status} elapsed_sec={time.monotonic() - worker_started:.3f}"
+            f"{f' {detail_text}' if detail_text else ''}",
+            flush=True,
+        )
+
+    log_stage(
+        "worker",
+        "started",
+        universe=len(symbols),
+        abnormal=len(set(abnormal_symbols)),
+        deadline_ts=deadline_ts,
+    )
+    log_stage("scoring_init", "started", db_path=db_path)
     scoring = ScoringSystem(db_path=db_path)
     scoring.init_table()
     openable = OpenableSymbolModule(db_path=db_path)
     openable.init_table()
+    log_stage("scoring_init", "completed")
     if _scoring_worker_should_stop(
         decision_round_ts=decision_round_ts,
         deadline_ts=deadline_ts,
         stage="before_score_round",
     ):
+        log_stage("worker", "stopped", reason="deadline_before_score_round")
         return
 
+    log_stage("score_round", "started")
     scored = scoring.score_round(
         decision_round_ts=decision_round_ts,
         all_symbols=symbols,
@@ -514,6 +537,7 @@ def run_scoring_round_worker(
         f"🧮 scoring round={decision_round_ts} universe={len(symbols)} "
         f"abnormal={len(set(abnormal_symbols))} scored={len(scored)}"
     )
+    log_stage("score_round", "completed", scored=len(scored))
 
     # Dynamic-threshold evaluation and openable rows belong immediately after
     # a completed score round.  Publish them before any
@@ -526,6 +550,7 @@ def run_scoring_round_worker(
     # threshold.  Keep initialization here as well so a threshold-table problem
     # cannot prevent scoring from running.
     dynamic_threshold_result = None
+    log_stage("dynamic_open_threshold", "started")
     try:
         dynamic_open_threshold = DynamicOpenThresholdModule(db_path=db_path)
         dynamic_open_threshold.init_table()
@@ -539,7 +564,20 @@ def run_scoring_round_worker(
             f"allow={dynamic_threshold_result.allow_new_positions} "
             f"policy={dynamic_threshold_result.policy}"
         )
+        log_stage(
+            "dynamic_open_threshold",
+            "completed",
+            allow=dynamic_threshold_result.allow_new_positions,
+            min_open=dynamic_threshold_result.min_open_total_score,
+        )
     except Exception as exc:
+        log_stage(
+            "dynamic_open_threshold",
+            "failed",
+            error_type=type(exc).__name__,
+            error=repr(exc),
+        )
+        print(traceback.format_exc(), flush=True)
         recover_after_worker_error(exc)
         try:
             DynamicOpenThresholdModule.record_error(
@@ -560,6 +598,7 @@ def run_scoring_round_worker(
         )
 
     market_filter_result = None
+    log_stage("market_filter_lookup", "started")
     if feature_flags.is_feature_enabled(feature_flags.MARKET_FILTER):
         try:
             market_filter_result = MarketFilterModule(
@@ -568,6 +607,20 @@ def run_scoring_round_worker(
         except Exception as exc:
             recover_after_worker_error(exc)
             print(f"⚠️ market filter lookup failed round={decision_round_ts}: {exc}")
+            log_stage(
+                "market_filter_lookup",
+                "failed",
+                error_type=type(exc).__name__,
+                error=repr(exc),
+            )
+        else:
+            log_stage(
+                "market_filter_lookup",
+                "completed",
+                result_found=market_filter_result is not None,
+            )
+    else:
+        log_stage("market_filter_lookup", "skipped", reason="feature_flag_disabled")
 
     # No current-round dynamic result means no dynamic minimum or dynamic
     # opening ban.  Independent filters below still retain their authority.
@@ -596,6 +649,12 @@ def run_scoring_round_worker(
             f"{market_filter_result.reason}"
         )
 
+    log_stage(
+        "openable_symbols",
+        "started",
+        allow_new_positions=allow_new_positions,
+        min_open=min_open_total_score,
+    )
     openable_symbols = openable.run_round(
         decision_round_ts=decision_round_ts,
         evaluated_at=evaluated_at,
@@ -608,7 +667,14 @@ def run_scoring_round_worker(
         f"🚪 openable round={decision_round_ts} candidates={len(openable_symbols)} "
         f"qualified={qualified_openable_count}"
     )
+    log_stage(
+        "openable_symbols",
+        "completed",
+        candidates=len(openable_symbols),
+        qualified=qualified_openable_count,
+    )
 
+    log_stage("holding_pipeline", "started", trading_db=db_config.TRADING_DB_PATH)
     try:
         # A completed score round must always publish the holding stop-loss
         # judgement that consumes it.  Previously the generic scoring deadline
@@ -629,6 +695,13 @@ def run_scoring_round_worker(
             db_path=db_config.TRADING_DB_PATH
         )
         trailing_reduction.init_tables()
+        holding_flags = {
+            "stop_loss": feature_flags.is_feature_enabled(feature_flags.STOP_LOSS_RULE),
+            "reduction": feature_flags.is_feature_enabled(feature_flags.REDUCTION_CONDITIONS),
+            "increase": feature_flags.is_feature_enabled(feature_flags.INCREASE_CONDITIONS),
+            "portfolio_risk": feature_flags.is_feature_enabled(feature_flags.PORTFOLIO_RISK),
+        }
+        log_stage("holding_feature_flags", "completed", **holding_flags)
         with db_config.sqlite_connection_scopes(
             db_config.TRADING_DB_PATH,
             db_config.trading_core_path(db_config.TRADING_DB_PATH),
@@ -636,10 +709,10 @@ def run_scoring_round_worker(
         ):
             holding_result = holding_scoring.run_round(
                 decision_round_ts=decision_round_ts,
-                enable_stop_loss=feature_flags.is_feature_enabled(feature_flags.STOP_LOSS_RULE),
-                enable_reduction=feature_flags.is_feature_enabled(feature_flags.REDUCTION_CONDITIONS),
-                enable_increase=feature_flags.is_feature_enabled(feature_flags.INCREASE_CONDITIONS),
-                enable_portfolio_risk=feature_flags.is_feature_enabled(feature_flags.PORTFOLIO_RISK),
+                enable_stop_loss=holding_flags["stop_loss"],
+                enable_reduction=holding_flags["reduction"],
+                enable_increase=holding_flags["increase"],
+                enable_portfolio_risk=holding_flags["portfolio_risk"],
             )
             print(
                 f"📊 holding scoring round={decision_round_ts} "
@@ -660,7 +733,22 @@ def run_scoring_round_worker(
                     f"pretriggered={trailing_reduction_result.get('pretriggered', 0)} "
                     f"2R={trailing_reduction_result.get('trigger_r_usdt', '')}"
                 )
+        log_stage(
+            "holding_pipeline",
+            "completed",
+            stop_loss_checked=holding_result.get("checked", 0),
+            reduction_checked=holding_result.get("reduction_checked", 0),
+            increase_checked=holding_result.get("increase_checked", 0),
+            risk_positions=holding_result.get("risk_position_count", 0),
+        )
     except Exception as exc:
+        log_stage(
+            "holding_pipeline",
+            "failed",
+            error_type=type(exc).__name__,
+            error=repr(exc),
+        )
+        print(traceback.format_exc(), flush=True)
         recover_after_worker_error(exc)
         print(f"⚠️ holding scoring failed round={decision_round_ts}: {exc}")
 
@@ -669,9 +757,12 @@ def run_scoring_round_worker(
         deadline_ts=deadline_ts,
         stage="before_first_experiment",
     ):
+        log_stage("worker", "stopped", reason="deadline_before_first_experiment")
         return
 
+    log_stage("first_experiment", "started")
     run_first_experiment_after_openable_round(openable_symbols, decision_round_ts)
+    log_stage("worker", "completed")
 
 
 def start_break_even_take_profit_task() -> None:
