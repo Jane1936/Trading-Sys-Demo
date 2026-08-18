@@ -1306,6 +1306,13 @@ def abnormal_wicks():
     dynamic_add_position_threshold_results = load_module("动态加仓阈值", lambda: dynamic_add_position_threshold.recent_results(limit=100, days=7), [])
     dynamic_open_threshold = DynamicOpenThresholdModule(db_path=_scoring_db_path())
     dynamic_open_threshold_results = load_module("动态开仓门槛", lambda: dynamic_open_threshold.recent_results(limit=100, days=7), [])
+    dynamic_open_threshold_errors = load_module(
+        "动态开仓门槛错误",
+        lambda: DynamicOpenThresholdModule.recent_errors(
+            error_db_path=_market_db_path(), limit=20, days=7
+        ),
+        [],
+    )
     open_block_notice = _current_open_block_notice(
         openable_round_ts, market_filter_results, dynamic_open_threshold_results
     )
@@ -1438,6 +1445,7 @@ def abnormal_wicks():
         add_position_permission_results=add_position_permission_results,
         dynamic_add_position_threshold_results=dynamic_add_position_threshold_results,
         dynamic_open_threshold_results=dynamic_open_threshold_results,
+        dynamic_open_threshold_errors=dynamic_open_threshold_errors,
         open_block_notice=open_block_notice,
         trading_trade_records=trading_trade_records,
         trading_new_open_symbols=trading_new_open_symbols,

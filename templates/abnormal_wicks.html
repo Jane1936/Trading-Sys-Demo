@@ -851,6 +851,14 @@
   <section id="tab-market-filter" class="panel {{ 'active' if active_tab == 'tab-market-filter' else '' }}">
     <div class="card">
       <div class="header"><h2>市场行情过滤</h2></div>
+      {% if dynamic_open_threshold_errors %}
+      <div class="tip danger" role="alert">
+        <strong>动态开仓门槛模块报错（最近7天）</strong>
+        {% for row in dynamic_open_threshold_errors %}
+        <div>轮次 {{ row.decision_round_ts|fmt_ms_datetime }} · 报错时间 {{ row.created_at|fmt_ms_datetime }}：{{ row.error }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
       <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
         <div class="symbol-strip collapsible-header">
           <div>

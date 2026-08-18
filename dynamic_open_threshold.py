@@ -29,8 +29,16 @@ class DynamicOpenThresholdResult:
     evaluated_at: int
 
 
+@dataclass(frozen=True)
+class DynamicOpenThresholdError:
+    decision_round_ts: int
+    error: str
+    created_at: int
+
+
 class DynamicOpenThresholdModule:
     TABLE_NAME = "dynamic_open_threshold_rounds"
+    ERROR_TABLE_NAME = "dynamic_open_threshold_error_records"
     ROUND_MS = 15 * 60_000
     WINDOW_MS = 12 * 60 * 60_000
     NO_THRESHOLD_SCORE = 85
@@ -72,6 +80,76 @@ class DynamicOpenThresholdModule:
                 f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_evaluated "
                 f"ON {self.TABLE_NAME}(evaluated_at DESC)"
             )
+
+    @classmethod
+    def record_error(
+        cls,
+        error_db_path: str,
+        decision_round_ts: int,
+        error: str,
+        created_at: int | None = None,
+    ) -> None:
+        """Persist worker errors outside the scoring DB for dashboard diagnostics."""
+        with db_config.connect_sqlite(error_db_path) as conn:
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {cls.ERROR_TABLE_NAME} (
+                    decision_round_ts INTEGER PRIMARY KEY,
+                    error TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                f"""
+                INSERT INTO {cls.ERROR_TABLE_NAME} (decision_round_ts, error, created_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(decision_round_ts) DO UPDATE SET
+                    error=excluded.error,
+                    created_at=excluded.created_at
+                """,
+                (
+                    int(decision_round_ts),
+                    str(error),
+                    int(time.time() * 1000) if created_at is None else int(created_at),
+                ),
+            )
+
+    @classmethod
+    def recent_errors(
+        cls,
+        error_db_path: str,
+        limit: int = 20,
+        days: int = 7,
+        now_ms: int | None = None,
+    ) -> list[DynamicOpenThresholdError]:
+        """Return recent worker errors; an uninitialized store has no errors."""
+        with db_config.connect_sqlite(error_db_path, row_factory=sqlite3.Row) as conn:
+            table_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (cls.ERROR_TABLE_NAME,),
+            ).fetchone()
+            if table_exists is None:
+                return []
+            current_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
+            rows = conn.execute(
+                f"""
+                SELECT decision_round_ts, error, created_at
+                FROM {cls.ERROR_TABLE_NAME}
+                WHERE created_at >= ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (current_ms - int(days) * 24 * 60 * 60_000, int(limit)),
+            ).fetchall()
+        return [
+            DynamicOpenThresholdError(
+                decision_round_ts=int(row["decision_round_ts"]),
+                error=str(row["error"]),
+                created_at=int(row["created_at"]),
+            )
+            for row in rows
+        ]
 
     @staticmethod
     def decision_round_ts(now_ms: int | None = None) -> int:

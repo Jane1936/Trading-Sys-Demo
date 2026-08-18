@@ -76,6 +76,26 @@ def test_dynamic_open_threshold_does_not_depend_on_companion_databases(
     assert result.allow_new_positions is True
 
 
+def test_dynamic_open_threshold_error_store_round_trip(tmp_path):
+    error_db_path = str(tmp_path / "market.db")
+    DynamicOpenThresholdModule.record_error(
+        error_db_path=error_db_path,
+        decision_round_ts=900_000,
+        error="symbol_total_scores unavailable",
+        created_at=1_000_000,
+    )
+
+    errors = DynamicOpenThresholdModule.recent_errors(
+        error_db_path=error_db_path,
+        now_ms=1_000_000,
+    )
+
+    assert len(errors) == 1
+    assert errors[0].decision_round_ts == 900_000
+    assert errors[0].error == "symbol_total_scores unavailable"
+    assert errors[0].created_at == 1_000_000
+
+
 def test_openable_respects_dynamic_threshold(tmp_path):
     db_path = tmp_path / "klines.db"
     module = OpenableSymbolModule(db_path=str(db_path))

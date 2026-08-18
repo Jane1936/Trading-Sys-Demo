@@ -514,6 +514,17 @@ def test_market_filter_uses_collapsible_recent_records_ui():
     assert "{% if loop.index > 10 %} collapsed-extra{% endif %}" in template[section_index:template.index('</section>', section_index)]
 
 
+def test_market_filter_shows_dynamic_threshold_errors_at_page_top():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    section_index = template.index('<section id="tab-market-filter"')
+    error_index = template.index("dynamic_open_threshold_errors", section_index)
+    first_module_index = template.index("弱势市场止盈动态调整", section_index)
+
+    assert section_index < error_index < first_module_index
+    assert "动态开仓门槛模块报错（最近7天）" in template[error_index:first_module_index]
+    assert "row.error" in template[error_index:first_module_index]
+
+
 def test_market_filter_includes_weak_market_profit_adjustment_ui():
     template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
     section_index = template.index('<section id="tab-market-filter"')

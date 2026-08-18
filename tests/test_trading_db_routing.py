@@ -4,6 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app
+from dynamic_open_threshold import DynamicOpenThresholdModule
 
 
 class FakeScoringSystem:
@@ -222,6 +223,53 @@ def test_completed_scoring_round_publishes_threshold_openable_and_holding_after_
             "threshold_reason": "test",
         }
     ]
+
+
+def test_scoring_worker_uses_no_dynamic_minimum_when_threshold_result_is_unavailable(
+    monkeypatch, tmp_path
+):
+    scoring_db = str(tmp_path / "scoring.db")
+    market_db = str(tmp_path / "market.db")
+    openable_calls = []
+
+    class BrokenThreshold(DynamicOpenThresholdModule):
+        def run_round(self, **kwargs):
+            raise RuntimeError("threshold query unavailable")
+
+    class RecordingOpenable(FakeOpenableSymbolModule):
+        def run_round(self, **kwargs):
+            openable_calls.append(kwargs)
+            return []
+
+    monkeypatch.setattr(app, "ScoringSystem", FakeScoringSystem)
+    monkeypatch.setattr(app.db_config, "MARKET_DB_PATH", market_db)
+    monkeypatch.setattr(app, "OpenableSymbolModule", RecordingOpenable)
+    monkeypatch.setattr(app, "DynamicOpenThresholdModule", BrokenThreshold)
+    monkeypatch.setattr(app, "HoldingPositionScoringSystem", FakeTradingOwnedModule)
+    monkeypatch.setattr(app, "TrailingReductionTracker", FakeTradingOwnedModule)
+
+    app.run_scoring_round_worker(
+        db_path=scoring_db,
+        decision_round_ts=123,
+        symbols=["BTC"],
+        abnormal_symbols=[],
+        evaluated_at=456,
+    )
+
+    assert openable_calls == [
+        {
+            "decision_round_ts": 123,
+            "evaluated_at": 456,
+            "min_total_score": None,
+            "allow_new_positions": True,
+            "threshold_reason": "dynamic_threshold_unavailable_no_minimum",
+        }
+    ]
+    errors = DynamicOpenThresholdModule.recent_errors(
+        error_db_path=market_db,
+        now_ms=456,
+    )
+    assert [row.error for row in errors] == ["threshold query unavailable"]
 
 
 class FakeActiveProcess:

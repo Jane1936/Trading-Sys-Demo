@@ -498,39 +498,6 @@ def run_scoring_round_worker(
     scoring.init_table()
     openable = OpenableSymbolModule(db_path=db_path)
     openable.init_table()
-    dynamic_open_threshold = DynamicOpenThresholdModule(db_path=db_path)
-    dynamic_open_threshold.init_table()
-    if _scoring_worker_should_stop(
-        decision_round_ts=decision_round_ts,
-        deadline_ts=deadline_ts,
-        stage="before_ma20_readiness",
-    ):
-        return
-
-    readiness = scoring.wait_for_15m_ma20_readiness_for_round(
-        decision_round_ts=decision_round_ts,
-        symbols=symbols,
-        retries=6,
-        retry_delay_seconds=5.0,
-    )
-    if not readiness.ready:
-        scoring.record_ma20_skip_for_round(
-            decision_round_ts=decision_round_ts,
-            readiness=readiness,
-            universe_count=len(symbols),
-            created_at=int(time.time() * 1000),
-        )
-        missing_preview = ",".join(readiness.missing_symbols[:10])
-        if len(readiness.missing_symbols) > 10:
-            missing_preview += ",..."
-        print(
-            f"⚠️ scoring round={decision_round_ts} skipping symbols missing converged 15m MA20/EMA20 "
-            f"target_open_time={readiness.target_open_time} "
-            f"ready={len(readiness.ready_symbols)} "
-            f"missing={len(readiness.missing_symbols)} "
-            f"missing_symbols={missing_preview}"
-        )
-
     if _scoring_worker_should_stop(
         decision_round_ts=decision_round_ts,
         deadline_ts=deadline_ts,
@@ -540,30 +507,57 @@ def run_scoring_round_worker(
 
     scored = scoring.score_round(
         decision_round_ts=decision_round_ts,
-        all_symbols=readiness.ready_symbols,
+        all_symbols=symbols,
         abnormal_symbols=abnormal_symbols,
     )
     print(
         f"🧮 scoring round={decision_round_ts} universe={len(symbols)} "
-        f"ready={len(readiness.ready_symbols)} "
         f"abnormal={len(set(abnormal_symbols))} scored={len(scored)}"
     )
 
-    # Dynamic-threshold and openable rows are part of publishing a completed
-    # score round, not optional downstream work.  Publish them before any
+    # Dynamic-threshold evaluation and openable rows belong immediately after
+    # a completed score round.  Publish them before any
     # trading/account work, which can be slow enough to exhaust the worker
     # deadline.  Otherwise scoring appears current while both dashboard
     # modules remain pinned to an older round (or contain no rows at all).
-    dynamic_threshold_result = dynamic_open_threshold.run_round(
-        decision_round_ts=decision_round_ts, evaluated_at=evaluated_at
-    )
-    print(
-        f"🚦 dynamic open threshold round={decision_round_ts} "
-        f"highest={dynamic_threshold_result.highest_total_score} "
-        f"min_open={dynamic_threshold_result.min_open_total_score} "
-        f"allow={dynamic_threshold_result.allow_new_positions} "
-        f"policy={dynamic_threshold_result.policy}"
-    )
+    # The dynamic threshold is an optional restriction on an otherwise
+    # completed scoring round.  A missing result must fail open: it must not
+    # strand openable-symbol publication or silently behave like a zero/blocked
+    # threshold.  Keep initialization here as well so a threshold-table problem
+    # cannot prevent scoring from running.
+    dynamic_threshold_result = None
+    try:
+        dynamic_open_threshold = DynamicOpenThresholdModule(db_path=db_path)
+        dynamic_open_threshold.init_table()
+        dynamic_threshold_result = dynamic_open_threshold.run_round(
+            decision_round_ts=decision_round_ts, evaluated_at=evaluated_at
+        )
+        print(
+            f"🚦 dynamic open threshold round={decision_round_ts} "
+            f"highest={dynamic_threshold_result.highest_total_score} "
+            f"min_open={dynamic_threshold_result.min_open_total_score} "
+            f"allow={dynamic_threshold_result.allow_new_positions} "
+            f"policy={dynamic_threshold_result.policy}"
+        )
+    except Exception as exc:
+        recover_after_worker_error(exc)
+        try:
+            DynamicOpenThresholdModule.record_error(
+                error_db_path=db_config.MARKET_DB_PATH,
+                decision_round_ts=decision_round_ts,
+                error=str(exc),
+                created_at=evaluated_at,
+            )
+        except Exception as record_exc:
+            recover_after_worker_error(record_exc)
+            print(
+                f"⚠️ dynamic open threshold error record failed "
+                f"round={decision_round_ts}: {record_exc}"
+            )
+        print(
+            f"⚠️ dynamic open threshold unavailable round={decision_round_ts}; "
+            f"continuing without a minimum opening score: {exc}"
+        )
 
     market_filter_result = None
     if feature_flags.is_feature_enabled(feature_flags.MARKET_FILTER):
@@ -575,21 +569,37 @@ def run_scoring_round_worker(
             recover_after_worker_error(exc)
             print(f"⚠️ market filter lookup failed round={decision_round_ts}: {exc}")
 
-    allow_new_positions = dynamic_threshold_result.allow_new_positions
-    openable_reason = dynamic_threshold_result.reason
+    # No current-round dynamic result means no dynamic minimum or dynamic
+    # opening ban.  Independent filters below still retain their authority.
+    allow_new_positions = (
+        dynamic_threshold_result.allow_new_positions
+        if dynamic_threshold_result is not None
+        else True
+    )
+    min_open_total_score = (
+        dynamic_threshold_result.min_open_total_score
+        if dynamic_threshold_result is not None
+        else None
+    )
+    openable_reason = (
+        dynamic_threshold_result.reason
+        if dynamic_threshold_result is not None
+        else "dynamic_threshold_unavailable_no_minimum"
+    )
     if market_filter_result is not None and not market_filter_result.allow_new_positions:
+        dynamic_allow_new_positions = allow_new_positions
         allow_new_positions = False
         openable_reason = f"market_filter_blocked:{market_filter_result.reason}"
         print(
             f"🚫 openable round={decision_round_ts} blocked by independent market filter "
-            f"despite dynamic_threshold_allow={dynamic_threshold_result.allow_new_positions}: "
+            f"despite dynamic_threshold_allow={dynamic_allow_new_positions}: "
             f"{market_filter_result.reason}"
         )
 
     openable_symbols = openable.run_round(
         decision_round_ts=decision_round_ts,
         evaluated_at=evaluated_at,
-        min_total_score=dynamic_threshold_result.min_open_total_score,
+        min_total_score=min_open_total_score,
         allow_new_positions=allow_new_positions,
         threshold_reason=openable_reason,
     )
