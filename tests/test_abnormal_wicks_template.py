@@ -527,7 +527,7 @@ def test_openable_section_highlights_current_round_open_block_notice():
 
     openable_index = template.index("本轮可开仓symbol情况")
     notice_index = template.index("open_block_notice", openable_index)
-    text_index = template.index("本轮禁止新开仓", notice_index)
+    text_index = template.index("本轮开仓限制", notice_index)
     table_index = template.index("openable_symbols", text_index)
 
     assert notice_index < text_index < table_index

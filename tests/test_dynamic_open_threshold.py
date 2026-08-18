@@ -82,3 +82,23 @@ def test_current_open_block_notice_prefers_independent_market_filter_reason():
     )
 
     assert notice == "独立市场过滤模块：btc_siphon"
+
+
+def test_current_open_block_notice_shows_active_dynamic_minimum():
+    from types import SimpleNamespace
+    import web_app
+
+    notice = web_app._current_open_block_notice(
+        900_000,
+        [],
+        [
+            SimpleNamespace(
+                decision_round_ts=900_000,
+                allow_new_positions=True,
+                min_open_total_score=81,
+                reason="highest_score_73_to_84",
+            )
+        ],
+    )
+
+    assert notice == "动态开仓门槛：本轮总分需≥81（highest_score_73_to_84）"

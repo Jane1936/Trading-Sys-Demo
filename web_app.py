@@ -80,7 +80,12 @@ def _market_db_path() -> str:
 
 
 def _current_open_block_notice(openable_round_ts, market_filter_results, dynamic_open_threshold_results):
-    """Build the current-round no-new-position notice shown above openable symbols."""
+    """Build the current-round opening restriction shown above openable symbols.
+
+    A dynamic threshold can leave the candidate list empty while still reporting
+    ``allow_new_positions=True``.  Surface that minimum explicitly so an empty
+    list is not mistaken for an account-balance problem.
+    """
     if not openable_round_ts:
         return None
     market_result = next(
@@ -96,6 +101,11 @@ def _current_open_block_notice(openable_round_ts, market_filter_results, dynamic
         reasons.append(f"独立市场过滤模块：{market_result.reason}")
     if dynamic_result is not None and not dynamic_result.allow_new_positions:
         reasons.append(f"动态开仓门槛：{dynamic_result.reason}")
+    elif dynamic_result is not None and getattr(dynamic_result, "min_open_total_score", None) is not None:
+        reasons.append(
+            f"动态开仓门槛：本轮总分需≥{dynamic_result.min_open_total_score}"
+            f"（{dynamic_result.reason}）"
+        )
     if not reasons:
         return None
     return "；".join(reasons)
