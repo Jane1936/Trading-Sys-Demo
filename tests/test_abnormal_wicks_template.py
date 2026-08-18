@@ -533,6 +533,14 @@ def test_market_filter_includes_weak_market_profit_adjustment_ui():
     assert "1.4R" in template[module_index:]
 
 
+def test_feature_flags_include_weak_market_profit_settings_form():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    section_index = template.index('<section id="tab-feature-flags"')
+    form_index = template.index('id="weak-market-profit-form"', section_index)
+    assert template.index("止盈阈值（R）", form_index) > form_index
+    assert "take_profit_fraction" in template[form_index:]
+
+
 def test_openable_section_highlights_current_round_open_block_notice():
     template = Path("templates/abnormal_wicks.html").read_text()
 
