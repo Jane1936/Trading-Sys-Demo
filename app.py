@@ -527,12 +527,63 @@ def run_scoring_round_worker(
         log_stage("worker", "stopped", reason="deadline_before_score_round")
         return
 
-    log_stage("score_round", "started")
-    scored = scoring.score_round(
-        decision_round_ts=decision_round_ts,
-        all_symbols=symbols,
-        abnormal_symbols=abnormal_symbols,
-    )
+    log_stage("score_round", "started", attempt=1)
+    try:
+        scored = scoring.score_round(
+            decision_round_ts=decision_round_ts,
+            all_symbols=symbols,
+            abnormal_symbols=abnormal_symbols,
+        )
+    except Exception as exc:
+        log_stage(
+            "score_round",
+            "failed",
+            attempt=1,
+            error_type=type(exc).__name__,
+            error=repr(exc),
+        )
+        print(traceback.format_exc(), flush=True)
+        if not is_malformed_database_error(exc):
+            raise
+
+        # A connection can report SQLITE_CORRUPT even when a subsequent
+        # file-level quick_check is healthy (for example after a transient WAL
+        # or replaced-connection condition).  Report both physical databases
+        # used to build the score round, run the existing guarded recovery, and
+        # retry once with a brand-new ScoringSystem/writer.  All scoring writes
+        # are UPSERTs keyed by symbol and round, so repeating the round is safe.
+        scoring_ok, scoring_detail = quick_check_sqlite_database(db_path)
+        base_ok, base_detail = quick_check_sqlite_database(db_config.BASE_DB_PATH)
+        log_stage(
+            "score_round_integrity_check",
+            "completed",
+            scoring_ok=scoring_ok,
+            scoring_detail=repr(scoring_detail),
+            base_ok=base_ok,
+            base_detail=repr(base_detail),
+        )
+        recovered = recover_after_worker_error(exc)
+        log_stage("score_round_recovery", "completed", recovered=recovered)
+
+        scoring = ScoringSystem(db_path=db_path)
+        scoring.init_table()
+        log_stage("score_round", "started", attempt=2)
+        try:
+            scored = scoring.score_round(
+                decision_round_ts=decision_round_ts,
+                all_symbols=symbols,
+                abnormal_symbols=abnormal_symbols,
+            )
+        except Exception as retry_exc:
+            log_stage(
+                "score_round",
+                "failed",
+                attempt=2,
+                error_type=type(retry_exc).__name__,
+                error=repr(retry_exc),
+            )
+            print(traceback.format_exc(), flush=True)
+            raise
     print(
         f"🧮 scoring round={decision_round_ts} universe={len(symbols)} "
         f"abnormal={len(set(abnormal_symbols))} scored={len(scored)}"

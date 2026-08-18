@@ -1,6 +1,7 @@
 import sqlite3
 
 import db_config
+import pytest
 from scoring_system import ScoringSystem
 
 
@@ -376,6 +377,36 @@ def test_score_round_records_symbol_error_when_three_15m_ma20_values_missing(tmp
     assert len(symbol_errors) == 1
     assert symbol_errors[0].symbol == "BTCUSDT"
     assert symbol_errors[0].error == "missing_latest_three_15m_ma20_records"
+
+
+def test_score_round_does_not_treat_malformed_database_as_symbol_error(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "scoring.db"
+    scoring = ScoringSystem(db_path=str(db_path))
+    scoring.init_table()
+    monkeypatch.setattr(scoring, "_load_round_snapshot", lambda _symbols: {})
+    monkeypatch.setattr(
+        scoring,
+        "_score_symbol",
+        lambda *_args: (_ for _ in ()).throw(
+            sqlite3.DatabaseError("database disk image is malformed")
+        ),
+    )
+    monkeypatch.setattr(
+        scoring,
+        "record_symbol_error_for_round",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("database corruption must not be recorded as a symbol error")
+        ),
+    )
+
+    with pytest.raises(sqlite3.DatabaseError, match="database disk image is malformed"):
+        scoring.score_round(
+            decision_round_ts=1_800_000,
+            all_symbols=["BTCUSDT"],
+            abnormal_symbols=[],
+        )
 
 
 def test_score_round_commits_twenty_symbols_per_batch(tmp_path, monkeypatch):

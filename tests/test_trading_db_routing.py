@@ -146,6 +146,52 @@ def test_scoring_worker_continues_when_trading_module_initialization_fails(
     assert threshold_calls == [{"decision_round_ts": 123, "evaluated_at": 456}]
 
 
+def test_scoring_worker_retries_malformed_connection_after_healthy_quick_check(
+    monkeypatch, tmp_path, capsys
+):
+    scoring_db = str(tmp_path / "scoring.db")
+    attempts = []
+
+    class TransientMalformedScoring(FakeScoringSystem):
+        def score_round(self, decision_round_ts, all_symbols, abnormal_symbols):
+            attempts.append(decision_round_ts)
+            if len(attempts) == 1:
+                raise app.sqlite3.DatabaseError("database disk image is malformed")
+            return []
+
+    monkeypatch.setattr(app, "ScoringSystem", TransientMalformedScoring)
+    monkeypatch.setattr(app, "OpenableSymbolModule", FakeOpenableSymbolModule)
+    monkeypatch.setattr(app, "DynamicOpenThresholdModule", FakeDynamicOpenThresholdModule)
+    monkeypatch.setattr(app, "HoldingPositionScoringSystem", FakeTradingOwnedModule)
+    monkeypatch.setattr(app, "TrailingReductionTracker", FakeTradingOwnedModule)
+    monkeypatch.setattr(
+        app, "quick_check_sqlite_database", lambda _path: (True, "ok")
+    )
+    recovery_calls = []
+    monkeypatch.setattr(
+        app,
+        "recover_after_worker_error",
+        lambda exc: recovery_calls.append(str(exc)) or True,
+    )
+
+    app.run_scoring_round_worker(
+        db_path=scoring_db,
+        decision_round_ts=123,
+        symbols=["BTC"],
+        abnormal_symbols=[],
+        evaluated_at=456,
+    )
+
+    output = capsys.readouterr().out
+    assert attempts == [123, 123]
+    assert recovery_calls[0] == "database disk image is malformed"
+    assert "stage=score_round status=failed" in output
+    assert "stage=score_round_integrity_check status=completed" in output
+    assert "scoring_ok=True" in output
+    assert "stage=score_round status=started" in output
+    assert "attempt=2" in output
+
+
 def test_scoring_worker_deadline_is_ten_minutes():
     assert app.SCORING_WORKER_DEADLINE_MS == 10 * 60_000
 

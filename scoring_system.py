@@ -11,6 +11,8 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Iterable, List
 
+from sqlite_recovery import is_malformed_database_error
+
 
 DEFAULT_RULE_SCORE_WEIGHTS: dict[int, int] = {
     1: 4,
@@ -1032,6 +1034,14 @@ class ScoringSystem:
                     except Exception as exc:
                         conn.execute("ROLLBACK TO scoring_symbol")
                         conn.execute("RELEASE scoring_symbol")
+                        # SQLITE_CORRUPT is a connection/database-level failure,
+                        # not a bad-symbol result.  Reusing the same writer to
+                        # persist a symbol error only masks the original failure
+                        # with a second identical exception.  Let the worker
+                        # close this connection, verify the files, and retry the
+                        # complete idempotent round with a fresh connection.
+                        if is_malformed_database_error(exc):
+                            raise
                         self.record_symbol_error_for_round(
                             decision_round_ts=decision_round_ts,
                             symbol=symbol,
