@@ -40,7 +40,11 @@ from scoring_system import (
 from scoring_rule_election import get_settings as get_rule_election_settings, set_settings as set_rule_election_settings
 from trading_experiment import TradingExperiment
 from market_filter_module import MarketFilterModule
-from weak_market_profit_adjustment import WeakMarketProfitAdjustmentModule
+from weak_market_profit_adjustment import (
+    WeakMarketProfitAdjustmentModule,
+    get_settings as get_weak_market_profit_settings,
+    set_settings as set_weak_market_profit_settings,
+)
 from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import DynamicOpenThresholdModule
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
@@ -1197,6 +1201,21 @@ def update_openable_symbol_settings_api():
         return jsonify({"error": str(exc)}), 400
 
 
+@app.get("/api/weak-market-profit-settings")
+def weak_market_profit_settings_api():
+    return jsonify(get_weak_market_profit_settings(BASE_DB_PATH))
+
+
+@app.put("/api/weak-market-profit-settings")
+def update_weak_market_profit_settings_api():
+    try:
+        return jsonify(set_weak_market_profit_settings(
+            request.get_json(silent=True) or {}, BASE_DB_PATH
+        ))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
 @app.post("/api/trading-experiment/run")
 def trading_experiment_run_api():
     try:
@@ -1502,6 +1521,7 @@ def abnormal_wicks():
         scoring_rule_weight_settings=get_rule_score_weight_settings(BASE_DB_PATH),
         scoring_rule_election_settings=get_rule_election_settings(BASE_DB_PATH),
         openable_symbol_settings=get_openable_symbol_settings(BASE_DB_PATH),
+        weak_market_profit_settings=get_weak_market_profit_settings(BASE_DB_PATH),
     )
 
 

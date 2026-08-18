@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import sqlite3
 import time
@@ -10,6 +11,62 @@ from typing import Optional
 
 import allusdt_15m_ma20
 import db_config
+
+
+DEFAULT_WEAK_MARKET_TRIGGER_R_MULTIPLE = 1.4
+DEFAULT_WEAK_MARKET_TAKE_PROFIT_FRACTION = 0.5
+SETTINGS_TABLE_NAME = "weak_market_profit_adjustment_settings"
+
+
+def get_settings(db_path: str | None = None) -> dict[str, float | int]:
+    """Return the persisted weak-market take-profit parameters."""
+    settings_path = db_path or db_config.BASE_DB_PATH
+    with db_config.sqlite_schema_lock(settings_path):
+        with db_config.connect_sqlite(settings_path, row_factory=sqlite3.Row) as conn:
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {SETTINGS_TABLE_NAME} (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    trigger_r_multiple REAL NOT NULL,
+                    take_profit_fraction REAL NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )
+            """)
+            conn.execute(
+                f"INSERT OR IGNORE INTO {SETTINGS_TABLE_NAME} VALUES (1, ?, ?, ?)",
+                (DEFAULT_WEAK_MARKET_TRIGGER_R_MULTIPLE,
+                 DEFAULT_WEAK_MARKET_TAKE_PROFIT_FRACTION, int(time.time() * 1000)),
+            )
+            row = conn.execute(f"SELECT * FROM {SETTINGS_TABLE_NAME} WHERE id = 1").fetchone()
+    return {
+        "trigger_r_multiple": float(row["trigger_r_multiple"]),
+        "take_profit_fraction": float(row["take_profit_fraction"]),
+        "updated_at": int(row["updated_at"]),
+    }
+
+
+def set_settings(payload: dict, db_path: str | None = None) -> dict[str, float | int]:
+    """Validate and persist weak-market take-profit parameters."""
+    try:
+        trigger = float(payload["trigger_r_multiple"])
+        fraction = float(payload["take_profit_fraction"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("止盈阈值和卖出比例必须是数字") from exc
+    if not math.isfinite(trigger) or not 0 < trigger <= 100:
+        raise ValueError("止盈阈值必须大于 0 且不超过 100R")
+    if not math.isfinite(fraction) or not 0 < fraction <= 1:
+        raise ValueError("卖出比例必须大于 0 且不超过 100%")
+
+    settings_path = db_path or db_config.BASE_DB_PATH
+    get_settings(settings_path)
+    updated_at = int(time.time() * 1000)
+    with db_config.connect_sqlite(settings_path) as conn:
+        conn.execute(
+            f"""UPDATE {SETTINGS_TABLE_NAME}
+                SET trigger_r_multiple = ?, take_profit_fraction = ?, updated_at = ?
+                WHERE id = 1""",
+            (trigger, fraction, updated_at),
+        )
+    return get_settings(settings_path)
 
 
 @dataclass(frozen=True)
@@ -100,10 +157,13 @@ class WeakMarketProfitAdjustmentModule:
                 reason = "allusdt_close_below_1h_ma20_weak_market"
             else:
                 reason = "allusdt_close_not_below_1h_ma20_normal_market"
+            settings = get_settings()
             result = WeakMarketProfitAdjustmentResult(
                 round_ts, int(candle["open_time"]) if candle else None, close,
                 int(ma20["open_time"]) if ma20 else None, ma_value, weak,
-                1.4 if weak else 2.0, 0.5 if weak else 0.3, reason, evaluated,
+                float(settings["trigger_r_multiple"]) if weak else 2.0,
+                float(settings["take_profit_fraction"]) if weak else 0.3,
+                reason, evaluated,
             )
             conn.execute(f"""INSERT INTO {self.TABLE_NAME} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(decision_round_ts) DO UPDATE SET

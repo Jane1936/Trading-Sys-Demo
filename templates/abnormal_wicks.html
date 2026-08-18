@@ -867,7 +867,7 @@
           </div>
           <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
         </div>
-        <div class="collapse-hint">规则：若最近第1条 ALLUSDT 15分钟K线 close &lt; 最近第1条 ALLUSDT 1小时MA20，则触发市场弱势。市场弱势时，分批止盈改为未变现盈亏 ≥ 1.4R 时卖出当前仓位50%；否则维持 ≥ 2R 时卖出30%。15分钟整点的分批止盈扫描会等待本模块完成。</div>
+        <div class="collapse-hint">规则：若最近第1条 ALLUSDT 15分钟K线 close &lt; 最近第1条 ALLUSDT 1小时MA20，则触发市场弱势。市场弱势时，分批止盈按功能开关页当前配置，在未变现盈亏 ≥ {{ weak_market_profit_settings.trigger_r_multiple }}R 时卖出当前仓位{{ '%.1f'|format(weak_market_profit_settings.take_profit_fraction * 100) }}%；否则维持 ≥ 2R 时卖出30%。系统默认值为1.4R/50%；15分钟整点的分批止盈扫描会等待本模块完成。</div>
         <div class="table-wrap">
           <table>
             <thead><tr><th>决策轮次</th><th>执行时间</th><th>15m K线时间</th><th>ALLUSDT close</th><th>1h MA20时间</th><th>1h MA20</th><th>市场弱势</th><th>止盈阈值</th><th>卖出比例</th><th>原因</th></tr></thead>
@@ -2627,6 +2627,20 @@
       </div>
     </div>
     <div class="card">
+      <div class="header"><h2>弱势市场止盈动态调整</h2></div>
+      <div class="tip">配置市场弱势时分批止盈的触发阈值和卖出当前仓位的比例。保存后持久化到基础数据库，并从下一轮 15 分钟弱势市场判断开始生效。</div>
+      <div id="weak-market-profit-message" class="feature-flag-message" role="status" aria-live="polite"></div>
+      <form id="weak-market-profit-form" class="score-weight-actions">
+        <label>止盈阈值（R）
+          <input id="weak-market-trigger-r" type="number" min="0.1" max="100" step="0.1" required value="{{ weak_market_profit_settings.trigger_r_multiple }}">
+        </label>
+        <label>卖出比例（%）
+          <input id="weak-market-take-profit-percent" type="number" min="0.1" max="100" step="0.1" required value="{{ weak_market_profit_settings.take_profit_fraction * 100 }}">
+        </label>
+        <button class="btn btn-success" type="submit">保存弱势市场止盈配置</button>
+      </form>
+    </div>
+    <div class="card">
       <div class="header">
         <h2>评分规则权重</h2>
       </div>
@@ -2773,6 +2787,37 @@
             button.disabled = false;
           }
         });
+      });
+    })();
+
+    (function initWeakMarketProfitForm() {
+      const form = document.getElementById('weak-market-profit-form');
+      const message = document.getElementById('weak-market-profit-message');
+      if (!form || !message) return;
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const button = form.querySelector('button[type="submit"]');
+        button.disabled = true;
+        message.textContent = '正在保存弱势市场止盈配置...';
+        message.classList.remove('error');
+        try {
+          const response = await fetch('/api/weak-market-profit-settings', {
+            method: 'PUT',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              trigger_r_multiple: Number(document.getElementById('weak-market-trigger-r').value),
+              take_profit_fraction: Number(document.getElementById('weak-market-take-profit-percent').value) / 100,
+            }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          message.textContent = `配置已保存：未变现盈亏 ≥ ${payload.trigger_r_multiple}R 时卖出当前仓位 ${(payload.take_profit_fraction * 100).toFixed(1)}%。`;
+        } catch (err) {
+          message.textContent = `弱势市场止盈配置保存失败：${err.message || err}`;
+          message.classList.add('error');
+        } finally {
+          button.disabled = false;
+        }
       });
     })();
 
