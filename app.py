@@ -56,6 +56,7 @@ from sqlite_recovery import (
 
 _universe_lock = threading.Lock()
 _universe_refresh_interval_sec = 12 * 60 * 60
+_universe_refresh_failure_retry_sec = 5 * 60
 _universe_last_refresh_ts = 0.0
 DATABASE_HEALTH_CHECK_INTERVAL_SEC = 5 * 60
 PROFIT_MARKET_CONVERGENCE_TIMEOUT_SEC = float(
@@ -273,7 +274,17 @@ def verify_db_writable(db_path: str) -> None:
 
 
 def ensure_universe() -> List[str]:
-    """Return current universe snapshot and refresh it every 12 hours."""
+    """Return the universe snapshot, retaining stale data on refresh failure.
+
+    Several independent 15-minute modules share the pre-safety scheduler, and
+    that scheduler calls this function at the top of every loop.  A transient
+    Binance/universe refresh error used to escape from here and permanently
+    kill the daemon thread.  The dynamic opening threshold and every holding
+    safety module would consequently stop on exactly the same round.  Once a
+    snapshot exists, availability is safer than terminating all those modules:
+    keep the last known universe and retry the remote refresh in five minutes.
+    Initial startup still raises because there is no safe snapshot to use.
+    """
     global _universe_last_refresh_ts
     with _universe_lock:
         now_ts = time.time()
@@ -282,8 +293,22 @@ def ensure_universe() -> List[str]:
             or (now_ts - _universe_last_refresh_ts) >= _universe_refresh_interval_sec
         )
         if should_refresh:
-            collector.UNIVERSE = collector.build_universe()
-            _universe_last_refresh_ts = now_ts
+            try:
+                collector.UNIVERSE = collector.build_universe()
+                _universe_last_refresh_ts = now_ts
+            except Exception as exc:
+                if collector.UNIVERSE is None:
+                    raise
+                _universe_last_refresh_ts = (
+                    now_ts
+                    - _universe_refresh_interval_sec
+                    + _universe_refresh_failure_retry_sec
+                )
+                print(
+                    "⚠️ universe refresh failed; retaining "
+                    f"{len(collector.UNIVERSE)} cached symbols and retrying in "
+                    f"{_universe_refresh_failure_retry_sec}s: {exc}"
+                )
         return list(collector.UNIVERSE)
 
 
