@@ -318,7 +318,16 @@ class TrailingReductionTracker:
             take_profit_order_id, tp_price, tp_reason = holding._replace_hard_take_profit_for_position(helper, exchange_symbol, symbol, side, actual_entry, actual_qty, info["tick_size"])
             holding._update_latest_open_trade_take_profit(symbol, take_profit_order_id, tp_price)
             reason_parts.append(tp_reason)
-            stop_loss_order_id, sl_price, sl_reason = holding._replace_stop_loss_for_position(helper, exchange_symbol, symbol, side, actual_qty, info["tick_size"], close)
+            stop_loss_order_id, sl_price, sl_reason = holding._replace_stop_loss_for_position(
+                helper,
+                exchange_symbol,
+                symbol,
+                side,
+                actual_qty,
+                info["tick_size"],
+                close,
+                existing_orders_cancelled=True,
+            )
             holding._update_latest_open_trade_stop_loss(symbol, stop_loss_order_id, sl_price)
             reason_parts.append(sl_reason)
         except Exception as exc:

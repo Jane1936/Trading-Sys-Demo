@@ -1032,6 +1032,7 @@ class HoldingPositionScoringSystem:
                         actual_quantity,
                         exchange_info["tick_size"],
                         self._decimal_from(check.current_price, Decimal("0")),
+                        existing_orders_cancelled=True,
                     )
                     if stop_loss_order_id:
                         self._update_latest_open_trade_stop_loss(check.symbol, stop_loss_order_id, stop_loss_price)
@@ -1168,6 +1169,7 @@ class HoldingPositionScoringSystem:
         quantity: Decimal,
         tick_size: Decimal,
         current_mark_price: Decimal = Decimal("0"),
+        existing_orders_cancelled: bool = False,
     ) -> tuple[str, Decimal, str]:
         old_order_id = self._latest_open_trade_stop_loss_order_id(symbol)
         stop_loss_price = self._decimal_from(self._latest_open_trade_stop_loss_price(symbol), Decimal("0"))
@@ -1177,7 +1179,10 @@ class HoldingPositionScoringSystem:
         skip_reason = self._replacement_stop_immediate_trigger_reason(side, stop_loss_price, current_mark_price)
         if skip_reason:
             raise RuntimeError(skip_reason)
-        cancel_reason = self._cancel_latest_stop_loss_order(exchange_symbol, old_order_id)
+        if existing_orders_cancelled:
+            cancel_reason = "stop_loss_cancel_skipped_already_cancelled_with_existing_exit_orders"
+        else:
+            cancel_reason = self._cancel_latest_stop_loss_order(exchange_symbol, old_order_id)
         endpoint, params = TradingExperiment._exit_order_request(
             {
                 "symbol": exchange_symbol,
