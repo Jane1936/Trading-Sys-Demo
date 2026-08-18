@@ -19,6 +19,7 @@ from sqlite_recovery import (
     ensure_sqlite_database_usable,
     is_malformed_database_error,
     is_sqlite_integrity_failure,
+    quick_check_sqlite_database,
 )
 
 
@@ -155,7 +156,73 @@ def test_worker_health_check_does_not_quarantine_storage_failure(
 def test_integrity_failure_classifier_rejects_io_errors():
     assert is_sqlite_integrity_failure("database disk image is malformed")
     assert is_sqlite_integrity_failure("*** in database main ***\nPage 3 is never used")
+    assert is_sqlite_integrity_failure(
+        "row 42 missing from index sqlite_autoindex_symbol_scores_close_gt_ma20_1"
+    )
+    assert is_sqlite_integrity_failure("wrong # of entries in index scores_by_round")
     assert not is_sqlite_integrity_failure("disk I/O error")
+
+
+def test_quick_check_returns_every_integrity_error(tmp_path, monkeypatch):
+    class Result:
+        def fetchall(self):
+            return [
+                ("row 1 missing from index first",),
+                ("wrong # of entries in index second",),
+            ]
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, statement):
+            assert statement == "PRAGMA quick_check"
+            return Result()
+
+    db_path = tmp_path / "scoring.db"
+    db_path.write_bytes(b"placeholder")
+    monkeypatch.setattr(sqlite3, "connect", lambda *_args, **_kwargs: Connection())
+
+    ok, detail = quick_check_sqlite_database(str(db_path))
+
+    assert not ok
+    assert detail == "row 1 missing from index first\nwrong # of entries in index second"
+
+
+def test_worker_reindexes_before_destructive_recovery(tmp_path, monkeypatch):
+    db_path = tmp_path / "scoring.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE scores (symbol TEXT PRIMARY KEY, score INTEGER)")
+        conn.execute("INSERT INTO scores VALUES ('BTCUSDT', 10)")
+    initialized = []
+    monkeypatch.setattr(
+        worker_app,
+        "_database_initializers",
+        lambda: {str(db_path): lambda: initialized.append(True)},
+    )
+    monkeypatch.setattr(
+        worker_app,
+        "quick_check_sqlite_database",
+        lambda _path: (False, "row 1 missing from index sqlite_autoindex_scores_1"),
+    )
+    monkeypatch.setattr(
+        worker_app, "reindex_sqlite_database", lambda _path: (True, "ok")
+    )
+    monkeypatch.setenv("SQLITE_RECOVERY_LOG_DIR", str(tmp_path / "incidents"))
+
+    recovered = worker_app.check_worker_databases()
+
+    assert recovered == {str(db_path): []}
+    assert initialized == []
+    assert not list(tmp_path.glob("scoring.db.corrupt-*"))
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT * FROM scores").fetchall() == [("BTCUSDT", 10)]
+    incident_path = next((tmp_path / "incidents").glob("*.json"))
+    incident = json.loads(incident_path.read_text(encoding="utf-8"))
+    assert incident["status"] == "reindexed"
 
 
 def test_safe_page_module_does_not_quarantine_live_database(tmp_path, monkeypatch):

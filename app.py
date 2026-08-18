@@ -53,6 +53,7 @@ from sqlite_recovery import (
     is_sqlite_integrity_failure,
     quarantine_sqlite_database,
     quick_check_sqlite_database,
+    reindex_sqlite_database,
 )
 
 _universe_lock = threading.Lock()
@@ -201,8 +202,29 @@ def check_worker_databases(
         marker.write_text(f"pid={os.getpid()} detail={detail}\n", encoding="utf-8")
         # The marker rejects new connections. EX waits until every managed main
         # or ATTACH connection has closed, so no process retains the old inode.
+        repaired = False
         with db_config.sqlite_access_lock(db_path, exclusive=True):
-            quarantined = quarantine_sqlite_database(db_path)
+            # Preserve the data when quick_check reports an index-only problem.
+            # If REINDEX fails or the verification is still dirty, fall back to
+            # the existing whole-database quarantine and schema rebuild.
+            if not is_malformed_database_error(sqlite3.DatabaseError(detail)):
+                repaired, repair_detail = reindex_sqlite_database(db_path)
+                if repaired:
+                    print(f"✅ SQLite indexes repaired db={db_path}")
+                else:
+                    print(
+                        f"⚠️ SQLite REINDEX did not repair db={db_path}; "
+                        f"detail={repair_detail}"
+                    )
+            if not repaired:
+                quarantined = quarantine_sqlite_database(db_path)
+        if repaired:
+            marker.unlink(missing_ok=True)
+            recovered[db_path] = []
+            finish_sqlite_failure_record(
+                failure_record, status="reindexed", quarantined_files=[]
+            )
+            continue
         try:
             with db_config.sqlite_recovery_bypass(db_path):
                 initialize()

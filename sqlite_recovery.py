@@ -111,13 +111,20 @@ def is_sqlite_integrity_failure(detail: str) -> bool:
     ``PRAGMA quick_check`` can fail before it produces an integrity result (for
     example with ``disk I/O error``).  Replacing a database in that situation
     is both destructive and unlikely to succeed on the same unhealthy storage.
-    Actual quick-check findings are returned as text, commonly prefixed by
-    ``*** in database ... ***``; malformed headers are raised as exceptions.
+    Actual quick-check findings are returned as text. Page errors are commonly
+    prefixed by ``*** in database ... ***``, while index errors use messages
+    such as ``row ... missing from index ...``; malformed headers are raised.
     """
     normalized = detail.strip().lower()
-    return (
-        is_malformed_database_error(Exception(normalized))
-        or normalized.startswith("*** in database ")
+    integrity_markers = (
+        "*** in database ",
+        "row ",
+        "wrong # of entries in index ",
+        "missing from index ",
+        "malformed database schema",
+    )
+    return is_malformed_database_error(Exception(normalized)) or any(
+        marker in normalized for marker in integrity_markers
     )
 
 
@@ -198,11 +205,26 @@ def quick_check_sqlite_database(db_path: str) -> tuple[bool, str]:
         return True, "empty; will be initialized on demand"
     try:
         with sqlite3.connect(db_path, timeout=30) as conn:
-            row = conn.execute("PRAGMA quick_check").fetchone()
+            rows = conn.execute("PRAGMA quick_check").fetchall()
     except sqlite3.DatabaseError as exc:
         return False, str(exc)
-    detail = str(row[0]) if row else "no quick_check result"
+    detail = "\n".join(str(row[0]) for row in rows) if rows else "no quick_check result"
     return detail.lower() == "ok", detail
+
+
+def reindex_sqlite_database(db_path: str) -> tuple[bool, str]:
+    """Rebuild all indexes and verify the database without replacing its data.
+
+    An inconsistent index is repairable and should not cause the recovery path
+    to discard an otherwise healthy database. The caller must fence business
+    connections and hold the database's exclusive access lock while this runs.
+    """
+    try:
+        with sqlite3.connect(db_path, timeout=30) as conn:
+            conn.execute("REINDEX")
+        return quick_check_sqlite_database(db_path)
+    except sqlite3.DatabaseError as exc:
+        return False, str(exc)
 
 
 def quarantine_malformed_sqlite_databases(
