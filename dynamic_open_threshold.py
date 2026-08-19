@@ -1,17 +1,71 @@
 """Dynamic opening threshold evaluated after each scoring round.
 
-The module records the highest total score observed in the last 12 hours and
-turns it into an opening threshold for the current 15m decision round.
+The module records the highest total score observed in a configurable lookback
+window and turns it into an opening threshold for the current 15m round.
 """
 
 from __future__ import annotations
 
+import math
 import os
 import sqlite3
-import db_config
 import time
 from dataclasses import dataclass
 from typing import Optional
+
+import db_config
+
+
+DEFAULT_SETTINGS = {
+    "window_hours": 12,
+    "unrestricted_score": 85,
+    "restricted_score_floor": 73,
+    "min_open_total_score": 81,
+}
+SETTINGS_TABLE_NAME = "dynamic_open_threshold_settings"
+
+
+def _validate_settings(payload: dict) -> dict[str, int]:
+    try:
+        values = {key: float(payload[key]) for key in DEFAULT_SETTINGS}
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("统计窗口和三个评分门槛均为必填数字") from exc
+    if any(not math.isfinite(value) or not value.is_integer() for value in values.values()):
+        raise ValueError("统计窗口和三个评分门槛必须是整数")
+    settings = {key: int(value) for key, value in values.items()}
+    if not 1 <= settings["window_hours"] <= 168:
+        raise ValueError("统计窗口必须在 1–168 小时之间")
+    if not 0 <= settings["restricted_score_floor"] < settings["unrestricted_score"] <= 100:
+        raise ValueError("限制区最低分必须小于放开门槛分，且均在 0–100 之间")
+    if not 0 <= settings["min_open_total_score"] <= 100:
+        raise ValueError("限制区开仓最低总分必须在 0–100 之间")
+    return settings
+
+
+def get_settings(db_path: str | None = None) -> dict[str, int]:
+    """Return the persisted policy used by the next 15-minute round."""
+    path = db_path or db_config.BASE_DB_PATH
+    with db_config.connect_sqlite(path, row_factory=sqlite3.Row) as conn:
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS {SETTINGS_TABLE_NAME} (
+            id INTEGER PRIMARY KEY CHECK (id = 1), window_hours INTEGER NOT NULL,
+            unrestricted_score INTEGER NOT NULL, restricted_score_floor INTEGER NOT NULL,
+            min_open_total_score INTEGER NOT NULL, updated_at INTEGER NOT NULL)""")
+        conn.execute(f"INSERT OR IGNORE INTO {SETTINGS_TABLE_NAME} VALUES (1, ?, ?, ?, ?, ?)",
+                     (*DEFAULT_SETTINGS.values(), int(time.time() * 1000)))
+        row = conn.execute(f"SELECT * FROM {SETTINGS_TABLE_NAME} WHERE id = 1").fetchone()
+    return _validate_settings(dict(row))
+
+
+def set_settings(payload: dict, db_path: str | None = None) -> dict[str, int]:
+    """Validate and persist a complete dynamic-opening policy."""
+    settings = _validate_settings(payload)
+    path = db_path or db_config.BASE_DB_PATH
+    get_settings(path)
+    with db_config.connect_sqlite(path) as conn:
+        conn.execute(f"""UPDATE {SETTINGS_TABLE_NAME} SET window_hours=?, unrestricted_score=?,
+            restricted_score_floor=?, min_open_total_score=?, updated_at=? WHERE id=1""",
+            (*settings.values(), int(time.time() * 1000)))
+    return get_settings(path)
 
 
 @dataclass(frozen=True)
@@ -45,8 +99,9 @@ class DynamicOpenThresholdModule:
     TREND_STANDARD_MIN_SCORE = 81
     STANDARD_TRIAL_MIN_SCORE = 73
 
-    def __init__(self, db_path: str = "data/klines.db") -> None:
+    def __init__(self, db_path: str = "data/klines.db", settings_db_path: str | None = None) -> None:
         self.db_path = db_path
+        self.settings_db_path = settings_db_path
 
     def _connect(self) -> sqlite3.Connection:
         db_dir = os.path.dirname(self.db_path)
@@ -160,7 +215,8 @@ class DynamicOpenThresholdModule:
         self.init_table()
         round_ts = self.decision_round_ts() if decision_round_ts is None else int(decision_round_ts)
         evaluated_ms = int(time.time() * 1000) if evaluated_at is None else int(evaluated_at)
-        window_start = round_ts - self.WINDOW_MS
+        settings = get_settings(self.settings_db_path)
+        window_start = round_ts - settings["window_hours"] * 60 * 60_000
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -176,7 +232,7 @@ class DynamicOpenThresholdModule:
             highest_score = int(row["total_score"]) if row is not None else None
             highest_symbol = str(row["symbol"]) if row is not None else None
             highest_round = int(row["decision_round_ts"]) if row is not None else None
-            min_open_score, allow, policy, reason = self._policy_for_score(highest_score)
+            min_open_score, allow, policy, reason = self._policy_for_score(highest_score, settings)
             result = DynamicOpenThresholdResult(
                 decision_round_ts=round_ts,
                 window_start_ts=window_start,
@@ -194,14 +250,17 @@ class DynamicOpenThresholdModule:
             return result
 
     @classmethod
-    def _policy_for_score(cls, score: Optional[int]) -> tuple[Optional[int], bool, str, str]:
+    def _policy_for_score(cls, score: Optional[int], settings: dict[str, int] | None = None) -> tuple[Optional[int], bool, str, str]:
+        settings = _validate_settings(settings or DEFAULT_SETTINGS)
+        unrestricted = settings["unrestricted_score"]
+        floor = settings["restricted_score_floor"]
         if score is None:
-            return None, False, "no_new_positions", "no_scores_in_last_12h"
-        if score >= cls.NO_THRESHOLD_SCORE:
-            return None, True, "no_min_open_threshold", "highest_score_gte_85"
-        if cls.STANDARD_TRIAL_MIN_SCORE <= score < cls.NO_THRESHOLD_SCORE:
-            return cls.TREND_STANDARD_MIN_SCORE, True, "trend_standard_or_above_only", "highest_score_73_to_84"
-        return None, False, "no_new_positions", "highest_score_lt_73"
+            return None, False, "no_new_positions", f"no_scores_in_last_{settings['window_hours']}h"
+        if score >= unrestricted:
+            return None, True, "no_min_open_threshold", f"highest_score_gte_{unrestricted}"
+        if floor <= score < unrestricted:
+            return settings["min_open_total_score"], True, "trend_standard_or_above_only", f"highest_score_{floor}_to_{unrestricted - 1}"
+        return None, False, "no_new_positions", f"highest_score_lt_{floor}"
 
     def _save(self, conn: sqlite3.Connection, r: DynamicOpenThresholdResult) -> None:
         conn.execute(

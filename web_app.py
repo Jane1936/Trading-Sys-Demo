@@ -46,7 +46,11 @@ from weak_market_profit_adjustment import (
     set_settings as set_weak_market_profit_settings,
 )
 from add_position_permission_module import AddPositionPermissionModule
-from dynamic_open_threshold import DynamicOpenThresholdModule
+from dynamic_open_threshold import (
+    DynamicOpenThresholdModule,
+    get_settings as get_dynamic_open_threshold_settings,
+    set_settings as set_dynamic_open_threshold_settings,
+)
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
 from zombie_force_liquidation import ZombieForceLiquidationModule
 from sqlite_recovery import (
@@ -1150,6 +1154,22 @@ def update_feature_flag_api(key: str):
     return jsonify({"flag": feature_flags.flags_to_dict([flag])[0]})
 
 
+@app.get("/api/dynamic-open-threshold-settings")
+def dynamic_open_threshold_settings_api():
+    return jsonify(get_dynamic_open_threshold_settings(BASE_DB_PATH))
+
+
+@app.put("/api/dynamic-open-threshold-settings")
+def update_dynamic_open_threshold_settings_api():
+    try:
+        settings = set_dynamic_open_threshold_settings(
+            request.get_json(silent=True) or {}, BASE_DB_PATH
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(settings)
+
+
 @app.get("/api/scoring-rule-weights")
 def scoring_rule_weights_api():
     return jsonify({"rules": get_rule_score_weight_settings(BASE_DB_PATH)})
@@ -1518,6 +1538,7 @@ def abnormal_wicks():
         should_load_abnormal_events=should_load_abnormal_events,
         btc_total_pages=btc_total_pages,
         feature_flags=feature_flags.list_feature_flags(BASE_DB_PATH),
+        dynamic_open_threshold_settings=get_dynamic_open_threshold_settings(BASE_DB_PATH),
         scoring_rule_weight_settings=get_rule_score_weight_settings(BASE_DB_PATH),
         scoring_rule_election_settings=get_rule_election_settings(BASE_DB_PATH),
         openable_symbol_settings=get_openable_symbol_settings(BASE_DB_PATH),
