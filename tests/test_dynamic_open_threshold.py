@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import dynamic_open_threshold
-from dynamic_open_threshold import DynamicOpenThresholdModule
+from dynamic_open_threshold import DynamicOpenThresholdModule, get_settings, set_settings
 from openable_symbol_module import OpenableSymbolModule
 
 
@@ -47,6 +47,46 @@ def test_dynamic_open_threshold_policies(tmp_path):
     low = module.run_round(decision_round_ts=-1, evaluated_at=1)
     assert low.allow_new_positions is False
     assert low.policy == "no_new_positions"
+
+
+def test_dynamic_open_threshold_uses_persisted_custom_policy(tmp_path):
+    scoring_path = tmp_path / "scoring.db"
+    settings_path = tmp_path / "base.db"
+    set_settings({
+        "window_hours": 6,
+        "unrestricted_score": 90,
+        "restricted_score_floor": 75,
+        "min_open_total_score": 84,
+    }, str(settings_path))
+    with sqlite3.connect(scoring_path) as conn:
+        _create_total_scores(conn)
+        conn.executemany(
+            "INSERT INTO symbol_total_scores VALUES (?, ?, ?)",
+            [("EXPIRED", -7 * 60 * 60_000, 99), ("ACTIVE", 0, 80)],
+        )
+
+    result = DynamicOpenThresholdModule(
+        str(scoring_path), settings_db_path=str(settings_path)
+    ).run_round(decision_round_ts=0, evaluated_at=1)
+
+    assert result.highest_symbol == "ACTIVE"
+    assert result.min_open_total_score == 84
+    assert result.reason == "highest_score_75_to_89"
+    assert get_settings(str(settings_path))["window_hours"] == 6
+
+
+def test_dynamic_open_threshold_rejects_invalid_custom_policy(tmp_path):
+    try:
+        set_settings({
+            "window_hours": 0,
+            "unrestricted_score": 70,
+            "restricted_score_floor": 80,
+            "min_open_total_score": 101,
+        }, str(tmp_path / "base.db"))
+    except ValueError as exc:
+        assert "统计窗口" in str(exc)
+    else:
+        raise AssertionError("invalid dynamic opening policy should be rejected")
 
 
 def test_dynamic_open_threshold_does_not_depend_on_companion_databases(

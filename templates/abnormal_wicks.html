@@ -2627,6 +2627,26 @@
       </div>
     </div>
     <div class="card">
+      <div class="header"><h2>动态开仓门槛（每15分钟执行，评分完成后）</h2></div>
+      <div class="tip">按最近统计窗口内的最高总分动态决定下一轮开仓规则：达到“放开门槛分”时不追加最低分限制；处于限制区时只允许总分达到配置值的 symbol；低于限制区最低分或窗口内无评分时禁止新开仓。保存后从下一轮评分完成后的动态门槛计算开始生效。</div>
+      <div id="dynamic-open-threshold-message" class="feature-flag-message" role="status" aria-live="polite"></div>
+      <form id="dynamic-open-threshold-form" class="score-weight-actions">
+        <label>统计窗口（小时）
+          <input id="dynamic-open-window-hours" type="number" min="1" max="168" step="1" required value="{{ dynamic_open_threshold_settings.window_hours }}">
+        </label>
+        <label>放开门槛分
+          <input id="dynamic-open-unrestricted-score" type="number" min="0" max="100" step="1" required value="{{ dynamic_open_threshold_settings.unrestricted_score }}">
+        </label>
+        <label>限制区最低分
+          <input id="dynamic-open-restricted-floor" type="number" min="0" max="100" step="1" required value="{{ dynamic_open_threshold_settings.restricted_score_floor }}">
+        </label>
+        <label>限制区开仓最低总分
+          <input id="dynamic-open-min-total-score" type="number" min="0" max="100" step="1" required value="{{ dynamic_open_threshold_settings.min_open_total_score }}">
+        </label>
+        <button class="btn btn-success" type="submit">保存动态开仓门槛配置</button>
+      </form>
+    </div>
+    <div class="card">
       <div class="header"><h2>弱势市场止盈动态调整</h2></div>
       <div class="tip">配置市场弱势时分批止盈的触发阈值和卖出当前仓位的比例。保存后持久化到基础数据库，并从下一轮 15 分钟弱势市场判断开始生效。</div>
       <div id="weak-market-profit-message" class="feature-flag-message" role="status" aria-live="polite"></div>
@@ -2787,6 +2807,37 @@
             button.disabled = false;
           }
         });
+      });
+    })();
+
+    (function initDynamicOpenThresholdForm() {
+      const form = document.getElementById('dynamic-open-threshold-form');
+      const message = document.getElementById('dynamic-open-threshold-message');
+      if (!form || !message) return;
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        const button = form.querySelector('button[type="submit"]');
+        const payload = {
+          window_hours: Number(document.getElementById('dynamic-open-window-hours').value),
+          unrestricted_score: Number(document.getElementById('dynamic-open-unrestricted-score').value),
+          restricted_score_floor: Number(document.getElementById('dynamic-open-restricted-floor').value),
+          min_open_total_score: Number(document.getElementById('dynamic-open-min-total-score').value),
+        };
+        button.disabled = true;
+        message.textContent = '正在保存动态开仓门槛配置...';
+        message.classList.remove('error');
+        try {
+          const response = await fetch('/api/dynamic-open-threshold-settings', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+          message.textContent = `配置已保存：统计最近 ${result.window_hours} 小时；最高分 ≥ ${result.unrestricted_score} 放开限制，${result.restricted_score_floor}–${result.unrestricted_score - 1} 分时要求本轮总分 ≥ ${result.min_open_total_score}。`;
+        } catch (err) {
+          message.textContent = `动态开仓门槛配置保存失败：${err.message || err}`;
+          message.classList.add('error');
+        } finally { button.disabled = false; }
       });
     })();
 
