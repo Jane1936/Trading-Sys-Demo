@@ -1,6 +1,7 @@
 import sqlite3
 
 from market_filter_module import MarketFilterModule
+from market_filter_settings import get_settings, set_settings
 import allusdt_15m_ma20
 import collector
 
@@ -121,3 +122,41 @@ def test_market_filter_can_load_saved_round_result(tmp_path):
     assert result.allow_new_positions is False
     assert result.reason == "btc_siphon"
     assert module.get_result_for_round(1_800_000) is None
+
+
+def test_market_filter_uses_configured_thresholds_and_block_duration(tmp_path):
+    db_path = tmp_path / "klines.db"
+    settings_path = tmp_path / "base.db"
+    set_settings({
+        "btc_siphon_threshold": 0.01,
+        "market_crash_threshold": 0.02,
+        "block_duration_minutes": 30,
+    }, str(settings_path))
+    module = MarketFilterModule(str(db_path), settings_db_path=str(settings_path))
+    with sqlite3.connect(db_path) as conn:
+        _init_source_tables(conn)
+        _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100, 100, 100, 97.5])
+        _insert_rows(conn, collector.BTC_15M_TABLE, [100, 100, 100, 98])
+
+    result = module.run_round(decision_round_ts=900_000, evaluated_at=900_001)
+
+    assert result.btc_siphon is False
+    assert result.market_crash is True
+    assert result.block_until == 2_700_001
+
+
+def test_market_filter_settings_defaults_and_validation(tmp_path):
+    settings_path = str(tmp_path / "base.db")
+
+    assert get_settings(settings_path)["block_duration_minutes"] == 60
+
+    try:
+        set_settings({
+            "btc_siphon_threshold": 0.005,
+            "market_crash_threshold": 0.03,
+            "block_duration_minutes": 1.5,
+        }, settings_path)
+    except ValueError as exc:
+        assert "整数分钟" in str(exc)
+    else:
+        raise AssertionError("fractional block duration should be rejected")
