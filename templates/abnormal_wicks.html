@@ -1020,7 +1020,7 @@
           </div>
           <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
         </div>
-        <div class="collapse-hint">规则：分别读取 ALLUSDT 与 BTC 最近4条15分钟K线，使用最近第1条 close 和最近第4条 open 计算最近1小时涨幅 delta=(close-open)/open。若 BTC吸血：(BTC delta - ALLUSDT delta)&gt;0.5%，或大盘暴跌：ALLUSDT delta&lt;-3%，则从触发时刻起接下来1小时不允许新开仓。点击“展开全部”查看最近7天完整记录。</div>
+        <div class="collapse-hint">规则：分别读取 ALLUSDT 与 BTC 最近4条15分钟K线，使用最近第1条 close 和最近第4条 open 计算最近1小时涨幅 delta=(close-open)/open。若 BTC吸血：(BTC delta - ALLUSDT delta)&gt;{{ '%.4g'|format(market_filter_settings.btc_siphon_threshold * 100) }}%，或大盘暴跌：ALLUSDT delta&lt;-{{ '%.4g'|format(market_filter_settings.market_crash_threshold * 100) }}%，则从触发时刻起接下来{{ market_filter_settings.block_duration_minutes }}分钟不允许新开仓。点击“展开全部”查看最近7天完整记录。</div>
       <div class="table-wrap">
         <table>
           <thead>
@@ -2627,6 +2627,23 @@
       </div>
     </div>
     <div class="card">
+      <div class="header"><h2>独立市场过滤配置</h2></div>
+      <div class="tip">配置 BTC 相对大盘涨幅差、大盘跌幅以及触发后的禁止新开仓时间。阈值按百分比填写，保存后从独立市场过滤模块下一轮执行开始生效。</div>
+      <div id="market-filter-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
+      <form id="market-filter-settings-form" class="score-weight-actions">
+        <label>BTC吸血阈值（%）
+          <input id="market-filter-btc-threshold" type="number" min="0.0001" max="100" step="0.0001" required value="{{ market_filter_settings.btc_siphon_threshold * 100 }}">
+        </label>
+        <label>大盘暴跌阈值（%）
+          <input id="market-filter-crash-threshold" type="number" min="0.0001" max="100" step="0.0001" required value="{{ market_filter_settings.market_crash_threshold * 100 }}">
+        </label>
+        <label>禁止新开仓时间（分钟）
+          <input id="market-filter-block-minutes" type="number" min="1" max="10080" step="1" required value="{{ market_filter_settings.block_duration_minutes }}">
+        </label>
+        <button class="btn btn-success" type="submit">保存独立市场过滤配置</button>
+      </form>
+    </div>
+    <div class="card">
       <div class="header"><h2>动态开仓门槛（每15分钟执行，评分完成后）</h2></div>
       <div class="tip">按最近统计窗口内的最高总分动态决定下一轮开仓规则：达到“放开门槛分”时不追加最低分限制；处于限制区时只允许总分达到配置值的 symbol；低于限制区最低分或窗口内无评分时禁止新开仓。保存后从下一轮评分完成后的动态门槛计算开始生效。</div>
       <div id="dynamic-open-threshold-message" class="feature-flag-message" role="status" aria-live="polite"></div>
@@ -2836,6 +2853,36 @@
           message.textContent = `配置已保存：统计最近 ${result.window_hours} 小时；最高分 ≥ ${result.unrestricted_score} 放开限制，${result.restricted_score_floor}–${result.unrestricted_score - 1} 分时要求本轮总分 ≥ ${result.min_open_total_score}。`;
         } catch (err) {
           message.textContent = `动态开仓门槛配置保存失败：${err.message || err}`;
+          message.classList.add('error');
+        } finally { button.disabled = false; }
+      });
+    })();
+
+    (function initMarketFilterSettingsForm() {
+      const form = document.getElementById('market-filter-settings-form');
+      const message = document.getElementById('market-filter-settings-message');
+      if (!form || !message) return;
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        const button = form.querySelector('button[type="submit"]');
+        const payload = {
+          btc_siphon_threshold: Number(document.getElementById('market-filter-btc-threshold').value) / 100,
+          market_crash_threshold: Number(document.getElementById('market-filter-crash-threshold').value) / 100,
+          block_duration_minutes: Number(document.getElementById('market-filter-block-minutes').value),
+        };
+        button.disabled = true;
+        message.textContent = '正在保存独立市场过滤配置...';
+        message.classList.remove('error');
+        try {
+          const response = await fetch('/api/market-filter-settings', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+          message.textContent = `配置已保存：BTC吸血阈值 ${result.btc_siphon_threshold * 100}%，大盘暴跌阈值 ${result.market_crash_threshold * 100}%，触发后禁止新开仓 ${result.block_duration_minutes} 分钟。`;
+        } catch (err) {
+          message.textContent = `独立市场过滤配置保存失败：${err.message || err}`;
           message.classList.add('error');
         } finally { button.disabled = false; }
       });

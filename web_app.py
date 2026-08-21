@@ -40,6 +40,10 @@ from scoring_system import (
 from scoring_rule_election import get_settings as get_rule_election_settings, set_settings as set_rule_election_settings
 from trading_experiment import TradingExperiment
 from market_filter_module import MarketFilterModule
+from market_filter_settings import (
+    get_settings as get_market_filter_settings,
+    set_settings as set_market_filter_settings,
+)
 from weak_market_profit_adjustment import (
     WeakMarketProfitAdjustmentModule,
     get_settings as get_weak_market_profit_settings,
@@ -1170,6 +1174,21 @@ def update_dynamic_open_threshold_settings_api():
     return jsonify(settings)
 
 
+@app.get("/api/market-filter-settings")
+def market_filter_settings_api():
+    return jsonify(get_market_filter_settings(BASE_DB_PATH))
+
+
+@app.put("/api/market-filter-settings")
+def update_market_filter_settings_api():
+    try:
+        return jsonify(set_market_filter_settings(
+            request.get_json(silent=True) or {}, BASE_DB_PATH
+        ))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
 @app.get("/api/scoring-rule-weights")
 def scoring_rule_weights_api():
     return jsonify({"rules": get_rule_score_weight_settings(BASE_DB_PATH)})
@@ -1538,6 +1557,7 @@ def abnormal_wicks():
         should_load_abnormal_events=should_load_abnormal_events,
         btc_total_pages=btc_total_pages,
         feature_flags=feature_flags.list_feature_flags(BASE_DB_PATH),
+        market_filter_settings=get_market_filter_settings(BASE_DB_PATH),
         dynamic_open_threshold_settings=get_dynamic_open_threshold_settings(BASE_DB_PATH),
         scoring_rule_weight_settings=get_rule_score_weight_settings(BASE_DB_PATH),
         scoring_rule_election_settings=get_rule_election_settings(BASE_DB_PATH),

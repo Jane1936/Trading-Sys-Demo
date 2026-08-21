@@ -16,6 +16,7 @@ from typing import Optional
 
 import allusdt_15m_ma20
 import collector
+from market_filter_settings import get_settings
 
 
 @dataclass(frozen=True)
@@ -41,13 +42,11 @@ class MarketFilterResult:
 
 class MarketFilterModule:
     TABLE_NAME = "market_filter_rounds"
-    BTC_SIPHON_THRESHOLD = 0.005
-    MARKET_CRASH_THRESHOLD = -0.03
     ROUND_MS = 15 * 60_000
-    BLOCK_MS = 60 * 60_000
 
-    def __init__(self, db_path: str = "data/klines.db") -> None:
+    def __init__(self, db_path: str = "data/klines.db", settings_db_path: str | None = None) -> None:
         self.db_path = db_path
+        self.settings_db_path = settings_db_path or db_config.BASE_DB_PATH
 
     def _connect(self) -> sqlite3.Connection:
         db_dir = os.path.dirname(self.db_path)
@@ -134,6 +133,10 @@ class MarketFilterModule:
 
     def run_round(self, decision_round_ts: int | None = None, evaluated_at: int | None = None) -> MarketFilterResult:
         self.init_table()
+        settings = get_settings(self.settings_db_path)
+        btc_siphon_threshold = float(settings["btc_siphon_threshold"])
+        market_crash_threshold = float(settings["market_crash_threshold"])
+        block_ms = int(settings["block_duration_minutes"]) * 60_000
         round_ts = self.decision_round_ts() if decision_round_ts is None else int(decision_round_ts)
         evaluated_ms = int(time.time() * 1000) if evaluated_at is None else int(evaluated_at)
         with self._connect() as conn:
@@ -148,10 +151,10 @@ class MarketFilterModule:
                 allow = block_until is None
                 reason = "insufficient_market_data_allow_open" if allow else f"market_filter_cooldown_until_{block_until}"
             else:
-                btc_siphon = (btc_delta - all_delta) > self.BTC_SIPHON_THRESHOLD
-                market_crash = all_delta < self.MARKET_CRASH_THRESHOLD
+                btc_siphon = (btc_delta - all_delta) > btc_siphon_threshold
+                market_crash = all_delta < -market_crash_threshold
                 triggered = btc_siphon or market_crash
-                block_until = evaluated_ms + self.BLOCK_MS if triggered else self._active_block_until(conn, evaluated_ms)
+                block_until = evaluated_ms + block_ms if triggered else self._active_block_until(conn, evaluated_ms)
                 allow = block_until is None
                 reasons = []
                 if btc_siphon:
