@@ -553,6 +553,24 @@ def test_feature_flags_include_independent_market_filter_settings_form():
     assert "fetch('/api/market-filter-settings'" in section
 
 
+def test_feature_flag_configuration_cards_use_requested_theme_colors():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    section = template[template.index('<section id="tab-feature-flags"'):]
+
+    for title in (
+        "独立市场过滤配置",
+        "动态开仓门槛（每15分钟执行，评分完成后）",
+        "弱势市场止盈动态调整",
+    ):
+        title_index = section.index(title)
+        assert 'class="card feature-config-purple"' in section[max(0, title_index - 100):title_index]
+
+    mapping_index = section.index("止损距离档位与总分映射")
+    assert 'class="card feature-config-green"' in section[mapping_index - 100:mapping_index]
+    assert ".feature-config-purple > .header" in template
+    assert ".feature-config-green > .header" in template
+
+
 def test_openable_section_highlights_current_round_open_block_notice():
     template = Path("templates/abnormal_wicks.html").read_text()
 

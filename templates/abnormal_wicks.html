@@ -97,6 +97,13 @@
     .primary-feature-row td:first-child strong { color:#92400e; font-size:15px; }
     .feature-flag-message { padding:0 20px 14px; color:#4b5563; font-size:13px; }
     .feature-flag-message.error { color:#991b1b; }
+    .feature-config-purple { border-color:#c4b5fd; box-shadow:0 8px 24px rgba(124, 58, 237, 0.12); }
+    .feature-config-purple > .header { background:#f3e8ff; border-bottom-color:#c4b5fd; color:#5b21b6; }
+    .feature-config-purple input, .feature-config-purple select { border-color:#c4b5fd; background:#faf5ff; }
+    .feature-config-green { border-color:#86efac; box-shadow:0 8px 24px rgba(22, 163, 74, 0.12); }
+    .feature-config-green > .header { background:#dcfce7; border-bottom-color:#86efac; color:#166534; }
+    .feature-config-green .score-weight-item { border-color:#bbf7d0; background:#f0fdf4; }
+    .feature-config-green input, .feature-config-green select { border-color:#86efac; background:#f0fdf4; }
     .score-weight-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(245px, 1fr)); gap:12px; padding:16px 20px 20px; }
     .score-weight-item { display:grid; grid-template-columns:1fr 82px; align-items:center; gap:12px; padding:12px; border:1px solid var(--line); border-radius:10px; background:#f8fafc; }
     .fixed-setting-value { display:inline-block; padding:7px 12px; border-radius:8px; background:#fef3c7; color:#92400e; font-weight:800; border:1px solid #f59e0b; }
@@ -2626,7 +2633,7 @@
         </table>
       </div>
     </div>
-    <div class="card">
+    <div class="card feature-config-purple">
       <div class="header"><h2>独立市场过滤配置</h2></div>
       <div class="tip">配置 BTC 相对大盘涨幅差、大盘跌幅以及触发后的禁止新开仓时间。阈值按百分比填写，保存后从独立市场过滤模块下一轮执行开始生效。</div>
       <div id="market-filter-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
@@ -2643,7 +2650,7 @@
         <button class="btn btn-success" type="submit">保存独立市场过滤配置</button>
       </form>
     </div>
-    <div class="card">
+    <div class="card feature-config-purple">
       <div class="header"><h2>动态开仓门槛（每15分钟执行，评分完成后）</h2></div>
       <div class="tip">按最近统计窗口内的最高总分动态决定下一轮开仓规则：达到“放开门槛分”时不追加最低分限制；处于限制区时只允许总分达到配置值的 symbol；低于限制区最低分或窗口内无评分时禁止新开仓。保存后从下一轮评分完成后的动态门槛计算开始生效。</div>
       <div id="dynamic-open-threshold-message" class="feature-flag-message" role="status" aria-live="polite"></div>
@@ -2663,7 +2670,7 @@
         <button class="btn btn-success" type="submit">保存动态开仓门槛配置</button>
       </form>
     </div>
-    <div class="card">
+    <div class="card feature-config-purple">
       <div class="header"><h2>弱势市场止盈动态调整</h2></div>
       <div class="tip">配置市场弱势时分批止盈的触发阈值和卖出当前仓位的比例。保存后持久化到基础数据库，并从下一轮 15 分钟弱势市场判断开始生效。</div>
       <div id="weak-market-profit-message" class="feature-flag-message" role="status" aria-live="polite"></div>
@@ -2729,7 +2736,7 @@
         </div>
       </form>
     </div>
-    <div class="card">
+    <div class="card feature-config-green">
       <div class="header"><h2>止损距离档位与总分映射</h2></div>
       <div class="tip">配置“本轮可开仓symbol情况”使用的止损距离档位上限、总分区间、距离筛查上限，以及各总分区间对应 A/B/C/D 档的开仓杠杆。保存后从下一轮可开仓评估开始生效。</div>
       <div id="openable-settings-message" class="feature-flag-message" role="status"></div>
