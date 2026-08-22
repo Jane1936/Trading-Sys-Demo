@@ -53,6 +53,8 @@ def test_production_action_record_tables_route_to_trading_info_db(tmp_path, monk
     assert INFO_TABLES.isdisjoint(_table_names(trading_db))
     assert DynamicProfitProtection.CHECKS_TABLE in _table_names(trading_db)
     assert TrailingStopTracker.CHECKS_TABLE in _table_names(trading_db)
+    assert TrailingReductionTracker.CHECKS_TABLE in _table_names(trading_db)
+    assert TrailingReductionTracker.CHECKS_TABLE not in _table_names(info_db)
 
 
 def test_cross_module_partial_take_profit_reads_use_trading_info_db(

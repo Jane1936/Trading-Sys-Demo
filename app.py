@@ -197,6 +197,7 @@ def _database_schema_requirements() -> dict[str, dict[str, set[str]]]:
             BreakEvenTakeProfitStrategy.CHECKS_TABLE: {"symbol", "checked_at"},
             DynamicProfitProtection.CHECKS_TABLE: {"symbol", "checked_at"},
             TrailingStopTracker.CHECKS_TABLE: {"symbol", "checked_at"},
+            TrailingReductionTracker.CHECKS_TABLE: {"symbol", "decision_round_ts"},
             DynamicAddPositionThresholdModule.TABLE_NAME: {"decision_round_ts"},
         },
         db_config.TRADING_CORE_DB_PATH: {
@@ -210,7 +211,7 @@ def _database_schema_requirements() -> dict[str, dict[str, set[str]]]:
         db_config.TRADING_INFO_DB_PATH: {
             BreakEvenTakeProfitStrategy.RECORDS_TABLE: {"symbol", "checked_at"},
             PartialTakeProfitStrategy.RECORDS_TABLE: {"symbol", "checked_at"},
-            TrailingReductionTracker.CHECKS_TABLE: {"symbol", "decision_round_ts"},
+            TrailingReductionTracker.RECORDS_TABLE: {"symbol", "decision_round_ts"},
             holding.INCREASE_RECORDS_TABLE: {"symbol", "decision_round_ts"},
         },
     }
