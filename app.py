@@ -165,6 +165,91 @@ def _database_initializers() -> dict[str, Callable[[], None]]:
     }
 
 
+def _database_schema_requirements() -> dict[str, dict[str, set[str]]]:
+    """Return the minimum schema contract required before workers may start.
+
+    Initializers remain the owners of complete DDL and migrations.  This
+    deliberately small contract catches missing module initializers and partial
+    recovery without duplicating every column definition from those owners.
+    """
+    holding = HoldingPositionScoringSystem(db_path=db_config.TRADING_DB_PATH)
+    return {
+        db_config.BASE_DB_PATH: {
+            "klines_1m": {"symbol", "open_time", "close"},
+            "ma20_indicators": {"symbol"},
+            "ema_indicators": {"symbol"},
+            "macd_indicators": {"symbol"},
+            "feature_flags": {"key", "enabled"},
+        },
+        db_config.SCORING_DB_PATH: {
+            "abnormal_wick_events": {"symbol", "decision_round_ts"},
+            CooldownModule.TABLE_NAME: {"symbol", "decision_round_ts"},
+            "symbol_scores": {"symbol", "decision_round_ts", "score"},
+            OpenableSymbolModule.TABLE_NAME: {"symbol", "decision_round_ts"},
+            DynamicOpenThresholdModule.TABLE_NAME: {"decision_round_ts"},
+        },
+        db_config.MARKET_DB_PATH: {
+            MarketFilterModule.TABLE_NAME: {"decision_round_ts"},
+            AddPositionPermissionModule.TABLE_NAME: {"decision_round_ts"},
+        },
+        db_config.TRADING_DB_PATH: {
+            TradingExperiment.ERRORS_TABLE: {"created_at"},
+            BreakEvenTakeProfitStrategy.CHECKS_TABLE: {"symbol", "checked_at"},
+            DynamicProfitProtection.CHECKS_TABLE: {"symbol", "checked_at"},
+            TrailingStopTracker.CHECKS_TABLE: {"symbol", "checked_at"},
+            DynamicAddPositionThresholdModule.TABLE_NAME: {"decision_round_ts"},
+        },
+        db_config.TRADING_CORE_DB_PATH: {
+            TradingExperiment.TRADES_TABLE: {"symbol", "status", "created_at"},
+            TradingExperiment.POSITIONS_TABLE: {"symbol", "updated_at"},
+            holding.CHECKS_TABLE: {"symbol", "decision_round_ts"},
+            holding.PORTFOLIO_RISK_TABLE: {"symbol", "decision_round_ts"},
+            holding.REDUCTION_CHECKS_TABLE: {"symbol", "decision_round_ts"},
+            ZombieForceLiquidationModule.CHECKS_TABLE: {"symbol", "checked_at"},
+        },
+        db_config.TRADING_INFO_DB_PATH: {
+            BreakEvenTakeProfitStrategy.RECORDS_TABLE: {"symbol", "checked_at"},
+            PartialTakeProfitStrategy.RECORDS_TABLE: {"symbol", "checked_at"},
+            TrailingReductionTracker.CHECKS_TABLE: {"symbol", "decision_round_ts"},
+            holding.INCREASE_RECORDS_TABLE: {"symbol", "decision_round_ts"},
+        },
+    }
+
+
+def verify_database_schema(db_path: str) -> None:
+    """Fail closed when a configured database has an incomplete schema."""
+    requirements = _database_schema_requirements().get(db_path, {})
+    if not requirements:
+        return
+    failures: list[str] = []
+    with db_config.connect_sqlite(db_path) as conn:
+        for table, required_columns in requirements.items():
+            quoted_table = db_config.quote_identifier(table)
+            actual_columns = {
+                str(row[1]) for row in conn.execute(f"PRAGMA table_info({quoted_table})")
+            }
+            if not actual_columns:
+                failures.append(f"missing table {table}")
+                continue
+            missing_columns = sorted(required_columns - actual_columns)
+            if missing_columns:
+                failures.append(
+                    f"table {table} missing columns {', '.join(missing_columns)}"
+                )
+    if failures:
+        raise RuntimeError(
+            f"SQLite schema verification failed db={db_path}: {'; '.join(failures)}"
+        )
+
+
+def initialize_worker_databases() -> None:
+    """Initialize and verify every database before any worker thread starts."""
+    check_worker_databases(source="startup_health_check")
+    for db_path, initialize in _database_initializers().items():
+        initialize()
+        verify_database_schema(db_path)
+
+
 def check_worker_databases(
     *, source: str = "periodic_health_check", trigger_exception: BaseException | None = None
 ) -> dict[str, list[str]]:
@@ -228,6 +313,7 @@ def check_worker_databases(
         try:
             with db_config.sqlite_recovery_bypass(db_path):
                 initialize()
+                verify_database_schema(db_path)
                 verified, verify_detail = quick_check_sqlite_database(db_path)
             if not verified:
                 raise sqlite3.DatabaseError(
@@ -1321,7 +1407,10 @@ def start_processor_task(symbols: List[str]) -> None:
 if __name__ == "__main__":
     collector.database_error_handler = recover_after_worker_error
     verify_db_writable(db_config.BASE_DB_PATH)
-    feature_flags.init_feature_flags(db_config.BASE_DB_PATH)
+    # No collector, strategy, or Web-facing worker is allowed to observe a
+    # partially initialized schema. Recovery uses the same verification before
+    # removing its access fence.
+    initialize_worker_databases()
     # 预先构建一次 universe，并按12小时周期刷新
     symbols = ensure_universe()
 
