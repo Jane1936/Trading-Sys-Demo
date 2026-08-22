@@ -80,6 +80,7 @@ def test_partial_take_profit_records_lock_error_without_ordering():
         lock = TradeActionLockManager(db_path=db_path).acquire("BANK", "other-module", "force_close")
         assert lock is not None
         strategy = PartialTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
 
         result = strategy.run_round()
         records = strategy.recent_records()
