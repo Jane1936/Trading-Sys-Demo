@@ -15,6 +15,7 @@ import app as worker_app
 import web_app
 from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
+from trading_experiment import TradingExperiment
 from sqlite_recovery import (
     ensure_sqlite_database_usable,
     is_malformed_database_error,
@@ -370,6 +371,71 @@ def test_trading_core_recovery_recreates_holding_risk_tables(tmp_path, monkeypat
         }
 
     assert expected_tables <= actual_tables
+
+
+def test_startup_initializes_and_verifies_every_database(tmp_path, monkeypatch):
+    first = str(tmp_path / "first.db")
+    second = str(tmp_path / "second.db")
+    calls = []
+
+    def initializer(path, table):
+        def initialize():
+            calls.append(path)
+            with db_config.connect_sqlite(path) as conn:
+                conn.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY)")
+        return initialize
+
+    monkeypatch.setattr(worker_app, "check_worker_databases", lambda **kwargs: calls.append(kwargs["source"]))
+    monkeypatch.setattr(worker_app, "_database_initializers", lambda: {
+        first: initializer(first, "first_table"),
+        second: initializer(second, "second_table"),
+    })
+    monkeypatch.setattr(worker_app, "_database_schema_requirements", lambda: {
+        first: {"first_table": {"id"}},
+        second: {"second_table": {"id"}},
+    })
+
+    worker_app.initialize_worker_databases()
+
+    assert calls == ["startup_health_check", first, second]
+
+
+def test_schema_verification_rejects_missing_required_column(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "incomplete.db")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE lifecycle (id INTEGER PRIMARY KEY)")
+    monkeypatch.setattr(worker_app, "_database_schema_requirements", lambda: {
+        db_path: {"lifecycle": {"id", "status"}}
+    })
+
+    with pytest.raises(RuntimeError, match="lifecycle missing columns status"):
+        worker_app.verify_database_schema(db_path)
+
+
+def test_malformed_trading_core_recovery_rebuilds_and_verifies_schema(tmp_path, monkeypatch):
+    trading_db = str(tmp_path / "trading.db")
+    trading_core_db = str(tmp_path / "trading_core.db")
+    trading_core_path = Path(trading_core_db)
+    trading_core_path.write_bytes(b"not a sqlite database")
+    monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
+    monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", trading_core_db)
+    monkeypatch.setattr(db_config, "TRADING_INFO_DB_PATH", str(tmp_path / "trading_info.db"))
+    monkeypatch.setattr(worker_app, "_database_initializers", lambda: {
+        trading_core_db: lambda: (
+            TradingExperiment(db_path=trading_db).init_core_tables(),
+            HoldingPositionScoringSystem(db_path=trading_db).init_tables(),
+            worker_app.ZombieForceLiquidationModule(db_path=trading_db).init_tables(),
+        )
+    })
+
+    recovered = worker_app.check_worker_databases(source="integration_test")
+
+    assert list(recovered) == [trading_core_db]
+    worker_app.verify_database_schema(trading_core_db)
+    with sqlite3.connect(trading_core_db) as conn:
+        assert conn.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+    assert list(tmp_path.glob("trading_core.db.corrupt-*"))
+    assert not Path(db_config.database_recovery_marker(trading_core_db)).exists()
 
 
 def test_recovery_marker_blocks_business_connections(tmp_path):
