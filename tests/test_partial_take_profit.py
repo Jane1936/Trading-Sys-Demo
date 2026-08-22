@@ -92,12 +92,51 @@ def _insert_open_trade(db_path):
         )
 
 
+def test_run_round_does_not_reinitialize_tables(monkeypatch, tmp_path):
+    strategy = PartialTakeProfitStrategy(
+        db_path=str(tmp_path / "trading.db"),
+        account_manager=FakeAccountManager(unrealized_profit="0"),
+    )
+    strategy.init_tables()
+
+    def fail_if_called():
+        pytest.fail("run_round() must not call init_tables()")
+
+    monkeypatch.setattr(strategy, "init_tables", fail_if_called)
+
+    result = strategy.run_round()
+
+    assert result["checked"] == 1
+
+
+def test_run_round_without_initialization_fails_and_does_not_create_tables(tmp_path):
+    db_path = str(tmp_path / "trading.db")
+    strategy = PartialTakeProfitStrategy(
+        db_path=db_path,
+        account_manager=FakeAccountManager(),
+    )
+
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        strategy.run_round()
+
+    with sqlite3.connect(db_path) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+
+    assert strategy.CHECKS_TABLE not in tables
+    assert strategy.RECORDS_TABLE not in tables
+    assert strategy.ERRORS_TABLE not in tables
+
+
 def test_partial_take_profit_sells_30_percent_when_unrealized_pnl_reaches_2r():
     fake_account = FakeAccountManager()
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
         _insert_open_trade(db_path)
         strategy = PartialTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
 
         result = strategy.run_round()
         _, checks = strategy.get_latest_round_checks()
@@ -178,6 +217,7 @@ def test_partial_take_profit_updates_trade_in_routed_core_database(monkeypatch, 
         )
 
     strategy = PartialTakeProfitStrategy(db_path=trading_db, account_manager=fake_account)
+    strategy.init_tables()
     result = strategy.run_round()
 
     assert result["triggered"] == 1
@@ -228,6 +268,7 @@ def test_partial_take_profit_skips_when_unrealized_pnl_below_2r():
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
         strategy = PartialTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
 
         result = strategy.run_round()
         _, checks = strategy.get_latest_round_checks()
@@ -265,6 +306,7 @@ def test_partial_take_profit_preserves_live_break_even_stop_price():
         db_path = str(Path(tmpdir) / "klines.db")
         _insert_open_trade(db_path)
         strategy = PartialTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
 
         strategy.run_round()
         record = strategy.recent_records()[0]
@@ -283,6 +325,7 @@ def test_partial_take_profit_uses_live_stop_when_trade_price_is_missing():
         with sqlite3.connect(db_path) as conn:
             conn.execute(f"UPDATE {TradingExperiment.TRADES_TABLE} SET stop_loss_price = '0'")
         strategy = PartialTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
 
         strategy.run_round()
         record = strategy.recent_records()[0]
@@ -299,6 +342,7 @@ def test_partial_take_profit_does_not_cancel_orders_when_no_stop_price_exists():
         with sqlite3.connect(db_path) as conn:
             conn.execute(f"UPDATE {TradingExperiment.TRADES_TABLE} SET stop_loss_price = '0'")
         strategy = PartialTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
 
         strategy.run_round()
         record = strategy.recent_records()[0]
@@ -317,6 +361,7 @@ def test_failed_trade_attempt_is_authoritative_error_source():
         with sqlite3.connect(db_path) as conn:
             conn.execute(f"UPDATE {TradingExperiment.TRADES_TABLE} SET stop_loss_price = '0'")
         strategy = PartialTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
 
         strategy.run_round(decision_round_ts=1234)
         errors = strategy.recent_errors()
@@ -332,6 +377,7 @@ def test_error_before_trade_attempt_uses_dedicated_error_table(monkeypatch):
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
         strategy = PartialTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
 
         def fail_evaluation(*args, **kwargs):
             raise RuntimeError("evaluation exploded")
@@ -359,6 +405,7 @@ def test_round_error_before_position_scan_is_persisted():
             db_path=str(Path(tmpdir) / "klines.db"),
             account_manager=InvalidAccountManager(),
         )
+        strategy.init_tables()
         with pytest.raises(ValueError, match="invalid credentials"):
             strategy.run_round(decision_round_ts=1234)
         errors = strategy.recent_errors()

@@ -238,7 +238,6 @@ class PartialTakeProfitStrategy:
             )
 
     def run_round(self, decision_round_ts: int | None = None) -> dict[str, Any]:
-        self.init_tables()
         round_ts = int(decision_round_ts or time.time() * 1000)
         now = int(time.time() * 1000)
         try:
