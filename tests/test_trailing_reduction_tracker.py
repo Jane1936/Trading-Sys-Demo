@@ -1,6 +1,8 @@
 import sqlite3
 from decimal import Decimal
 
+import pytest
+
 from trailing_reduction_tracker import TrailingReductionTracker
 
 
@@ -52,6 +54,7 @@ def test_trailing_reduction_marks_pretrigger_structure_break(tmp_path, monkeypat
     monkeypatch.setattr("trailing_reduction_tracker.TradingExperiment", FakeTradingExperiment)
 
     tracker = TrailingReductionTracker(db_path=str(db_path), account_manager=FakeAccountManager())
+    tracker.init_tables()
     result = tracker.run_round(decision_round_ts=2000)
 
     assert result["checked"] == 1
@@ -87,6 +90,7 @@ def test_trailing_reduction_skips_symbol_after_lifecycle_partial_take_profit(tmp
         )
 
     tracker = TrailingReductionTracker(db_path=str(db_path), account_manager=FakeAccountManager())
+    tracker.init_tables()
     result = tracker.run_round(decision_round_ts=2000)
     _, checks = tracker.get_latest_round_checks()
 
@@ -105,6 +109,7 @@ def test_summary_payload_includes_recent_7_day_records(tmp_path, monkeypatch):
     now_ms = 1_700_000_000_000
     monkeypatch.setattr("trailing_reduction_tracker.time.time", lambda: now_ms / 1000)
     tracker = TrailingReductionTracker(db_path=str(db_path), account_manager=FakeAccountManager())
+    tracker.init_tables()
     tracker.run_round(decision_round_ts=2000)
     tracker._insert_record(
         "BTC", 1000, now_ms - 3 * 24 * 60 * 60 * 1000, Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1"),
@@ -123,6 +128,42 @@ def test_summary_payload_includes_recent_7_day_records(tmp_path, monkeypatch):
 
     assert payload["round_ts"] == 2000
     assert [record["market_order_id"] for record in payload["records"]] == ["current", "recent_old_round"]
+
+
+def test_run_round_does_not_reinitialize_tables_after_explicit_initialization(tmp_path, monkeypatch):
+    db_path = tmp_path / "klines.db"
+    _create_klines(db_path)
+    monkeypatch.setattr("trailing_reduction_tracker.TradingExperiment", FakeTradingExperiment)
+    tracker = TrailingReductionTracker(db_path=str(db_path), account_manager=FakeAccountManager())
+    tracker.init_tables()
+
+    def fail_if_called():
+        pytest.fail("run_round() must not call init_tables()")
+
+    monkeypatch.setattr(tracker, "init_tables", fail_if_called)
+
+    result = tracker.run_round(decision_round_ts=2000)
+
+    assert result["checked"] == 1
+    assert result["pretriggered"] == 1
+
+
+def test_run_round_without_initialization_fails_without_creating_tables(tmp_path, monkeypatch):
+    db_path = tmp_path / "uninitialized.db"
+    monkeypatch.setattr("trailing_reduction_tracker.TradingExperiment", FakeTradingExperiment)
+    tracker = TrailingReductionTracker(db_path=str(db_path), account_manager=FakeAccountManager())
+
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        tracker.run_round(decision_round_ts=2000)
+
+    with sqlite3.connect(db_path) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+
+    assert tracker.CHECKS_TABLE not in tables
+    assert tracker.RECORDS_TABLE not in tables
 
 
 def test_refresh_pretriggered_symbols_preserves_recent_records_without_checks(tmp_path, monkeypatch):
