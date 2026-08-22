@@ -412,6 +412,21 @@ def test_schema_verification_rejects_missing_required_column(tmp_path, monkeypat
         worker_app.verify_database_schema(db_path)
 
 
+def test_schema_contract_routes_trailing_reduction_tables_to_owner_databases(
+    tmp_path, monkeypatch
+):
+    trading_db = str(tmp_path / "trading.db")
+    info_db = str(tmp_path / "trading_info.db")
+    monkeypatch.setattr(db_config, "TRADING_DB_PATH", trading_db)
+    monkeypatch.setattr(db_config, "TRADING_INFO_DB_PATH", info_db)
+
+    requirements = worker_app._database_schema_requirements()
+
+    assert worker_app.TrailingReductionTracker.CHECKS_TABLE in requirements[trading_db]
+    assert worker_app.TrailingReductionTracker.CHECKS_TABLE not in requirements[info_db]
+    assert worker_app.TrailingReductionTracker.RECORDS_TABLE in requirements[info_db]
+
+
 def test_malformed_trading_core_recovery_rebuilds_and_verifies_schema(tmp_path, monkeypatch):
     trading_db = str(tmp_path / "trading.db")
     trading_core_db = str(tmp_path / "trading_core.db")
