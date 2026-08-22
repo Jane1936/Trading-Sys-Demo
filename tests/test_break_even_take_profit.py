@@ -1,5 +1,8 @@
+import sqlite3
 import tempfile
 from pathlib import Path
+
+import pytest
 
 from trading_experiment import TradingExperiment
 from break_even_take_profit import BreakEvenTakeProfitStrategy
@@ -66,6 +69,41 @@ class FakeAccountManager:
     def _signed_post(self, endpoint, params=None):
         self.signed_posts.append((endpoint, dict(params or {})))
         return {"algoId": 456}
+
+
+def test_run_round_does_not_reinitialize_tables(monkeypatch):
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
+
+        def fail_if_called():
+            pytest.fail("run_round() must not call init_tables()")
+
+        monkeypatch.setattr(strategy, "init_tables", fail_if_called)
+        result = strategy.run_round()
+
+    assert result["checked"] == 1
+
+
+def test_run_round_without_initialization_fails_and_does_not_create_tables():
+    fake_account = FakeAccountManager()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "klines.db")
+        strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+
+        with pytest.raises(sqlite3.OperationalError, match="no such table"):
+            strategy.run_round()
+
+        with sqlite3.connect(db_path) as conn:
+            tables = {
+                row[0]
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            }
+
+    assert strategy.CHECKS_TABLE not in tables
+    assert strategy.RECORDS_TABLE not in tables
 
 
 def test_break_even_strategy_moves_stop_loss_to_entry_when_unrealized_pnl_reaches_r():
@@ -225,6 +263,7 @@ def test_break_even_strategy_cancels_regular_stop_loss_with_regular_order_endpoi
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
         strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
         result = strategy.run_round()
 
     assert result["triggered"] == 1
@@ -243,6 +282,7 @@ def test_break_even_strategy_does_not_retry_algo_stop_loss_cancel_as_regular_ord
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
         strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
         result = strategy.run_round()
         records = strategy.recent_records()
 
@@ -347,6 +387,7 @@ def test_break_even_strategy_recognizes_open_algo_order_order_type_field():
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
         strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
         result = strategy.run_round()
 
     assert result["triggered"] == 1
@@ -389,6 +430,7 @@ def test_break_even_strategy_cancels_stale_stop_limit_algo_order():
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
         strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
         result = strategy.run_round()
 
     assert result["triggered"] == 1
@@ -421,6 +463,7 @@ def test_break_even_strategy_records_failure_when_new_stop_loss_response_has_no_
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
         strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
         result = strategy.run_round()
         records = strategy.recent_records()
 
@@ -469,6 +512,7 @@ def test_break_even_strategy_cancels_stale_limit_orders_and_creates_stop_market_
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
         strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
         result = strategy.run_round()
         records = strategy.recent_records()
 
@@ -513,6 +557,7 @@ def test_break_even_strategy_creates_new_stop_loss_before_canceling_old_one():
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
         strategy = BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=fake_account)
+        strategy.init_tables()
         result = strategy.run_round()
 
     assert result["triggered"] == 1
@@ -534,6 +579,7 @@ def test_break_even_strategy_records_failure_when_action_lock_lookup_raises(monk
         strategy = BreakEvenTakeProfitStrategy(
             db_path=db_path, account_manager=fake_account
         )
+        strategy.init_tables()
         result = strategy.run_round()
         records = strategy.recent_records()
 

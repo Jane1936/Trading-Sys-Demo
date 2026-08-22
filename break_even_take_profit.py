@@ -140,7 +140,6 @@ class BreakEvenTakeProfitStrategy:
 
     def run_round(self) -> dict[str, Any]:
         self.account_manager.validate_config()
-        self.init_tables()
         helper = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)
         equity = helper._fetch_experiment_usdt_equity()
         r_value = equity * self.config.risk_fraction
