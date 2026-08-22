@@ -1,11 +1,11 @@
 # Docker 云服务器部署指南
 
-你当前的部署目标是 3 个容器：
+默认部署目标是 2 个业务容器：
 - `trade`：运行项目主进程（`worker`）
 - `trade-web`：运行交易数据 Web 平台（`web`）
-- `sqlite-web`：运行 SQLite 可视化 Web
+- `sqlite-web`：仅在排障时按需启动的只读 SQLite 可视化工具
 
-下面给你两种方案：**推荐用 Docker Compose（一条命令管理 3 个容器）**；也保留优化后的 `docker run` 版本。
+下面给你两种方案：**推荐用 Docker Compose 管理业务容器**；也保留优化后的 `docker run` 版本。
 
 ## 1) 拉取最新代码
 
@@ -66,7 +66,7 @@ TRADING_DB_PATH=data/trading.db
 MARKET_DB_PATH=data/market.db
 ```
 
-`sqlite-web` 默认打开基础数据库。如需查看其他库，启动前设置：
+`sqlite-web` 默认不会随业务栈启动。它以只读数据卷和 SQLite 只读模式运行，且端口只绑定宿主机回环地址，避免绕过应用的 access lock/recovery fence，也避免把数据库管理界面直接暴露到公网。排障时可通过 diagnostics profile 临时启动；如需查看其他库，启动前设置：
 
 ```bash
 # 查看评分库
@@ -75,7 +75,12 @@ export SQLITE_WEB_DB_PATH=/data/scoring.db
 # export SQLITE_WEB_DB_PATH=/data/trading.db
 # 查看市场行情库
 # export SQLITE_WEB_DB_PATH=/data/market.db
-docker compose up -d sqlite-web
+docker compose --profile diagnostics up -d sqlite-web
+# 在服务器本机访问 http://127.0.0.1:8080；远程访问请使用 SSH 隧道：
+# ssh -L 8080:127.0.0.1:8080 user@server
+
+# 采证完成后立即停止，避免长时间读取阻碍 WAL checkpoint：
+docker compose --profile diagnostics stop sqlite-web
 ```
 
 ---
@@ -150,8 +155,9 @@ docker compose up -d --build
 - `user: "${PUID:-1000}:${PGID:-1000}"`：让 `worker/web` 进程直接使用宿主机当前用户 UID/GID，避免挂载数据目录时出现只读权限问题。
 - `HOST_DATA_DIR` / `HOST_LOGS_DIR`：可切换宿主机挂载目录；不设置时默认使用仓库当前目录的 `./data`、`./logs`。
 - `worker` 和 `web` 都声明同一个 `build: .` / `image: trading-sys-demo:latest`，避免新增 Python 文件后只启动 web 时仍使用旧镜像。
-- `worker` 和 `web` 都注入 Binance 环境变量和 4 个数据库路径；第一组交易实验现在由 `worker` 在每轮可开仓 symbol 计算完成后自动触发。
+- `worker` 和 `web` 都注入 Binance 环境变量和数据库路径；第一组交易实验现在由 `worker` 在每轮可开仓 symbol 计算完成后自动触发。
 - 健康检查只配置在 `web` 服务上，避免 `worker` 因不提供 HTTP 服务而在云平台部署时被误判。
+- `sqlite-web` 位于 `diagnostics` profile，不会被普通 `docker compose up` 启动；即使显式启动也只能只读访问数据库。
 
 ### 查看状态与日志
 
@@ -159,13 +165,13 @@ docker compose up -d --build
 docker compose ps
 docker compose logs -f worker
 docker compose logs -f web
-docker compose logs -f sqlite-web
+docker compose --profile diagnostics logs -f sqlite-web
 ```
 
 ### 访问地址
 
 - 交易数据平台：`http://YOUR_PUBLIC_IP:5000/`
-- SQLite 可视化：`http://YOUR_PUBLIC_IP:8080/`
+- SQLite 可视化（仅排障、本机或 SSH 隧道）：`http://127.0.0.1:8080/`
 
 ---
 
@@ -202,12 +208,16 @@ docker run -d \
 ```bash
 docker run -d \
   --name sqlite-web \
-  -p 8080:8080 \
-  -v "$(pwd)/data:/data" \
-  --restart=always \
+  -p 127.0.0.1:8080:8080 \
+  -v "$(pwd)/data:/data:ro" \
+  --restart=no \
   coleifer/sqlite-web:latest \
-  sqlite_web "${SQLITE_WEB_DB_PATH:-/data/base_data.db}" --host 0.0.0.0
+  sqlite_web "${SQLITE_WEB_DB_PATH:-/data/base_data.db}" --host 0.0.0.0 --read-only
 ```
+
+> 不要对生产数据目录启动可写的第三方 SQLite GUI，也不要让其常驻。应用的跨进程
+> access lock 和自动恢复 fence 只约束通过 `db_config.connect_sqlite()` 建立的连接，
+> 外部 SQLite 客户端不会遵守该协议；长时间只读事务也可能使 WAL 无法及时回收。
 
 ### 3) 运行交易数据 web 平台（trade-web）
 

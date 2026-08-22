@@ -55,10 +55,12 @@ services:
   sqlite-web:
     image: coleifer/sqlite-web
     container_name: sqlite-web
+    # This is an operator-only diagnostic tool.  Keeping it out of the default
+    # stack prevents an unmanaged SQLite client from joining the live write
+    # path or bypassing the application's recovery fence.
+    profiles: ["diagnostics"]
     ports:
-      - "8080:8080"
+      - "127.0.0.1:${SQLITE_WEB_PORT:-8080}:8080"
     volumes:
-      - ${HOST_DATA_DIR:-./data}:/data
-    command: ["sqlite_web", "${SQLITE_WEB_DB_PATH:-/data/base_data.db}", "--host", "0.0.0.0"]
-    depends_on:
-      - worker
+      - ${HOST_DATA_DIR:-./data}:/data:ro
+    command: ["sqlite_web", "${SQLITE_WEB_DB_PATH:-/data/base_data.db}", "--host", "0.0.0.0", "--read-only"]

@@ -16,6 +16,7 @@
 | P2 | Compose 和 `.env.example` 过去没有显式传递 `TRADING_CORE_DB_PATH` | 本次已补齐 |
 | P2 | 运行期反复调用 `init_tables()`，造成不必要的 schema lock 与元数据查询 | 建议后续改为每进程一次初始化 |
 | P2 | 自动恢复按整库隔离；`trading.db` 损坏会同时丢失多个独立风控模块的在线状态 | 需备份、告警和恢复优先级设计 |
+| P1 | 常驻、可写的 `sqlite-web` 不遵守应用 access lock/recovery fence，并向公网开放管理端口 | 本次改为默认不启动、只读挂载、只读 SQLite 及仅回环监听 |
 
 ## 1. 拆分实际上拆走了什么
 
@@ -52,19 +53,25 @@ SELECT 'new_positions', count(*) FROM core.trading_experiment_position_snapshots
 
 ## 2. 已确认的代码风险
 
-### 2.1 巡检可能误删健康但繁忙的库（本次已修复）
+### 2.1 外部 SQLite 管理工具绕过恢复互斥（本次已修复）
+
+`sqlite-web` 不是通过 `db_config.connect_sqlite()` 连接，因此不会获取 `.access.lock`，也不会识别 `.recovering` marker。旧 Compose 会在默认启动中让它常驻、以可写方式挂载整个数据目录，并把 8080 端口暴露到所有网卡。这样既允许误操作直接写生产库，也可能在 worker 隔离/替换主库和 WAL sidecar 时仍持有旧连接；长只读事务还可能阻碍 checkpoint、导致 WAL 与磁盘占用持续增长。
+
+现在该服务进入可选的 `diagnostics` profile，普通 `docker compose up` 不再启动它；显式启动时同时使用 `:ro` bind mount、`--read-only`，并只监听宿主机 `127.0.0.1`。这是低成本且直接缩小故障面的改动。排障结束后仍应立即停止该服务；数据库迁移、恢复和备份期间应确保所有外部 SQLite 工具均已退出。
+
+### 2.2 巡检可能误删健康但繁忙的库（本次已修复）
 
 `quick_check_sqlite_database()` 将 SQLite 异常转换成 `(False, detail)`。旧的 worker 巡检对所有 `False` 都创建 fence，并隔离主库及 WAL/SHM；因此一次超过 30 秒的锁等待也可能触发健康库替换。这不产生最初的 `malformed`，但会把普通拥塞升级为整库丢失，并容易被误判为“数据库崩溃”。本次修改明确跳过 `database is locked` 和 `database is busy`，保留数据库供下轮检查。
 
 仍建议后续把巡检结果分为 `healthy / corrupt / transient / io_error`，只有明确的完整性错误才允许自动隔离；I/O 错误、权限错误和磁盘满应告警并停止自动替换。
 
-### 2.2 表初始化位于热路径
+### 2.3 表初始化位于热路径
 
 多个 `run`、`summary`、刷新和锁获取方法会再次调用 `init_tables()`。虽然 schema file lock 避免并发 `ALTER`，但它不能降低调用频率；每次仍会串行获取文件锁、连接数据库、查询 `PRAGMA table_info` 并执行 `CREATE IF NOT EXISTS`。这通常导致延迟或 `busy`，不是页面损坏的直接原因，但会放大交易轮次和 Web 请求之间的竞争。
 
 建议将 schema 初始化移到进程启动阶段，用 schema version 做幂等迁移；热路径只做数据事务。需要保留“数据库被恢复后重建 schema”的能力时，可由恢复器显式重置进程内初始化状态。
 
-### 2.3 `trading.db` 的故障域仍然过大
+### 2.4 `trading.db` 的故障域仍然过大
 
 当前库同时保存多类高频检查明细、执行记录、加仓状态和互斥锁。自动恢复以文件为粒度，任一页面损坏都会隔离整个文件并创建空 schema。这意味着一个非关键历史检查表的问题，会连带清空交易动作锁、止损/止盈生命周期证据及其他模块状态。对交易系统而言，恢复后的“库可写”不等于“业务状态已恢复”。
 
@@ -75,7 +82,7 @@ SELECT 'new_positions', count(*) FROM core.trading_experiment_position_snapshots
 3. 将可重算的观察明细与不可重算的订单生命周期/锁状态进一步分库。
 4. 自动恢复时发出强告警并记录隔离文件、首次错误、旧文件 inode 和校验结果，不能只打印成功消息。
 
-### 2.4 跨库读取需要显式 schema，不能依赖测试环境同库布局
+### 2.5 跨库读取需要显式 schema，不能依赖测试环境同库布局
 
 Web 成交单归因现在以 `trading.db` 为主连接，并在生产路径不同时显式附加 `trading_core.db`。僵尸强平、结构止损、普通减仓和开仓评分统一使用带 schema 的核心库表名；加仓、分批止盈、移动止盈等仍从主交易库读取，从而避免旧表残留时误读迁移前数据。自定义或测试数据库仍保持单库兼容。
 
