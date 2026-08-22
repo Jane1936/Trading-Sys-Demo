@@ -3,6 +3,8 @@ import tempfile
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from dynamic_profit_protection import DynamicProfitProtection
 from trading_experiment import TradingExperiment
 
@@ -51,10 +53,45 @@ class FailingOnceAccountManager(FakeAccountManager):
 
 def _seed_db(db_path, close, high=20):
     TradingExperiment(db_path=db_path, account_manager=FakeAccountManager()).init_tables()
+    DynamicProfitProtection(db_path=db_path, account_manager=FakeAccountManager()).init_tables()
     with sqlite3.connect(db_path) as conn:
         conn.execute("CREATE TABLE klines_1m (symbol TEXT, open_time INTEGER, open REAL, high REAL, low REAL, close REAL, volume REAL, close_time INTEGER, PRIMARY KEY(symbol, open_time))")
         conn.execute("INSERT INTO klines_1m VALUES ('BANK', 1000, 10, ?, 9, ?, 100, 59999)", (high, close))
         conn.execute(f"INSERT INTO {TradingExperiment.TRADES_TABLE} (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt, required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity, notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation, take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at) VALUES ('BANK', 1, 'LONG', 'opened', 80, 5, '100', '20', '5000', '50', '10', '10', '100', '18', '8', '', 'tp-1', 'sl-1', '', '', 1, 1)")
+
+
+def test_run_round_does_not_reinitialize_tables_after_explicit_initialization(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = str(Path(tmp) / "k.db")
+        _seed_db(db_path, close=10.5, high=11.9)
+        tracker = DynamicProfitProtection(db_path=db_path, account_manager=FakeAccountManager(unrealized_profit="19"))
+
+        def fail_if_called():
+            pytest.fail("run_round() must not call init_tables()")
+
+        monkeypatch.setattr(tracker, "init_tables", fail_if_called)
+        result = tracker.run_round()
+
+    assert result["checked"] == 1
+    assert result["triggered"] == 0
+
+
+def test_run_round_without_database_initialization_fails_without_creating_tables():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = str(Path(tmp) / "uninitialized.db")
+        tracker = DynamicProfitProtection(db_path=db_path, account_manager=FakeAccountManager())
+
+        with pytest.raises(sqlite3.OperationalError, match="no such table"):
+            tracker.run_round()
+
+        with sqlite3.connect(db_path) as conn:
+            tables = {
+                row[0]
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            }
+
+    assert tracker.CHECKS_TABLE not in tables
+    assert tracker.RECORDS_TABLE not in tables
 
 
 def test_dynamic_profit_protection_closes_when_2r_to_3r_profit_draws_down_40_percent():
