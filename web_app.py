@@ -1245,13 +1245,13 @@ def update_scoring_rule_election_api():
 
 @app.get("/api/openable-symbol-settings")
 def openable_symbol_settings_api():
-    return jsonify(get_openable_symbol_settings(BASE_DB_PATH))
+    return jsonify(get_openable_symbol_settings(CONFIG_DB_PATH))
 
 
 @app.put("/api/openable-symbol-settings")
 def update_openable_symbol_settings_api():
     try:
-        return jsonify(set_openable_symbol_settings(request.get_json(silent=True) or {}, BASE_DB_PATH))
+        return jsonify(set_openable_symbol_settings(request.get_json(silent=True) or {}, CONFIG_DB_PATH))
     except (KeyError, TypeError, ValueError) as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -1577,7 +1577,7 @@ def abnormal_wicks():
         dynamic_open_threshold_settings=get_dynamic_open_threshold_settings(CONFIG_DB_PATH),
         scoring_rule_weight_settings=get_rule_score_weight_settings(CONFIG_DB_PATH),
         scoring_rule_election_settings=get_rule_election_settings(CONFIG_DB_PATH),
-        openable_symbol_settings=get_openable_symbol_settings(BASE_DB_PATH),
+        openable_symbol_settings=get_openable_symbol_settings(CONFIG_DB_PATH),
         weak_market_profit_settings=get_weak_market_profit_settings(CONFIG_DB_PATH),
     )
 
