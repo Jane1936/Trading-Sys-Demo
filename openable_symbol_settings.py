@@ -47,7 +47,7 @@ def _validate(settings: dict) -> dict:
 
 
 def get_settings(db_path: str | None = None) -> dict:
-    db_path = db_path or db_config.BASE_DB_PATH
+    db_path = db_path or db_config.CONFIG_DB_PATH
     with db_config.connect_sqlite(db_path) as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS runtime_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL)")
         row = conn.execute("SELECT value_json FROM runtime_settings WHERE key='openable_symbol_settings'").fetchone()
@@ -55,7 +55,7 @@ def get_settings(db_path: str | None = None) -> dict:
 
 
 def set_settings(settings: dict, db_path: str | None = None) -> dict:
-    db_path = db_path or db_config.BASE_DB_PATH
+    db_path = db_path or db_config.CONFIG_DB_PATH
     value = _validate(settings)
     with db_config.connect_sqlite(db_path) as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS runtime_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL)")

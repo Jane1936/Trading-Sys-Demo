@@ -98,7 +98,7 @@ class OpenableSymbolModule:
         self.db_path = db_path
 
     def configured_score_bands(self) -> tuple[ScoreBandConfig, ...]:
-        settings = get_settings(db_config.BASE_DB_PATH)
+        settings = get_settings(db_config.CONFIG_DB_PATH)
         styles = self.SCORE_BANDS
         return tuple(
             ScoreBandConfig(
@@ -116,7 +116,7 @@ class OpenableSymbolModule:
     def _configured_tier(self, ratio: float | None) -> str:
         if ratio is None or ratio <= 0:
             return "NA"
-        settings = get_settings(db_config.BASE_DB_PATH)
+        settings = get_settings(db_config.CONFIG_DB_PATH)
         limits = settings["tier_max_percent"]
         percent = ratio * 100
         if percent <= settings["tier_min_percent"]:
@@ -332,7 +332,7 @@ class OpenableSymbolModule:
         distance_tier = self._configured_tier(ratio)
         opening_leverage = band.tier_leverages.get(distance_tier, "NA") if band and ratio and ratio > 0 else "NA"
         zero_distance = ratio == 0
-        tier_min_ratio = get_settings(db_config.BASE_DB_PATH)["tier_min_percent"] / 100
+        tier_min_ratio = get_settings(db_config.CONFIG_DB_PATH)["tier_min_percent"] / 100
         distance_qualified = (
             ratio is not None
             and threshold is not None

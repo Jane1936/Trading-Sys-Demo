@@ -10,7 +10,12 @@ import market_filter_settings
 import openable_symbol_settings
 import scoring_rule_election
 import weak_market_profit_adjustment
-from config_database import MIGRATED_TABLES, initialize_config_database
+from config_database import (
+    MIGRATED_TABLES,
+    MIGRATION_NAME,
+    RUNTIME_SETTINGS_MIGRATION_NAME,
+    initialize_config_database,
+)
 from dynamic_open_threshold import get_settings as get_dynamic_settings
 from dynamic_open_threshold import set_settings as set_dynamic_settings
 from scoring_system import DEFAULT_RULE_SCORE_WEIGHTS, set_rule_score_weight_settings
@@ -82,7 +87,8 @@ def test_initialize_config_database_migrates_only_requested_runtime_config(tmp_p
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
     assert set(MIGRATED_TABLES) <= table_names
-    assert "runtime_settings" not in table_names
+    assert "runtime_settings" in table_names
+    assert openable_symbol_settings.get_settings(config_db) == openable_symbol_settings.DEFAULT_SETTINGS
 
 
 def test_legacy_values_are_imported_once_and_do_not_overwrite_new_config(tmp_path):
@@ -95,3 +101,34 @@ def test_legacy_values_are_imported_once_and_do_not_overwrite_new_config(tmp_pat
     initialize_config_database(config_db, base_db)
 
     assert feature_flags.is_feature_enabled(feature_flags.TRADING_SYSTEM, config_db) is True
+
+
+def test_runtime_settings_migrate_after_original_config_migration_was_applied(tmp_path):
+    base_db = str(tmp_path / "base_data.db")
+    config_db = str(tmp_path / "config.db")
+    legacy_settings = {
+        **openable_symbol_settings.DEFAULT_SETTINGS,
+        "tier_min_percent": 1.0,
+    }
+    openable_symbol_settings.set_settings(legacy_settings, base_db)
+
+    with db_config.connect_sqlite(config_db) as conn:
+        conn.execute(
+            "CREATE TABLE config_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        conn.execute("INSERT INTO config_migrations (name) VALUES (?)", (MIGRATION_NAME,))
+
+    initialize_config_database(config_db, base_db)
+
+    assert openable_symbol_settings.get_settings(config_db)["tier_min_percent"] == 1.0
+    with db_config.connect_sqlite(config_db) as conn:
+        assert conn.execute(
+            "SELECT 1 FROM config_migrations WHERE name = ?",
+            (RUNTIME_SETTINGS_MIGRATION_NAME,),
+        ).fetchone()
+
+    openable_symbol_settings.set_settings(
+        openable_symbol_settings.DEFAULT_SETTINGS, config_db
+    )
+    initialize_config_database(config_db, base_db)
+    assert openable_symbol_settings.get_settings(config_db)["tier_min_percent"] == 0.0
