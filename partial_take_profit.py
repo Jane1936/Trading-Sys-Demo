@@ -619,7 +619,6 @@ class PartialTakeProfitStrategy:
         return cls.TRIGGER_LABEL_2R
 
     def get_latest_round_checks(self) -> tuple[int | None, list[PartialTakeProfitCheck]]:
-        self.init_tables()
         with self._connect() as conn:
             latest = conn.execute(f"SELECT MAX(checked_at) AS latest_checked_at FROM {self.CHECKS_TABLE}").fetchone()
             latest_checked_at = latest["latest_checked_at"] if latest else None
@@ -629,14 +628,12 @@ class PartialTakeProfitStrategy:
         return int(latest_checked_at), [PartialTakeProfitCheck(**{**dict(row), "triggered": bool(row["triggered"])}) for row in rows]
 
     def recent_records(self, limit: int = 100) -> list[PartialTakeProfitRecord]:
-        self.init_tables()
         with self._info_connect() as conn:
             rows = conn.execute(f"SELECT * FROM {self.RECORDS_TABLE} ORDER BY checked_at DESC, id DESC LIMIT ?", (int(limit),)).fetchall()
         return [PartialTakeProfitRecord(**dict(row)) for row in rows]
 
     def recent_errors(self, limit: int = 100) -> list[dict[str, Any]]:
         """Merge authoritative failed attempts with pre-attempt strategy errors."""
-        self.init_tables()
         with self._info_connect() as conn:
             failed_attempts = conn.execute(
                 f"SELECT * FROM {self.RECORDS_TABLE} WHERE status != 'submitted' ORDER BY checked_at DESC, id DESC LIMIT ?",

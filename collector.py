@@ -1499,6 +1499,11 @@ UNIVERSE = None
 
 # ================= 启动 =================
 if __name__ == "__main__":
+    # Do not let this legacy standalone process bypass the application-wide
+    # startup schema barrier merely because it was not launched through app.py.
+    from app import initialize_worker_databases
+
+    initialize_worker_databases()
     init_db()
     startup_recent_backfill()
 

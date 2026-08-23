@@ -246,7 +246,6 @@ class TradingExperiment:
         positions from a stale previous round before the current round's
         ``本轮可开仓 symbol 情况`` has completed.
         """
-        self.init_tables()
         candidates = self._latest_openable_candidates(decision_round_ts=decision_round_ts)
         if not candidates:
             reason = "current_round_openable_not_ready" if decision_round_ts is not None else "no_qualified_openable_symbols"
@@ -261,7 +260,7 @@ class TradingExperiment:
         available_balance = self._decimal_from(account.get("availableBalance"), Decimal("0"))
         account_equity = self._fetch_experiment_usdt_equity()
         max_loss = account_equity * self.config.risk_fraction
-        positions = self._fetch_and_store_positions(initialize_tables=False)
+        positions = self._fetch_and_store_positions()
         reserved_margin_budget = self._reserved_margin_from_positions(positions)
 
         opened = 0
@@ -340,15 +339,14 @@ class TradingExperiment:
                 opened += 1
                 available_balance -= required_margin
                 reserved_margin_budget += required_margin
-                positions = self._fetch_and_store_positions(initialize_tables=False)
+                positions = self._fetch_and_store_positions()
             else:
                 skipped += 1
 
-        self._fetch_and_store_positions(initialize_tables=False)
+        self._fetch_and_store_positions()
         return {"opened": opened, "skipped": skipped, "reason": "completed"}
 
     def recent_trade_records(self, limit: int = 100, since_ms: int | None = None) -> list[ExperimentTradeRecord]:
-        self.init_tables()
         since_clause = "AND created_at >= ?" if since_ms is not None else ""
         params: tuple[int, ...]
         if since_ms is not None:
@@ -369,7 +367,6 @@ class TradingExperiment:
         return [self._trade_from_row(row) for row in rows]
 
     def latest_position_snapshots(self, limit: int = 100) -> list[ExperimentPositionSnapshot]:
-        self.init_tables()
         with self._connect() as conn:
             latest_ts = conn.execute(f"SELECT MAX(updated_at) AS updated_at FROM {self.POSITIONS_TABLE}").fetchone()["updated_at"]
             if latest_ts is None:
@@ -396,7 +393,6 @@ class TradingExperiment:
         return [self._position_from_row(row) for row in rows]
 
     def recent_error_records(self, limit: int = 100, since_ms: int | None = None) -> list[ExperimentErrorRecord]:
-        self.init_tables()
         if since_ms is not None:
             query = f"""
                 SELECT * FROM {self.ERRORS_TABLE}
@@ -830,7 +826,6 @@ class TradingExperiment:
         protection from the latest opened trade row.
         """
         now = checked_at or int(time.time() * 1000)
-        self.init_tables()
         positions = [
             row for row in self._fetch_and_store_positions()
             if self._decimal_from(row.get("positionAmt"), Decimal("0")) != 0
@@ -1051,13 +1046,13 @@ class TradingExperiment:
             return ""
         return str(order.get("algoId") or order.get("orderId") or "")
 
-    def _fetch_and_store_positions(self, *, initialize_tables: bool = True) -> list[dict[str, Any]]:
+    def _fetch_and_store_positions(self) -> list[dict[str, Any]]:
         rows = self.account_manager._signed_get("/fapi/v3/positionRisk")
         positions = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
         active_positions = [
             row for row in positions if self._decimal_from(row.get("positionAmt"), Decimal("0")) != 0
         ]
-        fallback_leverages = self._latest_opened_trade_leverages(initialize_tables=initialize_tables)
+        fallback_leverages = self._latest_opened_trade_leverages()
         now = int(time.time() * 1000)
         with self._connect() as conn:
             conn.execute(f"DELETE FROM {self.POSITIONS_TABLE}")
@@ -1084,10 +1079,14 @@ class TradingExperiment:
             )
         return positions
 
-    def _latest_opened_trade_leverages(self, *, initialize_tables: bool = True) -> dict[str, str]:
-        if initialize_tables:
-            self.init_tables()
+    def _latest_opened_trade_leverages(self) -> dict[str, str]:
         with self._connect() as conn:
+            table_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (self.TRADES_TABLE,),
+            ).fetchone()
+            if table_exists is None:
+                return {}
             rows = conn.execute(
                 f"""
                 SELECT symbol, leverage
@@ -1584,6 +1583,13 @@ class TradingExperiment:
 
 
 if __name__ == "__main__":
+    # The standalone scheduler is a process entrypoint too: establish the same
+    # fail-closed schema barrier used by the combined worker before executing a
+    # trading round.  Import lazily to keep the reusable strategy module free
+    # of an app-level import cycle.
+    from app import initialize_worker_databases
+
+    initialize_worker_databases()
     # Standalone 15-minute scans must not use stale openable results from a
     # previous round. They are allowed to trade only after the current round's
     # openable-symbol evaluation has already persisted qualified candidates.

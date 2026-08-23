@@ -349,6 +349,28 @@ class TradingExperimentSymbolTests(unittest.TestCase):
 
         self.assertEqual(result, {"opened": 0, "skipped": 0, "reason": "completed"})
 
+    def test_run_latest_round_does_not_reinitialize_tables(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=FakeAccountManager(),
+            )
+            experiment.init_tables()
+
+            with patch.object(
+                experiment,
+                "init_tables",
+                side_effect=AssertionError(
+                    "run_latest_round() must rely on the process startup barrier"
+                ),
+            ):
+                result = experiment.run_latest_round()
+
+        self.assertEqual(
+            result,
+            {"opened": 0, "skipped": 0, "reason": "no_qualified_openable_symbols"},
+        )
+
     def test_run_round_without_initialization_fails_without_creating_tables(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "klines.db"
@@ -359,7 +381,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 sqlite3.OperationalError,
-                "no such table: trading_experiment_trades",
+                "no such table: trading_experiment_position_snapshots",
             ):
                 experiment.run_round([])
 

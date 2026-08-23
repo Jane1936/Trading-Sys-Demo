@@ -1,7 +1,7 @@
 """Minimal Flask web app for abnormal wick events.
 
 Run:
-    flask --app web_app run --host 0.0.0.0 --port 5000
+    flask --app 'web_app:create_app()' run --host 0.0.0.0 --port 5000
 """
 
 from __future__ import annotations
@@ -75,6 +75,19 @@ WEB_SQLITE_QUICK_CHECK_ON_REQUEST = (
     in {"1", "true", "yes", "on"}
 )
 _db_recovery_checked_path: str | None = None
+
+
+def create_app() -> Flask:
+    """Initialize and verify all schemas before exposing any Web endpoint.
+
+    Gunicorn must use this factory rather than importing the global ``app``
+    directly.  Keeping initialization in the process factory also avoids
+    mutating production databases when test code merely imports this module.
+    """
+    from app import initialize_worker_databases
+
+    initialize_worker_databases()
+    return app
 
 
 def _base_db_path() -> str:
@@ -1573,4 +1586,4 @@ def fmt_ms_datetime(ts_ms: int) -> str:
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    create_app().run(host="0.0.0.0", port=5000)

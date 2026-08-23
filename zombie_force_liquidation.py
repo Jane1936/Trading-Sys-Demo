@@ -80,6 +80,11 @@ class ZombieForceLiquidationModule:
         db_dir = os.path.dirname(self.core_db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
+        TradingExperiment(
+            db_path=self.db_path,
+            account_manager=self.account_manager,
+            config=self.config,
+        ).init_tables()
         TradeActionLockManager(self.db_path).init_table()
         with self._connect() as conn:
             conn.execute(
@@ -125,7 +130,6 @@ class ZombieForceLiquidationModule:
     def run_round(self, checked_at: int | None = None) -> dict[str, Any]:
         self.account_manager.validate_config()
         helper = TradingExperiment(db_path=self.db_path, account_manager=self.account_manager, config=self.config)
-        helper.init_tables()
         positions = helper._fetch_and_store_positions()
         now = int(time.time() * 1000) if checked_at is None else int(checked_at)
         checked = triggered = records = 0
@@ -239,7 +243,6 @@ class ZombieForceLiquidationModule:
             )
 
     def get_latest_round_checks(self) -> tuple[int | None, list[ZombieForceLiquidationCheck]]:
-        self.init_tables()
         with self._connect() as conn:
             latest = conn.execute(f"SELECT MAX(checked_at) AS latest_checked_at FROM {self.CHECKS_TABLE}").fetchone()
             latest_checked_at = latest["latest_checked_at"] if latest else None
@@ -249,7 +252,6 @@ class ZombieForceLiquidationModule:
         return int(latest_checked_at), [ZombieForceLiquidationCheck(**{**dict(row), "break_even_record_found": bool(row["break_even_record_found"]), "triggered": bool(row["triggered"])}) for row in rows]
 
     def recent_records(self, limit: int = 100, since_ms: int | None = None) -> list[ZombieForceLiquidationRecord]:
-        self.init_tables()
         if since_ms is not None:
             query = f"""
                 SELECT * FROM {self.RECORDS_TABLE}
