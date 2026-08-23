@@ -512,7 +512,7 @@
         </div>
         <div class="score-tab-group rhythm">
           <span class="score-tab-group-label">开仓位置与节奏评分</span>
-          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-17" style="width:auto;">规则17：15m低点反弹≥6%（{{ rule_score_weights[17] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-17" style="width:auto;">规则17：15m低点反弹≥4%（{{ rule_score_weights[17] }}分）</button>
           <button class="tab-btn score-rule-tab" data-score-tab="score-rule-18" style="width:auto;">规则18：结构止损位距离+15m节奏（{{ rule_score_weights[18] }}分）</button>
         </div>
         <button class="tab-btn score-rule-tab score-total-tab active" data-score-tab="score-total" style="width:auto;">总分</button>
@@ -769,7 +769,7 @@
 
       <div id="score-rule-17" class="score-rule-panel">
         {% if score_rule17_round_ts %}
-        <div class="tip">规则17轮次：{{ score_rule17_round_ts|fmt_ms_datetime }}。查询最近3条15m K线low，找出最低点lowest；在latest_rebound_ratio（最近第1条close相对lowest涨幅）≤6%的前提下，若最近第3条low为lowest，且最近第2条或最近第1条close相对lowest涨幅≥6%，则得5分；若最近第2条low为lowest，且最近第1条close相对lowest涨幅≥6%，则得5分；所有条件均满足才得分，其他情况得0分。</div>
+        <div class="tip">规则17轮次：{{ score_rule17_round_ts|fmt_ms_datetime }}。查询最近3条15m K线low，找出最低点lowest；在latest_rebound_ratio（最近第1条close相对lowest涨幅）≤6%的前提下，若最近第3条low为lowest，且最近第2条或最近第1条close相对lowest涨幅≥4%，则得5分；若最近第2条low为lowest，且最近第1条close相对lowest涨幅≥4%，则得5分；所有条件均满足才得分，其他情况得0分。</div>
         {% endif %}
         <div class="table-wrap"><table>
           <thead><tr><th>symbol</th><th>score</th><th>latest_low</th><th>latest_close</th><th>prev1_low</th><th>prev1_close</th><th>prev2_low</th><th>prev2_close</th><th>lowest_low</th><th>prev1_rebound_ratio</th><th>latest_rebound_ratio</th><th>reason</th><th>updated_at</th></tr></thead>
