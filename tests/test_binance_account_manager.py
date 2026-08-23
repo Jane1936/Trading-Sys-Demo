@@ -292,3 +292,16 @@ def test_binance_request_runs_after_sqlite_transaction_commits(tmp_path, monkeyp
         conn.execute("CREATE TABLE events (value INTEGER)")
         conn.execute("INSERT INTO events VALUES (1)")
     assert manager._public_get("/test") == {"ok": True}
+
+
+def test_live_manager_always_uses_production_credentials(monkeypatch):
+    monkeypatch.setenv("BINANCE_REAL_API_KEY", "live-key")
+    monkeypatch.setenv("BINANCE_REAL_API_SECRET", "live-secret")
+    monkeypatch.setenv("BINANCE_REAL_BASE_URL", "https://live.example")
+
+    manager = BinanceAccountManager.live()
+
+    assert manager.base_url == "https://live.example"
+    assert manager.api_key == "live-key"
+    assert manager.secret_key == "live-secret"
+    assert manager.testnet is False
