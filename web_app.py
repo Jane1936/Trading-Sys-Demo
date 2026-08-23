@@ -1264,7 +1264,7 @@ def trading_experiment_run_api():
                 {
                     "opened": 0,
                     "skipped": 0,
-                    "reason": "交易系统功能开关已关闭，不再开新仓；已有仓位风控保护继续运行。",
+                    "reason": "模拟盘交易系统功能开关已关闭，模拟盘不再开新仓；已有模拟盘仓位风控保护继续运行。",
                     "zombie_force_liquidation": zombie_result,
                 }
             )
