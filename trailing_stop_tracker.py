@@ -200,7 +200,6 @@ class TrailingStopTracker:
 
     def run_round(self) -> dict[str, Any]:
         self.account_manager.validate_config()
-        self.init_tables()
         helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
         positions = helper._fetch_and_store_positions()
         # Evaluate every open position instead of filtering here.  The evaluator
