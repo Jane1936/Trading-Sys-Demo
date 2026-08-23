@@ -27,7 +27,32 @@ def test_rule17_scores_when_previous_low_rebounds_and_latest_rebound_is_capped(t
 
     _, rows = scoring.get_latest_round_scores_15m_low_rebound_3bars()
     assert rows[0]["score"] == 5
-    assert rows[0]["reason"] == "third_15m_lowest_rebound_ge_6pct_and_latest_rebound_lte_6pct"
+    assert rows[0]["reason"] == "third_15m_lowest_rebound_ge_4pct_and_latest_rebound_lte_6pct"
+
+
+def test_rule17_scores_four_percent_rebound_from_second_lowest_bar(tmp_path, monkeypatch):
+    db_path = tmp_path / "klines.db"
+    scoring = ScoringSystem(db_path=str(db_path))
+    scoring.init_table()
+    monkeypatch.setattr(
+        scoring,
+        "_latest_3_15m_low_close",
+        lambda _symbol: [
+            {"low": 102.0, "close": 104.0},
+            {"low": 100.0, "close": 101.0},
+            {"low": 103.0, "close": 103.0},
+        ],
+    )
+
+    scoring._save_15m_low_rebound_3bars_score(
+        symbol="BTCUSDT",
+        decision_round_ts=1_800_000,
+        updated_at=1_800_001,
+    )
+
+    _, rows = scoring.get_latest_round_scores_15m_low_rebound_3bars()
+    assert rows[0]["score"] == 5
+    assert rows[0]["reason"] == "second_15m_lowest_latest_rebound_ge_4pct_and_lte_6pct"
 
 
 def test_rule17_does_not_score_when_latest_rebound_exceeds_six_percent(tmp_path, monkeypatch):

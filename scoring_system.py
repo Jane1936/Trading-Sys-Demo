@@ -2263,17 +2263,17 @@ class ScoringSystem:
             prev1_low_is_lowest = prev1_low == lowest_low
             latest_rebound_lte_6pct = latest_rebound_ratio <= 0.06
             if prev2_low_is_lowest:
-                has_rebound_ge_6pct = prev1_rebound_ratio >= 0.06 or latest_rebound_ratio >= 0.06
-                hit = has_rebound_ge_6pct and latest_rebound_lte_6pct
+                has_rebound_ge_4pct = prev1_rebound_ratio >= 0.04 or latest_rebound_ratio >= 0.04
+                hit = has_rebound_ge_4pct and latest_rebound_lte_6pct
                 reason = (
-                    "third_15m_lowest_rebound_ge_6pct_and_latest_rebound_lte_6pct"
+                    "third_15m_lowest_rebound_ge_4pct_and_latest_rebound_lte_6pct"
                     if hit
                     else "rule17_third_lowest_rebound_not_met"
                 )
             elif prev1_low_is_lowest:
-                hit = latest_rebound_ratio >= 0.06 and latest_rebound_lte_6pct
+                hit = latest_rebound_ratio >= 0.04 and latest_rebound_lte_6pct
                 reason = (
-                    "second_15m_lowest_latest_rebound_eq_6pct"
+                    "second_15m_lowest_latest_rebound_ge_4pct_and_lte_6pct"
                     if hit
                     else "rule17_second_lowest_rebound_not_met"
                 )
