@@ -18,6 +18,7 @@ from typing import Callable, Iterable, List
 
 import collector
 import db_config
+from config_database import initialize_config_database
 import feature_flags
 from data_processor import (
     MA20Processor,
@@ -118,12 +119,17 @@ def _initialize_base_database() -> None:
     init_ma20_table(db_path=db_config.BASE_DB_PATH)
     init_ema_table(db_path=db_config.BASE_DB_PATH)
     init_macd_table(db_path=db_config.BASE_DB_PATH)
-    feature_flags.init_feature_flags(db_config.BASE_DB_PATH)
+
+
+def _initialize_config_database() -> None:
+    """Create config tables and import values left in the legacy base DB."""
+    initialize_config_database()
 
 
 def _database_initializers() -> dict[str, Callable[[], None]]:
     return {
         db_config.BASE_DB_PATH: _initialize_base_database,
+        db_config.CONFIG_DB_PATH: _initialize_config_database,
         db_config.SCORING_DB_PATH: lambda: (
             PreSafetyModule(db_path=db_config.SCORING_DB_PATH).init_table(),
             CooldownModule(db_path=db_config.SCORING_DB_PATH).init_table(),
@@ -179,7 +185,15 @@ def _database_schema_requirements() -> dict[str, dict[str, set[str]]]:
             "ma20_indicators": {"symbol"},
             "ema_indicators": {"symbol"},
             "macd_indicators": {"symbol"},
+        },
+        db_config.CONFIG_DB_PATH: {
             "feature_flags": {"key", "enabled"},
+            "market_filter_settings": {"id", "updated_at"},
+            "dynamic_open_threshold_settings": {"id", "updated_at"},
+            "weak_market_profit_adjustment_settings": {"id", "updated_at"},
+            "scoring_rule_weights": {"rule_id", "weight"},
+            "scoring_rule_election": {"rule_id", "status"},
+            "scoring_rule_election_config": {"id", "optional_min"},
         },
         db_config.SCORING_DB_PATH: {
             "abnormal_wick_events": {"symbol", "decision_round_ts"},

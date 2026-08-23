@@ -20,7 +20,7 @@ SETTINGS_TABLE_NAME = "weak_market_profit_adjustment_settings"
 
 def get_settings(db_path: str | None = None) -> dict[str, float | int]:
     """Return the persisted weak-market take-profit parameters."""
-    settings_path = db_path or db_config.BASE_DB_PATH
+    settings_path = db_path or db_config.CONFIG_DB_PATH
     with db_config.sqlite_schema_lock(settings_path):
         with db_config.connect_sqlite(settings_path, row_factory=sqlite3.Row) as conn:
             conn.execute(f"""
@@ -56,7 +56,7 @@ def set_settings(payload: dict, db_path: str | None = None) -> dict[str, float |
     if not math.isfinite(fraction) or not 0 < fraction <= 1:
         raise ValueError("卖出比例必须大于 0 且不超过 100%")
 
-    settings_path = db_path or db_config.BASE_DB_PATH
+    settings_path = db_path or db_config.CONFIG_DB_PATH
     get_settings(settings_path)
     updated_at = int(time.time() * 1000)
     with db_config.connect_sqlite(settings_path) as conn:

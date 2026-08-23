@@ -44,7 +44,7 @@ def _validate_settings(payload: dict) -> dict[str, int]:
 
 def get_settings(db_path: str | None = None) -> dict[str, int]:
     """Return the persisted policy used by the next 15-minute round."""
-    path = db_path or db_config.BASE_DB_PATH
+    path = db_path or db_config.CONFIG_DB_PATH
     with db_config.connect_sqlite(path, row_factory=sqlite3.Row) as conn:
         conn.execute(f"""CREATE TABLE IF NOT EXISTS {SETTINGS_TABLE_NAME} (
             id INTEGER PRIMARY KEY CHECK (id = 1), window_hours INTEGER NOT NULL,
@@ -59,7 +59,7 @@ def get_settings(db_path: str | None = None) -> dict[str, int]:
 def set_settings(payload: dict, db_path: str | None = None) -> dict[str, int]:
     """Validate and persist a complete dynamic-opening policy."""
     settings = _validate_settings(payload)
-    path = db_path or db_config.BASE_DB_PATH
+    path = db_path or db_config.CONFIG_DB_PATH
     get_settings(path)
     with db_config.connect_sqlite(path) as conn:
         conn.execute(f"""UPDATE {SETTINGS_TABLE_NAME} SET window_hours=?, unrestricted_score=?,

@@ -1,6 +1,7 @@
 x-app-env: &app-env
   DATA_DIR: "${DATA_DIR:-data}"
   BASE_DB_PATH: "${BASE_DB_PATH:-data/base_data.db}"
+  CONFIG_DB_PATH: "${CONFIG_DB_PATH:-data/config.db}"
   SCORING_DB_PATH: "${SCORING_DB_PATH:-data/scoring.db}"
   TRADING_DB_PATH: "${TRADING_DB_PATH:-data/trading.db}"
   TRADING_CORE_DB_PATH: "${TRADING_CORE_DB_PATH:-data/trading_core.db}"

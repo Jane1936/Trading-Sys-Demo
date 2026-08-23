@@ -14,7 +14,7 @@ DEFAULT_STATUS = "ignored"
 
 
 def init_settings(db_path: str | None = None) -> None:
-    db_path = db_path or db_config.BASE_DB_PATH
+    db_path = db_path or db_config.CONFIG_DB_PATH
     with db_config.sqlite_schema_lock(db_path):
         with db_config.connect_sqlite(db_path) as conn:
             conn.execute(
@@ -47,7 +47,7 @@ def init_settings(db_path: str | None = None) -> None:
 
 
 def get_settings(db_path: str | None = None) -> dict:
-    db_path = db_path or db_config.BASE_DB_PATH
+    db_path = db_path or db_config.CONFIG_DB_PATH
     init_settings(db_path)
     with db_config.connect_sqlite(db_path, row_factory=sqlite3.Row) as conn:
         rows = conn.execute(
@@ -90,7 +90,7 @@ def set_settings(payload: dict, db_path: str | None = None) -> dict:
     if not 0 <= optional_min <= optional_count:
         raise ValueError("optional_min must be between 0 and the number of optional rules")
 
-    db_path = db_path or db_config.BASE_DB_PATH
+    db_path = db_path or db_config.CONFIG_DB_PATH
     init_settings(db_path)
     now_ms = int(time.time() * 1000)
     with db_config.connect_sqlite(db_path) as conn:
@@ -103,4 +103,3 @@ def set_settings(payload: dict, db_path: str | None = None) -> dict:
             (optional_min, now_ms),
         )
     return get_settings(db_path)
-

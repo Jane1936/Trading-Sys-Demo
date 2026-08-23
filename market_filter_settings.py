@@ -17,7 +17,7 @@ SETTINGS_TABLE_NAME = "market_filter_settings"
 
 def get_settings(db_path: str | None = None) -> dict[str, float | int]:
     """Return the current thresholds and blocking duration."""
-    settings_path = db_path or db_config.BASE_DB_PATH
+    settings_path = db_path or db_config.CONFIG_DB_PATH
     with db_config.sqlite_schema_lock(settings_path):
         with db_config.connect_sqlite(settings_path, row_factory=sqlite3.Row) as conn:
             conn.execute(f"""
@@ -61,7 +61,7 @@ def set_settings(payload: dict, db_path: str | None = None) -> dict[str, float |
     if not 1 <= duration <= 10_080:
         raise ValueError("禁止开仓时间必须为 1–10080 分钟")
 
-    settings_path = db_path or db_config.BASE_DB_PATH
+    settings_path = db_path or db_config.CONFIG_DB_PATH
     get_settings(settings_path)
     updated_at = int(time.time() * 1000)
     with db_config.connect_sqlite(settings_path) as conn:
