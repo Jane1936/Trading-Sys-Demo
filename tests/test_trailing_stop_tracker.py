@@ -1,6 +1,9 @@
+import sqlite3
 import tempfile
 from decimal import Decimal
 from pathlib import Path
+
+import pytest
 
 from partial_take_profit import PartialTakeProfitStrategy
 from trading_experiment import TradingExperiment
@@ -69,6 +72,39 @@ class FailingOnceAccountManager(FakeAccountManager):
             self.fail_next_post = False
             raise RuntimeError("temporary order failure")
         return super()._signed_post(endpoint, params)
+
+
+def test_run_round_does_not_reinitialize_tables(monkeypatch, tmp_path):
+    db_path = str(tmp_path / "trading.db")
+    tracker = TrailingStopTracker(db_path=db_path, account_manager=FakeAccountManager())
+    tracker.init_tables()
+
+    def fail_if_called():
+        pytest.fail("run_round() must not call init_tables()")
+
+    monkeypatch.setattr(tracker, "init_tables", fail_if_called)
+
+    result = tracker.run_round()
+
+    assert result == {"checked": 1, "eligible": 0, "updated": 0}
+
+
+def test_run_round_without_initialization_fails_and_does_not_create_tables(tmp_path):
+    db_path = str(tmp_path / "trading.db")
+    tracker = TrailingStopTracker(db_path=db_path, account_manager=FakeAccountManager())
+
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        tracker.run_round()
+
+    with sqlite3.connect(db_path) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+
+    assert tracker.CHECKS_TABLE not in tables
+    assert tracker.RECORDS_TABLE not in tables
+
 
 def _insert_1m_kline(db_path, high, open_time, close=12):
     import sqlite3
@@ -195,6 +231,7 @@ def test_trailing_stop_tracker_ignores_1_4r_partial_take_profit_record():
         db_path = str(Path(tmpdir) / "klines.db")
         _insert_partial_take_profit_record(db_path, "已触发1.4R分批止盈")
         tracker = TrailingStopTracker(db_path=db_path, account_manager=fake_account)
+        tracker.init_tables()
 
         result = tracker.run_round()
         _, checks = tracker.get_latest_round_checks()
@@ -217,6 +254,7 @@ def test_trailing_stop_tracker_updates_max_after_partial_take_profit():
         _insert_15m_kline(db_path, low=13, open_time=3000)
         _insert_15m_kline(db_path, low=13, open_time=4000, close=12)
         tracker = TrailingStopTracker(db_path=db_path, account_manager=fake_account)
+        tracker.init_tables()
 
         first = tracker.run_round()
         _insert_1m_kline(db_path, high=12, open_time=2000)
@@ -238,6 +276,7 @@ def test_trailing_stop_tracker_requires_partial_take_profit_record():
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "klines.db")
         tracker = TrailingStopTracker(db_path=db_path, account_manager=fake_account)
+        tracker.init_tables()
 
         result = tracker.run_round()
         _, checks = tracker.get_latest_round_checks()
@@ -264,6 +303,7 @@ def test_trailing_stop_tracker_closes_position_when_drawdown_threshold_hit(monke
         _insert_15m_kline(db_path, low=13, open_time=3000)
         _insert_15m_kline(db_path, low=13, open_time=4000, close=12)
         tracker = TrailingStopTracker(db_path=db_path, account_manager=fake_account)
+        tracker.init_tables()
 
         tracker.run_round()
         _insert_1m_kline(db_path, high=12.3, open_time=2000, close=12.3)
@@ -314,6 +354,7 @@ def test_trailing_stop_tracker_updates_failed_action_record_on_retry(monkeypatch
             _insert_15m_kline(db_path, low=13, open_time=open_time)
         _insert_15m_kline(db_path, low=13, open_time=4000, close=12)
         tracker = TrailingStopTracker(db_path=db_path, account_manager=account)
+        tracker.init_tables()
 
         assert tracker.run_round()["updated"] == 1
         failed = tracker.recent_action_records()
@@ -341,6 +382,7 @@ def test_trailing_stop_tracker_does_not_close_when_latest_close_is_below_long_en
         _insert_15m_kline(db_path, low=13, open_time=3000)
         _insert_15m_kline(db_path, low=13, open_time=4000, close=12)
         tracker = TrailingStopTracker(db_path=db_path, account_manager=fake_account)
+        tracker.init_tables()
 
         tracker.run_round()
         _insert_1m_kline(db_path, high=9.9, open_time=2000, close=9.9)
@@ -371,6 +413,7 @@ def test_trailing_stop_tracker_requires_pretrigger_before_close():
         _insert_15m_kline(db_path, low=13, open_time=3000)
         _insert_15m_kline(db_path, low=13, open_time=4000, close=12)
         tracker = TrailingStopTracker(db_path=db_path, account_manager=fake_account)
+        tracker.init_tables()
 
         tracker.run_round()
         _insert_1m_kline(db_path, high=12.3, open_time=2000, close=12.3)
@@ -405,6 +448,7 @@ def test_refresh_pretriggered_symbols_updates_latest_close_highest_and_drawdown(
         _insert_15m_kline(db_path, low=13, open_time=3000)
         _insert_15m_kline(db_path, low=13, open_time=4000, close=12)
         tracker = TrailingStopTracker(db_path=db_path, account_manager=fake_account)
+        tracker.init_tables()
 
         tracker.run_round()
         _insert_1m_kline(db_path, high=14, open_time=2000, close=13.4)
@@ -436,6 +480,7 @@ def test_trailing_stop_tracker_uses_2atr_threshold_when_volatility_is_high():
         _insert_15m_kline(db_path, low=13, open_time=3000, close=13)
         _insert_15m_kline(db_path, low=13, open_time=4000, close=12)
         tracker = TrailingStopTracker(db_path=db_path, account_manager=fake_account)
+        tracker.init_tables()
 
         tracker.run_round()
         _insert_1m_kline(db_path, high=12.3, open_time=2000, close=11.9)
@@ -469,6 +514,7 @@ def test_trailing_stop_tracker_reads_migrated_open_trade_from_trading_core_db(tm
     _insert_15m_kline(str(trading_db), low=13, open_time=3000)
     _insert_15m_kline(str(trading_db), low=13, open_time=4000, close=12)
     tracker = TrailingStopTracker(db_path=str(trading_db), account_manager=fake_account)
+    tracker.init_tables()
 
     result = tracker.run_round()
     _, checks = tracker.get_latest_round_checks()
