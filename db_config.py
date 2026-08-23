@@ -16,6 +16,7 @@ from typing import Iterable
 
 DATA_DIR = os.getenv("DATA_DIR", "data")
 BASE_DB_PATH = os.getenv("BASE_DB_PATH", os.getenv("DB_PATH", f"{DATA_DIR}/base_data.db"))
+CONFIG_DB_PATH = os.getenv("CONFIG_DB_PATH", f"{DATA_DIR}/config.db")
 SCORING_DB_PATH = os.getenv("SCORING_DB_PATH", f"{DATA_DIR}/scoring.db")
 TRADING_DB_PATH = os.getenv("TRADING_DB_PATH", f"{DATA_DIR}/trading.db")
 TRADING_CORE_DB_PATH = os.getenv("TRADING_CORE_DB_PATH", f"{DATA_DIR}/trading_core.db")
@@ -25,6 +26,7 @@ SCHEMA_LOCK_TIMEOUT_SECONDS = float(os.getenv("SCHEMA_LOCK_TIMEOUT_SECONDS", "30
 
 DB_LABELS = {
     "基础数据库": BASE_DB_PATH,
+    "配置数据库": CONFIG_DB_PATH,
     "评分系统数据库": SCORING_DB_PATH,
     "交易数据库": TRADING_DB_PATH,
     "交易核心数据库": TRADING_CORE_DB_PATH,

@@ -23,6 +23,7 @@ from break_even_take_profit import BreakEvenTakeProfitStrategy
 import collector
 import db_config
 import feature_flags
+from config_database import initialize_config_database
 from cooldown_module import CooldownModule
 from openable_symbol_module import OpenableSymbolModule
 from openable_symbol_settings import get_settings as get_openable_symbol_settings, set_settings as set_openable_symbol_settings
@@ -66,6 +67,7 @@ app = Flask(__name__)
 
 DB_PATH = db_config.BASE_DB_PATH
 BASE_DB_PATH = db_config.BASE_DB_PATH
+CONFIG_DB_PATH = db_config.CONFIG_DB_PATH
 SCORING_DB_PATH = db_config.SCORING_DB_PATH
 TRADING_DB_PATH = db_config.TRADING_DB_PATH
 MARKET_DB_PATH = db_config.MARKET_DB_PATH
@@ -1028,7 +1030,7 @@ def trailing_stop_summary_api():
 
 @app.post("/api/trailing-stop/refresh-pretrigger")
 def trailing_stop_refresh_pretrigger_api():
-    if not feature_flags.is_feature_enabled(feature_flags.TRAILING_STOP, BASE_DB_PATH):
+    if not feature_flags.is_feature_enabled(feature_flags.TRAILING_STOP, CONFIG_DB_PATH):
         return jsonify({"error": "移动追踪止盈规则功能开关已关闭"}), 409
     try:
         return jsonify(TrailingStopTracker(db_path=_trading_db_path()).refresh_pretriggered_symbols())
@@ -1151,7 +1153,8 @@ def btc_5m_api():
 
 @app.get("/api/feature-flags")
 def feature_flags_api():
-    flags = feature_flags.list_feature_flags(BASE_DB_PATH)
+    initialize_config_database(CONFIG_DB_PATH, BASE_DB_PATH)
+    flags = feature_flags.list_feature_flags(CONFIG_DB_PATH)
     return jsonify({"flags": feature_flags.flags_to_dict(flags)})
 
 
@@ -1164,7 +1167,7 @@ def update_feature_flag_api(key: str):
         flag = feature_flags.set_feature_flag(
             key=key,
             enabled=bool(payload["enabled"]),
-            db_path=BASE_DB_PATH,
+            db_path=CONFIG_DB_PATH,
         )
     except KeyError:
         return jsonify({"error": f"Unknown feature flag: {key}"}), 404
@@ -1173,14 +1176,14 @@ def update_feature_flag_api(key: str):
 
 @app.get("/api/dynamic-open-threshold-settings")
 def dynamic_open_threshold_settings_api():
-    return jsonify(get_dynamic_open_threshold_settings(BASE_DB_PATH))
+    return jsonify(get_dynamic_open_threshold_settings(CONFIG_DB_PATH))
 
 
 @app.put("/api/dynamic-open-threshold-settings")
 def update_dynamic_open_threshold_settings_api():
     try:
         settings = set_dynamic_open_threshold_settings(
-            request.get_json(silent=True) or {}, BASE_DB_PATH
+            request.get_json(silent=True) or {}, CONFIG_DB_PATH
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -1189,14 +1192,14 @@ def update_dynamic_open_threshold_settings_api():
 
 @app.get("/api/market-filter-settings")
 def market_filter_settings_api():
-    return jsonify(get_market_filter_settings(BASE_DB_PATH))
+    return jsonify(get_market_filter_settings(CONFIG_DB_PATH))
 
 
 @app.put("/api/market-filter-settings")
 def update_market_filter_settings_api():
     try:
         return jsonify(set_market_filter_settings(
-            request.get_json(silent=True) or {}, BASE_DB_PATH
+            request.get_json(silent=True) or {}, CONFIG_DB_PATH
         ))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -1204,7 +1207,7 @@ def update_market_filter_settings_api():
 
 @app.get("/api/scoring-rule-weights")
 def scoring_rule_weights_api():
-    return jsonify({"rules": get_rule_score_weight_settings(BASE_DB_PATH)})
+    return jsonify({"rules": get_rule_score_weight_settings(CONFIG_DB_PATH)})
 
 
 @app.put("/api/scoring-rule-weights")
@@ -1221,7 +1224,7 @@ def update_scoring_rule_weights_api():
         }
         if len(weights) != len(raw_rules):
             raise ValueError("Each rule must have a unique rule_id and weight")
-        rules = set_rule_score_weight_settings(weights, BASE_DB_PATH)
+        rules = set_rule_score_weight_settings(weights, CONFIG_DB_PATH)
     except (KeyError, TypeError, ValueError) as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify({"rules": rules})
@@ -1229,13 +1232,13 @@ def update_scoring_rule_weights_api():
 
 @app.get("/api/scoring-rule-election")
 def scoring_rule_election_api():
-    return jsonify(get_rule_election_settings(BASE_DB_PATH))
+    return jsonify(get_rule_election_settings(CONFIG_DB_PATH))
 
 
 @app.put("/api/scoring-rule-election")
 def update_scoring_rule_election_api():
     try:
-        return jsonify(set_rule_election_settings(request.get_json(silent=True) or {}, BASE_DB_PATH))
+        return jsonify(set_rule_election_settings(request.get_json(silent=True) or {}, CONFIG_DB_PATH))
     except (TypeError, ValueError) as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -1255,14 +1258,14 @@ def update_openable_symbol_settings_api():
 
 @app.get("/api/weak-market-profit-settings")
 def weak_market_profit_settings_api():
-    return jsonify(get_weak_market_profit_settings(BASE_DB_PATH))
+    return jsonify(get_weak_market_profit_settings(CONFIG_DB_PATH))
 
 
 @app.put("/api/weak-market-profit-settings")
 def update_weak_market_profit_settings_api():
     try:
         return jsonify(set_weak_market_profit_settings(
-            request.get_json(silent=True) or {}, BASE_DB_PATH
+            request.get_json(silent=True) or {}, CONFIG_DB_PATH
         ))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -1272,7 +1275,7 @@ def update_weak_market_profit_settings_api():
 def trading_experiment_run_api():
     try:
         zombie_result = ZombieForceLiquidationModule(db_path=_trading_db_path()).run_round()
-        if not feature_flags.is_feature_enabled(feature_flags.TRADING_SYSTEM, BASE_DB_PATH):
+        if not feature_flags.is_feature_enabled(feature_flags.TRADING_SYSTEM, CONFIG_DB_PATH):
             return jsonify(
                 {
                     "opened": 0,
@@ -1294,7 +1297,7 @@ def trading_experiment_run_api():
 
 @app.get("/safety/abnormal-wicks")
 def abnormal_wicks():
-    feature_flags.init_feature_flags(BASE_DB_PATH)
+    initialize_config_database(CONFIG_DB_PATH, BASE_DB_PATH)
     limit = request.args.get("limit", default=100, type=int)
     symbol = request.args.get("symbol", default="", type=str).strip()
     btc_page = request.args.get("btc_page", default=1, type=int)
@@ -1569,13 +1572,13 @@ def abnormal_wicks():
         btc_total_rows=btc_total_rows,
         should_load_abnormal_events=should_load_abnormal_events,
         btc_total_pages=btc_total_pages,
-        feature_flags=feature_flags.list_feature_flags(BASE_DB_PATH),
-        market_filter_settings=get_market_filter_settings(BASE_DB_PATH),
-        dynamic_open_threshold_settings=get_dynamic_open_threshold_settings(BASE_DB_PATH),
-        scoring_rule_weight_settings=get_rule_score_weight_settings(BASE_DB_PATH),
-        scoring_rule_election_settings=get_rule_election_settings(BASE_DB_PATH),
+        feature_flags=feature_flags.list_feature_flags(CONFIG_DB_PATH),
+        market_filter_settings=get_market_filter_settings(CONFIG_DB_PATH),
+        dynamic_open_threshold_settings=get_dynamic_open_threshold_settings(CONFIG_DB_PATH),
+        scoring_rule_weight_settings=get_rule_score_weight_settings(CONFIG_DB_PATH),
+        scoring_rule_election_settings=get_rule_election_settings(CONFIG_DB_PATH),
         openable_symbol_settings=get_openable_symbol_settings(BASE_DB_PATH),
-        weak_market_profit_settings=get_weak_market_profit_settings(BASE_DB_PATH),
+        weak_market_profit_settings=get_weak_market_profit_settings(CONFIG_DB_PATH),
     )
 
 

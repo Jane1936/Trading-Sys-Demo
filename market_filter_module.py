@@ -46,7 +46,7 @@ class MarketFilterModule:
 
     def __init__(self, db_path: str = "data/klines.db", settings_db_path: str | None = None) -> None:
         self.db_path = db_path
-        self.settings_db_path = settings_db_path or db_config.BASE_DB_PATH
+        self.settings_db_path = settings_db_path or db_config.CONFIG_DB_PATH
 
     def _connect(self) -> sqlite3.Connection:
         db_dir = os.path.dirname(self.db_path)

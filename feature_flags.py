@@ -118,7 +118,7 @@ def _feature_flags_are_current(db_path: str) -> bool:
 
 def init_feature_flags(db_path: str | None = None) -> None:
     """Create and seed the feature flag table with all switches enabled by default."""
-    db_path = db_path or db_config.BASE_DB_PATH
+    db_path = db_path or db_config.CONFIG_DB_PATH
     if _feature_flags_are_current(db_path):
         return
     with db_config.sqlite_schema_lock(db_path):
@@ -154,7 +154,7 @@ def init_feature_flags(db_path: str | None = None) -> None:
 
 
 def list_feature_flags(db_path: str | None = None) -> list[FeatureFlag]:
-    db_path = db_path or db_config.BASE_DB_PATH
+    db_path = db_path or db_config.CONFIG_DB_PATH
     init_feature_flags(db_path)
     with _connect(db_path) as conn:
         rows = conn.execute(
@@ -191,7 +191,7 @@ def get_feature_flag(key: str, db_path: str | None = None) -> FeatureFlag:
 
 
 def set_feature_flag(key: str, enabled: bool, db_path: str | None = None) -> FeatureFlag:
-    db_path = db_path or db_config.BASE_DB_PATH
+    db_path = db_path or db_config.CONFIG_DB_PATH
     definition = _DEFINITIONS_BY_KEY.get(key)
     if definition is None:
         raise KeyError(f"Unknown feature flag: {key}")

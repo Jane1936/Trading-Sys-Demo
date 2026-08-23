@@ -2602,7 +2602,7 @@
         <h2>功能开关</h2>
       </div>
       <div class="tip">
-        所有开关默认开启，状态持久化在基础数据库 <code>base_data.db</code>。点击开启/关闭后，worker 会在对应模块下一次 job 执行前重新读取并生效；模拟盘交易系统开关仅控制模拟盘，关闭后只会阻止模拟盘新开仓，已有模拟盘仓位的止损、止盈、风控保护默认继续运行。
+        所有开关默认开启，状态持久化在配置数据库 <code>config.db</code>。点击开启/关闭后，worker 会在对应模块下一次 job 执行前重新读取并生效；模拟盘交易系统开关仅控制模拟盘，关闭后只会阻止模拟盘新开仓，已有模拟盘仓位的止损、止盈、风控保护默认继续运行。
       </div>
       <div id="feature-flag-message" class="feature-flag-message" role="status" aria-live="polite"></div>
       <div class="table-wrap">
@@ -2684,7 +2684,7 @@
     </div>
     <div class="card feature-config-purple">
       <div class="header"><h2>弱势市场止盈动态调整</h2></div>
-      <div class="tip">配置市场弱势时分批止盈的触发阈值和卖出当前仓位的比例。保存后持久化到基础数据库，并从下一轮 15 分钟弱势市场判断开始生效。</div>
+      <div class="tip">配置市场弱势时分批止盈的触发阈值和卖出当前仓位的比例。保存后持久化到配置数据库，并从下一轮 15 分钟弱势市场判断开始生效。</div>
       <div id="weak-market-profit-message" class="feature-flag-message" role="status" aria-live="polite"></div>
       <form id="weak-market-profit-form" class="score-weight-actions">
         <label>止盈阈值（R）
@@ -2701,7 +2701,7 @@
         <h2>评分规则权重</h2>
       </div>
       <div class="tip">
-        可配置评分系统全部 18 条规则的命中分值，允许填写 0–100 的整数；0 表示该规则命中也不加分。保存后会持久化到基础数据库，并从下一轮评分开始生效。本轮已生成的历史评分不会重算。
+        可配置评分系统全部 18 条规则的命中分值，允许填写 0–100 的整数；0 表示该规则命中也不加分。保存后会持久化到配置数据库，并从下一轮评分开始生效。本轮已生成的历史评分不会重算。
       </div>
       <div id="score-weight-message" class="feature-flag-message" role="status" aria-live="polite"></div>
       <form id="score-weight-form">

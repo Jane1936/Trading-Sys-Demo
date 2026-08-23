@@ -251,7 +251,7 @@ class OpenableSymbolModule:
             else self.MIN_TOTAL_SCORE
         )
         with self._connect() as conn:
-            election = get_rule_election_settings(db_config.BASE_DB_PATH)
+            election = get_rule_election_settings(db_config.CONFIG_DB_PATH)
             total_round = conn.execute(
                 "SELECT 1 FROM symbol_total_scores WHERE decision_round_ts = ? LIMIT 1",
                 (int(decision_round_ts),),
@@ -340,7 +340,7 @@ class OpenableSymbolModule:
         )
         previous_band = self._configured_band(previous_total_score) if previous_total_score is not None else None
         previous_score_band_lower = bool(previous_band and band and self.configured_score_bands().index(previous_band) < self.configured_score_bands().index(band))
-        election = election or get_rule_election_settings(db_config.BASE_DB_PATH)
+        election = election or get_rule_election_settings(db_config.CONFIG_DB_PATH)
         required_ids = [r["rule_id"] for r in election["rules"] if r["status"] == "required"]
         optional_ids = [r["rule_id"] for r in election["rules"] if r["status"] == "optional"]
         missing_required = [rule_id for rule_id in required_ids if int(row[f"rule{rule_id}_score"]) <= 0]

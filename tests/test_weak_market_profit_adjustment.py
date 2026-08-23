@@ -18,6 +18,7 @@ def test_weak_market_uses_1_4r_and_fifty_percent(tmp_path, monkeypatch):
     path = str(tmp_path / "market.db")
     _sources(path)
     monkeypatch.setattr(db_config, "BASE_DB_PATH", path)
+    monkeypatch.setattr(db_config, "CONFIG_DB_PATH", path)
     module = WeakMarketProfitAdjustmentModule(path)
     result = module.run_round(decision_round_ts=900_000, evaluated_at=900_001)
     assert result.weak_market is True
@@ -30,6 +31,7 @@ def test_normal_market_keeps_2r_and_thirty_percent(tmp_path, monkeypatch):
     path = str(tmp_path / "market.db")
     _sources(path, close=101, ma20=100)
     monkeypatch.setattr(db_config, "BASE_DB_PATH", path)
+    monkeypatch.setattr(db_config, "CONFIG_DB_PATH", path)
     result = WeakMarketProfitAdjustmentModule(path).run_round(decision_round_ts=900_000)
     assert result.weak_market is False
     assert result.trigger_r_multiple == 2.0
@@ -40,6 +42,7 @@ def test_weak_market_uses_persisted_settings(tmp_path, monkeypatch):
     path = str(tmp_path / "market.db")
     _sources(path)
     monkeypatch.setattr(db_config, "BASE_DB_PATH", path)
+    monkeypatch.setattr(db_config, "CONFIG_DB_PATH", path)
     saved = set_settings({"trigger_r_multiple": 1.8, "take_profit_fraction": 0.65}, path)
     assert saved["trigger_r_multiple"] == 1.8
     assert get_settings(path)["take_profit_fraction"] == 0.65
@@ -68,6 +71,7 @@ def test_hour_round_waits_for_hourly_ma20_convergence(tmp_path, monkeypatch):
     path = str(tmp_path / "market.db")
     _sources(path, close_time=899_999)
     monkeypatch.setattr(db_config, "BASE_DB_PATH", path)
+    monkeypatch.setattr(db_config, "CONFIG_DB_PATH", path)
     module = WeakMarketProfitAdjustmentModule(path)
     assert module.is_data_converged_for_round(3_600_000) == (False, "waiting_allusdt_15m_convergence")
     with sqlite3.connect(path) as conn:

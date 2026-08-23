@@ -200,8 +200,8 @@ def init_rule_score_weight_settings(
     db_path: str | None = None,
     defaults: dict[int, int] | None = None,
 ) -> None:
-    """Create and seed the runtime scoring-weight settings in the base database."""
-    db_path = db_path or db_config.BASE_DB_PATH
+    """Create and seed the runtime scoring-weight settings in the config database."""
+    db_path = db_path or db_config.CONFIG_DB_PATH
     defaults = defaults or load_rule_score_weights()
     if _rule_score_weight_settings_are_current(db_path, defaults):
         return
@@ -263,7 +263,7 @@ def get_rule_score_weight_settings(
     defaults: dict[int, int] | None = None,
 ) -> list[dict]:
     """Return all 18 runtime weights, seeding missing rows from file defaults."""
-    db_path = db_path or db_config.BASE_DB_PATH
+    db_path = db_path or db_config.CONFIG_DB_PATH
     defaults = defaults or load_rule_score_weights()
     init_rule_score_weight_settings(db_path, defaults)
     with db_config.connect_sqlite(db_path, row_factory=sqlite3.Row) as conn:
@@ -296,7 +296,7 @@ def set_rule_score_weight_settings(
         rule_id: _validate_rule_score_weight(rule_id, weight)
         for rule_id, weight in weights.items()
     }
-    db_path = db_path or db_config.BASE_DB_PATH
+    db_path = db_path or db_config.CONFIG_DB_PATH
     defaults = defaults or load_rule_score_weights()
     init_rule_score_weight_settings(db_path, defaults)
     now_ms = int(time.time() * 1000)
@@ -417,7 +417,7 @@ class ScoringSystem:
     ) -> None:
         self.db_path = db_path
         self.rule_score_weights = load_runtime_rule_score_weights(
-            settings_db_path or db_config.BASE_DB_PATH, rule_weights_path
+            settings_db_path or db_config.CONFIG_DB_PATH, rule_weights_path
         )
         self.structural_stop_loss_coefficient = load_structural_stop_loss_coefficient(
             rule_weights_path
