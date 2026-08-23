@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 from openable_symbol_module import OpenableSymbol, OpenableSymbolModule
 from trading_experiment import ExperimentConfig, TradingExperiment
@@ -331,6 +332,49 @@ class HighRiskAccountManager(FakeAccountManager):
         return super()._signed_get(endpoint, params)
 
 class TradingExperimentSymbolTests(unittest.TestCase):
+    def test_run_round_does_not_reinitialize_tables(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=FakeAccountManager(),
+            )
+            experiment.init_tables()
+
+            with patch.object(
+                experiment,
+                "init_tables",
+                side_effect=AssertionError("run_round() must not initialize tables"),
+            ):
+                result = experiment.run_round([])
+
+        self.assertEqual(result, {"opened": 0, "skipped": 0, "reason": "completed"})
+
+    def test_run_round_without_initialization_fails_without_creating_tables(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "klines.db"
+            experiment = TradingExperiment(
+                db_path=str(db_path),
+                account_manager=FakeAccountManager(),
+            )
+
+            with self.assertRaisesRegex(
+                sqlite3.OperationalError,
+                "no such table: trading_experiment_trades",
+            ):
+                experiment.run_round([])
+
+            with sqlite3.connect(db_path) as conn:
+                tables = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    ).fetchall()
+                }
+
+        self.assertNotIn(TradingExperiment.TRADES_TABLE, tables)
+        self.assertNotIn(TradingExperiment.POSITIONS_TABLE, tables)
+        self.assertNotIn(TradingExperiment.ERRORS_TABLE, tables)
+
     def test_base_symbol_is_expanded_to_binance_usdt_pair_for_order_api_calls(self):
         fake_account = FakeAccountManager()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -486,6 +530,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
                 evaluated_at=1,
             )
 
+            experiment.init_tables()
             result = experiment.run_round([candidate])
             with sqlite3.connect(db_path) as conn:
                 conn.row_factory = sqlite3.Row
@@ -524,6 +569,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
                 evaluated_at=1,
             )
 
+            experiment.init_tables()
             result = experiment.run_round([candidate])
             error_rows = experiment.recent_error_records()
 
@@ -554,6 +600,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
                 evaluated_at=1,
             )
 
+            experiment.init_tables()
             result = experiment.run_round([candidate])
             error_rows = experiment.recent_error_records()
             with sqlite3.connect(db_path) as conn:
@@ -844,6 +891,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
                 evaluated_at=1,
             )
 
+            experiment.init_tables()
             result = experiment.run_round([candidate])
             with sqlite3.connect(experiment.db_path) as conn:
                 row = conn.execute(
@@ -876,6 +924,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
                 evaluated_at=1,
             )
 
+            experiment.init_tables()
             result = experiment.run_round([candidate])
             with sqlite3.connect(experiment.db_path) as conn:
                 rows = conn.execute(
@@ -924,6 +973,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
                 ),
             ]
 
+            experiment.init_tables()
             result = experiment.run_round(candidates)
 
         self.assertEqual(result, {"opened": 0, "skipped": 0, "reason": "completed"})
@@ -968,6 +1018,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
                 ),
             ]
 
+            experiment.init_tables()
             result = experiment.run_round(candidates)
             errors = experiment.recent_error_records()
             with sqlite3.connect(db_path) as conn:
@@ -1033,6 +1084,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
                 ),
             ]
 
+            experiment.init_tables()
             result = experiment.run_round(candidates)
             with sqlite3.connect(experiment.db_path) as conn:
                 rows = conn.execute(
@@ -1068,6 +1120,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
                 evaluated_at=1,
             )
 
+            experiment.init_tables()
             result = experiment.run_round([candidate])
             with sqlite3.connect(experiment.db_path) as conn:
                 row = conn.execute(
@@ -1106,6 +1159,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
                 evaluated_at=1,
             )
 
+            experiment.init_tables()
             result = experiment.run_round([candidate])
             rows = experiment.recent_trade_records()
 
@@ -1132,6 +1186,7 @@ class TradingExperimentSymbolTests(unittest.TestCase):
                 evaluated_at=1,
             )
 
+            experiment.init_tables()
             result = experiment.run_round([candidate])
             rows = experiment.recent_trade_records()
 
