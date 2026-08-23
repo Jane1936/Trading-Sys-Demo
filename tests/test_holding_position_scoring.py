@@ -3,6 +3,8 @@ import tempfile
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 import db_config
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
 from holding_position_scoring import HoldingPositionScoringSystem, PositionIncreaseCheck, PositionReductionCheck
@@ -117,6 +119,56 @@ class FakeAccountManager:
     def _signed_delete(self, endpoint, params=None):
         self.signed_deletes.append((endpoint, dict(params or {})))
         return {"code": 200, "msg": "success"}
+
+
+def test_run_round_does_not_reinitialize_tables(monkeypatch, tmp_path):
+    scoring = HoldingPositionScoringSystem(
+        db_path=str(tmp_path / "trading.db"),
+        account_manager=FakeAccountManager(),
+    )
+    scoring.init_tables()
+    monkeypatch.setattr(scoring, "_active_positions", lambda: [])
+
+    def fail_if_called():
+        pytest.fail("run_round() must not call init_tables()")
+
+    monkeypatch.setattr(scoring, "init_tables", fail_if_called)
+
+    result = scoring.run_round(decision_round_ts=1_000)
+
+    assert result["decision_round_ts"] == 1_000
+    assert result["checked"] == 0
+
+
+def test_run_round_without_initialization_fails_and_does_not_create_tables(monkeypatch, tmp_path):
+    db_path = str(tmp_path / "trading.db")
+    scoring = HoldingPositionScoringSystem(
+        db_path=db_path,
+        account_manager=FakeAccountManager(),
+    )
+    monkeypatch.setattr(scoring, "_active_positions", lambda: [])
+
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        scoring.run_round(decision_round_ts=1_000)
+
+    table_paths = {Path(db_path), Path(scoring.info_db_path), Path(db_config.trading_core_path(db_path))}
+    tables = set()
+    for table_path in table_paths:
+        if table_path.exists():
+            with sqlite3.connect(table_path) as conn:
+                tables.update(
+                    row[0]
+                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+                )
+
+    assert scoring.CHECKS_TABLE not in tables
+    assert scoring.RECORDS_TABLE not in tables
+    assert scoring.PORTFOLIO_RISK_TABLE not in tables
+    assert scoring.PORTFOLIO_RISK_SUMMARY_TABLE not in tables
+    assert scoring.REDUCTION_CHECKS_TABLE not in tables
+    assert scoring.REDUCTION_RECORDS_TABLE not in tables
+    assert scoring.INCREASE_CHECKS_TABLE not in tables
+    assert scoring.INCREASE_RECORDS_TABLE not in tables
 
 
 def test_replacement_stop_immediate_trigger_force_closes_and_records(tmp_path):
@@ -349,6 +401,7 @@ def test_holding_position_scoring_strips_usdt_for_database_lookups_and_records()
             )
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
         result = scoring.run_round(decision_round_ts=3000)
         round_ts, checks = scoring.get_latest_round_checks()
         records = scoring.recent_stop_loss_records()
@@ -385,6 +438,7 @@ def test_position_reduction_runs_after_stop_loss_judgement_is_persisted():
             )
 
         scoring = StopLossBeforeReductionScoring(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
         result = scoring.run_round(decision_round_ts=3000)
 
     assert result["checked"] == 1
@@ -410,6 +464,7 @@ def test_position_reduction_runs_after_triggered_stop_loss_record_is_persisted()
             conn.execute("INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)", ("BANK", 3000, 30))
 
         scoring = StopLossRecordBeforeReductionScoring(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
         result = scoring.run_round(decision_round_ts=3000)
 
     assert result["records"] == 1
@@ -435,6 +490,7 @@ def test_position_reduction_waits_for_current_round_total_scores():
             conn.executemany("INSERT INTO symbol_total_scores (symbol, decision_round_ts, total_score) VALUES (?, ?, ?)", [("BANK", 3000, 20), ("BANK", 2000, 50)])
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
         result = scoring.run_round(decision_round_ts=4000)
 
     assert result["reduction_checked"] == 0
@@ -465,6 +521,7 @@ def test_position_reduction_waits_for_current_round_macd_data():
             conn.execute("INSERT INTO ema_indicators (symbol, interval, open_time, ema16, ema21) VALUES (?, ?, ?, ?, ?)", ("BANK", "15m", 4000, 9, 12))
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
         result = scoring.run_round(decision_round_ts=4000)
 
     assert result["reduction_checked"] == 0
@@ -487,6 +544,7 @@ def test_portfolio_risk_runs_after_holding_stop_loss_round():
             )
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
         result = scoring.run_round(decision_round_ts=3000)
         risk = scoring.get_latest_portfolio_risk()
 
@@ -511,6 +569,7 @@ def test_portfolio_risk_includes_all_positions_without_ten_position_cap():
             for i in range(11):
                 conn.execute("INSERT INTO klines_15m (symbol, open_time, close) VALUES (?, ?, ?)", (f"COIN{i}", 1, 1))
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
 
         risk = scoring.calculate_portfolio_risk(decision_round_ts=1)
 
@@ -539,6 +598,7 @@ def test_portfolio_risk_displays_scores_without_forced_liquidation_when_total_ri
             )
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account, realized_pnl_retry_delays=())
+        scoring.init_tables()
         result = scoring.run_round(decision_round_ts=3000)
         risk = scoring.get_latest_portfolio_risk()
         stop_loss_records = scoring.recent_stop_loss_records()
@@ -574,6 +634,7 @@ def test_realized_pnl_query_retries_until_trades_are_available():
             account_manager=fake_account,
             realized_pnl_retry_delays=(0, 0, 0),
         )
+        scoring.init_tables()
         scoring.run_round(decision_round_ts=3000)
         records = scoring.recent_stop_loss_records()
 
@@ -592,6 +653,7 @@ def test_realized_pnl_query_failure_is_written_to_reason():
             account_manager=fake_account,
             realized_pnl_retry_delays=(0, 0, 0),
         )
+        scoring.init_tables()
         scoring.run_round(decision_round_ts=3000)
         records = scoring.recent_stop_loss_records()
 
@@ -606,6 +668,7 @@ def test_unfilled_stop_loss_order_response_is_recorded_as_failed_without_pnl_loo
         _seed_triggered_stop_loss_db(db_path)
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
         scoring.run_round(decision_round_ts=3000)
         records = scoring.recent_stop_loss_records()
 
@@ -622,6 +685,7 @@ def test_reduce_only_rejection_records_positions_and_open_order_diagnostics():
         _seed_triggered_stop_loss_db(db_path)
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
         scoring.run_round(decision_round_ts=3000)
         records = scoring.recent_stop_loss_records()
 
@@ -668,6 +732,7 @@ def test_position_reduction_rule3_absolute_score_large_drawdown_is_removed():
             conn.execute("INSERT INTO trading_experiment_trades (symbol, status, total_score, created_at) VALUES (?, ?, ?, ?)", ("BANK", "opened", 80, 1000))
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
         result = scoring.run_round(decision_round_ts=4000)
         round_ts, checks = scoring.get_latest_reduction_checks()
 
@@ -734,6 +799,7 @@ def test_position_reduction_skips_rules_after_partial_take_profit():
             )
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
         result = scoring.run_round(decision_round_ts=4000)
         round_ts, checks = scoring.get_latest_reduction_checks()
 
@@ -781,6 +847,7 @@ def test_position_reduction_rule2_skips_when_recent_trend_weakening_triggered():
             )
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
         positions = [{"symbol": "BANKUSDT", "positionAmt": "2", "leverage": "5"}]
         first_checks = scoring.evaluate_reduction_conditions(positions=positions, decision_round_ts=4000, checked_at=1_000_000)
         second_checks = scoring.evaluate_reduction_conditions(positions=positions, decision_round_ts=5000, checked_at=1_000_000 + 30 * 60 * 1000)
@@ -825,6 +892,7 @@ def test_position_reduction_rule2_retry_does_not_erase_cooldown_trigger():
             )
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
         positions = [{"symbol": "ORDERUSDT", "positionAmt": "2", "leverage": "5"}]
         first = scoring.evaluate_reduction_conditions(positions=positions, decision_round_ts=4000, checked_at=1_000_000)
         retry = scoring.evaluate_reduction_conditions(positions=positions, decision_round_ts=4000, checked_at=1_001_000)
@@ -872,6 +940,7 @@ def test_position_reduction_no_longer_triggers_on_removed_rule_four_score_danger
             )
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
         result = scoring.run_round(decision_round_ts=4000)
         round_ts, checks = scoring.get_latest_reduction_checks()
 
@@ -917,6 +986,7 @@ def test_position_reduction_rule5_tags_deep_weakness():
             )
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
         result = scoring.run_round(decision_round_ts=4000)
         round_ts, checks = scoring.get_latest_reduction_checks()
 
@@ -968,6 +1038,7 @@ def test_position_reduction_rule5_condition2_requires_recent_two_closes_below_en
             )
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
         result = scoring.run_round(decision_round_ts=4000)
         round_ts, checks = scoring.get_latest_reduction_checks()
 
@@ -1065,6 +1136,7 @@ def test_reduction_action_uses_highest_rule_replaces_limit_and_market_reduces():
             )
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account, realized_pnl_retry_delays=())
+        scoring.init_tables()
         result = scoring.run_round(decision_round_ts=4000)
         records = scoring.recent_reduction_records()
 
@@ -1123,6 +1195,7 @@ def test_reduction_action_skips_replacement_stop_that_would_immediately_trigger_
             )
 
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account, realized_pnl_retry_delays=())
+        scoring.init_tables()
         result = scoring.run_round(decision_round_ts=4000)
         records = scoring.recent_reduction_records()
 
@@ -1145,6 +1218,7 @@ def test_position_increase_triggers_first_add_once_per_open_lifecycle():
                 ("BANK", "opened", 1000, "72", "7", "", ""),
             )
         scoring = HoldingPositionScoringSystem(db_path=db_path, account_manager=fake_account)
+        scoring.init_tables()
         positions = [{"symbol": "BANKUSDT", "positionAmt": "2", "markPrice": "8", "unRealizedProfit": "70"}]
 
         checks = scoring.evaluate_increase_conditions(positions=positions, decision_round_ts=3000, checked_at=4000)
