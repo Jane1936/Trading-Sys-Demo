@@ -54,8 +54,8 @@ FEATURE_FLAG_DEFINITIONS: tuple[FeatureFlagDefinition, ...] = (
     ),
     FeatureFlagDefinition(
         key=TRADING_SYSTEM,
-        name="交易系统",
-        description="关闭后不再开新仓；已有仓位止损、止盈、风控保护默认继续运行。",
+        name="模拟盘交易系统",
+        description="仅控制模拟盘交易；关闭后模拟盘不再开新仓，已有模拟盘仓位的止损、止盈、风控保护默认继续运行。",
     ),
     FeatureFlagDefinition(
         key=MARKET_FILTER,
@@ -64,17 +64,17 @@ FEATURE_FLAG_DEFINITIONS: tuple[FeatureFlagDefinition, ...] = (
     ),
     FeatureFlagDefinition(
         key=TRAILING_STOP,
-        name="移动追踪止盈规则",
+        name="模拟盘移动追踪止盈规则",
         description="控制移动追踪止盈的每分钟扫描及平仓操作；关闭后不再执行该规则。",
     ),
-    FeatureFlagDefinition(STOP_LOSS_RULE, "止损规则", "控制持仓结构止损判断及平仓操作。"),
-    FeatureFlagDefinition(REDUCTION_CONDITIONS, "减仓条件模块", "控制持仓评分减仓条件判断及减仓操作。"),
-    FeatureFlagDefinition(INCREASE_CONDITIONS, "加仓条件模块", "控制持仓评分加仓条件判断及加仓操作。"),
-    FeatureFlagDefinition(PORTFOLIO_RISK, "组合风险约束", "控制持仓组合风险计算与约束数据更新。"),
-    FeatureFlagDefinition(BREAK_EVEN_TAKE_PROFIT, "保本止盈策略", "控制保本止盈的每分钟扫描及平仓操作。"),
-    FeatureFlagDefinition(PARTIAL_TAKE_PROFIT, "分批止盈规则", "控制分批止盈的每分钟扫描及减仓操作。"),
-    FeatureFlagDefinition(TRAILING_REDUCTION, "移动追踪减仓", "控制移动追踪减仓判断、刷新及减仓操作。"),
-    FeatureFlagDefinition(DYNAMIC_PROFIT_PROTECTION, "动态利润保护模块", "控制动态利润保护的每分钟扫描及平仓操作。"),
+    FeatureFlagDefinition(STOP_LOSS_RULE, "模拟盘止损规则", "控制持仓结构止损判断及平仓操作。"),
+    FeatureFlagDefinition(REDUCTION_CONDITIONS, "模拟盘减仓条件模块", "控制持仓评分减仓条件判断及减仓操作。"),
+    FeatureFlagDefinition(INCREASE_CONDITIONS, "模拟盘加仓条件模块", "控制持仓评分加仓条件判断及加仓操作。"),
+    FeatureFlagDefinition(PORTFOLIO_RISK, "模拟盘组合风险约束", "控制持仓组合风险计算与约束数据更新。"),
+    FeatureFlagDefinition(BREAK_EVEN_TAKE_PROFIT, "模拟盘保本止盈策略", "控制保本止盈的每分钟扫描及平仓操作。"),
+    FeatureFlagDefinition(PARTIAL_TAKE_PROFIT, "模拟盘分批止盈规则", "控制分批止盈的每分钟扫描及减仓操作。"),
+    FeatureFlagDefinition(TRAILING_REDUCTION, "模拟盘移动追踪减仓", "控制移动追踪减仓判断、刷新及减仓操作。"),
+    FeatureFlagDefinition(DYNAMIC_PROFIT_PROTECTION, "模拟盘动态利润保护模块", "控制动态利润保护的每分钟扫描及平仓操作。"),
 )
 
 _DEFINITIONS_BY_KEY = {definition.key: definition for definition in FEATURE_FLAG_DEFINITIONS}

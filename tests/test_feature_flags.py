@@ -28,6 +28,8 @@ def test_feature_flags_seed_enabled_by_default(tmp_path):
     ]
     assert all(flag.enabled for flag in flags)
     assert all(flag.updated_at > 0 for flag in flags)
+    assert flags[2].name == "模拟盘交易系统"
+    assert all(flag.name.startswith("模拟盘") for flag in flags[4:])
 
 
 def test_set_feature_flag_persists_status_and_updates_timestamp(tmp_path, monkeypatch):
@@ -47,7 +49,7 @@ def test_trailing_stop_flag_can_be_disabled(tmp_path):
 
     updated = feature_flags.set_feature_flag(feature_flags.TRAILING_STOP, False, db_path)
 
-    assert updated.name == "移动追踪止盈规则"
+    assert updated.name == "模拟盘移动追踪止盈规则"
     assert updated.enabled is False
     assert feature_flags.is_feature_enabled(feature_flags.TRAILING_STOP, db_path) is False
 
