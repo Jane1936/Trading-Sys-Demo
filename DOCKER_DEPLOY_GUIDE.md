@@ -126,15 +126,20 @@ else:
 export BINANCE_TESTNET=true
 export BINANCE_TESTNET_API_KEY="你的 demo API key"
 export BINANCE_TESTNET_SECRET_KEY="你的 demo secret key"
-# 如切换实盘：
-# export BINANCE_TESTNET=false
-# export BINANCE_REAL_API_KEY="你的 real API key"
-# export BINANCE_REAL_API_SECRET="你的 real secret key"
+# “实盘数据”页面可与 Demo worker 同时启用，无需把 BINANCE_TESTNET 改成 false：
+export BINANCE_REAL_API_KEY="你的 real API key"
+export BINANCE_REAL_API_SECRET="你的 real secret key"
+# 通常无需设置；仅在代理/网关场景覆盖生产 REST 地址：
+export BINANCE_REAL_BASE_URL="https://fapi.binance.com"
 ```
 
 Docker Compose 启动前在同一个 shell 中导出这些变量即可；`docker-compose.yml` 会把这些变量同时注入 `worker` 和 `web` 容器：
 - `worker` 容器会在每轮“本轮可开仓symbol情况”完成计算后立即执行第一组交易实验，因此必须能读取交易 API key/secret。
 - `web` 容器会通过 `/api/account/balance` 在你点击网页“账户情况”的查询按钮时实时请求余额，也会复用这些变量。
+- 导航栏“实盘数据”只通过 `/api/live/account/*` 读取 `BINANCE_REAL_API_KEY` 和
+  `BINANCE_REAL_API_SECRET`；它固定访问生产环境，不受 `BINANCE_TESTNET` 影响。建议
+  将密钥保存在服务器项目目录的 `.env`（该文件已被 Git 忽略）或服务器的 secret
+  管理器中，切勿填写到 `binance_account_manager.py` 或提交到 Git。
 
 ---
 

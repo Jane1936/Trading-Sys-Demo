@@ -99,21 +99,43 @@ class BinanceAccountManager:
         secret_key: str = SECRET_KEY,
         recv_window: int = DEFAULT_RECV_WINDOW,
         timeout: int = 10,
+        testnet: bool = BINANCE_TESTNET,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.secret_key = secret_key
         self.recv_window = recv_window
         self.timeout = timeout
+        self.testnet = testnet
         self.session = requests.Session()
+
+    @classmethod
+    def live(cls, **kwargs: Any) -> "BinanceAccountManager":
+        """Build a client that always targets the production USDⓈ-M API.
+
+        This deliberately ignores ``BINANCE_TESTNET`` so the demo worker can
+        remain on testnet while the web UI reads the separately configured
+        production account.
+        """
+        return cls(
+            base_url=_env_or_default("BINANCE_REAL_BASE_URL", "https://fapi.binance.com"),
+            api_key=_env_or_default("BINANCE_REAL_API_KEY", "YOUR_REAL_API_KEY"),
+            secret_key=_env_or_default("BINANCE_REAL_API_SECRET", "YOUR_REAL_API_SECRET"),
+            testnet=False,
+            **kwargs,
+        )
 
     def validate_config(self) -> None:
         """Validate that API credentials are no longer placeholder values."""
         if self.api_key in PLACEHOLDER_VALUES or self.secret_key in PLACEHOLDER_VALUES:
+            credential_names = (
+                "BINANCE_TESTNET_API_KEY/BINANCE_TESTNET_SECRET_KEY"
+                if self.testnet
+                else "BINANCE_REAL_API_KEY/BINANCE_REAL_API_SECRET"
+            )
             raise BinanceAccountConfigError(
-                "Binance API credentials are not configured. Fill the placeholders in "
-                "binance_account_manager.py or set BINANCE_TESTNET_API_KEY/"
-                "BINANCE_TESTNET_SECRET_KEY environment variables."
+                "Binance API credentials are not configured. Set "
+                f"{credential_names} environment variables on the server."
             )
 
     def futures_balance(self) -> dict[str, Any]:
@@ -125,7 +147,7 @@ class BinanceAccountManager:
 
         balances = [self._normalize_balance_row(row) for row in raw_rows if isinstance(row, dict)]
         return {
-            "testnet": BINANCE_TESTNET,
+            "testnet": self.testnet,
             "base_url": self.base_url,
             "queried_at": int(time.time() * 1000),
             "balances": [row.__dict__ for row in balances],
@@ -161,7 +183,7 @@ class BinanceAccountManager:
         )
         orders.sort(key=lambda row: row.time, reverse=True)
         return {
-            "testnet": BINANCE_TESTNET,
+            "testnet": self.testnet,
             "base_url": self.base_url,
             "queried_at": int(time.time() * 1000),
             "start_time": start_time,

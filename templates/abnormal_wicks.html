@@ -218,6 +218,8 @@
     .strategy-subpanel.active { display:block; }
     .simulation-subpanel { display:none; }
     .simulation-subpanel.active { display:block; }
+    .live-subpanel { display:none; }
+    .live-subpanel.active { display:block; }
     .holding-module-tabs { display:flex; gap:10px; flex-wrap:wrap; align-items:center; padding:14px 20px; background:#f8fdff; border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
     .holding-module-tab { border:1px solid var(--line); background:#eff6ff; color:#1e3a8a; border-radius:999px; padding:9px 14px; cursor:pointer; font-size:13px; font-weight:800; box-shadow:0 3px 10px rgba(14, 116, 144, 0.08); }
     .holding-module-tab:hover { transform:translateY(-1px); background:#dbeafe; }
@@ -279,6 +281,7 @@
     <button class="tab-btn {{ 'active' if active_tab == 'tab-market-filter' else '' }}" data-tab="tab-market-filter">市场行情过滤</button>
     <button class="tab-btn {{ 'active' if active_tab == 'tab-strategy' else '' }}" data-tab="tab-strategy">本轮交易策略</button>
     <button class="tab-btn {{ 'active' if active_tab == 'tab-simulation' else '' }}" data-tab="tab-simulation">模拟盘数据</button>
+    <button class="tab-btn {{ 'active' if active_tab == 'tab-live' else '' }}" data-tab="tab-live">实盘数据</button>
     <button class="tab-btn {{ 'active' if active_tab == 'tab-feature-flags' else '' }}" data-tab="tab-feature-flags">功能开关</button>
   </aside>
   <main class="content container">
@@ -2596,6 +2599,33 @@
 
     </div>
   </section>
+  <section id="tab-live" class="panel {{ 'active' if active_tab == 'tab-live' else '' }}">
+    <div class="card">
+      <div class="header"><h2>实盘数据</h2></div>
+      <div class="bookmark-tabs" role="tablist" aria-label="实盘数据板块">
+        <button class="bookmark-tab active" type="button" role="tab" aria-selected="true" data-live-tab="live-filled-orders">已成交订单分析</button>
+        <button class="bookmark-tab" type="button" role="tab" aria-selected="false" data-live-tab="live-account">账户信息</button>
+      </div>
+      <div id="live-filled-orders" class="live-subpanel active" role="tabpanel">
+        <div class="symbol-strip"><div><strong>已成交订单分析（实盘）</strong></div><div class="muted">数据实时来自 Binance USDⓈ-M Futures 实盘 <code>userTrades</code> 接口，不会使用 Demo/Testnet 密钥。</div></div>
+        <div class="filled-orders-query-tools">
+          <div class="filled-orders-query-row"><label class="control-label" for="live-filled-days">查询范围</label><select id="live-filled-days" class="select-control"><option value="1">近1天</option><option value="3">近3天</option><option value="7" selected>近7天</option><option value="15">近15天</option><option value="30">近30天</option></select><button id="live-query-filled" class="btn btn-primary" type="button">查询近7天已成交订单</button></div>
+          <div class="filled-orders-query-row"><label class="control-label" for="live-filled-start">开始时间</label><input id="live-filled-start" class="select-control" type="datetime-local" step="3600"><label class="control-label" for="live-filled-end">截止时间</label><input id="live-filled-end" class="select-control" type="datetime-local" step="3600"><button id="live-query-filled-range" class="btn btn-primary" type="button">按起止时间查询</button></div>
+          <div class="filled-orders-query-row"><button id="live-export-filled" class="btn btn-primary" type="button" disabled>导出 Excel 到本地</button><span id="live-filled-status" class="muted">尚未查询</span></div>
+        </div>
+        <div id="live-filled-error" class="account-error"></div>
+        <div id="live-filled-summary" class="filled-orders-summary"><div class="account-metric"><div class="account-metric-label">已完成订单数量</div><div id="live-completed-count" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">已完成订单总盈利</div><div id="live-total-profit" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">盈利订单总数</div><div id="live-profit-count" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">胜率</div><div id="live-win-rate" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">总亏损</div><div id="live-total-loss" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">亏损订单总数</div><div id="live-loss-count" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">平均盈利</div><div id="live-average-profit" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">平均亏损</div><div id="live-average-loss" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">盈亏比</div><div id="live-profit-loss-ratio" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">期望</div><div id="live-expectancy" class="account-metric-value">-</div></div></div>
+        <div class="table-wrap filled-orders-wrap"><table><thead><tr><th>成交时间</th><th>symbol</th><th>开仓评分档位</th><th>开仓杠杆大小</th><th>开仓总分</th><th>止盈/止损原因</th><th>方向</th><th>order_id</th><th>成交价格</th><th>成交数量</th><th>成交额</th><th>已实现盈亏</th><th>手续费</th><th>maker</th><th>trade_id</th></tr></thead><tbody id="live-filled-rows"><tr><td class="empty" colspan="15">点击查询按钮后显示实盘数据</td></tr></tbody></table></div>
+      </div>
+      <div id="live-account" class="live-subpanel" role="tabpanel">
+        <div class="symbol-strip"><div><strong>账户情况（实盘）</strong></div><div class="muted">通过生产 REST API 实时查询 Binance USDⓈ-M Futures 账户余额：<code>https://fapi.binance.com</code>。</div></div>
+        <div class="toolbar"><button id="live-query-balance" class="btn btn-primary" type="button">查询账户余额</button><span id="live-balance-status" class="muted">尚未查询</span></div><div id="live-balance-error" class="account-error"></div>
+        <div class="account-summary"><div class="account-metric"><div class="account-metric-label">USDT 总余额</div><div id="live-usdt-balance" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">USDT 可用余额</div><div id="live-usdt-available" class="account-metric-value">-</div></div><div class="account-metric account-metric-highlight"><div class="account-metric-label">USDT 未实现盈亏</div><div id="live-usdt-pnl" class="account-metric-value">-</div></div></div>
+        <div class="table-wrap"><table><thead><tr><th>asset</th><th>balance</th><th>available_balance</th><th>cross_wallet_balance</th><th>cross_un_pnl</th><th>account_alias</th></tr></thead><tbody id="live-balance-rows"><tr><td class="empty" colspan="6">点击“查询账户余额”后显示实盘数据</td></tr></tbody></table></div>
+      </div>
+    </div>
+  </section>
+
   <section id="tab-feature-flags" class="panel {{ 'active' if active_tab == 'tab-feature-flags' else '' }}">
     <div class="card">
       <div class="header">
@@ -3129,6 +3159,18 @@
           }
         });
       });
+    })();
+
+    (function initLiveBookmarkTabs() {
+      const btns = document.querySelectorAll('.bookmark-tab[data-live-tab]');
+      const panels = document.querySelectorAll('.live-subpanel');
+      btns.forEach((button) => button.addEventListener('click', () => {
+        btns.forEach(item => { item.classList.remove('active'); item.setAttribute('aria-selected', 'false'); });
+        panels.forEach(item => item.classList.remove('active'));
+        button.classList.add('active');
+        button.setAttribute('aria-selected', 'true');
+        document.getElementById(button.dataset.liveTab)?.classList.add('active');
+      }));
     })();
 
 
@@ -4228,6 +4270,83 @@
         } finally {
           setFilledSellOrdersLoading(false);
         }
+      });
+    })();
+
+
+    (function initLiveAccountData() {
+      const byId = id => document.getElementById(id);
+      const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+      const showError = (id, statusId, message) => {
+        const error = byId(id);
+        if (error) { error.textContent = message; error.style.display = 'block'; }
+        if (byId(statusId)) byId(statusId).textContent = '查询失败';
+      };
+      const clearError = id => { const error = byId(id); if (error) { error.textContent = ''; error.style.display = 'none'; } };
+
+      byId('live-query-balance')?.addEventListener('click', async () => {
+        const button = byId('live-query-balance');
+        button.disabled = true; button.textContent = '查询中...';
+        byId('live-balance-status').textContent = '正在请求 Binance 实盘 REST API...';
+        try {
+          const response = await fetch('/api/live/account/balance', { headers: { Accept: 'application/json' } });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          clearError('live-balance-error');
+          const balances = payload.balances || [];
+          const usdt = balances.find(row => row.asset === 'USDT') || {};
+          byId('live-usdt-balance').textContent = usdt.balance || '-';
+          byId('live-usdt-available').textContent = usdt.available_balance || '-';
+          byId('live-usdt-pnl').textContent = usdt.cross_un_pnl || '-';
+          byId('live-balance-status').textContent = `Real 查询完成：${formatMsDatetime(payload.queried_at)}`;
+          byId('live-balance-rows').innerHTML = balances.length ? balances.map(row => `<tr><td>${escapeHtml(row.asset)}</td><td>${escapeHtml(row.balance)}</td><td>${escapeHtml(row.available_balance)}</td><td>${escapeHtml(row.cross_wallet_balance)}</td><td>${escapeHtml(row.cross_un_pnl)}</td><td>${escapeHtml(row.account_alias)}</td></tr>`).join('') : '<tr><td class="empty" colspan="6">接口未返回余额数据</td></tr>';
+        } catch (error) { showError('live-balance-error', 'live-balance-status', `实盘账户余额查询失败：${error.message}`); }
+        finally { button.disabled = false; button.textContent = '查询账户余额'; }
+      });
+
+      let displayedOrders = [];
+      const summaryIds = ['completed-count', 'total-profit', 'profit-count', 'win-rate', 'total-loss', 'loss-count', 'average-profit', 'average-loss', 'profit-loss-ratio', 'expectancy'];
+      const renderOrders = payload => {
+        const orders = payload.orders || [];
+        displayedOrders = orders;
+        byId('live-export-filled').disabled = !orders.length;
+        clearError('live-filled-error');
+        const analysis = buildFilledOrderAnalysis(orders).summary;
+        const values = [analysis.completedCount, formatPnlAmount(analysis.totalProfit), analysis.profitCount, `${(analysis.winRate * 100).toFixed(2)}%`, formatPnlAmount(analysis.totalLoss), analysis.lossCount, formatPnlAmount(analysis.averageProfit), formatPnlAmount(analysis.averageLoss), formatPnlAmount(analysis.profitLossRatio), formatPnlAmount(analysis.expectancy)];
+        summaryIds.forEach((id, index) => { if (byId(`live-${id}`)) byId(`live-${id}`).textContent = values[index]; });
+        byId('live-filled-status').textContent = `Real 查询完成：${formatMsDatetime(payload.queried_at)}；已成交合并记录 ${orders.length} 条`;
+        byId('live-filled-rows').innerHTML = orders.length ? orders.map(row => `<tr class="filled-order-row"><td>${formatMsDatetime(row.time)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.open_score_band || '-')}</td><td>${escapeHtml(row.open_leverage ?? '-')}</td><td>${escapeHtml(row.open_total_score ?? '-')}</td><td>${escapeHtml(row.exit_reason || '-')}</td><td>${escapeHtml(row.side)}</td><td>${escapeHtml(row.order_id)}</td><td>${escapeHtml(row.price)}</td><td>${escapeHtml(row.quantity)}</td><td>${escapeHtml(row.quote_quantity)}</td><td><span class="${pnlClass(row.realized_pnl)}">${escapeHtml(row.realized_pnl)}</span></td><td>${escapeHtml(row.commission)} ${escapeHtml(row.commission_asset)}</td><td>${row.maker ? '是' : '否'}</td><td>${escapeHtml(row.trade_id)}</td></tr>`).join('') : '<tr><td class="empty" colspan="15">所选时间范围内暂无已成交订单</td></tr>';
+      };
+      const queryOrders = async query => {
+        const buttons = [byId('live-query-filled'), byId('live-query-filled-range')];
+        buttons.forEach(button => { button.disabled = true; });
+        byId('live-filled-status').textContent = '正在请求 Binance 实盘 REST API...';
+        try {
+          const response = await fetch(`/api/live/account/filled-orders?${query}`, { headers: { Accept: 'application/json' } });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          renderOrders(payload);
+        } catch (error) { showError('live-filled-error', 'live-filled-status', `实盘已成交订单查询失败：${error.message}`); }
+        finally { buttons.forEach(button => { button.disabled = false; }); }
+      };
+      const daysSelect = byId('live-filled-days');
+      daysSelect?.addEventListener('change', () => { byId('live-query-filled').textContent = `查询近${daysSelect.value}天已成交订单`; });
+      byId('live-query-filled')?.addEventListener('click', () => queryOrders(new URLSearchParams({ days: daysSelect.value })));
+      const end = new Date(); end.setMinutes(0, 0, 0);
+      const localHour = date => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 13) + ':00';
+      byId('live-filled-end').value = localHour(end);
+      byId('live-filled-start').value = localHour(new Date(end.getTime() - 7 * 86400000));
+      byId('live-query-filled-range')?.addEventListener('click', () => {
+        const start = new Date(byId('live-filled-start').value).getTime();
+        const finish = new Date(byId('live-filled-end').value).getTime();
+        if (!Number.isFinite(start) || !Number.isFinite(finish) || start >= finish) return showError('live-filled-error', 'live-filled-status', '请选择有效的起止时间，且开始时间必须早于截止时间');
+        queryOrders(new URLSearchParams({ start_time: String(start), end_time: String(finish) }));
+      });
+      byId('live-export-filled')?.addEventListener('click', async () => {
+        if (!displayedOrders.length) return;
+        const response = await fetch('/api/account/filled-orders/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orders: displayedOrders }) });
+        if (!response.ok) return showError('live-filled-error', 'live-filled-status', 'Excel 导出失败');
+        const link = document.createElement('a'); link.href = URL.createObjectURL(await response.blob()); link.download = 'live_filled_orders.xlsx'; link.click(); URL.revokeObjectURL(link.href);
       });
     })();
 
