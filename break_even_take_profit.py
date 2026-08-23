@@ -95,6 +95,9 @@ class BreakEvenTakeProfitStrategy:
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
+        TradingExperiment(
+            db_path=self.db_path, account_manager=self.account_manager
+        ).init_tables()
         TradeActionLockManager(self.db_path).init_table()
         with self._connect() as conn:
             conn.execute(
@@ -405,7 +408,6 @@ class BreakEvenTakeProfitStrategy:
             conn.execute(f"INSERT INTO {self.RECORDS_TABLE} (symbol, checked_at, side, position_amt, entry_price, account_equity_usdt, r_usdt, unrealized_pnl, old_stop_loss_order_id, new_stop_loss_order_id, stop_loss_price, status, reason, raw_response) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, side, self._fmt_decimal(amount), self._fmt_decimal(entry), self._fmt_decimal(equity), self._fmt_decimal(r_value), self._fmt_decimal(pnl), old_id, new_id, self._fmt_decimal(stop_price), status, reason, raw))
 
     def get_latest_round_checks(self) -> tuple[int | None, list[BreakEvenTakeProfitCheck]]:
-        self.init_tables()
         with self._connect() as conn:
             latest = conn.execute(f"SELECT MAX(checked_at) AS latest_checked_at FROM {self.CHECKS_TABLE}").fetchone()
             latest_checked_at = latest["latest_checked_at"] if latest else None
@@ -418,13 +420,11 @@ class BreakEvenTakeProfitStrategy:
         return int(latest_checked_at), [BreakEvenTakeProfitCheck(**{**dict(row), "triggered": bool(row["triggered"])}) for row in rows]
 
     def recent_checks(self, limit: int = 100) -> list[BreakEvenTakeProfitCheck]:
-        self.init_tables()
         with self._connect() as conn:
             rows = conn.execute(f"SELECT * FROM {self.CHECKS_TABLE} ORDER BY checked_at DESC, id DESC LIMIT ?", (int(limit),)).fetchall()
         return [BreakEvenTakeProfitCheck(**{**dict(row), "triggered": bool(row["triggered"])}) for row in rows]
 
     def recent_records(self, limit: int = 100) -> list[BreakEvenStopLossRecord]:
-        self.init_tables()
         with self._info_connect() as conn:
             rows = conn.execute(f"SELECT * FROM {self.RECORDS_TABLE} ORDER BY checked_at DESC, id DESC LIMIT ?", (int(limit),)).fetchall()
         return [BreakEvenStopLossRecord(**dict(row)) for row in rows]

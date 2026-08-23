@@ -844,17 +844,12 @@ def run_scoring_round_worker(
         # stopped even though scoring itself completed successfully.  Keep the
         # deadline for optional downstream work, but never strand this
         # safety-critical result between two decision rounds.
-        # Trading-owned modules are optional consumers of a completed scoring
-        # round.  Initialize them here, rather than before score_round, so a
-        # damaged/recovering trading DB cannot stop the independent scoring DB.
         holding_scoring = HoldingPositionScoringSystem(
             db_path=db_config.TRADING_DB_PATH
         )
-        holding_scoring.init_tables()
         trailing_reduction = TrailingReductionTracker(
             db_path=db_config.TRADING_DB_PATH
         )
-        trailing_reduction.init_tables()
         holding_flags = {
             "stop_loss": feature_flags.is_feature_enabled(feature_flags.STOP_LOSS_RULE),
             "reduction": feature_flags.is_feature_enabled(feature_flags.REDUCTION_CONDITIONS),
@@ -932,21 +927,6 @@ def start_break_even_take_profit_task() -> None:
     dynamic_profit_protection = DynamicProfitProtection(db_path=db_config.TRADING_DB_PATH)
     trailing_stop_tracker = TrailingStopTracker(db_path=db_config.TRADING_DB_PATH)
     weak_market_adjustment = WeakMarketProfitAdjustmentModule(db_path=db_config.MARKET_DB_PATH)
-    while True:
-        try:
-            strategy.init_tables()
-            partial_strategy.init_tables()
-            dynamic_profit_protection.init_tables()
-            trailing_stop_tracker.init_tables()
-            weak_market_adjustment.init_table()
-            break
-        except Exception as exc:
-            # This is a daemon thread.  Letting a transient startup DB lock or a
-            # recovery fence escape here kills every minute-level profit module
-            # permanently while the rest of the worker keeps running.
-            recover_after_worker_error(exc)
-            print(f"⚠️ profit protection task initialization failed; retrying in 5s: {exc}")
-            time.sleep(5)
     print("🟢 Break-even, partial take-profit, dynamic profit protection and trailing stop tracker task started")
     while True:
         with db_config.sqlite_connection_scope(
@@ -1045,7 +1025,6 @@ def start_pre_safety_task() -> None:
     cooldown.init_table()
     ScoringSystem(db_path=db_config.SCORING_DB_PATH).init_table()
     OpenableSymbolModule(db_path=db_config.SCORING_DB_PATH).init_table()
-    HoldingPositionScoringSystem(db_path=db_config.TRADING_DB_PATH).init_tables()
     market_filter = MarketFilterModule(db_path=db_config.MARKET_DB_PATH)
     market_filter.init_table()
     add_permission = AddPositionPermissionModule(db_path=db_config.MARKET_DB_PATH)
@@ -1209,7 +1188,6 @@ def start_pre_safety_task() -> None:
 def start_increase_pretrigger_refresh_task() -> None:
     """Refresh pre-triggered first-add symbols once per minute."""
     holding_scoring = HoldingPositionScoringSystem(db_path=db_config.TRADING_DB_PATH)
-    holding_scoring.init_tables()
     print("🟣 Increase pre-trigger refresh task started")
     while True:
         if not feature_flags.is_feature_enabled(feature_flags.INCREASE_CONDITIONS):
@@ -1359,7 +1337,6 @@ def start_atr_15m_task(symbols: List[str]) -> None:
 
 def start_trailing_reduction_refresh_task() -> None:
     tracker = TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH)
-    tracker.init_tables()
     scheduler = collector.BlockingScheduler()
 
     def _job():

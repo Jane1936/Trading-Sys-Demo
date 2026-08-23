@@ -12,7 +12,7 @@ if [ "$MODE" = "web" ]; then
     -w "${WEB_WORKERS:-2}" \
     --timeout "${WEB_TIMEOUT:-180}" \
     -b 0.0.0.0:5000 \
-    web_app:app
+    'web_app:create_app()'
 fi
 
 echo "Unknown mode: $MODE (expected: worker | web)" >&2

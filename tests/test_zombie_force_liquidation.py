@@ -178,7 +178,10 @@ class ZombieForceLiquidationTests(unittest.TestCase):
             db_path = str(Path(tmpdir) / "klines.db")
             module = ZombieForceLiquidationModule(db_path=db_path, account_manager=ZombieAccountManager())
 
-            with self.assertRaisesRegex(sqlite3.OperationalError, "no such table: zombie_force_liquidation_checks"):
+            with self.assertRaisesRegex(
+                sqlite3.OperationalError,
+                "no such table: trading_experiment_position_snapshots",
+            ):
                 module.run_round(checked_at=1_000)
 
             with sqlite3.connect(db_path) as conn:

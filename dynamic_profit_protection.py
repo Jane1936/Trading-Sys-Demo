@@ -373,7 +373,6 @@ class DynamicProfitProtection:
         return {"round_ts": round_ts, "checks": [check.__dict__ for check in checks], "records": [record.__dict__ for record in records]}
 
     def get_latest_round_checks(self) -> tuple[int | None, list[DynamicProfitProtectionCheck]]:
-        self.init_tables()
         with self._connect() as conn:
             latest = conn.execute(f"SELECT MAX(checked_at) AS latest_checked_at FROM {self.CHECKS_TABLE}").fetchone()
             latest_checked_at = latest["latest_checked_at"] if latest else None
@@ -383,7 +382,6 @@ class DynamicProfitProtection:
         return int(latest_checked_at), [self._check_from_row(row) for row in rows]
 
     def recent_action_records(self, limit: int = 100) -> list[DynamicProfitProtectionCheck]:
-        self.init_tables()
         with self._info_connect() as conn:
             rows = conn.execute(f"SELECT * FROM {self.RECORDS_TABLE} ORDER BY checked_at DESC, id DESC LIMIT ?", (int(limit),)).fetchall()
         return [self._check_from_row(row) for row in rows]

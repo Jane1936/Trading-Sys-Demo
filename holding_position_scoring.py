@@ -276,6 +276,9 @@ class HoldingPositionScoringSystem:
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
+        TradingExperiment(
+            db_path=self.db_path, account_manager=self.account_manager
+        ).init_error_tables()
         TradeActionLockManager(self.db_path).init_table()
         with ExitStack() as stack:
             trading_conn = stack.enter_context(self._connect())
@@ -1091,7 +1094,6 @@ class HoldingPositionScoringSystem:
 
     def _record_reduction_error(self, check: PositionReductionCheck, operation: str, exc: Exception) -> None:
         helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
-        helper.init_tables()
         candidate = OpenableSymbol(
             symbol=check.symbol,
             decision_round_ts=check.decision_round_ts,
@@ -1566,7 +1568,6 @@ class HoldingPositionScoringSystem:
         mark-price lookup for those symbols, re-evaluates the same decision
         round, and executes the first-add action when conditions 1 and 3 both become true.
         """
-        self.init_tables()
         checked_at = now_ms if now_ms is not None else int(time.time() * 1000)
         round_ts, latest_checks = self.get_latest_increase_checks()
         pretrigger_symbols = {str(row["symbol"]) for row in latest_checks if str(row["tag"] or "") == self.INCREASE_TAG_PRE_TRIGGER}
@@ -1843,7 +1844,6 @@ class HoldingPositionScoringSystem:
         return row is not None
 
     def get_latest_increase_checks(self) -> tuple[int | None, list[sqlite3.Row]]:
-        self.init_tables()
         with self._connect() as conn:
             row = conn.execute(f"SELECT MAX(decision_round_ts) AS ts FROM {self.INCREASE_CHECKS_TABLE}").fetchone()
             round_ts = int(row["ts"]) if row and row["ts"] is not None else None
@@ -1855,7 +1855,6 @@ class HoldingPositionScoringSystem:
 
     def latest_pretrigger_increase_rounds(self) -> dict[str, int]:
         """Return each symbol's most recent decision round with a pre-trigger tag."""
-        self.init_tables()
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
@@ -1869,7 +1868,6 @@ class HoldingPositionScoringSystem:
         return {str(row["symbol"]): int(row["decision_round_ts"]) for row in rows if row["decision_round_ts"] is not None}
 
     def recent_increase_records(self, limit: int = 100, since_ms: int | None = None) -> list[sqlite3.Row]:
-        self.init_tables()
         where = "WHERE created_at >= ?" if since_ms is not None else ""
         params: tuple[Any, ...] = (int(since_ms), limit) if since_ms is not None else (limit,)
         with self._trading_info_connect() as conn:
@@ -2042,7 +2040,6 @@ class HoldingPositionScoringSystem:
             )
 
     def get_latest_portfolio_risk(self) -> PortfolioRiskSummary | None:
-        self.init_tables()
         with self._trading_core_connect() as conn:
             summary_row = conn.execute(
                 f"SELECT * FROM {self.PORTFOLIO_RISK_SUMMARY_TABLE} ORDER BY decision_round_ts DESC LIMIT 1"
@@ -2348,7 +2345,6 @@ class HoldingPositionScoringSystem:
         return row is not None
 
     def recent_reduction_records(self, limit: int = 100) -> list[sqlite3.Row]:
-        self.init_tables()
         with self._trading_core_connect() as conn:
             return conn.execute(
                 f"SELECT * FROM {self.REDUCTION_RECORDS_TABLE} ORDER BY created_at DESC, id DESC LIMIT ?",
@@ -2371,7 +2367,6 @@ class HoldingPositionScoringSystem:
     def recent_reduction_stop_failure_liquidations(
         self, limit: int = 100, since_ms: int | None = None
     ) -> list[sqlite3.Row]:
-        self.init_tables()
         cutoff = since_ms if since_ms is not None else int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
         with self._trading_core_connect() as conn:
             return conn.execute(
@@ -2381,7 +2376,6 @@ class HoldingPositionScoringSystem:
             ).fetchall()
 
     def get_latest_reduction_checks(self) -> tuple[int | None, list[sqlite3.Row]]:
-        self.init_tables()
         with self._trading_core_connect() as conn:
             row = conn.execute(f"SELECT MAX(decision_round_ts) AS ts FROM {self.REDUCTION_CHECKS_TABLE}").fetchone()
             round_ts = int(row["ts"]) if row and row["ts"] is not None else None
@@ -2439,7 +2433,6 @@ class HoldingPositionScoringSystem:
         return row is not None
 
     def get_latest_round_checks(self) -> tuple[int | None, list[sqlite3.Row]]:
-        self.init_tables()
         with self._trading_core_connect() as conn:
             row = conn.execute(f"SELECT MAX(decision_round_ts) AS ts FROM {self.CHECKS_TABLE}").fetchone()
             round_ts = int(row["ts"]) if row and row["ts"] is not None else None
@@ -2452,7 +2445,6 @@ class HoldingPositionScoringSystem:
         return round_ts, rows
 
     def recent_stop_loss_records(self, limit: int = 100) -> list[sqlite3.Row]:
-        self.init_tables()
         with self._trading_core_connect() as conn:
             return conn.execute(
                 f"""

@@ -534,7 +534,6 @@ class TrailingStopTracker:
     def refresh_pretriggered_symbols(self) -> dict[str, Any]:
         """Refresh latest 1m metrics for the current round's pre-triggered symbols."""
         self.account_manager.validate_config()
-        self.init_tables()
         round_ts, checks = self.get_latest_round_checks()
         if round_ts is None:
             return {"round_ts": None, "checks": [], "records": [], "refreshed": 0, "triggered": 0, "created_records": 0}
@@ -646,7 +645,6 @@ class TrailingStopTracker:
         return {"round_ts": round_ts, "checks": [check.__dict__ for check in checks], "records": [record.__dict__ for record in records]}
 
     def get_latest_round_checks(self) -> tuple[int | None, list[TrailingStopCheck]]:
-        self.init_tables()
         with self._connect() as conn:
             latest = conn.execute(f"SELECT MAX(checked_at) AS latest_checked_at FROM {self.CHECKS_TABLE}").fetchone()
             latest_checked_at = latest["latest_checked_at"] if latest else None
@@ -656,7 +654,6 @@ class TrailingStopTracker:
         return int(latest_checked_at), [self._check_from_row(row) for row in rows]
 
     def recent_action_records(self, limit: int = 100) -> list[TrailingStopCheck]:
-        self.init_tables()
         with self._info_connect() as conn:
             rows = conn.execute(
                 f"""

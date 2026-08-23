@@ -222,7 +222,6 @@ class TrailingReductionTracker:
             )
 
     def get_latest_round_checks(self) -> tuple[int | None, list[TrailingReductionCheck]]:
-        self.init_tables()
         with self._connect() as conn:
             latest = conn.execute(f"SELECT MAX(decision_round_ts) AS latest_round FROM {self.CHECKS_TABLE}").fetchone()
             latest_round = latest["latest_round"] if latest else None
@@ -233,7 +232,6 @@ class TrailingReductionTracker:
 
     def refresh_pretriggered_symbols(self) -> dict[str, Any]:
         self.account_manager.validate_config()
-        self.init_tables()
         round_ts, checks = self.get_latest_round_checks()
         if round_ts is None:
             return {**self.summary_payload(), "refreshed": 0, "triggered": 0, "created_records": 0}
@@ -351,7 +349,6 @@ class TrailingReductionTracker:
         return {"round_ts": round_ts, "checks": annotated_checks, "records": [dict(r) for r in self.recent_action_records(days=7)]}
 
     def latest_pretrigger_rounds(self) -> dict[str, int]:
-        self.init_tables()
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
@@ -364,7 +361,6 @@ class TrailingReductionTracker:
         return {str(row["symbol"]): int(row["latest_round"]) for row in rows if row["latest_round"] is not None}
 
     def recent_action_records(self, limit: int = 100, decision_round_ts: int | None = None, days: int | None = None) -> list[sqlite3.Row]:
-        self.init_tables()
         with self._info_connect() as conn:
             if days is not None:
                 since_ms = int(time.time() * 1000) - int(days) * 24 * 60 * 60 * 1000
