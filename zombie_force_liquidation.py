@@ -124,7 +124,6 @@ class ZombieForceLiquidationModule:
 
     def run_round(self, checked_at: int | None = None) -> dict[str, Any]:
         self.account_manager.validate_config()
-        self.init_tables()
         helper = TradingExperiment(db_path=self.db_path, account_manager=self.account_manager, config=self.config)
         helper.init_tables()
         positions = helper._fetch_and_store_positions()

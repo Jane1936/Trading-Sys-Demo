@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from break_even_take_profit import BreakEvenTakeProfitStrategy
 from trading_experiment import TradingExperiment
@@ -49,6 +50,7 @@ class ZombieForceLiquidationTests(unittest.TestCase):
             db_path = str(Path(tmpdir) / "klines.db")
             account = ZombieAccountManager()
             TradingExperiment(db_path=db_path, account_manager=account).init_tables()
+            ZombieForceLiquidationModule(db_path=db_path, account_manager=account).init_tables()
             opened_at = 1_000
             checked_at = opened_at + 24 * 60 * 60 * 1000
             with sqlite3.connect(db_path) as conn:
@@ -92,6 +94,7 @@ class ZombieForceLiquidationTests(unittest.TestCase):
             db_path = str(Path(tmpdir) / "klines.db")
             account = ZombieAccountManager()
             TradingExperiment(db_path=db_path, account_manager=account).init_tables()
+            ZombieForceLiquidationModule(db_path=db_path, account_manager=account).init_tables()
             BreakEvenTakeProfitStrategy(db_path=db_path, account_manager=account).init_tables()
             opened_at = 1_000
             checked_at = opened_at + 24 * 60 * 60 * 1000
@@ -116,6 +119,7 @@ class ZombieForceLiquidationTests(unittest.TestCase):
             db_path = str(Path(tmpdir) / "klines.db")
             account = ZombieAccountManager()
             TradingExperiment(db_path=db_path, account_manager=account).init_tables()
+            ZombieForceLiquidationModule(db_path=db_path, account_manager=account).init_tables()
             opened_at = 1_000
             checked_at = opened_at + 24 * 60 * 60 * 1000 - 1
             with sqlite3.connect(db_path) as conn:
@@ -135,6 +139,7 @@ class ZombieForceLiquidationTests(unittest.TestCase):
             db_path = str(Path(tmpdir) / "klines.db")
             account = CancelFailureAccountManager()
             TradingExperiment(db_path=db_path, account_manager=account).init_tables()
+            ZombieForceLiquidationModule(db_path=db_path, account_manager=account).init_tables()
             opened_at = 1_000
             with sqlite3.connect(db_path) as conn:
                 conn.execute(
@@ -154,6 +159,35 @@ class ZombieForceLiquidationTests(unittest.TestCase):
                 ).fetchone()
             self.assertEqual(status, "submitted")
             self.assertIn("open_orders_cancel_failed", raw_response)
+
+    def test_run_round_does_not_initialize_tables_after_explicit_setup(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "klines.db")
+            account = ZombieAccountManager()
+            TradingExperiment(db_path=db_path, account_manager=account).init_tables()
+            module = ZombieForceLiquidationModule(db_path=db_path, account_manager=account)
+            module.init_tables()
+
+            with patch.object(module, "init_tables", side_effect=AssertionError("unexpected initialization")):
+                result = module.run_round(checked_at=1_000)
+
+            self.assertEqual(result, {"checked": 1, "triggered": 0, "records": 0, "reason": "completed"})
+
+    def test_run_round_without_initialization_fails_and_does_not_create_module_tables(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "klines.db")
+            module = ZombieForceLiquidationModule(db_path=db_path, account_manager=ZombieAccountManager())
+
+            with self.assertRaisesRegex(sqlite3.OperationalError, "no such table: zombie_force_liquidation_checks"):
+                module.run_round(checked_at=1_000)
+
+            with sqlite3.connect(db_path) as conn:
+                tables = {
+                    row[0]
+                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+                }
+            self.assertNotIn(ZombieForceLiquidationModule.CHECKS_TABLE, tables)
+            self.assertNotIn(ZombieForceLiquidationModule.RECORDS_TABLE, tables)
 
 
 if __name__ == "__main__":
