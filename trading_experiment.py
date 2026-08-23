@@ -256,13 +256,12 @@ class TradingExperiment:
     def run_round(self, candidates: Iterable[OpenableSymbol]) -> dict[str, Any]:
         """Attempt long entries for qualified candidates in score order."""
         self.account_manager.validate_config()
-        self.init_tables()
 
         account = self._fetch_account()
         available_balance = self._decimal_from(account.get("availableBalance"), Decimal("0"))
         account_equity = self._fetch_experiment_usdt_equity()
         max_loss = account_equity * self.config.risk_fraction
-        positions = self._fetch_and_store_positions()
+        positions = self._fetch_and_store_positions(initialize_tables=False)
         reserved_margin_budget = self._reserved_margin_from_positions(positions)
 
         opened = 0
@@ -341,11 +340,11 @@ class TradingExperiment:
                 opened += 1
                 available_balance -= required_margin
                 reserved_margin_budget += required_margin
-                positions = self._fetch_and_store_positions()
+                positions = self._fetch_and_store_positions(initialize_tables=False)
             else:
                 skipped += 1
 
-        self._fetch_and_store_positions()
+        self._fetch_and_store_positions(initialize_tables=False)
         return {"opened": opened, "skipped": skipped, "reason": "completed"}
 
     def recent_trade_records(self, limit: int = 100, since_ms: int | None = None) -> list[ExperimentTradeRecord]:
@@ -1052,13 +1051,13 @@ class TradingExperiment:
             return ""
         return str(order.get("algoId") or order.get("orderId") or "")
 
-    def _fetch_and_store_positions(self) -> list[dict[str, Any]]:
+    def _fetch_and_store_positions(self, *, initialize_tables: bool = True) -> list[dict[str, Any]]:
         rows = self.account_manager._signed_get("/fapi/v3/positionRisk")
         positions = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
         active_positions = [
             row for row in positions if self._decimal_from(row.get("positionAmt"), Decimal("0")) != 0
         ]
-        fallback_leverages = self._latest_opened_trade_leverages()
+        fallback_leverages = self._latest_opened_trade_leverages(initialize_tables=initialize_tables)
         now = int(time.time() * 1000)
         with self._connect() as conn:
             conn.execute(f"DELETE FROM {self.POSITIONS_TABLE}")
@@ -1085,8 +1084,9 @@ class TradingExperiment:
             )
         return positions
 
-    def _latest_opened_trade_leverages(self) -> dict[str, str]:
-        self.init_tables()
+    def _latest_opened_trade_leverages(self, *, initialize_tables: bool = True) -> dict[str, str]:
+        if initialize_tables:
+            self.init_tables()
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
