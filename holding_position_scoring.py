@@ -586,7 +586,6 @@ class HoldingPositionScoringSystem:
 
         log_module("initialization", "started")
         self.account_manager.validate_config()
-        self.init_tables()
         round_ts = decision_round_ts if decision_round_ts is not None else self._current_decision_round_ts()
         now_ms = int(time.time() * 1000)
         log_module("initialization", "completed", effective_round=round_ts)
@@ -778,7 +777,6 @@ class HoldingPositionScoringSystem:
         checked_at: int | None = None,
     ) -> list[PositionReductionCheck]:
         """Evaluate 15m position-reduction condition rules for active holdings."""
-        self.init_tables()
         round_ts = decision_round_ts if decision_round_ts is not None else self._current_decision_round_ts()
         if not self._has_total_scores_for_round(round_ts) or not self._has_ema_for_round(round_ts):
             return []
@@ -1480,7 +1478,6 @@ class HoldingPositionScoringSystem:
         checked_at: int | None = None,
     ) -> list[PositionIncreaseCheck]:
         """Evaluate the first-add-position module after reduction checks finish."""
-        self.init_tables()
         round_ts = decision_round_ts if decision_round_ts is not None else self._current_decision_round_ts()
         if not self._has_total_scores_for_round(round_ts):
             return []
@@ -1885,7 +1882,6 @@ class HoldingPositionScoringSystem:
         calculated_at: int | None = None,
     ) -> PortfolioRiskSummary:
         """Calculate and persist total portfolio risk for active holdings."""
-        self.init_tables()
         round_ts = decision_round_ts if decision_round_ts is not None else self._current_decision_round_ts()
         now_ms = calculated_at if calculated_at is not None else int(time.time() * 1000)
         active_positions = positions if positions is not None else self._active_positions()
