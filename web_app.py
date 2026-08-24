@@ -50,6 +50,10 @@ from weak_market_profit_adjustment import (
     get_settings as get_weak_market_profit_settings,
     set_settings as set_weak_market_profit_settings,
 )
+from reduction_module_settings import (
+    get_settings as get_reduction_module_settings,
+    set_settings as set_reduction_module_settings,
+)
 from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import (
     DynamicOpenThresholdModule,
@@ -1311,6 +1315,23 @@ def update_weak_market_profit_settings_api():
         return jsonify({"error": str(exc)}), 400
 
 
+@app.get("/api/reduction-module-settings")
+def reduction_module_settings_api():
+    return jsonify(get_reduction_module_settings(CONFIG_DB_PATH))
+
+
+@app.put("/api/reduction-module-settings")
+def update_reduction_module_settings_api():
+    try:
+        return jsonify(
+            set_reduction_module_settings(
+                request.get_json(silent=True) or {}, CONFIG_DB_PATH
+            )
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
 @app.post("/api/trading-experiment/run")
 def trading_experiment_run_api():
     try:
@@ -1619,6 +1640,7 @@ def abnormal_wicks():
         scoring_rule_election_settings=get_rule_election_settings(CONFIG_DB_PATH),
         openable_symbol_settings=get_openable_symbol_settings(CONFIG_DB_PATH),
         weak_market_profit_settings=get_weak_market_profit_settings(CONFIG_DB_PATH),
+        reduction_module_settings=get_reduction_module_settings(CONFIG_DB_PATH),
     )
 
 

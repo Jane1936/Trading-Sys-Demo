@@ -1364,7 +1364,7 @@
               <div class="chips"><span class="chip">本轮无触发减仓条件symbol</span></div>
             {% endif %}
           </div>
-          <div class="tip">规则二：若最近90分钟内已触发过规则二，则本轮跳过规则二检查，并打灰色 tag“90分钟内已触发趋势走弱”；否则若当前价格 &lt; 15分钟EMA16，且当前未变现盈利 &lt; 0.5R；再查询最近3条MACD数据，若最近第3条MACD &gt; 最近第2条MACD &gt; 最近第1条MACD，且最近第1条MACD &lt; 0，则代表该 symbol 触发“趋势走弱”，tag 标记为“趋势走弱”。<br>规则五：对于当前已持仓的 symbol，查询15分钟EMA21、当前价格、“交易实验交易记录”中匹配到的开仓价，以及最近3条15分钟K线。若当前价格 &lt; 15分钟EMA21，且当前价格 ≤ 开仓价，并且最近3条15分钟K线中存在两条及以上满足收盘价低于开盘价，则说明该 symbol 已触发“深度弱势”，tag 标记为“深度弱势”，并将此条减仓记录数据库落表；每个新开仓的 symbol 在它的生命周期内只能触发一次规则五。<br>原规则三（绝对分数大幅回撤）与原规则四（最新总分 &lt; 40分即触发“评分进入危险区”）已删除，不再作为减仓触发条件。<br>减仓操作：若同时满足多个规则，按当前最高优先级规则执行；规则五减仓50%，规则二减仓25%。触发减仓时会先取消原限价单，按剩余仓位数量重挂新的限价单，再调用市价单接口卖出对应减仓数量。</div>
+          <div class="tip">规则二：若最近90分钟内已触发过规则二，则本轮跳过规则二检查，并打灰色 tag“90分钟内已触发趋势走弱”；否则若当前价格 &lt; 15分钟EMA16，且当前未变现盈利 &lt; 0.5R；再查询最近3条MACD数据，若最近第3条MACD &gt; 最近第2条MACD &gt; 最近第1条MACD，且最近第1条MACD &lt; 0，则代表该 symbol 触发“趋势走弱”，tag 标记为“趋势走弱”。<br>规则五：对于当前已持仓的 symbol，查询15分钟EMA21、当前价格、“交易实验交易记录”中匹配到的开仓价，以及最近3条15分钟K线。若当前价格 &lt; 15分钟EMA21，且当前价格 ≤ 开仓价，并且最近3条15分钟K线中存在两条及以上满足收盘价低于开盘价，则说明该 symbol 已触发“深度弱势”，tag 标记为“深度弱势”，并将此条减仓记录数据库落表；每个新开仓的 symbol 在它的生命周期内只能触发一次规则五。<br>原规则三（绝对分数大幅回撤）与原规则四（最新总分 &lt; 40分即触发“评分进入危险区”）已删除，不再作为减仓触发条件。<br>减仓操作：若同时满足多个规则，按当前最高优先级规则执行；各规则是否启用及触发后的减仓比例以“功能开关 → 减仓模块配置”为准。触发减仓时会先取消原限价单，按剩余仓位数量重挂新的限价单，再调用市价单接口卖出对应减仓数量。</div>
           <div class="table-wrap">
             <table>
               <thead>
@@ -2676,6 +2676,18 @@
       </div>
     </div>
     <div class="card feature-config-purple">
+      <div class="header"><h2>减仓模块配置</h2></div>
+      <div class="tip">规则二与规则五可独立启停，并可分别设置触发后卖出当前仓位的比例。保存后从减仓条件模块下一轮判断开始生效。</div>
+      <div id="reduction-module-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
+      <form id="reduction-module-settings-form" class="score-weight-actions">
+        <label><input id="reduction-rule2-enabled" type="checkbox" {{ 'checked' if reduction_module_settings.rule2.enabled else '' }}> 启用规则二（趋势走弱）</label>
+        <label>规则二减仓比例（%）<input id="reduction-rule2-percent" type="number" min="0.1" max="100" step="0.1" required value="{{ reduction_module_settings.rule2.reduction_fraction * 100 }}"></label>
+        <label><input id="reduction-rule5-enabled" type="checkbox" {{ 'checked' if reduction_module_settings.rule5.enabled else '' }}> 启用规则五（深度弱势）</label>
+        <label>规则五减仓比例（%）<input id="reduction-rule5-percent" type="number" min="0.1" max="100" step="0.1" required value="{{ reduction_module_settings.rule5.reduction_fraction * 100 }}"></label>
+        <button class="btn btn-success" type="submit">保存减仓模块配置</button>
+      </form>
+    </div>
+    <div class="card feature-config-purple">
       <div class="header"><h2>独立市场过滤配置</h2></div>
       <div class="tip">配置 BTC 相对大盘涨幅差、大盘跌幅以及触发后的禁止新开仓时间。阈值按百分比填写，保存后从独立市场过滤模块下一轮执行开始生效。</div>
       <div id="market-filter-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
@@ -2904,6 +2916,29 @@
           message.textContent = `动态开仓门槛配置保存失败：${err.message || err}`;
           message.classList.add('error');
         } finally { button.disabled = false; }
+      });
+    })();
+
+    (function initReductionModuleSettingsForm() {
+      const form = document.getElementById('reduction-module-settings-form');
+      const message = document.getElementById('reduction-module-settings-message');
+      if (!form || !message) return;
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        const button = form.querySelector('button[type="submit"]');
+        const payload = {
+          rule2: {enabled: document.getElementById('reduction-rule2-enabled').checked, reduction_fraction: Number(document.getElementById('reduction-rule2-percent').value) / 100},
+          rule5: {enabled: document.getElementById('reduction-rule5-enabled').checked, reduction_fraction: Number(document.getElementById('reduction-rule5-percent').value) / 100},
+        };
+        button.disabled = true; message.textContent = '正在保存减仓模块配置…'; message.classList.remove('error');
+        try {
+          const response = await fetch('/api/reduction-module-settings', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+          message.textContent = `配置已保存：规则二${result.rule2.enabled ? '开启' : '关闭'}、减仓 ${result.rule2.reduction_fraction * 100}%；规则五${result.rule5.enabled ? '开启' : '关闭'}、减仓 ${result.rule5.reduction_fraction * 100}%。`;
+        } catch (err) { message.textContent = `减仓模块配置保存失败：${err.message || err}`; message.classList.add('error'); }
+        finally { button.disabled = false; }
       });
     })();
 

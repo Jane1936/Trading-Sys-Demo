@@ -24,6 +24,7 @@ from trading_experiment import TradingExperiment
 from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
 from add_position_permission_module import AddPositionPermissionModule
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
+from reduction_module_settings import get_settings as get_reduction_module_settings
 
 
 @dataclass(frozen=True)
@@ -852,6 +853,7 @@ class HoldingPositionScoringSystem:
         tags: list[str] = []
         matched_rules: list[str] = []
         reasons: list[str] = []
+        reduction_settings = get_reduction_module_settings()
 
         latest_open = latest_kline[0] if latest_kline else Decimal("0")
         latest_close = latest_kline[1] if latest_kline else Decimal("0")
@@ -863,7 +865,9 @@ class HoldingPositionScoringSystem:
         third_close = third_kline[1] if third_kline else Decimal("0")
         latest_ema16, latest_ema21 = self._latest_15m_emas(symbol, round_ts)
         rule2_in_cooldown = self._has_recent_rule2_trigger(symbol, now_ms)
-        if rule2_in_cooldown:
+        if not reduction_settings["rule2"]["enabled"]:
+            reasons.append("rule2_disabled")
+        elif rule2_in_cooldown:
             tags.append(self.REDUCTION_TAG_TREND_WEAKENING_COOLDOWN)
             reasons.append("rule2_skipped_recent_trend_weakening_within_90m")
         elif current_price <= 0:
@@ -899,7 +903,9 @@ class HoldingPositionScoringSystem:
             and len(recent_15m_open_closes) >= 3
             and rule5_bearish_count >= 2
         )
-        if open_entry_price == "":
+        if not reduction_settings["rule5"]["enabled"]:
+            reasons.append("rule5_disabled")
+        elif open_entry_price == "":
             reasons.append("rule5_missing_open_entry_price")
         elif open_trade_created_at == "":
             reasons.append("rule5_missing_open_trade_lifecycle")
@@ -1329,9 +1335,12 @@ class HoldingPositionScoringSystem:
         message = str(exc)
         return "-2021" in message or "Order would immediately trigger" in message
 
-    @staticmethod
-    def _reduction_action_for_rules(rule_name: str) -> tuple[str, Decimal]:
-        mapping = {"规则五": Decimal("0.5"), "规则二": Decimal("0.25")}
+    def _reduction_action_for_rules(self, rule_name: str) -> tuple[str, Decimal]:
+        settings = get_reduction_module_settings()
+        mapping = {
+            "规则五": Decimal(str(settings["rule5"]["reduction_fraction"])),
+            "规则二": Decimal(str(settings["rule2"]["reduction_fraction"])),
+        }
         for rule in ("规则五", "规则二"):
             if rule in rule_name:
                 return rule, mapping[rule]
