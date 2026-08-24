@@ -646,6 +646,18 @@ def test_feature_flags_page_contains_all_rule_weight_controls_and_save_logic():
     assert "fetch('/api/scoring-rule-weights'" in section
 
 
+def test_feature_flags_page_contains_reduction_module_rule_controls():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    section = template[template.index('id="tab-feature-flags"'):]
+
+    assert "减仓模块配置" in section
+    assert 'id="reduction-rule2-enabled"' in section
+    assert 'id="reduction-rule5-enabled"' in section
+    assert 'id="reduction-rule2-percent"' in section
+    assert 'id="reduction-rule5-percent"' in section
+    assert "fetch('/api/reduction-module-settings'" in section
+
+
 def test_feature_flags_page_contains_scoring_rule_election_below_weights():
     template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
     section = template[template.index('id="tab-feature-flags"'):]
