@@ -128,11 +128,16 @@ class TradingExperiment:
         db_path: str = db_config.TRADING_DB_PATH,
         account_manager: BinanceAccountManager | None = None,
         config: ExperimentConfig | None = None,
+        openable_db_path: str | None = None,
     ) -> None:
         self.db_path = db_path
         self.core_db_path = db_config.trading_core_path(db_path)
         self.account_manager = account_manager or BinanceAccountManager()
         self.config = config or ExperimentConfig()
+        # Decisions are shared market/scoring inputs.  Persistence remains in
+        # db_path, while a live experiment explicitly reads candidates from the
+        # scoring database so it never creates/copies simulation tables in its DB.
+        self.openable_db_path = openable_db_path or db_path
 
     def _connect(self) -> sqlite3.Connection:
         conn = db_config.connect_sqlite(self.core_db_path, row_factory=sqlite3.Row)
@@ -409,7 +414,7 @@ class TradingExperiment:
         return [self._error_from_row(row) for row in rows]
 
     def _latest_openable_candidates(self, decision_round_ts: int | None = None) -> list[OpenableSymbol]:
-        module = OpenableSymbolModule(db_path=self.db_path)
+        module = OpenableSymbolModule(db_path=self.openable_db_path)
         module.init_table()
         with module._connect() as conn:
             if decision_round_ts is None:
@@ -1120,6 +1125,26 @@ class TradingExperiment:
         return False
 
     def _record_error(self, candidate: OpenableSymbol, operation: str, exc: Exception) -> None:
+        self.record_error(
+            symbol=candidate.symbol,
+            decision_round_ts=candidate.decision_round_ts,
+            total_score=candidate.total_score,
+            leverage=self._parse_leverage(candidate.opening_leverage),
+            operation=operation,
+            exc=exc,
+        )
+
+    def record_error(
+        self,
+        *,
+        symbol: str,
+        operation: str,
+        exc: Exception,
+        decision_round_ts: int | None = None,
+        total_score: int | None = None,
+        leverage: int | None = None,
+    ) -> None:
+        """Persist an operational error, including non-entry strategy errors."""
         now = int(time.time() * 1000)
         with self._error_connect() as conn:
             conn.execute(
@@ -1129,10 +1154,10 @@ class TradingExperiment:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    candidate.symbol,
-                    candidate.decision_round_ts,
-                    candidate.total_score,
-                    self._parse_leverage(candidate.opening_leverage),
+                    symbol,
+                    decision_round_ts,
+                    total_score,
+                    leverage,
                     operation,
                     type(exc).__name__,
                     str(exc),

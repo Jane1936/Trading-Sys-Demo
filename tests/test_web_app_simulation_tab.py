@@ -40,6 +40,14 @@ def test_live_tab_has_production_filled_orders_and_account_panels() -> None:
     assert 'https://fapi.binance.com' in live_section
 
 
+def test_feature_flags_page_exposes_live_trading_switch() -> None:
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+
+    assert "实盘交易系统" in template
+    assert "real_trading_system" in template
+    assert "实盘交易系统”默认关闭" in template
+
+
 def test_simulation_subtab_script_targets_only_simulation_panels() -> None:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
 

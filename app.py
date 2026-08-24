@@ -47,6 +47,7 @@ from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import DynamicOpenThresholdModule
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
 from zombie_force_liquidation import ZombieForceLiquidationModule
+import real_trading
 from sqlite_recovery import (
     create_sqlite_failure_record,
     finish_sqlite_failure_record,
@@ -168,6 +169,7 @@ def _database_initializers() -> dict[str, Callable[[], None]]:
             PartialTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH).init_tables(),
             TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH).init_tables(),
         ),
+        db_config.REAL_TRADING_CORE_DB_PATH: real_trading.initialize,
     }
 
 
@@ -227,6 +229,13 @@ def _database_schema_requirements() -> dict[str, dict[str, set[str]]]:
             PartialTakeProfitStrategy.RECORDS_TABLE: {"symbol", "checked_at"},
             TrailingReductionTracker.RECORDS_TABLE: {"symbol", "decision_round_ts"},
             holding.INCREASE_RECORDS_TABLE: {"symbol", "decision_round_ts"},
+        },
+        db_config.REAL_TRADING_CORE_DB_PATH: {
+            TradingExperiment.TRADES_TABLE: {"symbol", "status", "created_at"},
+            TradingExperiment.POSITIONS_TABLE: {"symbol", "updated_at"},
+            TradingExperiment.ERRORS_TABLE: {"operation", "created_at"},
+            ZombieForceLiquidationModule.CHECKS_TABLE: {"symbol", "checked_at"},
+            ZombieForceLiquidationModule.RECORDS_TABLE: {"symbol", "status", "checked_at"},
         },
     }
 
@@ -465,6 +474,30 @@ def run_first_experiment_after_openable_round(
             f"triggered={zombie_result.get('triggered', 0)} "
             f"records={zombie_result.get('records', 0)}"
         )
+        live_trading_enabled = feature_flags.is_feature_enabled(
+            feature_flags.REAL_TRADING_SYSTEM
+        )
+        try:
+            live_zombie_result = real_trading.zombie_module().run_round(
+                checked_at=round_ts
+            )
+            print(
+                f"🧟 live zombie force liquidation round={round_ts} "
+                f"checked={live_zombie_result.get('checked', 0)} "
+                f"triggered={live_zombie_result.get('triggered', 0)}"
+            )
+        except Exception as exc:
+            # The opening switch deliberately does not disable protection for
+            # positions which already exist in the production account.
+            live = real_trading.experiment()
+            live.init_error_tables()
+            live.record_error(
+                symbol="SYSTEM",
+                decision_round_ts=round_ts,
+                operation="real_zombie_round",
+                exc=exc,
+            )
+            print(f"⚠️ live zombie liquidation failed round={round_ts}: {exc}")
         if qualified_openable_count <= 0:
             print(
                 f"🧪 first trading experiment round={round_ts} skipped after zombie force liquidation: no qualified symbols"
@@ -473,6 +506,20 @@ def run_first_experiment_after_openable_round(
         if market_result is not None and not market_result.allow_new_positions:
             print(f"🧪 first trading experiment round={round_ts} skipped by market filter: {market_result.reason}")
             return
+        if live_trading_enabled:
+            try:
+                live_result = real_trading.experiment().run_round(openable_rows)
+                print(
+                    f"💰 live trading round={round_ts} "
+                    f"opened={live_result.get('opened', 0)} "
+                    f"skipped={live_result.get('skipped', 0)} "
+                    f"reason={live_result.get('reason', '')}"
+                )
+            except Exception as exc:
+                live = real_trading.experiment()
+                live.init_error_tables()
+                live.record_error(symbol="SYSTEM", decision_round_ts=round_ts, operation="real_open_round", exc=exc)
+                print(f"⚠️ live open failed round={round_ts}: {exc}")
         if not feature_flags.is_feature_enabled(feature_flags.TRADING_SYSTEM):
             print(f"⏸️ trading system disabled round={round_ts}; skipping new positions")
             return
