@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import requests
 
@@ -126,7 +126,7 @@ class BinanceAccountManager:
         )
 
     def validate_config(self) -> None:
-        """Validate that API credentials are no longer placeholder values."""
+        """Validate credentials and prevent mixing production keys with Demo."""
         if self.api_key in PLACEHOLDER_VALUES or self.secret_key in PLACEHOLDER_VALUES:
             credential_names = (
                 "BINANCE_TESTNET_API_KEY/BINANCE_TESTNET_SECRET_KEY"
@@ -136,6 +136,16 @@ class BinanceAccountManager:
             raise BinanceAccountConfigError(
                 "Binance API credentials are not configured. Set "
                 f"{credential_names} environment variables on the server."
+            )
+
+        hostname = (urlparse(self.base_url).hostname or "").lower()
+        if not self.testnet and hostname in {"demo-fapi.binance.com", "testnet.binancefuture.com"}:
+            raise BinanceAccountConfigError(
+                "BINANCE_REAL_BASE_URL points to a Binance Demo/Testnet endpoint. "
+                "The live-account client requires production credentials and normally uses "
+                "https://fapi.binance.com. Remove BINANCE_REAL_BASE_URL or set it to the "
+                "production endpoint; use BINANCE_TESTNET_API_KEY/BINANCE_TESTNET_SECRET_KEY "
+                "for Demo/Testnet requests."
             )
 
     def futures_balance(self) -> dict[str, Any]:

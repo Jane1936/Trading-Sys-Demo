@@ -133,6 +133,13 @@ export BINANCE_REAL_API_SECRET="你的 real secret key"
 export BINANCE_REAL_BASE_URL="https://fapi.binance.com"
 ```
 
+> **环境必须匹配：** `BINANCE_REAL_*` 密钥只能配生产端点
+> `https://fapi.binance.com`；`https://demo-fapi.binance.com` 使用的是另一套 Demo
+> 密钥，应填写到 `BINANCE_TESTNET_API_KEY` / `BINANCE_TESTNET_SECRET_KEY`。
+> 将生产密钥与 Demo 端点（或反过来）混用会收到 Binance `-2015`（API key、IP
+> 或权限无效）。`BINANCE_ENV` 不是本项目读取的配置项，实际交易模式由
+> `BINANCE_TESTNET` 决定。
+
 Docker Compose 启动前在同一个 shell 中导出这些变量即可；`docker-compose.yml` 会把这些变量同时注入 `worker` 和 `web` 容器：
 - `worker` 容器会在每轮“本轮可开仓symbol情况”完成计算后立即执行第一组交易实验，因此必须能读取交易 API key/secret。
 - `web` 容器会通过 `/api/account/balance` 在你点击网页“账户情况”的查询按钮时实时请求余额，也会复用这些变量。
