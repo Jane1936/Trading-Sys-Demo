@@ -6,7 +6,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import db_config
-from binance_account_manager import BinanceAccountManager
+from binance_account_manager import BinanceAccountConfigError, BinanceAccountManager
 
 
 class FakeRecentTradesManager(BinanceAccountManager):
@@ -305,3 +305,21 @@ def test_live_manager_always_uses_production_credentials(monkeypatch):
     assert manager.api_key == "live-key"
     assert manager.secret_key == "live-secret"
     assert manager.testnet is False
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["https://demo-fapi.binance.com", "https://testnet.binancefuture.com/fapi"],
+)
+def test_live_manager_rejects_demo_endpoint_before_request(monkeypatch, base_url):
+    monkeypatch.setenv("BINANCE_REAL_API_KEY", "live-key")
+    monkeypatch.setenv("BINANCE_REAL_API_SECRET", "live-secret")
+    monkeypatch.setenv("BINANCE_REAL_BASE_URL", base_url)
+    manager = BinanceAccountManager.live()
+    network_calls = []
+    monkeypatch.setattr(manager.session, "get", lambda *args, **kwargs: network_calls.append((args, kwargs)))
+
+    with pytest.raises(BinanceAccountConfigError, match="Demo/Testnet endpoint"):
+        manager.futures_balance()
+
+    assert network_calls == []
