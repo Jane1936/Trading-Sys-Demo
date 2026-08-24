@@ -11,6 +11,7 @@ import db_config
 BASE_DATA_COLLECTION = "base_data_collection"
 SCORING_SYSTEM = "scoring_system"
 TRADING_SYSTEM = "trading_system"
+REAL_TRADING_SYSTEM = "real_trading_system"
 MARKET_FILTER = "market_filter"
 TRAILING_STOP = "trailing_stop"
 STOP_LOSS_RULE = "stop_loss_rule"
@@ -22,7 +23,9 @@ PARTIAL_TAKE_PROFIT = "partial_take_profit"
 TRAILING_REDUCTION = "trailing_reduction"
 DYNAMIC_PROFIT_PROTECTION = "dynamic_profit_protection"
 
-PRIMARY_FEATURE_FLAGS = frozenset({BASE_DATA_COLLECTION, SCORING_SYSTEM, TRADING_SYSTEM, MARKET_FILTER})
+PRIMARY_FEATURE_FLAGS = frozenset(
+    {BASE_DATA_COLLECTION, SCORING_SYSTEM, TRADING_SYSTEM, REAL_TRADING_SYSTEM, MARKET_FILTER}
+)
 
 
 @dataclass(frozen=True)
@@ -56,6 +59,11 @@ FEATURE_FLAG_DEFINITIONS: tuple[FeatureFlagDefinition, ...] = (
         key=TRADING_SYSTEM,
         name="模拟盘交易系统",
         description="仅控制模拟盘交易；关闭后模拟盘不再开新仓，已有模拟盘仓位的止损、止盈、风控保护默认继续运行。",
+    ),
+    FeatureFlagDefinition(
+        key=REAL_TRADING_SYSTEM,
+        name="实盘交易系统",
+        description="仅控制实盘新开仓；关闭后不再开实盘新仓，已有实盘仓位的僵尸单强平保护继续运行。",
     ),
     FeatureFlagDefinition(
         key=MARKET_FILTER,
@@ -117,7 +125,7 @@ def _feature_flags_are_current(db_path: str) -> bool:
 
 
 def init_feature_flags(db_path: str | None = None) -> None:
-    """Create and seed the feature flag table with all switches enabled by default."""
+    """Create and seed switches, keeping production entry disabled by default."""
     db_path = db_path or db_config.CONFIG_DB_PATH
     if _feature_flags_are_current(db_path):
         return
@@ -143,12 +151,18 @@ def init_feature_flags(db_path: str | None = None) -> None:
                 conn.execute(
                     """
                     INSERT INTO feature_flags (key, name, description, enabled, updated_at)
-                    VALUES (?, ?, ?, 1, ?)
+                    VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(key) DO UPDATE SET
                         name = excluded.name,
                         description = excluded.description
                     """,
-                    (definition.key, definition.name, definition.description, now_ms),
+                    (
+                        definition.key,
+                        definition.name,
+                        definition.description,
+                        0 if definition.key == REAL_TRADING_SYSTEM else 1,
+                        now_ms,
+                    ),
                 )
             conn.commit()
 
@@ -163,12 +177,13 @@ def list_feature_flags(db_path: str | None = None) -> list[FeatureFlag]:
             FROM feature_flags
             ORDER BY CASE key
                 WHEN 'base_data_collection' THEN 1 WHEN 'scoring_system' THEN 2
-                WHEN 'trading_system' THEN 3 WHEN 'market_filter' THEN 4
-                WHEN 'stop_loss_rule' THEN 5 WHEN 'reduction_conditions' THEN 6
-                WHEN 'increase_conditions' THEN 7 WHEN 'portfolio_risk' THEN 8
-                WHEN 'break_even_take_profit' THEN 9 WHEN 'partial_take_profit' THEN 10
-                WHEN 'trailing_reduction' THEN 11 WHEN 'trailing_stop' THEN 12
-                WHEN 'dynamic_profit_protection' THEN 13 ELSE 99 END, key
+                WHEN 'trading_system' THEN 3 WHEN 'real_trading_system' THEN 4
+                WHEN 'market_filter' THEN 5
+                WHEN 'stop_loss_rule' THEN 6 WHEN 'reduction_conditions' THEN 7
+                WHEN 'increase_conditions' THEN 8 WHEN 'portfolio_risk' THEN 9
+                WHEN 'break_even_take_profit' THEN 10 WHEN 'partial_take_profit' THEN 11
+                WHEN 'trailing_reduction' THEN 12 WHEN 'trailing_stop' THEN 13
+                WHEN 'dynamic_profit_protection' THEN 14 ELSE 99 END, key
             """,
         ).fetchall()
     return [
@@ -213,8 +228,10 @@ def is_feature_enabled(key: str, db_path: str | None = None) -> bool:
     try:
         return get_feature_flag(key, db_path).enabled
     except Exception as exc:
-        print(f"⚠️ feature flag lookup failed key={key}: {exc}; defaulting to enabled")
-        return True
+        fail_closed = key == REAL_TRADING_SYSTEM
+        fallback = "disabled" if fail_closed else "enabled"
+        print(f"⚠️ feature flag lookup failed key={key}: {exc}; defaulting to {fallback}")
+        return not fail_closed
 
 
 def flags_to_dict(flags: Iterable[FeatureFlag]) -> list[dict]:

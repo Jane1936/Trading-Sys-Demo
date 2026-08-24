@@ -15,6 +15,7 @@ def test_feature_flags_seed_enabled_by_default(tmp_path):
         feature_flags.BASE_DATA_COLLECTION,
         feature_flags.SCORING_SYSTEM,
         feature_flags.TRADING_SYSTEM,
+        feature_flags.REAL_TRADING_SYSTEM,
         feature_flags.MARKET_FILTER,
         feature_flags.STOP_LOSS_RULE,
         feature_flags.REDUCTION_CONDITIONS,
@@ -26,10 +27,29 @@ def test_feature_flags_seed_enabled_by_default(tmp_path):
         feature_flags.TRAILING_STOP,
         feature_flags.DYNAMIC_PROFIT_PROTECTION,
     ]
-    assert all(flag.enabled for flag in flags)
+    assert all(
+        flag.enabled == (flag.key != feature_flags.REAL_TRADING_SYSTEM)
+        for flag in flags
+    )
     assert all(flag.updated_at > 0 for flag in flags)
     assert flags[2].name == "模拟盘交易系统"
-    assert all(flag.name.startswith("模拟盘") for flag in flags[4:])
+    assert flags[3].name == "实盘交易系统"
+    assert all(flag.name.startswith("模拟盘") for flag in flags[5:])
+
+
+def test_real_trading_flag_defaults_off_and_can_be_enabled(tmp_path):
+    db_path = str(tmp_path / "config.db")
+
+    original = feature_flags.get_feature_flag(feature_flags.REAL_TRADING_SYSTEM, db_path)
+    updated = feature_flags.set_feature_flag(
+        feature_flags.REAL_TRADING_SYSTEM, True, db_path
+    )
+
+    assert original.enabled is False
+    assert updated.enabled is True
+    assert feature_flags.is_feature_enabled(
+        feature_flags.REAL_TRADING_SYSTEM, db_path
+    ) is True
 
 
 def test_set_feature_flag_persists_status_and_updates_timestamp(tmp_path, monkeypatch):

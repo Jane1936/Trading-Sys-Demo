@@ -184,6 +184,7 @@ class ZombieForceLiquidationModule:
                     # A stale protective order must not prevent the mandatory
                     # market close; record the cleanup error and keep going.
                     raw_parts.append(str({f"{label}_failed": f"{type(exc).__name__}: {exc}"}))
+                    helper.record_error(symbol=symbol, operation=label, exc=exc)
             exchange_info = helper._exchange_symbol_info(exchange_symbol)
             quantity = TradingExperiment._floor_to_step(abs(amount), exchange_info["step_size"])
             if quantity <= 0:
@@ -209,9 +210,11 @@ class ZombieForceLiquidationModule:
                     raw_parts.append(str({label: cancel_response}))
                 except Exception as exc:
                     raw_parts.append(str({f"{label}_failed": f"{type(exc).__name__}: {exc}"}))
+                    helper.record_error(symbol=symbol, operation=label, exc=exc)
         except Exception as exc:
             status = "failed"
             reason_parts.append(f"zombie_force_liquidation_failed: {type(exc).__name__}: {exc}")
+            helper.record_error(symbol=symbol, operation="zombie_force_liquidation", exc=exc)
         finally:
             lock_manager.release(lock_handle)
         self._insert_record(symbol, now, opened_at, side, amount, quantity, entry_price, status, order_id, "; ".join(reason_parts), " | ".join(raw_parts))

@@ -20,6 +20,9 @@ CONFIG_DB_PATH = os.getenv("CONFIG_DB_PATH", f"{DATA_DIR}/config.db")
 SCORING_DB_PATH = os.getenv("SCORING_DB_PATH", f"{DATA_DIR}/scoring.db")
 TRADING_DB_PATH = os.getenv("TRADING_DB_PATH", f"{DATA_DIR}/trading.db")
 TRADING_CORE_DB_PATH = os.getenv("TRADING_CORE_DB_PATH", f"{DATA_DIR}/trading_core.db")
+REAL_TRADING_CORE_DB_PATH = os.getenv(
+    "REAL_TRADING_CORE_DB_PATH", f"{DATA_DIR}/real_trading_core.db"
+)
 TRADING_INFO_DB_PATH = os.getenv("TRADING_INFO_DB_PATH", f"{DATA_DIR}/trading_info.db")
 MARKET_DB_PATH = os.getenv("MARKET_DB_PATH", f"{DATA_DIR}/market.db")
 SCHEMA_LOCK_TIMEOUT_SECONDS = float(os.getenv("SCHEMA_LOCK_TIMEOUT_SECONDS", "30"))
@@ -30,6 +33,7 @@ DB_LABELS = {
     "评分系统数据库": SCORING_DB_PATH,
     "交易数据库": TRADING_DB_PATH,
     "交易核心数据库": TRADING_CORE_DB_PATH,
+    "实盘交易核心数据库": REAL_TRADING_CORE_DB_PATH,
     "交易记录数据库": TRADING_INFO_DB_PATH,
     "市场行情数据库": MARKET_DB_PATH,
 }

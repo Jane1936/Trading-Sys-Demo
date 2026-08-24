@@ -40,6 +40,7 @@ from scoring_system import (
 )
 from scoring_rule_election import get_settings as get_rule_election_settings, set_settings as set_rule_election_settings
 from trading_experiment import TradingExperiment
+import real_trading
 from market_filter_module import MarketFilterModule
 from market_filter_settings import (
     get_settings as get_market_filter_settings,
@@ -248,7 +249,9 @@ def _qualified_table(schema: str, table_name: str) -> str:
     )
 
 
-def _experiment_equity_trend_rows(since_ms: int) -> list[sqlite3.Row]:
+def _experiment_equity_trend_rows(
+    since_ms: int, db_path: str | None = None
+) -> list[sqlite3.Row]:
     """Return one experiment USDT equity point per recorded scan/open timestamp."""
     sources = [
         (TradingExperiment.TRADES_TABLE, "created_at"),
@@ -257,7 +260,7 @@ def _experiment_equity_trend_rows(since_ms: int) -> list[sqlite3.Row]:
         (DynamicProfitProtection.CHECKS_TABLE, "checked_at"),
     ]
     try:
-        with db_config.connect_sqlite(_trading_db_path()) as conn:
+        with db_config.connect_sqlite(db_path or _trading_db_path()) as conn:
             conn.row_factory = sqlite3.Row
             union_queries = []
             params: list[int] = []
@@ -1474,6 +1477,14 @@ def abnormal_wicks():
     trading_error_records = load_module("交易错误记录", lambda: trading_experiment.recent_error_records(limit=100, since_ms=trading_records_since_ms), [])
     zombie_force_liquidation = ZombieForceLiquidationModule(db_path=_trading_db_path())
     zombie_force_liquidation_records = load_module("僵尸强平记录", lambda: zombie_force_liquidation.recent_records(limit=100, since_ms=trading_records_since_ms), [])
+    live_experiment = real_trading.experiment()
+    load_module("实盘交易表初始化", real_trading.initialize, None)
+    live_trade_records = load_module("实盘交易实验记录", lambda: live_experiment.recent_trade_records(limit=100, since_ms=trading_records_since_ms), [])
+    live_position_snapshots = load_module("实盘交易持仓快照", lambda: live_experiment.latest_position_snapshots(limit=100), [])
+    live_error_records = load_module("实盘交易错误记录", lambda: live_experiment.recent_error_records(limit=100, since_ms=trading_records_since_ms), [])
+    live_zombie_records = load_module("实盘僵尸强平记录", lambda: real_trading.zombie_module().recent_records(limit=100, since_ms=trading_records_since_ms), [])
+    live_equity_trend_rows = load_module("实盘交易权益曲线", lambda: _experiment_equity_trend_rows(trading_records_since_ms, db_config.REAL_TRADING_CORE_DB_PATH), [])
+    live_trading_equity = _latest_trading_equity_usdt(live_equity_trend_rows) if live_equity_trend_rows else real_trading.config().initial_equity_usdt
     holding_scoring = HoldingPositionScoringSystem(db_path=_trading_db_path())
     holding_stop_loss_round_ts, holding_stop_loss_checks = load_module("持仓结构止损检查", holding_scoring.get_latest_round_checks, (0, []))
     holding_portfolio_risk = load_module("持仓组合风险", holding_scoring.get_latest_portfolio_risk, None)
@@ -1591,6 +1602,12 @@ def abnormal_wicks():
         trading_error_records=trading_error_records,
         trading_equity_trend_rows=trading_equity_trend_rows,
         zombie_force_liquidation_records=zombie_force_liquidation_records,
+        live_trade_records=live_trade_records,
+        live_position_snapshots=live_position_snapshots,
+        live_error_records=live_error_records,
+        live_zombie_records=live_zombie_records,
+        live_equity_trend_rows=live_equity_trend_rows,
+        live_trading_equity=live_trading_equity,
         holding_stop_loss_round_ts=holding_stop_loss_round_ts,
         holding_stop_loss_checks=holding_stop_loss_checks,
         holding_portfolio_risk=holding_portfolio_risk,

@@ -6,6 +6,7 @@ x-app-env: &app-env
   TRADING_DB_PATH: "${TRADING_DB_PATH:-data/trading.db}"
   TRADING_CORE_DB_PATH: "${TRADING_CORE_DB_PATH:-data/trading_core.db}"
   TRADING_INFO_DB_PATH: "${TRADING_INFO_DB_PATH:-data/trading_info.db}"
+  REAL_TRADING_CORE_DB_PATH: "${REAL_TRADING_CORE_DB_PATH:-data/real_trading_core.db}"
   MARKET_DB_PATH: "${MARKET_DB_PATH:-data/market.db}"
   SQLITE_RECOVERY_LOG_DIR: "${SQLITE_RECOVERY_LOG_DIR:-logs/sqlite-recovery}"
   # Never let delayed market aggregation block minute-level position protection indefinitely.
@@ -16,6 +17,7 @@ x-app-env: &app-env
   BINANCE_REAL_API_KEY: "${BINANCE_REAL_API_KEY:-YOUR_REAL_API_KEY}"
   BINANCE_REAL_API_SECRET: "${BINANCE_REAL_API_SECRET:-YOUR_REAL_API_SECRET}"
   BINANCE_REAL_BASE_URL: "${BINANCE_REAL_BASE_URL:-https://fapi.binance.com}"
+  REAL_TRADING_INITIAL_EQUITY_USDT: "${REAL_TRADING_INITIAL_EQUITY_USDT:-100}"
 
 services:
   worker:

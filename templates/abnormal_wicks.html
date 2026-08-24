@@ -2622,6 +2622,16 @@
         <div class="toolbar"><button id="live-query-balance" class="btn btn-primary" type="button">查询账户余额</button><span id="live-balance-status" class="muted">尚未查询</span></div><div id="live-balance-error" class="account-error"></div>
         <div class="account-summary"><div class="account-metric"><div class="account-metric-label">USDT 总余额</div><div id="live-usdt-balance" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">USDT 可用余额</div><div id="live-usdt-available" class="account-metric-value">-</div></div><div class="account-metric account-metric-highlight"><div class="account-metric-label">USDT 未实现盈亏</div><div id="live-usdt-pnl" class="account-metric-value">-</div></div></div>
         <div class="table-wrap"><table><thead><tr><th>asset</th><th>balance</th><th>available_balance</th><th>cross_wallet_balance</th><th>cross_un_pnl</th><th>account_alias</th></tr></thead><tbody id="live-balance-rows"><tr><td class="empty" colspan="6">点击“查询账户余额”后显示实盘数据</td></tr></tbody></table></div>
+        <div class="experiment-note">实盘自动交易与模拟盘使用同一轮“本轮可开仓symbol情况”，但订单通过 Binance 生产接口执行；初始资金预算为 100U。所有实盘交易、持仓快照、僵尸强平和错误仅写入 <code>real_trading_core.db</code>，不会读写模拟盘交易数据库。请在“功能开关”页面开启“实盘交易系统”后再自动下单。</div>
+        <div class="account-summary" aria-label="实盘实验组USDT净值"><div class="account-metric account-metric-highlight"><div class="account-metric-label">实盘实验组USDT净值</div><div class="account-metric-value">{{ live_trading_equity }} U</div></div></div>
+        <div class="symbol-strip"><div><strong>僵尸单强平操作记录（实盘）</strong></div></div>
+        <div class="table-wrap"><table><thead><tr><th>时间</th><th>symbol</th><th>方向</th><th>数量</th><th>入场价</th><th>状态</th><th>order_id</th><th>原因</th></tr></thead><tbody>{% for row in live_zombie_records %}<tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.side }}</td><td>{{ row.quantity }}</td><td>{{ row.entry_price }}</td><td>{{ row.status }}</td><td>{{ row.order_id or '-' }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="8">暂无最近7天实盘僵尸单强平操作记录</td></tr>{% endfor %}</tbody></table></div>
+        <div class="symbol-strip"><div><strong>交易实验交易记录（实盘）</strong></div></div>
+        <div class="table-wrap"><table><thead><tr><th>时间</th><th>symbol</th><th>状态</th><th>总分</th><th>杠杆</th><th>保证金</th><th>入场价</th><th>数量</th><th>原因</th></tr></thead><tbody>{% for row in live_trade_records %}<tr><td>{{ row.created_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.status }}</td><td>{{ row.total_score }}</td><td>{{ row.leverage }}</td><td>{{ row.required_margin_usdt }}</td><td>{{ row.entry_price }}</td><td>{{ row.quantity }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="9">暂无最近7天实盘交易实验记录</td></tr>{% endfor %}</tbody></table></div>
+        <div class="symbol-strip"><div><strong>交易实验持仓快照（实盘）</strong></div></div>
+        <div class="table-wrap"><table><thead><tr><th>更新时间</th><th>symbol</th><th>持仓量</th><th>入场价</th><th>标记价</th><th>未实现盈亏</th><th>杠杆</th><th>持仓小时</th></tr></thead><tbody>{% for row in live_position_snapshots %}<tr><td>{{ row.updated_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.position_amt }}</td><td>{{ row.entry_price }}</td><td>{{ row.mark_price }}</td><td>{{ row.unrealized_pnl }}</td><td>{{ row.leverage }}</td><td>{{ row.holding_hours }}</td></tr>{% else %}<tr><td class="empty" colspan="8">暂无实盘交易实验持仓快照</td></tr>{% endfor %}</tbody></table></div>
+        <div class="symbol-strip"><div><strong>交易实验错误信息记录（实盘）</strong></div><div class="muted">包含新开仓、保护单、账户扫描和僵尸强平流程捕获的错误。</div></div>
+        <div class="table-wrap"><table><thead><tr><th>时间</th><th>symbol</th><th>轮次</th><th>总分</th><th>杠杆</th><th>操作</th><th>类型</th><th>错误</th></tr></thead><tbody>{% for row in live_error_records %}<tr><td>{{ row.created_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.decision_round_ts|fmt_ms_datetime if row.decision_round_ts else '-' }}</td><td>{{ row.total_score if row.total_score is not none else '-' }}</td><td>{{ row.leverage if row.leverage is not none else '-' }}</td><td>{{ row.operation }}</td><td>{{ row.error_type }}</td><td>{{ row.error_message }}</td></tr>{% else %}<tr><td class="empty" colspan="8">暂无最近7天实盘交易实验错误信息记录</td></tr>{% endfor %}</tbody></table></div>
       </div>
     </div>
   </section>
@@ -2632,7 +2642,7 @@
         <h2>功能开关</h2>
       </div>
       <div class="tip">
-        所有开关默认开启，状态持久化在配置数据库 <code>config.db</code>。点击开启/关闭后，worker 会在对应模块下一次 job 执行前重新读取并生效；模拟盘交易系统开关仅控制模拟盘，关闭后只会阻止模拟盘新开仓，已有模拟盘仓位的止损、止盈、风控保护默认继续运行。
+        开关状态持久化在配置数据库 <code>config.db</code>。为避免误下生产订单，“实盘交易系统”默认关闭，其他开关默认开启。点击开启/关闭后，worker 会在对应模块下一次 job 执行前重新读取并生效；模拟盘与实盘交易系统开关分别控制各自账户的新开仓，关闭后不会影响已有仓位的保护流程。
       </div>
       <div id="feature-flag-message" class="feature-flag-message" role="status" aria-live="polite"></div>
       <div class="table-wrap">
@@ -2648,7 +2658,7 @@
           </thead>
           <tbody id="feature-flag-rows">
             {% for flag in feature_flags %}
-            <tr data-feature-key="{{ flag.key }}" class="{{ 'primary-feature-row' if flag.key in ['base_data_collection','scoring_system','trading_system','market_filter'] else '' }}">
+            <tr data-feature-key="{{ flag.key }}" class="{{ 'primary-feature-row' if flag.key in ['base_data_collection','scoring_system','trading_system','real_trading_system','market_filter'] else '' }}">
               <td><strong>{{ flag.name }}</strong></td>
               <td>
                 <span class="feature-flag-status {{ 'enabled' if flag.enabled else 'disabled' }}">
