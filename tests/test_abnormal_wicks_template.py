@@ -651,6 +651,8 @@ def test_feature_flags_page_contains_reduction_module_rule_controls():
     section = template[template.index('id="tab-feature-flags"'):]
 
     assert "减仓模块配置" in section
+    reduction_card = section[:section.index("独立市场过滤配置")]
+    assert 'class="card feature-config-yellow"' in reduction_card
     assert 'id="reduction-rule2-enabled"' in section
     assert 'id="reduction-rule5-enabled"' in section
     assert 'id="reduction-rule2-percent"' in section
