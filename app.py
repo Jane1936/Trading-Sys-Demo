@@ -957,6 +957,36 @@ def run_scoring_round_worker(
             increase_checked=holding_result.get("increase_checked", 0),
             risk_positions=holding_result.get("risk_position_count", 0),
         )
+
+        # Production positions use the same low-frequency rules and shared
+        # market/scoring inputs, but all checks, actions and locks are routed to
+        # real_trading_core.db and all exchange calls use the live REST client.
+        with db_config.sqlite_connection_scope(
+            db_config.REAL_TRADING_CORE_DB_PATH, row_factory=sqlite3.Row
+        ):
+            live_holding_result = real_trading.holding_scoring().run_round(
+                decision_round_ts=decision_round_ts,
+                enable_stop_loss=feature_flags.is_feature_enabled(
+                    feature_flags.REAL_STOP_LOSS_RULE
+                ),
+                enable_reduction=feature_flags.is_feature_enabled(
+                    feature_flags.REAL_REDUCTION_CONDITIONS
+                ),
+                enable_increase=feature_flags.is_feature_enabled(
+                    feature_flags.REAL_INCREASE_CONDITIONS
+                ),
+                enable_portfolio_risk=feature_flags.is_feature_enabled(
+                    feature_flags.REAL_PORTFOLIO_RISK
+                ),
+            )
+        log_stage(
+            "live_holding_pipeline",
+            "completed",
+            stop_loss_checked=live_holding_result.get("checked", 0),
+            reduction_checked=live_holding_result.get("reduction_checked", 0),
+            increase_checked=live_holding_result.get("increase_checked", 0),
+            risk_positions=live_holding_result.get("risk_position_count", 0),
+        )
     except Exception as exc:
         log_stage(
             "holding_pipeline",

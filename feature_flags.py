@@ -12,6 +12,10 @@ BASE_DATA_COLLECTION = "base_data_collection"
 SCORING_SYSTEM = "scoring_system"
 TRADING_SYSTEM = "trading_system"
 REAL_TRADING_SYSTEM = "real_trading_system"
+REAL_STOP_LOSS_RULE = "real_stop_loss_rule"
+REAL_REDUCTION_CONDITIONS = "real_reduction_conditions"
+REAL_INCREASE_CONDITIONS = "real_increase_conditions"
+REAL_PORTFOLIO_RISK = "real_portfolio_risk"
 MARKET_FILTER = "market_filter"
 TRAILING_STOP = "trailing_stop"
 STOP_LOSS_RULE = "stop_loss_rule"
@@ -79,6 +83,10 @@ FEATURE_FLAG_DEFINITIONS: tuple[FeatureFlagDefinition, ...] = (
     FeatureFlagDefinition(REDUCTION_CONDITIONS, "模拟盘减仓条件模块", "控制持仓评分减仓条件判断及减仓操作。"),
     FeatureFlagDefinition(INCREASE_CONDITIONS, "模拟盘加仓条件模块", "控制持仓评分加仓条件判断及加仓操作。"),
     FeatureFlagDefinition(PORTFOLIO_RISK, "模拟盘组合风险约束", "控制持仓组合风险计算与约束数据更新。"),
+    FeatureFlagDefinition(REAL_STOP_LOSS_RULE, "实盘止损规则", "控制实盘持仓结构止损判断及实盘平仓操作。"),
+    FeatureFlagDefinition(REAL_REDUCTION_CONDITIONS, "实盘减仓条件模块", "控制实盘持仓评分减仓条件判断及实盘减仓操作。"),
+    FeatureFlagDefinition(REAL_INCREASE_CONDITIONS, "实盘加仓条件模块", "控制实盘持仓评分加仓条件判断及实盘加仓操作。"),
+    FeatureFlagDefinition(REAL_PORTFOLIO_RISK, "实盘组合风险约束", "控制实盘持仓组合风险计算与约束数据更新。"),
     FeatureFlagDefinition(BREAK_EVEN_TAKE_PROFIT, "模拟盘保本止盈策略", "控制保本止盈的每分钟扫描及平仓操作。"),
     FeatureFlagDefinition(PARTIAL_TAKE_PROFIT, "模拟盘分批止盈规则", "控制分批止盈的每分钟扫描及减仓操作。"),
     FeatureFlagDefinition(TRAILING_REDUCTION, "模拟盘移动追踪减仓", "控制移动追踪减仓判断、刷新及减仓操作。"),
@@ -160,7 +168,13 @@ def init_feature_flags(db_path: str | None = None) -> None:
                         definition.key,
                         definition.name,
                         definition.description,
-                        0 if definition.key == REAL_TRADING_SYSTEM else 1,
+                        0 if definition.key in {
+                            REAL_TRADING_SYSTEM,
+                            REAL_STOP_LOSS_RULE,
+                            REAL_REDUCTION_CONDITIONS,
+                            REAL_INCREASE_CONDITIONS,
+                            REAL_PORTFOLIO_RISK,
+                        } else 1,
                         now_ms,
                     ),
                 )
@@ -181,9 +195,11 @@ def list_feature_flags(db_path: str | None = None) -> list[FeatureFlag]:
                 WHEN 'market_filter' THEN 5
                 WHEN 'stop_loss_rule' THEN 6 WHEN 'reduction_conditions' THEN 7
                 WHEN 'increase_conditions' THEN 8 WHEN 'portfolio_risk' THEN 9
-                WHEN 'break_even_take_profit' THEN 10 WHEN 'partial_take_profit' THEN 11
-                WHEN 'trailing_reduction' THEN 12 WHEN 'trailing_stop' THEN 13
-                WHEN 'dynamic_profit_protection' THEN 14 ELSE 99 END, key
+                WHEN 'real_stop_loss_rule' THEN 10 WHEN 'real_reduction_conditions' THEN 11
+                WHEN 'real_increase_conditions' THEN 12 WHEN 'real_portfolio_risk' THEN 13
+                WHEN 'break_even_take_profit' THEN 14 WHEN 'partial_take_profit' THEN 15
+                WHEN 'trailing_reduction' THEN 16 WHEN 'trailing_stop' THEN 17
+                WHEN 'dynamic_profit_protection' THEN 18 ELSE 99 END, key
             """,
         ).fetchall()
     return [
@@ -228,7 +244,13 @@ def is_feature_enabled(key: str, db_path: str | None = None) -> bool:
     try:
         return get_feature_flag(key, db_path).enabled
     except Exception as exc:
-        fail_closed = key == REAL_TRADING_SYSTEM
+        fail_closed = key in {
+            REAL_TRADING_SYSTEM,
+            REAL_STOP_LOSS_RULE,
+            REAL_REDUCTION_CONDITIONS,
+            REAL_INCREASE_CONDITIONS,
+            REAL_PORTFOLIO_RISK,
+        }
         fallback = "disabled" if fail_closed else "enabled"
         print(f"⚠️ feature flag lookup failed key={key}: {exc}; defaulting to {fallback}")
         return not fail_closed
