@@ -21,6 +21,10 @@ def test_feature_flags_seed_enabled_by_default(tmp_path):
         feature_flags.REDUCTION_CONDITIONS,
         feature_flags.INCREASE_CONDITIONS,
         feature_flags.PORTFOLIO_RISK,
+        feature_flags.REAL_STOP_LOSS_RULE,
+        feature_flags.REAL_REDUCTION_CONDITIONS,
+        feature_flags.REAL_INCREASE_CONDITIONS,
+        feature_flags.REAL_PORTFOLIO_RISK,
         feature_flags.BREAK_EVEN_TAKE_PROFIT,
         feature_flags.PARTIAL_TAKE_PROFIT,
         feature_flags.TRAILING_REDUCTION,
@@ -28,13 +32,33 @@ def test_feature_flags_seed_enabled_by_default(tmp_path):
         feature_flags.DYNAMIC_PROFIT_PROTECTION,
     ]
     assert all(
-        flag.enabled == (flag.key != feature_flags.REAL_TRADING_SYSTEM)
+        flag.enabled == (flag.key not in {
+            feature_flags.REAL_TRADING_SYSTEM,
+            feature_flags.REAL_STOP_LOSS_RULE,
+            feature_flags.REAL_REDUCTION_CONDITIONS,
+            feature_flags.REAL_INCREASE_CONDITIONS,
+            feature_flags.REAL_PORTFOLIO_RISK,
+        })
         for flag in flags
     )
     assert all(flag.updated_at > 0 for flag in flags)
     assert flags[2].name == "模拟盘交易系统"
     assert flags[3].name == "实盘交易系统"
-    assert all(flag.name.startswith("模拟盘") for flag in flags[5:])
+    assert all(flag.name.startswith("模拟盘") for flag in flags[5:9])
+    assert all(flag.name.startswith("实盘") for flag in flags[9:13])
+
+
+def test_real_holding_flags_default_off_and_can_be_enabled(tmp_path):
+    db_path = str(tmp_path / "config.db")
+
+    for key in (
+        feature_flags.REAL_STOP_LOSS_RULE,
+        feature_flags.REAL_REDUCTION_CONDITIONS,
+        feature_flags.REAL_INCREASE_CONDITIONS,
+        feature_flags.REAL_PORTFOLIO_RISK,
+    ):
+        assert feature_flags.get_feature_flag(key, db_path).enabled is False
+        assert feature_flags.set_feature_flag(key, True, db_path).enabled is True
 
 
 def test_real_trading_flag_defaults_off_and_can_be_enabled(tmp_path):

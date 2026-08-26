@@ -14,6 +14,7 @@ from binance_account_manager import BinanceAccountManager
 from openable_symbol_module import OpenableSymbol
 from trading_experiment import ExperimentConfig, TradingExperiment
 from zombie_force_liquidation import ZombieForceLiquidationModule
+from holding_position_scoring import HoldingPositionScoringSystem
 
 
 def config() -> ExperimentConfig:
@@ -42,9 +43,23 @@ def zombie_module() -> ZombieForceLiquidationModule:
     )
 
 
+def holding_scoring() -> HoldingPositionScoringSystem:
+    """Build the 15-minute position manager for the production account.
+
+    Market candles and scores remain shared read-only inputs, while the explicit
+    database path and live account manager keep every decision and order audit
+    separate from the simulator.
+    """
+    return HoldingPositionScoringSystem(
+        db_path=db_config.REAL_TRADING_CORE_DB_PATH,
+        account_manager=BinanceAccountManager.live(),
+    )
+
+
 def initialize() -> None:
     experiment().init_tables()
     zombie_module().init_tables()
+    holding_scoring().init_tables()
 
 
 def run_round(candidates: Iterable[OpenableSymbol], round_ts: int) -> dict[str, Any]:

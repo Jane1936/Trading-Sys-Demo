@@ -1485,6 +1485,14 @@ def abnormal_wicks():
     live_zombie_records = load_module("实盘僵尸强平记录", lambda: real_trading.zombie_module().recent_records(limit=100, since_ms=trading_records_since_ms), [])
     live_equity_trend_rows = load_module("实盘交易权益曲线", lambda: _experiment_equity_trend_rows(trading_records_since_ms, db_config.REAL_TRADING_CORE_DB_PATH), [])
     live_trading_equity = _latest_trading_equity_usdt(live_equity_trend_rows) if live_equity_trend_rows else real_trading.config().initial_equity_usdt
+    live_holding_scoring = real_trading.holding_scoring()
+    live_holding_stop_loss_round_ts, live_holding_stop_loss_checks = load_module("实盘持仓结构止损检查", live_holding_scoring.get_latest_round_checks, (0, []))
+    live_holding_portfolio_risk = load_module("实盘持仓组合风险", live_holding_scoring.get_latest_portfolio_risk, None)
+    live_holding_reduction_round_ts, live_holding_reduction_checks = load_module("实盘持仓减仓检查", live_holding_scoring.get_latest_reduction_checks, (0, []))
+    live_holding_increase_round_ts, live_holding_increase_checks = load_module("实盘持仓加仓检查", live_holding_scoring.get_latest_increase_checks, (0, []))
+    live_holding_stop_loss_records = load_module("实盘持仓结构止损记录", lambda: live_holding_scoring.recent_stop_loss_records(limit=100), [])
+    live_holding_reduction_records = load_module("实盘持仓减仓记录", lambda: live_holding_scoring.recent_reduction_records(limit=100), [])
+    live_holding_increase_records = load_module("实盘持仓加仓记录", lambda: live_holding_scoring.recent_increase_records(limit=100, since_ms=trading_records_since_ms), [])
     holding_scoring = HoldingPositionScoringSystem(db_path=_trading_db_path())
     holding_stop_loss_round_ts, holding_stop_loss_checks = load_module("持仓结构止损检查", holding_scoring.get_latest_round_checks, (0, []))
     holding_portfolio_risk = load_module("持仓组合风险", holding_scoring.get_latest_portfolio_risk, None)
@@ -1608,6 +1616,16 @@ def abnormal_wicks():
         live_zombie_records=live_zombie_records,
         live_equity_trend_rows=live_equity_trend_rows,
         live_trading_equity=live_trading_equity,
+        live_holding_stop_loss_round_ts=live_holding_stop_loss_round_ts,
+        live_holding_stop_loss_checks=live_holding_stop_loss_checks,
+        live_holding_portfolio_risk=live_holding_portfolio_risk,
+        live_holding_reduction_round_ts=live_holding_reduction_round_ts,
+        live_holding_reduction_checks=live_holding_reduction_checks,
+        live_holding_increase_round_ts=live_holding_increase_round_ts,
+        live_holding_increase_checks=live_holding_increase_checks,
+        live_holding_stop_loss_records=live_holding_stop_loss_records,
+        live_holding_reduction_records=live_holding_reduction_records,
+        live_holding_increase_records=live_holding_increase_records,
         holding_stop_loss_round_ts=holding_stop_loss_round_ts,
         holding_stop_loss_checks=holding_stop_loss_checks,
         holding_portfolio_risk=holding_portfolio_risk,

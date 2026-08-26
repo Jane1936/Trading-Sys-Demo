@@ -34,3 +34,21 @@ def test_real_config_uses_100u_without_simulation_reserve(monkeypatch):
     assert value.initial_equity_usdt == Decimal("100")
     assert value.total_margin_budget_usdt == Decimal("100")
     assert value.experiment_uninvested_usdt == Decimal("0")
+
+
+def test_real_holding_scoring_uses_live_api_and_real_database(tmp_path, monkeypatch):
+    real_db = tmp_path / "real_trading_core.db"
+    simulation_db = tmp_path / "trading.db"
+    monkeypatch.setattr(db_config, "REAL_TRADING_CORE_DB_PATH", str(real_db))
+    monkeypatch.setattr(db_config, "TRADING_DB_PATH", str(simulation_db))
+    monkeypatch.setenv("BINANCE_REAL_API_KEY", "live-key")
+    monkeypatch.setenv("BINANCE_REAL_API_SECRET", "live-secret")
+
+    scoring = real_trading.holding_scoring()
+    scoring.init_tables()
+
+    assert scoring.db_path == str(real_db)
+    assert scoring.info_db_path == str(real_db)
+    assert scoring.account_manager.testnet is False
+    assert real_db.exists()
+    assert not simulation_db.exists()
