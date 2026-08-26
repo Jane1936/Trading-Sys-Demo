@@ -40,6 +40,30 @@ def test_live_tab_has_production_filled_orders_and_account_panels() -> None:
     assert 'https://fapi.binance.com' in live_section
 
 
+def test_live_holding_score_tabs_target_separate_module_panels() -> None:
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    live_start = template.index('<section id="tab-live"')
+    feature_flags_start = template.index('<section id="tab-feature-flags"')
+    live_section = template[live_start:feature_flags_start]
+    module_names = ("stop-loss", "reduction", "increase", "portfolio-risk")
+
+    for module_name in module_names:
+        panel_id = f"live-holding-module-{module_name}"
+        assert f'data-holding-module-tab="{panel_id}"' in live_section
+        assert f'id="{panel_id}" class="holding-module-panel' in live_section
+
+    assert live_section.count('class="holding-module-panel active"') == 1
+    assert live_section.count('class="holding-module-panel"') == 3
+
+
+def test_holding_module_tab_script_scopes_updates_to_current_account_panel() -> None:
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+
+    assert "b.closest('.simulation-subpanel, .live-subpanel')" in template
+    assert "container.querySelectorAll('.holding-module-tab[data-holding-module-tab]')" in template
+    assert "container.querySelectorAll('.holding-module-panel')" in template
+
+
 def test_feature_flags_page_exposes_live_trading_switch() -> None:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
 
