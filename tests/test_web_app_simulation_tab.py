@@ -40,6 +40,24 @@ def test_live_tab_has_production_filled_orders_and_account_panels() -> None:
     assert 'https://fapi.binance.com' in live_section
 
 
+def test_live_account_has_equity_trend_chart_backed_by_live_rows() -> None:
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    live_start = template.index('<section id="tab-live"')
+    feature_flags_start = template.index('<section id="tab-feature-flags"')
+    live_section = template[live_start:feature_flags_start]
+
+    equity_index = live_section.index('aria-label="实盘实验组USDT净值"')
+    chart_index = live_section.index('aria-label="实盘近7天实验组USDT净值变化趋势图"')
+    zombie_index = live_section.index("僵尸单强平操作记录（实盘）")
+
+    assert equity_index < chart_index < zombie_index
+    assert "live-experiment-equity-trend-chart" in live_section
+    assert "数据来自实盘开仓、保本止盈、分批止盈扫描记录" in live_section
+    assert "{% for r in live_equity_trend_rows %}" in template
+    assert "buildExperimentEquityTrendOption(rawRows)" in template
+    assert "refreshLiveExperimentEquityTrendChartLayout" in template
+
+
 def test_live_holding_score_tabs_target_separate_module_panels() -> None:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     live_start = template.index('<section id="tab-live"')
