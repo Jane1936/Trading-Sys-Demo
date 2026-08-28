@@ -73,7 +73,7 @@
     .score-trend-chart-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 12px 20px 16px; }
     #score-trend-chart { width: 100%; flex: 1; min-height: calc(100vh - 245px); height: auto; max-height: none; }
     .equity-trend-chart-wrap { padding: 14px 20px 16px; border-top: 1px solid var(--line); background: #ffffff; }
-    #experiment-equity-trend-chart { width: 100%; height: 340px; min-height: 280px; }
+    #experiment-equity-trend-chart, #live-experiment-equity-trend-chart { width: 100%; height: 340px; min-height: 280px; }
     .pager { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
     .pager-info { color: #4b5563; font-size: 12px; }
     .symbol-strip { padding: 14px 20px; border-bottom: 1px solid var(--line); background: #f8fdff; }
@@ -2660,6 +2660,13 @@
         <div class="table-wrap"><table><thead><tr><th>asset</th><th>balance</th><th>available_balance</th><th>cross_wallet_balance</th><th>cross_un_pnl</th><th>account_alias</th></tr></thead><tbody id="live-balance-rows"><tr><td class="empty" colspan="6">点击“查询账户余额”后显示实盘数据</td></tr></tbody></table></div>
         <div class="experiment-note">实盘自动交易与模拟盘使用同一轮“本轮可开仓symbol情况”，但订单通过 Binance 生产接口执行；初始资金预算为 100U。所有实盘交易、持仓快照、僵尸强平和错误仅写入 <code>real_trading_core.db</code>，不会读写模拟盘交易数据库。请在“功能开关”页面开启“实盘交易系统”后再自动下单。</div>
         <div class="account-summary" aria-label="实盘实验组USDT净值"><div class="account-metric account-metric-highlight"><div class="account-metric-label">实盘实验组USDT净值</div><div class="account-metric-value">{{ live_trading_equity }} U</div></div></div>
+        <div class="equity-trend-chart-wrap" aria-label="实盘近7天实验组USDT净值变化趋势图">
+          <div class="chart-meta">
+            <span><strong>近7天实验组USDT净值变化趋势图</strong></span>
+            <span>随页面每15分钟自动刷新；数据来自实盘开仓、保本止盈、分批止盈扫描记录。</span>
+          </div>
+          <div id="live-experiment-equity-trend-chart"></div>
+        </div>
         <div class="symbol-strip"><div><strong>僵尸单强平操作记录（实盘）</strong></div></div>
         <div class="table-wrap"><table><thead><tr><th>时间</th><th>symbol</th><th>方向</th><th>数量</th><th>入场价</th><th>状态</th><th>order_id</th><th>原因</th></tr></thead><tbody>{% for row in live_zombie_records %}<tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.side }}</td><td>{{ row.quantity }}</td><td>{{ row.entry_price }}</td><td>{{ row.status }}</td><td>{{ row.order_id or '-' }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="8">暂无最近7天实盘僵尸单强平操作记录</td></tr>{% endfor %}</tbody></table></div>
         <div class="symbol-strip"><div><strong>交易实验交易记录（实盘）</strong></div></div>
@@ -2861,6 +2868,7 @@
     let btcChart = null;
     let scoreTrendChart = null;
     let experimentEquityTrendChart = null;
+    let liveExperimentEquityTrendChart = null;
     const DYNAMIC_PROFIT_PROTECTION_RULE_NOTE = '每分钟读取最新1分钟K线 high/close，维护“开仓以来最高价”；按浮盈历史最高到达档位动态保护：浮盈到达过(2R, 3R] 回撤≥40%、浮盈到达过(3R, 4R] 回撤≥30%、浮盈到达过4R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓；三档按优先级递增，仅触发最高命中的一个条件。';
     const TRAILING_STOP_RULE_NOTE = '仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；先用最近4条15分钟K线判断“预触发移动追踪止盈”（最近第1条close < 最近第2/3/4条low的最小值）；对本轮预触发symbol每分钟读取 klines_1m 最新 high/close，维护“开仓以来最高价”，计算“波动率”=最新 ATR(14) / 最近第2条15分钟K线 close；若波动率 > 0.03，则当最新close相对开仓以来最高价回撤 > 2 × ATR(14) 时打上“移动追踪止盈”tag，否则回撤 > 2.5 × ATR(14) 时打上“移动追踪止盈”tag，并调用市价单接口全部平仓。';
 
@@ -3162,6 +3170,10 @@
       if (experimentEquityTrendChart) experimentEquityTrendChart.resize();
     }
 
+    function refreshLiveExperimentEquityTrendChartLayout() {
+      if (liveExperimentEquityTrendChart) liveExperimentEquityTrendChart.resize();
+    }
+
     (function initTabs() {
       const btns = document.querySelectorAll('.sidebar .tab-btn[data-tab]');
       const panels = document.querySelectorAll('.panel');
@@ -3251,6 +3263,9 @@
         button.classList.add('active');
         button.setAttribute('aria-selected', 'true');
         document.getElementById(button.dataset.liveTab)?.classList.add('active');
+        if (button.dataset.liveTab === 'live-account') {
+          requestAnimationFrame(refreshLiveExperimentEquityTrendChartLayout);
+        }
       }));
     })();
 
@@ -4497,6 +4512,20 @@
       experimentEquityTrendChart.setOption(buildExperimentEquityTrendOption(rawRows), true);
       window.addEventListener('resize', refreshExperimentEquityTrendChartLayout);
       requestAnimationFrame(refreshExperimentEquityTrendChartLayout);
+    })();
+
+    (function initLiveExperimentEquityTrendChart() {
+      const chartEl = document.getElementById('live-experiment-equity-trend-chart');
+      if (!chartEl || !window.echarts) return;
+      const rawRows = [
+        {% for r in live_equity_trend_rows %}
+          [{{ r.recorded_at }}, {{ '%.8f'|format(r.account_equity_usdt) }}],
+        {% endfor %}
+      ];
+      liveExperimentEquityTrendChart = echarts.init(chartEl);
+      liveExperimentEquityTrendChart.setOption(buildExperimentEquityTrendOption(rawRows), true);
+      window.addEventListener('resize', refreshLiveExperimentEquityTrendChartLayout);
+      requestAnimationFrame(refreshLiveExperimentEquityTrendChartLayout);
     })();
 
 
