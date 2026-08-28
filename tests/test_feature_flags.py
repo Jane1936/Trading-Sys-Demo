@@ -30,6 +30,11 @@ def test_feature_flags_seed_enabled_by_default(tmp_path):
         feature_flags.TRAILING_REDUCTION,
         feature_flags.TRAILING_STOP,
         feature_flags.DYNAMIC_PROFIT_PROTECTION,
+        feature_flags.REAL_BREAK_EVEN_TAKE_PROFIT,
+        feature_flags.REAL_PARTIAL_TAKE_PROFIT,
+        feature_flags.REAL_TRAILING_REDUCTION,
+        feature_flags.REAL_TRAILING_STOP,
+        feature_flags.REAL_DYNAMIC_PROFIT_PROTECTION,
     ]
     assert all(
         flag.enabled == (flag.key not in {
@@ -38,6 +43,11 @@ def test_feature_flags_seed_enabled_by_default(tmp_path):
             feature_flags.REAL_REDUCTION_CONDITIONS,
             feature_flags.REAL_INCREASE_CONDITIONS,
             feature_flags.REAL_PORTFOLIO_RISK,
+            feature_flags.REAL_BREAK_EVEN_TAKE_PROFIT,
+            feature_flags.REAL_PARTIAL_TAKE_PROFIT,
+            feature_flags.REAL_TRAILING_REDUCTION,
+            feature_flags.REAL_TRAILING_STOP,
+            feature_flags.REAL_DYNAMIC_PROFIT_PROTECTION,
         })
         for flag in flags
     )

@@ -23,6 +23,10 @@ TRADING_CORE_DB_PATH = os.getenv("TRADING_CORE_DB_PATH", f"{DATA_DIR}/trading_co
 REAL_TRADING_CORE_DB_PATH = os.getenv(
     "REAL_TRADING_CORE_DB_PATH", f"{DATA_DIR}/real_trading_core.db"
 )
+REAL_TRADING_DB_PATH = os.getenv("REAL_TRADING_DB_PATH", f"{DATA_DIR}/real_trading.db")
+REAL_TRADING_INFO_DB_PATH = os.getenv(
+    "REAL_TRADING_INFO_DB_PATH", f"{DATA_DIR}/real_trading_info.db"
+)
 TRADING_INFO_DB_PATH = os.getenv("TRADING_INFO_DB_PATH", f"{DATA_DIR}/trading_info.db")
 MARKET_DB_PATH = os.getenv("MARKET_DB_PATH", f"{DATA_DIR}/market.db")
 SCHEMA_LOCK_TIMEOUT_SECONDS = float(os.getenv("SCHEMA_LOCK_TIMEOUT_SECONDS", "30"))
@@ -34,6 +38,8 @@ DB_LABELS = {
     "交易数据库": TRADING_DB_PATH,
     "交易核心数据库": TRADING_CORE_DB_PATH,
     "实盘交易核心数据库": REAL_TRADING_CORE_DB_PATH,
+    "实盘交易数据库": REAL_TRADING_DB_PATH,
+    "实盘交易记录数据库": REAL_TRADING_INFO_DB_PATH,
     "交易记录数据库": TRADING_INFO_DB_PATH,
     "市场行情数据库": MARKET_DB_PATH,
 }
@@ -43,6 +49,8 @@ def trading_core_path(trading_db_path: str) -> str:
     """Route production trading-core tables while keeping custom/test DBs isolated."""
     if Path(trading_db_path).resolve() == Path(TRADING_DB_PATH).resolve():
         return TRADING_CORE_DB_PATH
+    if Path(trading_db_path).resolve() == Path(REAL_TRADING_DB_PATH).resolve():
+        return REAL_TRADING_CORE_DB_PATH
     return trading_db_path
 
 
@@ -50,6 +58,8 @@ def trading_info_path(trading_db_path: str) -> str:
     """Route production action records while keeping custom/test DBs isolated."""
     if Path(trading_db_path).resolve() == Path(TRADING_DB_PATH).resolve():
         return TRADING_INFO_DB_PATH
+    if Path(trading_db_path).resolve() == Path(REAL_TRADING_DB_PATH).resolve():
+        return REAL_TRADING_INFO_DB_PATH
     return trading_db_path
 
 _recovery_local = threading.local()
