@@ -56,6 +56,21 @@ def test_feature_flags_seed_enabled_by_default(tmp_path):
     assert flags[3].name == "实盘交易系统"
     assert all(flag.name.startswith("模拟盘") for flag in flags[5:9])
     assert all(flag.name.startswith("实盘") for flag in flags[9:13])
+    assert {
+        flag.name for flag in flags if flag.key in {
+            feature_flags.REAL_BREAK_EVEN_TAKE_PROFIT,
+            feature_flags.REAL_PARTIAL_TAKE_PROFIT,
+            feature_flags.REAL_TRAILING_REDUCTION,
+            feature_flags.REAL_DYNAMIC_PROFIT_PROTECTION,
+            feature_flags.REAL_TRAILING_STOP,
+        }
+    } == {
+        "实盘保本止盈",
+        "实盘分批止盈",
+        "实盘移动追踪减仓",
+        "实盘动态利润保护",
+        "实盘移动追踪止盈",
+    }
 
 
 def test_real_holding_flags_default_off_and_can_be_enabled(tmp_path):

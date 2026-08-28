@@ -91,6 +91,13 @@ def test_feature_flags_page_exposes_live_trading_switch() -> None:
     assert "实盘交易系统”默认关闭" in template
 
 
+def test_live_secondary_feature_switches_are_highlighted() -> None:
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+
+    assert ".live-secondary-feature-row" in template
+    assert "elif flag.name.startswith('实盘')" in template
+
+
 def test_simulation_subtab_script_targets_only_simulation_panels() -> None:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
 
