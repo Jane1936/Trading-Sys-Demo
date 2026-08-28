@@ -56,6 +56,24 @@ def test_live_holding_score_tabs_target_separate_module_panels() -> None:
     assert live_section.count('class="holding-module-panel"') == 3
 
 
+def test_live_holding_modules_render_full_operation_record_tables() -> None:
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    live_start = template.index('<section id="tab-live"')
+    feature_flags_start = template.index('<section id="tab-feature-flags"')
+    live_section = template[live_start:feature_flags_start]
+
+    assert "止损操作记录（实盘）" in live_section
+    assert "减仓操作记录（实盘）" in live_section
+    assert "加仓操作记录（实盘，最近7天）" in live_section
+    assert "{% for row in live_holding_stop_loss_records %}" in live_section
+    assert "{% for row in live_holding_reduction_records %}" in live_section
+    assert "{% for row in live_holding_increase_records %}" in live_section
+    assert live_section.count("记录存储于 real_trading_core.db") == 3
+    assert "row.realized_pnl" in live_section
+    assert "row.market_order_id" in live_section
+    assert "row.required_margin_usdt" in live_section
+
+
 def test_holding_module_tab_script_scopes_updates_to_current_account_panel() -> None:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
 
