@@ -52,3 +52,21 @@ def test_real_holding_scoring_uses_live_api_and_real_database(tmp_path, monkeypa
     assert scoring.account_manager.testnet is False
     assert real_db.exists()
     assert not simulation_db.exists()
+
+
+def test_real_high_frequency_modules_use_live_api_and_split_databases(tmp_path, monkeypatch):
+    live_db = tmp_path / "real_trading.db"
+    live_core = tmp_path / "real_trading_core.db"
+    live_info = tmp_path / "real_trading_info.db"
+    monkeypatch.setattr(db_config, "REAL_TRADING_DB_PATH", str(live_db))
+    monkeypatch.setattr(db_config, "REAL_TRADING_CORE_DB_PATH", str(live_core))
+    monkeypatch.setattr(db_config, "REAL_TRADING_INFO_DB_PATH", str(live_info))
+    monkeypatch.setenv("BINANCE_REAL_API_KEY", "live-key")
+    monkeypatch.setenv("BINANCE_REAL_API_SECRET", "live-secret")
+
+    modules = real_trading.high_frequency_modules()
+
+    assert len(modules) == 5
+    assert all(module.db_path == str(live_db) for module in modules)
+    assert all(module.info_db_path == str(live_info) for module in modules)
+    assert all(module.account_manager.testnet is False for module in modules)

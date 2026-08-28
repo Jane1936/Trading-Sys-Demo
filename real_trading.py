@@ -15,6 +15,11 @@ from openable_symbol_module import OpenableSymbol
 from trading_experiment import ExperimentConfig, TradingExperiment
 from zombie_force_liquidation import ZombieForceLiquidationModule
 from holding_position_scoring import HoldingPositionScoringSystem
+from break_even_take_profit import BreakEvenTakeProfitStrategy
+from partial_take_profit import PartialTakeProfitStrategy
+from trailing_reduction_tracker import TrailingReductionTracker
+from dynamic_profit_protection import DynamicProfitProtection
+from trailing_stop_tracker import TrailingStopTracker
 
 
 def config() -> ExperimentConfig:
@@ -56,10 +61,25 @@ def holding_scoring() -> HoldingPositionScoringSystem:
     )
 
 
+def high_frequency_modules():
+    """Build isolated live-account protection modules in simulator order."""
+    kwargs = {"db_path": db_config.REAL_TRADING_DB_PATH,
+              "account_manager": BinanceAccountManager.live()}
+    return (
+        BreakEvenTakeProfitStrategy(**kwargs, config=config()),
+        PartialTakeProfitStrategy(**kwargs, config=config()),
+        TrailingReductionTracker(**kwargs, config=config()),
+        DynamicProfitProtection(**kwargs, config=config()),
+        TrailingStopTracker(**kwargs),
+    )
+
+
 def initialize() -> None:
     experiment().init_tables()
     zombie_module().init_tables()
     holding_scoring().init_tables()
+    for module in high_frequency_modules():
+        module.init_tables()
 
 
 def run_round(candidates: Iterable[OpenableSymbol], round_ts: int) -> dict[str, Any]:

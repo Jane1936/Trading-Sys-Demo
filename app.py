@@ -169,6 +169,8 @@ def _database_initializers() -> dict[str, Callable[[], None]]:
             PartialTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH).init_tables(),
             TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH).init_tables(),
         ),
+        db_config.REAL_TRADING_DB_PATH: real_trading.initialize,
+        db_config.REAL_TRADING_INFO_DB_PATH: real_trading.initialize,
         db_config.REAL_TRADING_CORE_DB_PATH: real_trading.initialize,
     }
 
@@ -229,6 +231,17 @@ def _database_schema_requirements() -> dict[str, dict[str, set[str]]]:
             PartialTakeProfitStrategy.RECORDS_TABLE: {"symbol", "checked_at"},
             TrailingReductionTracker.RECORDS_TABLE: {"symbol", "decision_round_ts"},
             holding.INCREASE_RECORDS_TABLE: {"symbol", "decision_round_ts"},
+        },
+        db_config.REAL_TRADING_DB_PATH: {
+            BreakEvenTakeProfitStrategy.CHECKS_TABLE: {"symbol", "checked_at"},
+            DynamicProfitProtection.CHECKS_TABLE: {"symbol", "checked_at"},
+            TrailingStopTracker.CHECKS_TABLE: {"symbol", "checked_at"},
+            TrailingReductionTracker.CHECKS_TABLE: {"symbol", "decision_round_ts"},
+        },
+        db_config.REAL_TRADING_INFO_DB_PATH: {
+            BreakEvenTakeProfitStrategy.RECORDS_TABLE: {"symbol", "checked_at"},
+            PartialTakeProfitStrategy.RECORDS_TABLE: {"symbol", "checked_at"},
+            TrailingReductionTracker.RECORDS_TABLE: {"symbol", "decision_round_ts"},
         },
         db_config.REAL_TRADING_CORE_DB_PATH: {
             TradingExperiment.TRADES_TABLE: {"symbol", "status", "created_at"},
@@ -1101,7 +1114,37 @@ def start_break_even_take_profit_task() -> None:
             else:
                 print("⏸️ trailing stop tracker skipped: feature flag disabled")
 
+        _run_live_high_frequency_round()
         time.sleep(60)
+
+
+def _run_live_high_frequency_round() -> None:
+    """Run the five live protection modules with isolated DBs and live REST."""
+    break_even, partial, _reduction, dynamic, trailing = real_trading.high_frequency_modules()
+    modules = (
+        (feature_flags.REAL_BREAK_EVEN_TAKE_PROFIT, "live break-even", break_even.run_round),
+        (feature_flags.REAL_PARTIAL_TAKE_PROFIT, "live partial take-profit", partial.run_round),
+        (feature_flags.REAL_DYNAMIC_PROFIT_PROTECTION, "live dynamic profit protection", dynamic.run_round),
+        (feature_flags.REAL_TRAILING_STOP, "live trailing stop", trailing.run_round),
+    )
+    with db_config.sqlite_connection_scope(
+        db_config.REAL_TRADING_DB_PATH, row_factory=sqlite3.Row
+    ):
+        try:
+            real_trading.experiment().reconcile_missing_exit_orders()
+        except Exception as exc:
+            recover_after_worker_error(exc)
+            print(f"⚠️ live exit-order reconcile failed: {exc}")
+        for flag, label, runner in modules:
+            if not feature_flags.is_feature_enabled(flag):
+                print(f"⏸️ {label} skipped: feature flag disabled")
+                continue
+            try:
+                result = runner()
+                print(f"🟢 {label} result={result}")
+            except Exception as exc:
+                recover_after_worker_error(exc)
+                print(f"⚠️ {label} failed: {exc}")
 
 
 def start_pre_safety_task() -> None:
@@ -1416,6 +1459,14 @@ def start_atr_15m_task(symbols: List[str]) -> None:
         except Exception as exc:
             recover_after_worker_error(exc)
             print(f"⚠️ trailing reduction after ATR failed: {exc}")
+        if feature_flags.is_feature_enabled(feature_flags.REAL_TRAILING_REDUCTION):
+            try:
+                live_tracker = real_trading.high_frequency_modules()[2]
+                result = live_tracker.run_round(decision_round_ts=int(time.time() * 1000))
+                print(f"🧭 live trailing reduction after ATR result={result}")
+            except Exception as exc:
+                recover_after_worker_error(exc)
+                print(f"⚠️ live trailing reduction after ATR failed: {exc}")
 
     scheduler = collector.BlockingScheduler()
     scheduler.add_job(ensure_universe, "interval", hours=12)
@@ -1447,6 +1498,17 @@ def start_trailing_reduction_refresh_task() -> None:
         except Exception as exc:
             recover_after_worker_error(exc)
             print(f"⚠️ trailing reduction refresh failed: {exc}")
+        if feature_flags.is_feature_enabled(feature_flags.REAL_TRAILING_REDUCTION):
+            try:
+                live_tracker = real_trading.high_frequency_modules()[2]
+                with db_config.sqlite_connection_scope(
+                    db_config.REAL_TRADING_DB_PATH, row_factory=sqlite3.Row
+                ):
+                    result = live_tracker.refresh_pretriggered_symbols()
+                print(f"🧭 live trailing reduction refresh result={result}")
+            except Exception as exc:
+                recover_after_worker_error(exc)
+                print(f"⚠️ live trailing reduction refresh failed: {exc}")
 
     scheduler.add_job(_job, "cron", second=45)
     print("🚀 Trailing reduction pretrigger refresh task started")

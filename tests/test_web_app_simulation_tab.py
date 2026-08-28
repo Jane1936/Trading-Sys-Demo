@@ -53,7 +53,8 @@ def test_live_holding_score_tabs_target_separate_module_panels() -> None:
         assert f'id="{panel_id}" class="holding-module-panel' in live_section
 
     assert live_section.count('class="holding-module-panel active"') == 1
-    assert live_section.count('class="holding-module-panel"') == 3
+    assert live_section.count('class="holding-module-panel"') == 4
+    assert "live_high_frequency_modules" in live_section
 
 
 def test_live_holding_modules_render_full_operation_record_tables() -> None:

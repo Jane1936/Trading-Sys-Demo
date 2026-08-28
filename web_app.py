@@ -1493,6 +1493,23 @@ def abnormal_wicks():
     live_holding_stop_loss_records = load_module("实盘持仓结构止损记录", lambda: live_holding_scoring.recent_stop_loss_records(limit=100), [])
     live_holding_reduction_records = load_module("实盘持仓减仓记录", lambda: live_holding_scoring.recent_reduction_records(limit=100), [])
     live_holding_increase_records = load_module("实盘持仓加仓记录", lambda: live_holding_scoring.recent_increase_records(limit=100, since_ms=trading_records_since_ms), [])
+    live_break_even, live_partial, live_trailing_reduction, live_dynamic, live_trailing_stop = real_trading.high_frequency_modules()
+    live_high_frequency_modules = []
+    for label, module, records_loader in (
+        ("保本止盈", live_break_even, lambda m: m.recent_records(limit=100)),
+        ("分批止盈", live_partial, lambda m: m.recent_records(limit=100)),
+        ("移动追踪减仓", live_trailing_reduction, lambda m: m.recent_action_records(limit=100)),
+        ("动态利润保护", live_dynamic, lambda m: m.recent_action_records(limit=100)),
+        ("移动追踪止盈", live_trailing_stop, lambda m: m.recent_action_records(limit=100)),
+    ):
+        round_ts, checks = load_module(f"实盘{label}检查", module.get_latest_round_checks, (0, []))
+        records = load_module(f"实盘{label}记录", lambda m=module, loader=records_loader: loader(m), [])
+        live_high_frequency_modules.append({
+            "key": f"live-high-frequency-{len(live_high_frequency_modules)}",
+            "label": label, "round_ts": round_ts,
+            "checks": [asdict(row) if hasattr(row, "__dataclass_fields__") else dict(row) for row in checks],
+            "records": [asdict(row) if hasattr(row, "__dataclass_fields__") else dict(row) for row in records],
+        })
     holding_scoring = HoldingPositionScoringSystem(db_path=_trading_db_path())
     holding_stop_loss_round_ts, holding_stop_loss_checks = load_module("持仓结构止损检查", holding_scoring.get_latest_round_checks, (0, []))
     holding_portfolio_risk = load_module("持仓组合风险", holding_scoring.get_latest_portfolio_risk, None)
@@ -1626,6 +1643,7 @@ def abnormal_wicks():
         live_holding_stop_loss_records=live_holding_stop_loss_records,
         live_holding_reduction_records=live_holding_reduction_records,
         live_holding_increase_records=live_holding_increase_records,
+        live_high_frequency_modules=live_high_frequency_modules,
         holding_stop_loss_round_ts=holding_stop_loss_round_ts,
         holding_stop_loss_checks=holding_stop_loss_checks,
         holding_portfolio_risk=holding_portfolio_risk,

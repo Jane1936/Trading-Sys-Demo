@@ -16,6 +16,11 @@ REAL_STOP_LOSS_RULE = "real_stop_loss_rule"
 REAL_REDUCTION_CONDITIONS = "real_reduction_conditions"
 REAL_INCREASE_CONDITIONS = "real_increase_conditions"
 REAL_PORTFOLIO_RISK = "real_portfolio_risk"
+REAL_BREAK_EVEN_TAKE_PROFIT = "real_break_even_take_profit"
+REAL_PARTIAL_TAKE_PROFIT = "real_partial_take_profit"
+REAL_TRAILING_REDUCTION = "real_trailing_reduction"
+REAL_DYNAMIC_PROFIT_PROTECTION = "real_dynamic_profit_protection"
+REAL_TRAILING_STOP = "real_trailing_stop"
 MARKET_FILTER = "market_filter"
 TRAILING_STOP = "trailing_stop"
 STOP_LOSS_RULE = "stop_loss_rule"
@@ -87,6 +92,11 @@ FEATURE_FLAG_DEFINITIONS: tuple[FeatureFlagDefinition, ...] = (
     FeatureFlagDefinition(REAL_REDUCTION_CONDITIONS, "实盘减仓条件模块", "控制实盘持仓评分减仓条件判断及实盘减仓操作。"),
     FeatureFlagDefinition(REAL_INCREASE_CONDITIONS, "实盘加仓条件模块", "控制实盘持仓评分加仓条件判断及实盘加仓操作。"),
     FeatureFlagDefinition(REAL_PORTFOLIO_RISK, "实盘组合风险约束", "控制实盘持仓组合风险计算与约束数据更新。"),
+    FeatureFlagDefinition(REAL_BREAK_EVEN_TAKE_PROFIT, "实盘保本止盈策略", "控制实盘保本止盈的每分钟扫描及实盘平仓操作。"),
+    FeatureFlagDefinition(REAL_PARTIAL_TAKE_PROFIT, "实盘分批止盈规则", "控制实盘分批止盈的每分钟扫描及实盘减仓操作。"),
+    FeatureFlagDefinition(REAL_TRAILING_REDUCTION, "实盘移动追踪减仓", "控制实盘移动追踪减仓判断、刷新及实盘减仓操作。"),
+    FeatureFlagDefinition(REAL_DYNAMIC_PROFIT_PROTECTION, "实盘动态利润保护模块", "控制实盘动态利润保护的每分钟扫描及实盘平仓操作。"),
+    FeatureFlagDefinition(REAL_TRAILING_STOP, "实盘移动追踪止盈规则", "控制实盘移动追踪止盈的每分钟扫描及实盘平仓操作。"),
     FeatureFlagDefinition(BREAK_EVEN_TAKE_PROFIT, "模拟盘保本止盈策略", "控制保本止盈的每分钟扫描及平仓操作。"),
     FeatureFlagDefinition(PARTIAL_TAKE_PROFIT, "模拟盘分批止盈规则", "控制分批止盈的每分钟扫描及减仓操作。"),
     FeatureFlagDefinition(TRAILING_REDUCTION, "模拟盘移动追踪减仓", "控制移动追踪减仓判断、刷新及减仓操作。"),
@@ -174,6 +184,11 @@ def init_feature_flags(db_path: str | None = None) -> None:
                             REAL_REDUCTION_CONDITIONS,
                             REAL_INCREASE_CONDITIONS,
                             REAL_PORTFOLIO_RISK,
+                            REAL_BREAK_EVEN_TAKE_PROFIT,
+                            REAL_PARTIAL_TAKE_PROFIT,
+                            REAL_TRAILING_REDUCTION,
+                            REAL_DYNAMIC_PROFIT_PROTECTION,
+                            REAL_TRAILING_STOP,
                         } else 1,
                         now_ms,
                     ),
@@ -199,7 +214,12 @@ def list_feature_flags(db_path: str | None = None) -> list[FeatureFlag]:
                 WHEN 'real_increase_conditions' THEN 12 WHEN 'real_portfolio_risk' THEN 13
                 WHEN 'break_even_take_profit' THEN 14 WHEN 'partial_take_profit' THEN 15
                 WHEN 'trailing_reduction' THEN 16 WHEN 'trailing_stop' THEN 17
-                WHEN 'dynamic_profit_protection' THEN 18 ELSE 99 END, key
+                WHEN 'dynamic_profit_protection' THEN 18
+                WHEN 'real_break_even_take_profit' THEN 19
+                WHEN 'real_partial_take_profit' THEN 20
+                WHEN 'real_trailing_reduction' THEN 21
+                WHEN 'real_trailing_stop' THEN 22
+                WHEN 'real_dynamic_profit_protection' THEN 23 ELSE 99 END, key
             """,
         ).fetchall()
     return [
@@ -250,6 +270,11 @@ def is_feature_enabled(key: str, db_path: str | None = None) -> bool:
             REAL_REDUCTION_CONDITIONS,
             REAL_INCREASE_CONDITIONS,
             REAL_PORTFOLIO_RISK,
+            REAL_BREAK_EVEN_TAKE_PROFIT,
+            REAL_PARTIAL_TAKE_PROFIT,
+            REAL_TRAILING_REDUCTION,
+            REAL_DYNAMIC_PROFIT_PROTECTION,
+            REAL_TRAILING_STOP,
         }
         fallback = "disabled" if fail_closed else "enabled"
         print(f"⚠️ feature flag lookup failed key={key}: {exc}; defaulting to {fallback}")

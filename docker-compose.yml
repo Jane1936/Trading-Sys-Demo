@@ -7,6 +7,8 @@ x-app-env: &app-env
   TRADING_CORE_DB_PATH: "${TRADING_CORE_DB_PATH:-data/trading_core.db}"
   TRADING_INFO_DB_PATH: "${TRADING_INFO_DB_PATH:-data/trading_info.db}"
   REAL_TRADING_CORE_DB_PATH: "${REAL_TRADING_CORE_DB_PATH:-data/real_trading_core.db}"
+  REAL_TRADING_DB_PATH: "${REAL_TRADING_DB_PATH:-data/real_trading.db}"
+  REAL_TRADING_INFO_DB_PATH: "${REAL_TRADING_INFO_DB_PATH:-data/real_trading_info.db}"
   MARKET_DB_PATH: "${MARKET_DB_PATH:-data/market.db}"
   SQLITE_RECOVERY_LOG_DIR: "${SQLITE_RECOVERY_LOG_DIR:-logs/sqlite-recovery}"
   # Never let delayed market aggregation block minute-level position protection indefinitely.

@@ -93,3 +93,25 @@ def test_custom_database_keeps_single_file_compatibility(tmp_path):
 
     BreakEvenTakeProfitStrategy(db_path=custom_db).init_tables()
     assert "break_even_stop_loss_records" in _table_names(custom_db)
+
+
+def test_live_high_frequency_tables_use_dedicated_real_databases(tmp_path, monkeypatch):
+    live_db = str(tmp_path / "real_trading.db")
+    live_core = str(tmp_path / "real_trading_core.db")
+    live_info = str(tmp_path / "real_trading_info.db")
+    monkeypatch.setattr(db_config, "REAL_TRADING_DB_PATH", live_db)
+    monkeypatch.setattr(db_config, "REAL_TRADING_CORE_DB_PATH", live_core)
+    monkeypatch.setattr(db_config, "REAL_TRADING_INFO_DB_PATH", live_info)
+
+    BreakEvenTakeProfitStrategy(db_path=live_db).init_tables()
+    PartialTakeProfitStrategy(db_path=live_db).init_tables()
+    TrailingReductionTracker(db_path=live_db).init_tables()
+    DynamicProfitProtection(db_path=live_db).init_tables()
+    TrailingStopTracker(db_path=live_db).init_tables()
+
+    assert db_config.trading_core_path(live_db) == live_core
+    assert db_config.trading_info_path(live_db) == live_info
+    live_info_tables = INFO_TABLES - {"holding_position_increase_records"}
+    assert live_info_tables <= _table_names(live_info)
+    assert live_info_tables.isdisjoint(_table_names(live_db))
+    assert TrailingReductionTracker.CHECKS_TABLE in _table_names(live_db)
