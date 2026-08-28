@@ -95,6 +95,8 @@
     .feature-flag-status.disabled { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
     .primary-feature-row { background:linear-gradient(90deg,#fef3c7,#fffbeb); box-shadow:inset 4px 0 #f59e0b; }
     .primary-feature-row td:first-child strong { color:#92400e; font-size:15px; }
+    .live-secondary-feature-row { background:linear-gradient(90deg,#e0f2fe,#f0f9ff); box-shadow:inset 4px 0 #38bdf8; }
+    .live-secondary-feature-row td:first-child strong { color:#075985; }
     .feature-flag-message { padding:0 20px 14px; color:#4b5563; font-size:13px; }
     .feature-flag-message.error { color:#991b1b; }
     .feature-config-purple { border-color:#c4b5fd; box-shadow:0 8px 24px rgba(124, 58, 237, 0.12); }
@@ -2692,7 +2694,7 @@
           </thead>
           <tbody id="feature-flag-rows">
             {% for flag in feature_flags %}
-            <tr data-feature-key="{{ flag.key }}" class="{{ 'primary-feature-row' if flag.key in ['base_data_collection','scoring_system','trading_system','real_trading_system','market_filter'] else '' }}">
+            <tr data-feature-key="{{ flag.key }}" class="{% if flag.key in ['base_data_collection','scoring_system','trading_system','real_trading_system','market_filter'] %}primary-feature-row{% elif flag.name.startswith('实盘') %}live-secondary-feature-row{% endif %}">
               <td><strong>{{ flag.name }}</strong></td>
               <td>
                 <span class="feature-flag-status {{ 'enabled' if flag.enabled else 'disabled' }}">
