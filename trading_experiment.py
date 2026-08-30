@@ -104,9 +104,8 @@ class TradingExperiment:
 
     Rules implemented:
     * experiment equity matches the web page "experiment USDT equity" metric;
-    * open-position count is not capped; new entries are allowed as long as
-      available balance can cover the order while preserving the configured
-      uninvested USDT floor, and the experiment margin budget can cover the order;
+    * a configurable maximum concurrent-position count is checked against fresh
+      Binance positions before every new entry;
     * the experiment's total margin budget floats with current experiment USDT equity;
     * before each new entry, query the latest experiment USDT equity from Binance;
     * each candidate's base margin is sized from 1% equity risk, stop-loss distance,
@@ -129,6 +128,7 @@ class TradingExperiment:
         account_manager: BinanceAccountManager | None = None,
         config: ExperimentConfig | None = None,
         openable_db_path: str | None = None,
+        max_open_positions: int | None = None,
     ) -> None:
         self.db_path = db_path
         self.core_db_path = db_config.trading_core_path(db_path)
@@ -138,6 +138,7 @@ class TradingExperiment:
         # db_path, while a live experiment explicitly reads candidates from the
         # scoring database so it never creates/copies simulation tables in its DB.
         self.openable_db_path = openable_db_path or db_path
+        self.max_open_positions = max_open_positions
 
     def _connect(self) -> sqlite3.Connection:
         conn = db_config.connect_sqlite(self.core_db_path, row_factory=sqlite3.Row)
@@ -276,6 +277,17 @@ class TradingExperiment:
             if self._candidate_allows_open(candidate)
         ]
         for candidate in sorted(eligible_candidates, key=lambda row: (-row.total_score, row.symbol)):
+            # Refresh immediately before every candidate so concurrent/manual
+            # entries and positions opened earlier in this round count toward
+            # the configured cap.
+            positions = self._fetch_and_store_positions()
+            if (
+                self.max_open_positions is not None
+                and self._open_position_count(positions) >= self.max_open_positions
+            ):
+                self._record_skip(candidate, account_equity, max_loss, "max_open_positions_reached")
+                skipped += 1
+                break
             trading_symbol = self._binance_symbol(candidate.symbol)
             if self._has_open_position(trading_symbol, positions):
                 self._record_skip(candidate, account_equity, max_loss, "symbol_position_already_open")
@@ -350,6 +362,14 @@ class TradingExperiment:
 
         self._fetch_and_store_positions()
         return {"opened": opened, "skipped": skipped, "reason": "completed"}
+
+    def _open_position_count(self, positions: Iterable[dict[str, Any]]) -> int:
+        """Count active Binance position rows (zero-sized rows are not holdings)."""
+        return sum(
+            1
+            for row in positions
+            if self._decimal_from(row.get("positionAmt"), Decimal("0")) != 0
+        )
 
     def recent_trade_records(self, limit: int = 100, since_ms: int | None = None) -> list[ExperimentTradeRecord]:
         since_clause = "AND created_at >= ?" if since_ms is not None else ""

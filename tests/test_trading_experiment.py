@@ -332,6 +332,33 @@ class HighRiskAccountManager(FakeAccountManager):
         return super()._signed_get(endpoint, params)
 
 class TradingExperimentSymbolTests(unittest.TestCase):
+    def test_run_round_blocks_entry_when_maximum_position_count_is_reached(self):
+        fake_account = HighRiskAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment = TradingExperiment(
+                db_path=str(Path(tmpdir) / "klines.db"),
+                account_manager=fake_account,
+                max_open_positions=1,
+            )
+            candidate = OpenableSymbol(
+                symbol="BANK", decision_round_ts=1, total_score=90,
+                score_band="确定性强趋势单", stop_loss_distance_ratio=0.01,
+                distance_threshold=0.08, stop_loss_distance_tier="A档",
+                opening_leverage="4x", distance_qualified=True, qualified=True,
+                reason="test", evaluated_at=1,
+            )
+            experiment.init_tables()
+
+            result = experiment.run_round([candidate])
+            with sqlite3.connect(experiment.db_path) as conn:
+                reason = conn.execute(
+                    f"SELECT reason FROM {TradingExperiment.TRADES_TABLE} ORDER BY id DESC"
+                ).fetchone()[0]
+
+        self.assertEqual(result, {"opened": 0, "skipped": 1, "reason": "completed"})
+        self.assertEqual(reason, "max_open_positions_reached")
+        self.assertEqual(fake_account.signed_posts, [])
+
     def test_run_round_does_not_reinitialize_tables(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             experiment = TradingExperiment(

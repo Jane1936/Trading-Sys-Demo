@@ -20,6 +20,7 @@ from partial_take_profit import PartialTakeProfitStrategy
 from trailing_reduction_tracker import TrailingReductionTracker
 from dynamic_profit_protection import DynamicProfitProtection
 from trailing_stop_tracker import TrailingStopTracker
+from position_limit_settings import get_settings as get_position_limit_settings
 
 
 def config() -> ExperimentConfig:
@@ -38,6 +39,7 @@ def experiment() -> TradingExperiment:
         openable_db_path=db_config.SCORING_DB_PATH,
         account_manager=BinanceAccountManager.live(),
         config=config(),
+        max_open_positions=get_position_limit_settings()["live_max_open_positions"],
     )
 
 
