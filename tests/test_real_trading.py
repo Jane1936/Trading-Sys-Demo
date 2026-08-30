@@ -26,7 +26,7 @@ def test_real_experiment_isolated_from_simulation_database(tmp_path, monkeypatch
     assert not simulation_db.exists()
 
 
-def test_real_config_uses_100u_without_simulation_reserve(monkeypatch):
+def test_real_config_uses_100u_without_simulation_reserve_and_10u_take_profit(monkeypatch):
     monkeypatch.delenv("REAL_TRADING_INITIAL_EQUITY_USDT", raising=False)
 
     value = real_trading.config()
@@ -34,6 +34,7 @@ def test_real_config_uses_100u_without_simulation_reserve(monkeypatch):
     assert value.initial_equity_usdt == Decimal("100")
     assert value.total_margin_budget_usdt == Decimal("100")
     assert value.experiment_uninvested_usdt == Decimal("0")
+    assert value.hard_take_profit_usdt == Decimal("10")
 
 
 def test_real_holding_scoring_uses_live_api_and_real_database(tmp_path, monkeypatch):

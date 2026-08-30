@@ -28,6 +28,7 @@ def config() -> ExperimentConfig:
         initial_equity_usdt=initial,
         experiment_uninvested_usdt=Decimal("0"),
         total_margin_budget_usdt=initial,
+        hard_take_profit_usdt=Decimal("10"),
     )
 
 
