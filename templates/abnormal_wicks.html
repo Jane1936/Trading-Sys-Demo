@@ -2730,6 +2730,20 @@
       </div>
     </div>
     <div class="card feature-config-yellow">
+      <div class="header"><h2>最大同时持仓仓位个数</h2></div>
+      <div class="tip">每个 symbol 新开仓前都会重新查询当前已持仓仓位个数；仅当已持仓个数小于对应配置值时才允许开仓。模拟盘与实盘配置相互独立。</div>
+      <div id="position-limit-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
+      <form id="position-limit-settings-form" class="score-weight-actions">
+        <label>模拟盘最大允许同时持仓仓位个数
+          <input id="simulation-max-open-positions" type="number" min="1" max="1000" step="1" required value="{{ position_limit_settings.simulation_max_open_positions }}">
+        </label>
+        <label>实盘最大允许同时持仓仓位个数
+          <input id="live-max-open-positions" type="number" min="1" max="1000" step="1" required value="{{ position_limit_settings.live_max_open_positions }}">
+        </label>
+        <button class="btn btn-success" type="submit">保存最大持仓配置</button>
+      </form>
+    </div>
+    <div class="card feature-config-yellow">
       <div class="header"><h2>减仓模块配置</h2></div>
       <div class="tip">规则二与规则五可独立启停，并可分别设置触发后卖出当前仓位的比例。保存后从减仓条件模块下一轮判断开始生效。</div>
       <div id="reduction-module-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
@@ -2969,6 +2983,35 @@
           message.textContent = `配置已保存：统计最近 ${result.window_hours} 小时；最高分 ≥ ${result.unrestricted_score} 放开限制，${result.restricted_score_floor}–${result.unrestricted_score - 1} 分时要求本轮总分 ≥ ${result.min_open_total_score}。`;
         } catch (err) {
           message.textContent = `动态开仓门槛配置保存失败：${err.message || err}`;
+          message.classList.add('error');
+        } finally { button.disabled = false; }
+      });
+    })();
+
+    (function initPositionLimitSettingsForm() {
+      const form = document.getElementById('position-limit-settings-form');
+      const message = document.getElementById('position-limit-settings-message');
+      if (!form || !message) return;
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        const button = form.querySelector('button[type="submit"]');
+        const payload = {
+          simulation_max_open_positions: Number(document.getElementById('simulation-max-open-positions').value),
+          live_max_open_positions: Number(document.getElementById('live-max-open-positions').value),
+        };
+        button.disabled = true;
+        message.textContent = '正在保存最大持仓配置...';
+        message.classList.remove('error');
+        try {
+          const response = await fetch('/api/position-limit-settings', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+          message.textContent = `配置已保存：模拟盘最多 ${result.simulation_max_open_positions} 个仓位，实盘最多 ${result.live_max_open_positions} 个仓位。`;
+        } catch (err) {
+          message.textContent = `最大持仓配置保存失败：${err.message || err}`;
           message.classList.add('error');
         } finally { button.disabled = false; }
       });

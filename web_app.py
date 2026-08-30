@@ -55,6 +55,10 @@ from reduction_module_settings import (
     get_settings as get_reduction_module_settings,
     set_settings as set_reduction_module_settings,
 )
+from position_limit_settings import (
+    get_settings as get_position_limit_settings,
+    set_settings as set_position_limit_settings,
+)
 from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import (
     DynamicOpenThresholdModule,
@@ -1233,6 +1237,22 @@ def update_feature_flag_api(key: str):
     return jsonify({"flag": feature_flags.flags_to_dict([flag])[0]})
 
 
+@app.get("/api/position-limit-settings")
+def position_limit_settings_api():
+    return jsonify(get_position_limit_settings(CONFIG_DB_PATH))
+
+
+@app.put("/api/position-limit-settings")
+def update_position_limit_settings_api():
+    try:
+        settings = set_position_limit_settings(
+            request.get_json(silent=True) or {}, CONFIG_DB_PATH
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(settings)
+
+
 @app.get("/api/dynamic-open-threshold-settings")
 def dynamic_open_threshold_settings_api():
     return jsonify(get_dynamic_open_threshold_settings(CONFIG_DB_PATH))
@@ -1699,6 +1719,7 @@ def abnormal_wicks():
         should_load_abnormal_events=should_load_abnormal_events,
         btc_total_pages=btc_total_pages,
         feature_flags=feature_flags.list_feature_flags(CONFIG_DB_PATH),
+        position_limit_settings=get_position_limit_settings(CONFIG_DB_PATH),
         market_filter_settings=get_market_filter_settings(CONFIG_DB_PATH),
         dynamic_open_threshold_settings=get_dynamic_open_threshold_settings(CONFIG_DB_PATH),
         scoring_rule_weight_settings=get_rule_score_weight_settings(CONFIG_DB_PATH),

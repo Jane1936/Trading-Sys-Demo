@@ -20,6 +20,7 @@ import collector
 import db_config
 from config_database import initialize_config_database
 import feature_flags
+from position_limit_settings import get_settings as get_position_limit_settings
 from data_processor import (
     MA20Processor,
     MA20Scheduler,
@@ -536,9 +537,12 @@ def run_first_experiment_after_openable_round(
         if not feature_flags.is_feature_enabled(feature_flags.TRADING_SYSTEM):
             print(f"⏸️ trading system disabled round={round_ts}; skipping new positions")
             return
-        experiment_result = TradingExperiment(db_path=db_config.TRADING_DB_PATH).run_round(
-            openable_rows
-        )
+        position_limits = get_position_limit_settings()
+        simulation_experiment = TradingExperiment(db_path=db_config.TRADING_DB_PATH)
+        simulation_experiment.max_open_positions = position_limits[
+            "simulation_max_open_positions"
+        ]
+        experiment_result = simulation_experiment.run_round(openable_rows)
         print(
             f"🧪 first trading experiment after openable round={round_ts} "
             f"opened={experiment_result.get('opened', 0)} "
