@@ -465,11 +465,16 @@ def _filled_order_exit_reason_matches(
                 break
 
     if side == "BUY":
-        if _table_exists(conn, HoldingPositionScoringSystem.INCREASE_RECORDS_TABLE):
+        if _table_exists(
+            conn, HoldingPositionScoringSystem.INCREASE_RECORDS_TABLE, schema=core_schema
+        ):
+            increase_table = _qualified_table(
+                core_schema, HoldingPositionScoringSystem.INCREASE_RECORDS_TABLE
+            )
             rows = conn.execute(
                 f"""
                 SELECT created_at AS matched_at, increased_quantity
-                FROM {HoldingPositionScoringSystem.INCREASE_RECORDS_TABLE}
+                FROM {increase_table}
                 WHERE symbol = ?
                   AND status = 'submitted'
                   AND created_at BETWEEN ? AND ?
@@ -727,12 +732,15 @@ def _score_band_label(total_score: int | None) -> str:
     return band.label if band is not None else "未命中开仓档位"
 
 
-def _annotate_filled_order_exit_reasons(payload: dict) -> dict:
+def _annotate_filled_order_exit_reasons(
+    payload: dict, *, trading_db_path: str | None = None
+) -> dict:
+    """Annotate fills from the strategy databases belonging to their account."""
     orders = payload.get("orders")
     if not isinstance(orders, list) or not orders:
         return payload
     try:
-        trading_db_path = _trading_db_path()
+        trading_db_path = trading_db_path or _trading_db_path()
         core_db_path = db_config.trading_core_path(trading_db_path)
         info_db_path = db_config.trading_info_path(trading_db_path)
         with db_config.connect_sqlite(trading_db_path) as conn:
@@ -876,7 +884,11 @@ def live_account_filled_orders_api():
             payload = manager.futures_filled_orders(start_time=start_time, end_time=end_time, limit=limit)
         else:
             payload = manager.futures_recent_filled_orders(days=days, limit=limit)
-        return jsonify(_annotate_filled_order_exit_reasons(payload))
+        return jsonify(
+            _annotate_filled_order_exit_reasons(
+                payload, trading_db_path=db_config.REAL_TRADING_DB_PATH
+            )
+        )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except BinanceAccountConfigError as exc:

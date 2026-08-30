@@ -23,6 +23,14 @@ def test_live_balance_route_uses_live_manager(monkeypatch):
 
 def test_live_filled_orders_route_supports_days_and_explicit_range(monkeypatch):
     monkeypatch.setattr(web_app.BinanceAccountManager, "live", lambda: FakeLiveManager())
+    annotation_paths = []
+    original_annotate = web_app._annotate_filled_order_exit_reasons
+
+    def capture_annotation_path(payload, *, trading_db_path=None):
+        annotation_paths.append(trading_db_path)
+        return original_annotate(payload, trading_db_path=trading_db_path)
+
+    monkeypatch.setattr(web_app, "_annotate_filled_order_exit_reasons", capture_annotation_path)
     client = web_app.app.test_client()
 
     recent = client.get("/api/live/account/filled-orders?days=15")
@@ -33,3 +41,7 @@ def test_live_filled_orders_route_supports_days_and_explicit_range(monkeypatch):
     assert explicit.status_code == 200
     assert explicit.get_json()["start_time"] == 1000
     assert explicit.get_json()["end_time"] == 2000
+    assert annotation_paths == [
+        web_app.db_config.REAL_TRADING_DB_PATH,
+        web_app.db_config.REAL_TRADING_DB_PATH,
+    ]
