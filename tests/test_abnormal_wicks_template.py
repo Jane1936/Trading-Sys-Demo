@@ -448,8 +448,66 @@ def test_trading_trade_records_highlight_current_round_new_open_symbols():
     highlight_index = template.index('class="new-open-symbol-badge" title="本轮新开仓"')
 
     assert trade_records_index < highlight_index
+
+
+def test_live_trade_records_match_simulation_detail_and_collapsible_ui():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    start = template.index("<strong>交易实验交易记录（实盘）</strong>")
+    end = template.index("<strong>交易实验持仓快照（实盘）</strong>")
+    section = template[start:end]
+
+    assert "collapsible-toggle" in section
+    assert "collapsed-extra" in section
+    assert "live_new_open_symbols" in section
+    for field in (
+        "allocated_notional_usdt",
+        "account_equity_usdt",
+        "max_loss_usdt",
+        "take_profit_price",
+        "stop_loss_price",
+        "stop_loss_calculation",
+        "take_profit_order_id",
+        "stop_loss_order_id",
+    ):
+        assert field in section
+
+
+def test_live_position_snapshots_match_simulation_critical_ui_and_fields():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    marker = 'aria-label="关键实盘交易实验持仓快照"'
+    start = template.rindex('<div class="critical-section"', 0, template.index(marker) + 1)
+    end = template.index("<strong>交易实验错误信息记录（实盘）</strong>")
+    section = template[start:end]
+
+    assert "critical-section" in section
+    assert "live_used_margin_usdt" in section
+    assert "live_open_increase_blocked" in section
+    assert "holding-hours-badge" in section
+    for field in ("opened_at", "notional", "liquidation_price"):
+        assert field in section
     assert "trading_new_open_symbols" in template
     assert "本轮新开仓 symbol 会用红色徽标高亮" in template
+
+
+def test_live_filled_orders_use_group_tags_linked_highlights_and_simulation_columns():
+    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    start = template.index('<div id="live-filled-orders"')
+    end = template.index('<div id="live-account"', start)
+    section = template[start:end]
+
+    assert 'id="live-filled-score-band"' in section
+    assert "symbol / 组号" in section
+    assert "评分规则{{ rule_id }}" in section
+    assert 'colspan="33"' in section
+    assert "点击任意订单行，可高亮同一组的全部买卖订单" in section
+
+    script_start = template.index("let latestLiveFilledPayload = null;")
+    script = template[script_start:]
+    assert "buildFilledOrderAnalysis(orders)" in script
+    assert 'class="filled-order-group-badge"' in script
+    assert 'data-group-ids="${escapeHtml(groupIds.join(\',\'))}"' in script
+    assert "bindFilledOrderHighlights(rowsEl)" in script
+    assert "orderMatchesScoreBandFilter(row, scoreBandFilter)" in script
 
 
 def test_dynamic_profit_protection_has_scoped_refresh_button():

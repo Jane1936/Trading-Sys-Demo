@@ -3107,16 +3107,17 @@
         {% endfor %}
       </div>
       <div id="live-filled-orders" class="live-subpanel active" role="tabpanel">
-        <div class="symbol-strip"><div><strong>已成交订单分析（实盘）</strong></div><div class="muted">数据实时来自 Binance USDⓈ-M Futures 实盘 <code>userTrades</code> 接口，不会使用 Demo/Testnet 密钥。</div></div>
-        <div class="filled-orders-query-tools">
-          <div class="filled-orders-query-row"><label class="control-label" for="live-filled-days">查询范围</label><select id="live-filled-days" class="select-control"><option value="1">近1天</option><option value="3">近3天</option><option value="7" selected>近7天</option><option value="15">近15天</option><option value="30">近30天</option></select><button id="live-query-filled" class="btn btn-primary" type="button">查询近7天已成交订单</button></div>
-          <div class="filled-orders-query-row"><label class="control-label" for="live-filled-start">开始时间</label><input id="live-filled-start" class="select-control" type="datetime-local" step="3600"><label class="control-label" for="live-filled-end">截止时间</label><input id="live-filled-end" class="select-control" type="datetime-local" step="3600"><button id="live-query-filled-range" class="btn btn-primary" type="button">按起止时间查询</button></div>
+        <div class="symbol-strip"><div><strong>已成交订单分析（实盘）</strong></div><div class="muted">数据实时来自 Binance USDⓈ-M Futures 实盘 <code>userTrades</code> 接口；同一 symbol、同一 order_id、同一方向的多笔成交会合并展示。点击任意订单行，可高亮同一组的全部买卖订单。</div></div>
+        <div class="filled-orders-query-tools" aria-label="实盘已成交订单查询条件">
+          <div class="filled-orders-query-row"><span class="filled-orders-query-label">按最近天数</span><label class="control-label" for="live-filled-days">查询范围</label><select id="live-filled-days" class="select-control" aria-label="实盘已成交订单查询天数">{% for day in range(1, 31) %}<option value="{{ day }}"{% if day == 7 %} selected{% endif %}>近{{ day }}天</option>{% endfor %}</select><button id="live-query-filled" class="btn btn-primary" type="button">查询近7天已成交订单</button></div>
+          <div class="filled-orders-query-row"><span class="filled-orders-query-label">按起止时间</span><label class="control-label" for="live-filled-start">开始时间</label><input id="live-filled-start" class="select-control" type="datetime-local" step="3600" aria-label="实盘已成交订单开始时间"><label class="control-label" for="live-filled-end">截止时间</label><input id="live-filled-end" class="select-control" type="datetime-local" step="3600" aria-label="实盘已成交订单截止时间"><button id="live-query-filled-range" class="btn btn-primary" type="button">按起止时间查询</button></div>
           <div class="filled-orders-query-row"><button id="live-export-filled" class="btn btn-primary" type="button" disabled>导出 Excel 到本地</button><span id="live-filled-status" class="muted">尚未查询</span></div>
         </div>
+        <div class="filled-orders-filter-row"><label class="control-label" for="live-filled-score-band">通用筛选器：开仓评分档位</label><select id="live-filled-score-band" class="select-control" aria-label="实盘已成交订单开仓评分档位"><option value="all" selected>全部档位</option>{% for band in score_band_configs %}<option value="{{ band.lower }}-{{ band.upper }}">{{ band.label }}（{{ band.lower }}-{{ band.upper }}分）</option>{% endfor %}<option value="unknown">无匹配开仓评分</option></select></div>
         <div id="live-filled-error" class="account-error"></div>
         <div class="tip"><strong>止盈/止损原因显示规则：</strong>与模拟盘一致，但只匹配实盘策略数据库。SELL 成交优先按 order_id（强平记录）或 symbol、成交时间（±5分钟）和成交数量匹配实盘策略记录；优先级依次为：减仓失败强平、僵尸强平、结构止损、减仓、移动追踪减仓、动态利润保护、移动追踪止盈、分批止盈。未匹配时，realized_pnl &gt; 0 显示“硬止盈”，否则显示“硬止损”。BUY 成交匹配减仓失败强平或加仓记录，未命中则不显示原因。</div>
         <div id="live-filled-summary" class="filled-orders-summary"><div class="account-metric"><div class="account-metric-label">已完成订单数量</div><div id="live-completed-count" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">已完成订单总盈利</div><div id="live-total-profit" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">盈利订单总数</div><div id="live-profit-count" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">胜率</div><div id="live-win-rate" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">总亏损</div><div id="live-total-loss" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">亏损订单总数</div><div id="live-loss-count" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">平均盈利</div><div id="live-average-profit" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">平均亏损</div><div id="live-average-loss" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">盈亏比</div><div id="live-profit-loss-ratio" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">期望</div><div id="live-expectancy" class="account-metric-value">-</div></div></div>
-        <div class="table-wrap filled-orders-wrap"><table><thead><tr><th>成交时间</th><th>symbol</th><th>开仓评分档位</th><th>开仓杠杆大小</th><th>开仓总分</th><th>止盈/止损原因</th><th>方向</th><th>order_id</th><th>成交价格</th><th>成交数量</th><th>成交额</th><th>已实现盈亏</th><th>手续费</th><th>maker</th><th>trade_id</th></tr></thead><tbody id="live-filled-rows"><tr><td class="empty" colspan="15">点击查询按钮后显示实盘数据</td></tr></tbody></table></div>
+        <div class="table-wrap filled-orders-wrap"><table><thead><tr><th>成交时间</th><th>symbol / 组号</th><th>开仓评分档位</th><th>开仓杠杆大小</th><th>开仓总分</th><th>止盈/止损原因</th><th>方向</th><th>order_id</th><th>成交价格</th><th>成交数量</th><th>成交额</th><th>已实现盈亏</th><th>手续费</th>{% for rule_id in range(1, 19) %}<th>评分规则{{ rule_id }}</th>{% endfor %}<th>maker</th><th>trade_id</th></tr></thead><tbody id="live-filled-rows"><tr><td class="empty" colspan="33">点击查询按钮后显示实盘数据</td></tr></tbody></table></div>
       </div>
       <div id="live-account" class="live-subpanel" role="tabpanel">
         <div class="symbol-strip"><div><strong>账户情况（实盘）</strong></div><div class="muted">通过生产 REST API 实时查询 Binance USDⓈ-M Futures 账户余额：<code>https://fapi.binance.com</code>。</div></div>
@@ -3134,10 +3135,15 @@
         </div>
         <div class="symbol-strip"><div><strong>僵尸单强平操作记录（实盘）</strong></div></div>
         <div class="table-wrap"><table><thead><tr><th>时间</th><th>symbol</th><th>方向</th><th>数量</th><th>入场价</th><th>状态</th><th>order_id</th><th>原因</th></tr></thead><tbody>{% for row in live_zombie_records %}<tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.side }}</td><td>{{ row.quantity }}</td><td>{{ row.entry_price }}</td><td>{{ row.status }}</td><td>{{ row.order_id or '-' }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="8">暂无最近7天实盘僵尸单强平操作记录</td></tr>{% endfor %}</tbody></table></div>
-        <div class="symbol-strip"><div><strong>交易实验交易记录（实盘）</strong></div></div>
-        <div class="table-wrap"><table><thead><tr><th>时间</th><th>symbol</th><th>状态</th><th>总分</th><th>杠杆</th><th>保证金</th><th>入场价</th><th>数量</th><th>原因</th></tr></thead><tbody>{% for row in live_trade_records %}<tr><td>{{ row.created_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.status }}</td><td>{{ row.total_score }}</td><td>{{ row.leverage }}</td><td>{{ row.required_margin_usdt }}</td><td>{{ row.entry_price }}</td><td>{{ row.quantity }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="9">暂无最近7天实盘交易实验记录</td></tr>{% endfor %}</tbody></table></div>
-        <div class="symbol-strip"><div><strong>交易实验持仓快照（实盘）</strong></div></div>
-        <div class="table-wrap"><table><thead><tr><th>更新时间</th><th>symbol</th><th>持仓量</th><th>入场价</th><th>标记价</th><th>未实现盈亏</th><th>杠杆</th><th>持仓小时</th></tr></thead><tbody>{% for row in live_position_snapshots %}<tr><td>{{ row.updated_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.position_amt }}</td><td>{{ row.entry_price }}</td><td>{{ row.mark_price }}</td><td>{{ row.unrealized_pnl }}</td><td>{{ row.leverage }}</td><td>{{ row.holding_hours }}</td></tr>{% else %}<tr><td class="empty" colspan="8">暂无实盘交易实验持仓快照</td></tr>{% endfor %}</tbody></table></div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header"><div><div><strong>交易实验交易记录（实盘）</strong></div><div class="muted">只显示最近7天已开仓记录及实盘止盈/止损挂单信息；本轮新开仓 symbol 会用红色徽标高亮。</div></div><button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button></div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+          <div class="table-wrap"><table><thead><tr><th>created_at</th><th>symbol</th><th>轮次</th><th>side</th><th>status</th><th>total_score</th><th>leverage</th><th>allocated_notional_usdt</th><th>required_margin_usdt</th><th>account_equity</th><th>max_loss</th><th>entry_price</th><th>quantity</th><th>notional</th><th>take_profit_price</th><th>stop_loss_price</th><th>stop_loss_calculation</th><th>tp_order_id</th><th>sl_order_id</th><th>reason</th></tr></thead><tbody>{% for row in live_trade_records %}<tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}"><td>{{ row.created_at|fmt_ms_datetime }}</td><td>{% if row.symbol in live_new_open_symbols %}<span class="new-open-symbol-badge" title="本轮新开仓">{{ row.symbol }}</span>{% else %}{{ row.symbol }}{% endif %}</td><td>{{ row.decision_round_ts|fmt_ms_datetime if row.decision_round_ts else '-' }}</td><td>{{ row.side }}</td><td><span class="status-badge {{ 'status-pass' if row.status == 'opened' else 'status-fail' }}">{{ row.status }}</span></td><td>{{ row.total_score if row.total_score is not none else '-' }}</td><td>{{ row.leverage if row.leverage is not none else '-' }}</td><td>{{ row.allocated_notional_usdt }}</td><td>{{ row.required_margin_usdt }}</td><td>{{ row.account_equity_usdt }}</td><td>{{ row.max_loss_usdt }}</td><td>{{ row.entry_price }}</td><td>{{ row.quantity }}</td><td>{{ row.notional_usdt }}</td><td>{{ row.take_profit_price }}</td><td>{{ row.stop_loss_price }}</td><td class="mono-cell">{{ row.stop_loss_calculation or '-' }}</td><td>{{ row.take_profit_order_id or '-' }}</td><td>{{ row.stop_loss_order_id or '-' }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="20">暂无最近7天实盘交易实验记录</td></tr>{% endfor %}</tbody></table></div>
+        </div>
+        <div class="critical-section" aria-label="关键实盘交易实验持仓快照">
+          <div class="symbol-strip"><div><strong>交易实验持仓快照（实盘）</strong></div><div class="muted">展示最近一次由实盘交易实验模块写入的 Futures 持仓快照。</div><div class="chips"><span class="chip">已用资金：{{ live_used_margin_usdt }} USDT</span>{% if live_open_increase_blocked %}<span class="chip danger">禁止任何新开仓/加仓</span>{% endif %}</div></div>
+          <div class="table-wrap"><table><thead><tr><th>symbol</th><th>position_amt</th><th>entry_price</th><th>持仓时长(小时)</th><th>开仓时间</th><th>mark_price</th><th>unrealized_pnl</th><th>leverage</th><th>notional</th><th>liquidation_price</th><th>updated_at</th></tr></thead><tbody>{% for row in live_position_snapshots %}<tr><td>{{ row.symbol }}</td><td>{{ row.position_amt }}</td><td>{{ row.entry_price }}</td><td class="holding-hours-cell"><span class="holding-hours-badge">⏱ {{ row.holding_hours }}</span></td><td>{{ row.opened_at|fmt_ms_datetime if row.opened_at else '-' }}</td><td>{{ row.mark_price }}</td><td>{{ row.unrealized_pnl }}</td><td>{{ row.leverage if row.leverage else '-' }}</td><td>{{ row.notional }}</td><td>{{ row.liquidation_price }}</td><td>{{ row.updated_at|fmt_ms_datetime }}</td></tr>{% else %}<tr><td class="empty" colspan="11">暂无实盘交易实验持仓快照</td></tr>{% endfor %}</tbody></table></div>
+        </div>
         <div class="symbol-strip"><div><strong>交易实验错误信息记录（实盘）</strong></div><div class="muted">包含新开仓、保护单、账户扫描和僵尸强平流程捕获的错误。</div></div>
         <div class="table-wrap"><table><thead><tr><th>时间</th><th>symbol</th><th>轮次</th><th>总分</th><th>杠杆</th><th>操作</th><th>类型</th><th>错误</th></tr></thead><tbody>{% for row in live_error_records %}<tr><td>{{ row.created_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.decision_round_ts|fmt_ms_datetime if row.decision_round_ts else '-' }}</td><td>{{ row.total_score if row.total_score is not none else '-' }}</td><td>{{ row.leverage if row.leverage is not none else '-' }}</td><td>{{ row.operation }}</td><td>{{ row.error_type }}</td><td>{{ row.error_message }}</td></tr>{% else %}<tr><td class="empty" colspan="8">暂无最近7天实盘交易实验错误信息记录</td></tr>{% endfor %}</tbody></table></div>
       </div>
@@ -4990,17 +4996,37 @@
       });
 
       let displayedOrders = [];
+      let latestLiveFilledPayload = null;
       const summaryIds = ['completed-count', 'total-profit', 'profit-count', 'win-rate', 'total-loss', 'loss-count', 'average-profit', 'average-loss', 'profit-loss-ratio', 'expectancy'];
       const renderOrders = payload => {
-        const orders = payload.orders || [];
+        latestLiveFilledPayload = payload;
+        const allOrders = payload.orders || [];
+        const scoreBandFilter = byId('live-filled-score-band')?.value || 'all';
+        const orders = allOrders.filter(row => orderMatchesScoreBandFilter(row, scoreBandFilter));
         displayedOrders = orders;
         byId('live-export-filled').disabled = !orders.length;
         clearError('live-filled-error');
-        const analysis = buildFilledOrderAnalysis(orders).summary;
+        const filledOrderAnalysis = buildFilledOrderAnalysis(orders);
+        const analysis = filledOrderAnalysis.summary;
         const values = [analysis.completedCount, formatPnlAmount(analysis.totalProfit), analysis.profitCount, `${(analysis.winRate * 100).toFixed(2)}%`, formatPnlAmount(analysis.totalLoss), analysis.lossCount, formatPnlAmount(analysis.averageProfit), formatPnlAmount(analysis.averageLoss), formatPnlAmount(analysis.profitLossRatio), formatPnlAmount(analysis.expectancy)];
-        summaryIds.forEach((id, index) => { if (byId(`live-${id}`)) byId(`live-${id}`).textContent = values[index]; });
-        byId('live-filled-status').textContent = `Real 查询完成：${formatMsDatetime(payload.queried_at)}；已成交合并记录 ${orders.length} 条`;
-        byId('live-filled-rows').innerHTML = orders.length ? orders.map(row => `<tr class="filled-order-row"><td>${formatMsDatetime(row.time)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.open_score_band || '-')}</td><td>${escapeHtml(row.open_leverage ?? '-')}</td><td>${escapeHtml(row.open_total_score ?? '-')}</td><td>${escapeHtml(row.exit_reason || '-')}</td><td>${escapeHtml(row.side)}</td><td>${escapeHtml(row.order_id)}</td><td>${escapeHtml(row.price)}</td><td>${escapeHtml(row.quantity)}</td><td>${escapeHtml(row.quote_quantity)}</td><td><span class="${pnlClass(row.realized_pnl)}">${escapeHtml(row.realized_pnl)}</span></td><td>${escapeHtml(row.commission)} ${escapeHtml(row.commission_asset)}</td><td>${row.maker ? '是' : '否'}</td><td>${escapeHtml(row.trade_id)}</td></tr>`).join('') : '<tr><td class="empty" colspan="15">所选时间范围内暂无已成交订单</td></tr>';
+        summaryIds.forEach((id, index) => {
+          const element = byId(`live-${id}`);
+          if (!element) return;
+          element.textContent = values[index];
+          if ([1, 4, 6, 7, 9].includes(index)) {
+            element.classList.remove('pnl-positive', 'pnl-negative', 'pnl-zero');
+            element.classList.add(pnlClass([analysis.totalProfit, analysis.totalLoss, analysis.averageProfit, analysis.averageLoss, analysis.expectancy][[1, 4, 6, 7, 9].indexOf(index)]));
+          }
+        });
+        const filterLabel = byId('live-filled-score-band')?.selectedOptions?.[0]?.textContent || '全部档位';
+        byId('live-filled-status').textContent = `Real 查询完成：${formatMsDatetime(payload.queried_at)}；已成交合并记录 ${allOrders.length} 条；当前筛选 ${filterLabel} 后 ${orders.length} 条`;
+        const rowsEl = byId('live-filled-rows');
+        rowsEl.innerHTML = orders.length ? orders.map((row, index) => {
+          const groupIds = filledOrderAnalysis.rowGroups[index];
+          const groupLabel = groupIds.length ? `<span class="filled-order-group-badge" role="button" aria-label="高亮订单组${escapeHtml(groupIds.join('/'))}">组${escapeHtml(groupIds.join('/'))}</span>` : '';
+          return `<tr class="filled-order-row" data-group-ids="${escapeHtml(groupIds.join(','))}" title="点击高亮同一 symbol 同一组买卖订单"><td>${formatMsDatetime(row.time)}</td><td><strong>${escapeHtml(row.symbol)}</strong>${groupLabel}</td><td>${escapeHtml(row.open_score_band || '-')}</td><td>${escapeHtml(row.open_leverage ?? '-')}</td><td>${escapeHtml(row.open_total_score ?? '-')}</td><td>${escapeHtml(row.exit_reason || '-')}</td><td><span class="status-badge ${row.side === 'BUY' ? 'status-ok' : 'status-fail'}">${escapeHtml(row.side || '-')}</span></td><td>${escapeHtml(row.order_id)}</td><td>${escapeHtml(row.price)}</td><td>${escapeHtml(row.quantity)}</td><td>${escapeHtml(row.quote_quantity)}</td><td><span class="${pnlClass(row.realized_pnl)}">${escapeHtml(row.realized_pnl || '0')}</span></td><td>${escapeHtml(row.commission || '0')} ${escapeHtml(row.commission_asset || '')}</td>${Array.from({ length: 18 }, (_, ruleIndex) => `<td>${escapeHtml(row[`open_rule${ruleIndex + 1}_score`] ?? '-')}</td>`).join('')}<td>${row.maker ? '是' : '否'}</td><td>${escapeHtml(row.trade_id)}</td></tr>`;
+        }).join('') : '<tr><td class="empty" colspan="33">所选时间范围及评分档位下暂无已成交订单</td></tr>';
+        bindFilledOrderHighlights(rowsEl);
       };
       const queryOrders = async query => {
         const buttons = [byId('live-query-filled'), byId('live-query-filled-range')];
@@ -5016,6 +5042,7 @@
       };
       const daysSelect = byId('live-filled-days');
       daysSelect?.addEventListener('change', () => { byId('live-query-filled').textContent = `查询近${daysSelect.value}天已成交订单`; });
+      byId('live-filled-score-band')?.addEventListener('change', () => { if (latestLiveFilledPayload) renderOrders(latestLiveFilledPayload); });
       byId('live-query-filled')?.addEventListener('click', () => queryOrders(new URLSearchParams({ days: daysSelect.value })));
       const end = new Date(); end.setMinutes(0, 0, 0);
       const localHour = date => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 13) + ':00';
