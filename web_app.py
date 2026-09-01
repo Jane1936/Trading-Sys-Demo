@@ -1123,6 +1123,153 @@ def _holding_increase_payload() -> dict:
     }
 
 
+def _live_holding_increase_payload() -> dict:
+    """Return only the latest live-account increase module data."""
+    holding_scoring = real_trading.holding_scoring()
+    round_ts, checks = holding_scoring.get_latest_increase_checks()
+    since_ms = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp() * 1000)
+    records = holding_scoring.recent_increase_records(limit=100, since_ms=since_ms)
+    snapshots = real_trading.experiment().latest_position_snapshots(limit=100)
+    return {
+        "round_ts": round_ts,
+        "checks": _sync_live_module_checks(checks, snapshots),
+        "records": [dict(row) for row in records],
+    }
+
+
+@app.get("/api/live/holding-increase/summary")
+def live_holding_increase_summary_api():
+    try:
+        return jsonify(_live_holding_increase_payload())
+    except sqlite3.Error as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
+LIVE_HIGH_FREQUENCY_MODULES = {
+    "break-even": (0, "保本止盈", "recent_records"),
+    "partial-take-profit": (1, "分批止盈", "recent_records"),
+    "trailing-reduction": (2, "移动追踪减仓", "recent_action_records"),
+    "dynamic-profit-protection": (3, "动态利润保护", "recent_action_records"),
+    "trailing-stop": (4, "移动追踪止盈", "recent_action_records"),
+}
+
+LIVE_MODULE_TABLES = {
+    "break-even": {
+        "check_columns": (("检查时间", "checked_at", "time"), ("symbol", "symbol", "text"), ("实验组USDT净值", "account_equity_usdt", "text"), ("R", "r_usdt", "text"), ("未变现盈亏", "unrealized_pnl", "text"), ("开仓价", "entry_price", "text"), ("持仓数量", "position_amt", "text"), ("触发保本", "triggered", "bool"), ("状态", "status", "text"), ("原因", "reason", "text")),
+        "record_columns": (("操作时间", "checked_at", "time"), ("symbol", "symbol", "text"), ("方向", "side", "text"), ("持仓数量", "position_amt", "text"), ("开仓价", "entry_price", "text"), ("R", "r_usdt", "text"), ("未变现盈亏", "unrealized_pnl", "text"), ("原止损单", "old_stop_loss_order_id", "text"), ("新止损单", "new_stop_loss_order_id", "text"), ("止损价", "stop_loss_price", "text"), ("状态", "status", "text"), ("原因", "reason", "text")),
+    },
+    "partial-take-profit": {
+        "check_columns": (("检查时间", "checked_at", "time"), ("symbol", "symbol", "text"), ("实验组USDT净值", "account_equity_usdt", "text"), ("R", "r_usdt", "text"), ("触发R", "trigger_r_usdt", "text"), ("未变现盈亏", "unrealized_pnl", "text"), ("开仓价", "entry_price", "text"), ("持仓数量", "position_amt", "text"), ("触发分批止盈", "triggered", "bool"), ("状态", "status", "text"), ("原因", "reason", "text")),
+        "record_columns": (("操作时间", "checked_at", "time"), ("symbol", "symbol", "text"), ("方向", "side", "text"), ("原持仓", "position_amt", "text"), ("止盈数量", "take_profit_quantity", "text"), ("开仓价", "entry_price", "text"), ("R", "r_usdt", "text"), ("触发R", "trigger_r_usdt", "text"), ("未变现盈亏", "unrealized_pnl", "text"), ("订单ID", "take_profit_order_id", "text"), ("触发档位", "trigger_label", "text"), ("状态", "status", "text"), ("原因", "reason", "text")),
+    },
+    "trailing-reduction": {
+        "check_columns": (("检查时间", "checked_at", "time"), ("symbol", "symbol", "text"), ("tag", "tag", "text"), ("R", "r_usdt", "text"), ("触发R", "trigger_r_usdt", "text"), ("未变现盈亏", "unrealized_pnl", "text"), ("当前价", "current_price", "text"), ("最近15m low", "latest_15m_low", "text"), ("次近15m low", "second_15m_low", "text"), ("最低价", "lowest_15m_low", "text"), ("ATR(14)", "atr14", "text"), ("最新1m high", "latest_1m_high", "text"), ("最新1m close", "latest_1m_close", "text"), ("开仓以来最高价", "highest_since_open", "text"), ("回撤", "price_drawdown", "text"), ("预触发", "pretriggered", "bool"), ("结构破位", "structure_break_triggered", "bool"), ("原因", "reason", "text")),
+        "record_columns": (("操作时间", "checked_at", "time"), ("symbol", "symbol", "text"), ("最高价", "highest_since_open", "text"), ("ATR", "atr14", "text"), ("回撤", "price_drawdown", "text"), ("减仓比例", "reduction_percent", "text"), ("原数量", "original_quantity", "text"), ("减仓数量", "reduced_quantity", "text"), ("剩余数量", "remaining_quantity", "text"), ("市价单", "market_order_id", "text"), ("止盈单", "take_profit_order_id", "text"), ("止损单", "stop_loss_order_id", "text"), ("状态", "status", "text"), ("原因", "reason", "text")),
+    },
+    "dynamic-profit-protection": {
+        "check_columns": (("检查时间", "checked_at", "time"), ("symbol", "symbol", "text"), ("开仓价", "entry_price", "text"), ("持仓数量", "position_amt", "text"), ("浮盈", "unrealized_pnl", "text"), ("R", "r_usdt", "text"), ("最新high", "latest_1m_high", "text"), ("最新close", "latest_1m_close", "text"), ("开仓以来最高价", "highest_since_open", "text"), ("历史最高浮盈", "highest_unrealized_pnl", "text"), ("最高浮盈时间", "highest_profit_at", "time"), ("当前档位", "current_tier", "text"), ("回撤", "profit_drawdown_ratio", "text"), ("阈值", "drawdown_threshold", "text"), ("触发", "triggered", "bool"), ("满足前提", "eligible", "bool"), ("原因", "reason", "text")),
+        "record_columns": (("操作时间", "checked_at", "time"), ("symbol", "symbol", "text"), ("持仓数量", "position_amt", "text"), ("开仓价", "entry_price", "text"), ("R", "r_usdt", "text"), ("浮盈倍数", "profit_r_multiple", "text"), ("close", "latest_1m_close", "text"), ("最高价", "highest_since_open", "text"), ("历史最高浮盈", "highest_unrealized_pnl", "text"), ("当前档位", "current_tier", "text"), ("回撤", "profit_drawdown_ratio", "text"), ("阈值", "drawdown_threshold", "text"), ("平仓数量", "close_quantity", "text"), ("订单ID", "close_order_id", "text"), ("状态", "close_status", "text"), ("原因", "reason", "text")),
+    },
+    "trailing-stop": {
+        "check_columns": (("检查时间", "checked_at", "time"), ("symbol", "symbol", "text"), ("开仓价", "entry_price", "text"), ("持仓数量", "position_amt", "text"), ("持仓小时", "holding_hours", "text"), ("1m high", "kline_high", "text"), ("1m close", "latest_1m_close", "text"), ("开仓以来最高价", "highest_since_open", "text"), ("价格回撤", "price_drawdown", "text"), ("回撤阈值", "drawdown_threshold", "text"), ("ATR(14)", "atr14", "text"), ("波动率", "volatility", "text"), ("tag", "tag", "text"), ("触发止盈", "trailing_stop_triggered", "bool"), ("满足前提", "eligible", "bool"), ("原因", "reason", "text")),
+        "record_columns": (("操作时间", "checked_at", "time"), ("symbol", "symbol", "text"), ("持仓数量", "position_amt", "text"), ("开仓价", "entry_price", "text"), ("ATR(14)", "atr14", "text"), ("波动率", "volatility", "text"), ("当下浮盈", "unrealized_pnl_at_high", "text"), ("最大浮盈", "max_unrealized_pnl", "text"), ("价格回撤", "price_drawdown", "text"), ("回撤阈值", "drawdown_threshold", "text"), ("取消止盈单", "cancel_take_profit_order_id", "text"), ("取消状态", "cancel_status", "text"), ("平仓数量", "close_quantity", "text"), ("平仓单", "close_order_id", "text"), ("平仓状态", "close_status", "text"), ("原因", "reason", "text")),
+    },
+}
+
+
+def _serialize_live_module_row(row) -> dict:
+    return asdict(row) if hasattr(row, "__dataclass_fields__") else dict(row)
+
+
+def _sync_live_module_checks(checks, position_snapshots) -> list[dict]:
+    """Align a module's latest check list with the current live positions.
+
+    A position can be opened after the module's most recent minute scan.  Keep
+    it visible as pending until that module writes its first real check, while
+    dropping checks for positions which are no longer open.
+    """
+    serialized_checks = [_serialize_live_module_row(row) for row in checks]
+    snapshots = [_serialize_live_module_row(row) for row in position_snapshots]
+    active = {}
+    for row in snapshots:
+        try:
+            amount = Decimal(str(row.get("position_amt", row.get("positionAmt", "0")) or "0"))
+        except (ArithmeticError, ValueError):
+            continue
+        if amount != 0:
+            symbol = str(row.get("symbol", "")).strip().upper().removesuffix("USDT")
+            if symbol:
+                active[symbol] = row
+    checks_by_symbol = {
+        str(row.get("symbol", "")).strip().upper().removesuffix("USDT"): row
+        for row in serialized_checks
+    }
+    synchronized = []
+    for symbol, snapshot in sorted(active.items()):
+        if symbol in checks_by_symbol:
+            synchronized.append(checks_by_symbol[symbol])
+            continue
+        synchronized.append({
+            **snapshot,
+            "symbol": symbol,
+            "decision_round_ts": snapshot.get("updated_at"),
+            "checked_at": snapshot.get("updated_at"),
+            "calculated_at": snapshot.get("updated_at"),
+            "current_price": snapshot.get("mark_price", snapshot.get("markPrice", "")),
+            "unrealized_pnl": snapshot.get("unrealized_pnl", snapshot.get("unRealizedProfit", "")),
+            "tag": "新开仓待扫描",
+            "status": "待扫描",
+            "triggered": False,
+            "reason": "该symbol在模块最近一轮扫描后新开仓，等待下一轮扫描",
+        })
+    return synchronized
+
+
+def _sync_live_portfolio_risk(summary, position_snapshots):
+    """Keep the portfolio-risk symbol list aligned with live positions."""
+    snapshots = [_serialize_live_module_row(row) for row in position_snapshots]
+    current_rows = [] if summary is None else [
+        _serialize_live_module_row(row) for row in summary.positions
+    ]
+    synchronized = _sync_live_module_checks(current_rows, snapshots)
+    if summary is None:
+        summary_data = {
+            "decision_round_ts": 0,
+            "total_risk": "0",
+            "account_equity_usdt": "0",
+            "calculated_at": 0,
+        }
+    else:
+        summary_data = _serialize_live_module_row(summary)
+    summary_data["positions"] = synchronized
+    summary_data["position_count"] = len(synchronized)
+    summary_data["pending_count"] = sum(row.get("status") == "待扫描" for row in synchronized)
+    return summary_data
+
+
+@app.get("/api/live/high-frequency/<module_key>/summary")
+def live_high_frequency_summary_api(module_key: str):
+    config = LIVE_HIGH_FREQUENCY_MODULES.get(module_key)
+    if config is None:
+        return jsonify({"error": "unknown live module"}), 404
+    module_index, label, records_method = config
+    try:
+        module = real_trading.high_frequency_modules()[module_index]
+        round_ts, checks = module.get_latest_round_checks()
+        records = getattr(module, records_method)(limit=100)
+        snapshots = real_trading.experiment().latest_position_snapshots(limit=100)
+        return jsonify({
+            "key": module_key,
+            "label": label,
+            "round_ts": round_ts,
+            "checks": _sync_live_module_checks(checks, snapshots),
+            "records": [_serialize_live_module_row(row) for row in records],
+            "tables": LIVE_MODULE_TABLES[module_key],
+        })
+    except sqlite3.Error as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
 @app.post("/api/holding-increase/refresh-pretrigger")
 def holding_increase_refresh_pretrigger_api():
     try:
@@ -1522,25 +1669,40 @@ def abnormal_wicks():
     live_holding_portfolio_risk = load_module("实盘持仓组合风险", live_holding_scoring.get_latest_portfolio_risk, None)
     live_holding_reduction_round_ts, live_holding_reduction_checks = load_module("实盘持仓减仓检查", live_holding_scoring.get_latest_reduction_checks, (0, []))
     live_holding_increase_round_ts, live_holding_increase_checks = load_module("实盘持仓加仓检查", live_holding_scoring.get_latest_increase_checks, (0, []))
+    live_holding_increase_pretrigger_rounds = load_module(
+        "实盘持仓加仓预触发", live_holding_scoring.latest_pretrigger_increase_rounds, {}
+    )
     live_holding_stop_loss_records = load_module("实盘持仓结构止损记录", lambda: live_holding_scoring.recent_stop_loss_records(limit=100), [])
     live_holding_reduction_records = load_module("实盘持仓减仓记录", lambda: live_holding_scoring.recent_reduction_records(limit=100), [])
+    live_holding_reduction_stop_failure_liquidations = load_module(
+        "实盘重挂止损失败后强平记录",
+        lambda: live_holding_scoring.recent_reduction_stop_failure_liquidations(
+            limit=100, since_ms=trading_records_since_ms
+        ),
+        [],
+    )
     live_holding_increase_records = load_module("实盘持仓加仓记录", lambda: live_holding_scoring.recent_increase_records(limit=100, since_ms=trading_records_since_ms), [])
+    live_holding_stop_loss_checks = _sync_live_module_checks(live_holding_stop_loss_checks, live_position_snapshots)
+    live_holding_reduction_checks = _sync_live_module_checks(live_holding_reduction_checks, live_position_snapshots)
+    live_holding_increase_checks = _sync_live_module_checks(live_holding_increase_checks, live_position_snapshots)
+    live_holding_portfolio_risk = _sync_live_portfolio_risk(live_holding_portfolio_risk, live_position_snapshots)
     live_break_even, live_partial, live_trailing_reduction, live_dynamic, live_trailing_stop = real_trading.high_frequency_modules()
     live_high_frequency_modules = []
-    for label, module, records_loader in (
-        ("保本止盈", live_break_even, lambda m: m.recent_records(limit=100)),
-        ("分批止盈", live_partial, lambda m: m.recent_records(limit=100)),
-        ("移动追踪减仓", live_trailing_reduction, lambda m: m.recent_action_records(limit=100)),
-        ("动态利润保护", live_dynamic, lambda m: m.recent_action_records(limit=100)),
-        ("移动追踪止盈", live_trailing_stop, lambda m: m.recent_action_records(limit=100)),
+    for key, label, module, records_loader in (
+        ("break-even", "保本止盈", live_break_even, lambda m: m.recent_records(limit=100)),
+        ("partial-take-profit", "分批止盈", live_partial, lambda m: m.recent_records(limit=100)),
+        ("trailing-reduction", "移动追踪减仓", live_trailing_reduction, lambda m: m.recent_action_records(limit=100)),
+        ("dynamic-profit-protection", "动态利润保护", live_dynamic, lambda m: m.recent_action_records(limit=100)),
+        ("trailing-stop", "移动追踪止盈", live_trailing_stop, lambda m: m.recent_action_records(limit=100)),
     ):
         round_ts, checks = load_module(f"实盘{label}检查", module.get_latest_round_checks, (0, []))
         records = load_module(f"实盘{label}记录", lambda m=module, loader=records_loader: loader(m), [])
         live_high_frequency_modules.append({
-            "key": f"live-high-frequency-{len(live_high_frequency_modules)}",
+            "key": f"live-high-frequency-{key}", "api_key": key,
             "label": label, "round_ts": round_ts,
-            "checks": [asdict(row) if hasattr(row, "__dataclass_fields__") else dict(row) for row in checks],
+            "checks": _sync_live_module_checks(checks, live_position_snapshots),
             "records": [asdict(row) if hasattr(row, "__dataclass_fields__") else dict(row) for row in records],
+            "tables": LIVE_MODULE_TABLES[key],
         })
     holding_scoring = HoldingPositionScoringSystem(db_path=_trading_db_path())
     holding_stop_loss_round_ts, holding_stop_loss_checks = load_module("持仓结构止损检查", holding_scoring.get_latest_round_checks, (0, []))
@@ -1672,8 +1834,10 @@ def abnormal_wicks():
         live_holding_reduction_checks=live_holding_reduction_checks,
         live_holding_increase_round_ts=live_holding_increase_round_ts,
         live_holding_increase_checks=live_holding_increase_checks,
+        live_holding_increase_pretrigger_rounds=live_holding_increase_pretrigger_rounds,
         live_holding_stop_loss_records=live_holding_stop_loss_records,
         live_holding_reduction_records=live_holding_reduction_records,
+        live_holding_reduction_stop_failure_liquidations=live_holding_reduction_stop_failure_liquidations,
         live_holding_increase_records=live_holding_increase_records,
         live_high_frequency_modules=live_high_frequency_modules,
         holding_stop_loss_round_ts=holding_stop_loss_round_ts,
