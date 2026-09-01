@@ -51,6 +51,8 @@ def test_real_holding_scoring_uses_live_api_and_real_database(tmp_path, monkeypa
     assert scoring.db_path == str(real_db)
     assert scoring.info_db_path == str(real_db)
     assert scoring.account_manager.testnet is False
+    assert scoring.config.initial_equity_usdt == Decimal("100")
+    assert scoring.config.experiment_uninvested_usdt == Decimal("0")
     assert real_db.exists()
     assert not simulation_db.exists()
 

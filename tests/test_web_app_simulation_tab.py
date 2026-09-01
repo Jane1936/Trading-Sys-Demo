@@ -73,6 +73,7 @@ def test_live_holding_score_tabs_target_separate_module_panels() -> None:
     assert live_section.count('class="holding-module-panel active"') == 1
     assert live_section.count('class="holding-module-panel"') == 4
     assert "live_high_frequency_modules" in live_section
+    assert "live_holding_portfolio_risk.pending_count" in live_section
 
 
 def test_live_holding_modules_render_full_operation_record_tables() -> None:
@@ -87,10 +88,33 @@ def test_live_holding_modules_render_full_operation_record_tables() -> None:
     assert "{% for row in live_holding_stop_loss_records %}" in live_section
     assert "{% for row in live_holding_reduction_records %}" in live_section
     assert "{% for row in live_holding_increase_records %}" in live_section
-    assert live_section.count("记录存储于 real_trading_core.db") == 3
+    assert "最近3条MACD（第1/第2/第3）" in live_section
+    assert "重挂止损失败后强平记录" in live_section
+    assert "risk_i" in live_section
     assert "row.realized_pnl" in live_section
     assert "row.market_order_id" in live_section
     assert "row.required_margin_usdt" in live_section
+
+
+def test_live_position_modules_have_scoped_refresh_buttons() -> None:
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    live_start = template.index('<section id="tab-live"')
+    feature_flags_start = template.index('<section id="tab-feature-flags"')
+    live_section = template[live_start:feature_flags_start]
+
+    assert live_section.count('class="btn btn-primary btn-small live-module-refresh"') == 2
+    assert 'data-live-module="holding-increase"' in live_section
+    assert 'data-live-module="{{ module.api_key }}"' in live_section
+    for label in ("保本止盈", "分批止盈", "移动追踪减仓", "动态利润保护", "移动追踪止盈"):
+        assert label in live_section
+
+    assert "/api/live/holding-increase/summary" in template
+    assert "/api/live/high-frequency/${encodeURIComponent(moduleKey)}/summary" in template
+    assert "仅刷新本模块最新数据" in live_section
+    assert "字段与模拟盘对应模块保持一致" in live_section
+    assert "module.tables.check_columns" in live_section
+    assert "module.tables.record_columns" in live_section
+    assert "liveModuleCell(row, column)" in template
 
 
 def test_holding_module_tab_script_scopes_updates_to_current_account_panel() -> None:

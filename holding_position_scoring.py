@@ -20,7 +20,7 @@ from typing import Any, Iterable
 
 from binance_account_manager import BinanceAccountManager
 from openable_symbol_module import OpenableSymbol
-from trading_experiment import TradingExperiment
+from trading_experiment import ExperimentConfig, TradingExperiment
 from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
 from add_position_permission_module import AddPositionPermissionModule
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
@@ -228,11 +228,13 @@ class HoldingPositionScoringSystem:
         self,
         db_path: str = db_config.TRADING_DB_PATH,
         account_manager: BinanceAccountManager | None = None,
+        config: ExperimentConfig | None = None,
         realized_pnl_retry_delays: Iterable[float] = (1, 3, 5),
     ) -> None:
         self.db_path = db_path
         self.info_db_path = db_config.trading_info_path(db_path)
         self.account_manager = account_manager or BinanceAccountManager()
+        self.config = config or ExperimentConfig()
         self.realized_pnl_retry_delays = tuple(realized_pnl_retry_delays)
 
     def _connect(self) -> sqlite3.Connection:
@@ -278,7 +280,7 @@ class HoldingPositionScoringSystem:
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
         TradingExperiment(
-            db_path=self.db_path, account_manager=self.account_manager
+            db_path=self.db_path, account_manager=self.account_manager, config=self.config
         ).init_error_tables()
         TradeActionLockManager(self.db_path).init_table()
         with ExitStack() as stack:
@@ -788,7 +790,7 @@ class HoldingPositionScoringSystem:
         active_positions = positions if positions is not None else self._active_positions()
         if not self._has_macd_for_positions(active_positions, round_ts):
             return []
-        equity = TradingExperiment(self.db_path, account_manager=self.account_manager)._fetch_experiment_usdt_equity()
+        equity = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)._fetch_experiment_usdt_equity()
         one_r = equity * Decimal("0.01")
         two_r = equity * Decimal("0.02")
         half_r = one_r * Decimal("0.5")
@@ -976,7 +978,7 @@ class HoldingPositionScoringSystem:
             cancel_reason = self._cancel_existing_exit_orders(exchange_symbol)
             if cancel_reason:
                 reason_parts.append(cancel_reason)
-            helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
+            helper = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)
             exchange_info = helper._exchange_symbol_info(exchange_symbol)
             if percent >= Decimal("1"):
                 reduced_quantity = self._floor_to_step(original_quantity, exchange_info["step_size"])
@@ -1099,7 +1101,7 @@ class HoldingPositionScoringSystem:
 
 
     def _record_reduction_error(self, check: PositionReductionCheck, operation: str, exc: Exception) -> None:
-        helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
+        helper = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)
         candidate = OpenableSymbol(
             symbol=check.symbol,
             decision_round_ts=check.decision_round_ts,
@@ -1494,7 +1496,7 @@ class HoldingPositionScoringSystem:
             return []
         now_ms = checked_at if checked_at is not None else int(time.time() * 1000)
         active_positions = positions if positions is not None else self._active_positions()
-        equity = TradingExperiment(self.db_path, account_manager=self.account_manager)._fetch_experiment_usdt_equity()
+        equity = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)._fetch_experiment_usdt_equity()
         one_r = equity * Decimal("0.01")
         threshold_r_multiple = self._current_increase_threshold_r_multiple(round_ts, now_ms)
         checks: list[PositionIncreaseCheck] = []
@@ -1588,7 +1590,7 @@ class HoldingPositionScoringSystem:
             for position in self._active_positions()
             if self._base_symbol(str(position.get("symbol", ""))) in pretrigger_symbols
         ]
-        equity = TradingExperiment(self.db_path, account_manager=self.account_manager)._fetch_experiment_usdt_equity()
+        equity = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)._fetch_experiment_usdt_equity()
         one_r = equity * Decimal("0.01")
         threshold_r_multiple = self._current_increase_threshold_r_multiple(int(round_ts), checked_at)
         refreshed_checks: list[PositionIncreaseCheck] = []
@@ -1702,7 +1704,7 @@ class HoldingPositionScoringSystem:
         if lock_handle is None:
             return PositionIncreaseRecord(0, check.symbol, check.decision_round_ts, self.INCREASE_TAG_FIRST, check.current_price, check.unrealized_pnl, check.one_r_usdt, check.latest_total_score, check.previous_total_score, check.latest_reduction_price, "failed", f"{'; '.join(reason_parts)}; {lock_reason}", now_ms, self._fmt_decimal(original_quantity), self._fmt_decimal(increased_quantity), self._fmt_decimal(required_margin), self._fmt_decimal(available_experiment_usdt), market_order_id, raw_response)
         try:
-            helper = TradingExperiment(self.db_path, account_manager=self.account_manager)
+            helper = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)
             exchange_info = helper._exchange_symbol_info(exchange_symbol)
             current_price = self._decimal_from(check.current_price, Decimal("0"))
             if current_price <= 0:
@@ -1892,7 +1894,7 @@ class HoldingPositionScoringSystem:
         round_ts = decision_round_ts if decision_round_ts is not None else self._current_decision_round_ts()
         now_ms = calculated_at if calculated_at is not None else int(time.time() * 1000)
         active_positions = positions if positions is not None else self._active_positions()
-        equity = TradingExperiment(self.db_path, account_manager=self.account_manager)._fetch_experiment_usdt_equity()
+        equity = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)._fetch_experiment_usdt_equity()
         total_risk = Decimal("0")
         rows: list[PortfolioRiskPosition] = []
         for position in active_positions:
@@ -2017,7 +2019,7 @@ class HoldingPositionScoringSystem:
         raw = str(position.get("leverage", "")).strip().lower().replace("x", "")
         if raw:
             return self._decimal_from(raw, Decimal("0"))
-        fallback = TradingExperiment(self.db_path, account_manager=self.account_manager)._latest_opened_trade_leverages()
+        fallback = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)._latest_opened_trade_leverages()
         return self._decimal_from(fallback.get(self._base_symbol(position.get("symbol", "")), "0"), Decimal("0"))
 
     def _save_portfolio_risk_summary(self, summary: PortfolioRiskSummary) -> None:

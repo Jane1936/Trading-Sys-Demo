@@ -8,7 +8,7 @@ import pytest
 import db_config
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
 from holding_position_scoring import HoldingPositionScoringSystem, PositionIncreaseCheck, PositionReductionCheck
-from trading_experiment import TradingExperiment
+from trading_experiment import ExperimentConfig, TradingExperiment
 
 
 def test_partial_take_profit_guard_is_scoped_to_current_open_lifecycle(tmp_path):
@@ -559,6 +559,38 @@ def test_portfolio_risk_runs_after_holding_stop_loss_round():
     assert risk.positions[0].leverage == "5"
     assert risk.positions[0].risk == "0.08"
     assert fake_account.position_risk_calls == 4
+
+
+def test_portfolio_risk_uses_injected_live_equity_config(tmp_path):
+    class SmallLiveAccount(FakeAccountManager):
+        def _signed_get(self, endpoint, params=None):
+            if endpoint == "/fapi/v3/balance":
+                return [{"asset": "USDT", "balance": "100"}]
+            return super()._signed_get(endpoint, params)
+
+    db_path = str(tmp_path / "real_trading_core.db")
+    scoring = HoldingPositionScoringSystem(
+        db_path=db_path,
+        account_manager=SmallLiveAccount(),
+        config=ExperimentConfig(
+            initial_equity_usdt=Decimal("100"),
+            experiment_uninvested_usdt=Decimal("0"),
+            total_margin_budget_usdt=Decimal("100"),
+        ),
+    )
+    scoring.init_tables()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE klines_15m (symbol TEXT, open_time INTEGER, close REAL)")
+        conn.execute("INSERT INTO klines_15m VALUES ('BANK', 1000, 8)")
+
+    risk = scoring.calculate_portfolio_risk(
+        positions=[{"symbol": "BANKUSDT", "positionAmt": "2", "leverage": "5"}],
+        decision_round_ts=2000,
+    )
+
+    assert risk.account_equity_usdt == "100"
+    assert risk.positions[0].reason == "ok"
+    assert risk.positions[0].risk == "0.8"
 
 def test_portfolio_risk_includes_all_positions_without_ten_position_cap():
     fake_account = ElevenPositionsAccountManager()

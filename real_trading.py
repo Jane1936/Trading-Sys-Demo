@@ -61,6 +61,7 @@ def holding_scoring() -> HoldingPositionScoringSystem:
     return HoldingPositionScoringSystem(
         db_path=db_config.REAL_TRADING_CORE_DB_PATH,
         account_manager=BinanceAccountManager.live(),
+        config=config(),
     )
 
 
