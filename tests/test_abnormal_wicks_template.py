@@ -11,9 +11,47 @@ from pre_safety_module import PreSafetyModule
 from web_app import (
     DEFAULT_TRADING_EQUITY_USDT,
     _latest_trading_equity_usdt,
+    _sync_live_module_checks,
     _trading_open_increase_blocked,
     _trading_used_margin_text,
 )
+
+
+def test_pending_live_increase_check_supplies_template_fields():
+    snapshots = [{
+        "symbol": "BTCUSDT",
+        "position_amt": "0.5",
+        "mark_price": "50000",
+        "unrealized_pnl": "12.5",
+        "opened_at": 1_700_000_000_000,
+        "updated_at": 1_700_000_100_000,
+    }]
+
+    rows = _sync_live_module_checks([], snapshots)
+
+    assert rows == [
+        {
+            "symbol": "BTC",
+            "position_amt": "0.5",
+            "mark_price": "50000",
+            "unrealized_pnl": "12.5",
+            "opened_at": 1_700_000_000_000,
+            "updated_at": 1_700_000_100_000,
+            "decision_round_ts": 1_700_000_100_000,
+            "checked_at": 1_700_000_100_000,
+            "calculated_at": 1_700_000_100_000,
+            "current_price": "50000",
+            "one_r_usdt": "",
+            "latest_total_score": "",
+            "previous_total_score": "",
+            "latest_reduction_price": "",
+            "open_trade_created_at": 1_700_000_000_000,
+            "tag": "新开仓待扫描",
+            "status": "待扫描",
+            "triggered": False,
+            "reason": "该symbol在模块最近一轮扫描后新开仓，等待下一轮扫描",
+        }
+    ]
 
 
 def test_trading_position_snapshots_show_used_margin_summary():
