@@ -52,6 +52,22 @@ def test_pending_live_increase_check_supplies_template_fields():
             "prev_15m_open_time": None,
             "prev_15m_close": None,
             "prev_structural_stop_loss": None,
+            "open_entry_price": "",
+            "ema16": "",
+            "ema21": "",
+            "score_drawdown": "",
+            "atr14": "",
+            "two_r_usdt": "",
+            "open_total_score": "",
+            "latest_15m_open": "",
+            "second_15m_open": "",
+            "second_15m_close": "",
+            "third_15m_open": "",
+            "third_15m_close": "",
+            "latest_macd": "",
+            "second_macd": "",
+            "third_macd": "",
+            "rule_name": "",
             "tag": "新开仓待扫描",
             "status": "待扫描",
             "triggered": False,
@@ -81,6 +97,34 @@ def test_pending_live_stop_loss_check_can_render_numeric_columns():
         rendered = render_template_string(template, rows=rows)
 
     assert rendered.split() == ["-", "-", "-", "-"]
+
+
+def test_pending_live_reduction_check_can_render_numeric_columns():
+    from flask import render_template_string
+    from web_app import app
+
+    rows = _sync_live_module_checks([], [{
+        "symbol": "BTCUSDT",
+        "position_amt": "0.5",
+        "mark_price": "50000",
+        "unrealized_pnl": "12.5",
+        "updated_at": 1_700_000_100_000,
+    }])
+    template = """{% for row in rows %}
+        {% set current_price = row.current_price|float %}
+        {% set open_entry_price = row.open_entry_price|float %}
+        {% set ema16 = row.ema16|float %}
+        {% set ema21 = row.ema21|float %}
+        {% set one_r = row.one_r_usdt|float %}
+        {% set score_drawdown = row.score_drawdown|float %}
+        {{ current_price }} {{ open_entry_price }} {{ ema16 }} {{ ema21 }}
+        {{ one_r }} {{ score_drawdown }}
+    {% endfor %}"""
+
+    with app.app_context():
+        rendered = render_template_string(template, rows=rows)
+
+    assert rendered.split() == ["50000.0", "0.0", "0.0", "0.0", "0.0", "0.0"]
 
 
 def test_trading_position_snapshots_show_used_margin_summary():

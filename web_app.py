@@ -1236,6 +1236,26 @@ def _sync_live_module_checks(checks, position_snapshots) -> list[dict]:
             "prev_15m_open_time": None,
             "prev_15m_close": None,
             "prev_structural_stop_loss": None,
+            # Reduction checks use several values with Jinja's ``float``
+            # filter.  Pending positions do not have a reduction-check row
+            # yet, so give those numeric columns neutral values until the
+            # first scan completes.
+            "open_entry_price": "",
+            "ema16": "",
+            "ema21": "",
+            "score_drawdown": "",
+            "atr14": "",
+            "two_r_usdt": "",
+            "open_total_score": "",
+            "latest_15m_open": "",
+            "second_15m_open": "",
+            "second_15m_close": "",
+            "third_15m_open": "",
+            "third_15m_close": "",
+            "latest_macd": "",
+            "second_macd": "",
+            "third_macd": "",
+            "rule_name": "",
             "tag": "新开仓待扫描",
             "status": "待扫描",
             "triggered": False,
