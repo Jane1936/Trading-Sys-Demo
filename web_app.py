@@ -1217,6 +1217,15 @@ def _sync_live_module_checks(checks, position_snapshots) -> list[dict]:
             "calculated_at": snapshot.get("updated_at"),
             "current_price": snapshot.get("mark_price", snapshot.get("markPrice", "")),
             "unrealized_pnl": snapshot.get("unrealized_pnl", snapshot.get("unRealizedProfit", "")),
+            # Increase-check columns do not exist on a position snapshot.  Keep
+            # the pending row template-compatible until the first scan writes
+            # a real PositionIncreaseCheck instead of exposing Jinja Undefined
+            # values (numeric filters such as ``float`` cannot consume them).
+            "one_r_usdt": "",
+            "latest_total_score": "",
+            "previous_total_score": "",
+            "latest_reduction_price": "",
+            "open_trade_created_at": snapshot.get("opened_at"),
             "tag": "新开仓待扫描",
             "status": "待扫描",
             "triggered": False,
