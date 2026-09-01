@@ -46,12 +46,41 @@ def test_pending_live_increase_check_supplies_template_fields():
             "previous_total_score": "",
             "latest_reduction_price": "",
             "open_trade_created_at": 1_700_000_000_000,
+            "latest_15m_open_time": None,
+            "latest_15m_close": None,
+            "latest_structural_stop_loss": None,
+            "prev_15m_open_time": None,
+            "prev_15m_close": None,
+            "prev_structural_stop_loss": None,
             "tag": "新开仓待扫描",
             "status": "待扫描",
             "triggered": False,
             "reason": "该symbol在模块最近一轮扫描后新开仓，等待下一轮扫描",
         }
     ]
+
+
+def test_pending_live_stop_loss_check_can_render_numeric_columns():
+    from flask import render_template_string
+    from web_app import app
+
+    rows = _sync_live_module_checks([], [{
+        "symbol": "BTCUSDT",
+        "position_amt": "0.5",
+        "mark_price": "50000",
+        "updated_at": 1_700_000_100_000,
+    }])
+    template = """{% for row in rows %}
+        {{ '%.6f'|format(row.latest_15m_close) if row.latest_15m_close is not none else '-' }}
+        {{ '%.6f'|format(row.latest_structural_stop_loss) if row.latest_structural_stop_loss is not none else '-' }}
+        {{ '%.6f'|format(row.prev_15m_close) if row.prev_15m_close is not none else '-' }}
+        {{ '%.6f'|format(row.prev_structural_stop_loss) if row.prev_structural_stop_loss is not none else '-' }}
+    {% endfor %}"""
+
+    with app.app_context():
+        rendered = render_template_string(template, rows=rows)
+
+    assert rendered.split() == ["-", "-", "-", "-"]
 
 
 def test_trading_position_snapshots_show_used_margin_summary():

@@ -1226,6 +1226,16 @@ def _sync_live_module_checks(checks, position_snapshots) -> list[dict]:
             "previous_total_score": "",
             "latest_reduction_price": "",
             "open_trade_created_at": snapshot.get("opened_at"),
+            # Stop-loss checks also pass through this synchronizer.  A newly
+            # opened position has no candle/structural-stop values until the
+            # next scan, so provide explicit nulls rather than letting Jinja
+            # receive Undefined values (which fail when formatted as floats).
+            "latest_15m_open_time": None,
+            "latest_15m_close": None,
+            "latest_structural_stop_loss": None,
+            "prev_15m_open_time": None,
+            "prev_15m_close": None,
+            "prev_structural_stop_loss": None,
             "tag": "新开仓待扫描",
             "status": "待扫描",
             "triggered": False,
