@@ -1678,11 +1678,18 @@ def abnormal_wicks():
     live_experiment = real_trading.experiment()
     load_module("实盘交易表初始化", real_trading.initialize, None)
     live_trade_records = load_module("实盘交易实验记录", lambda: live_experiment.recent_trade_records(limit=100, since_ms=trading_records_since_ms), [])
+    live_new_open_symbols = sorted({
+        row.symbol
+        for row in live_trade_records
+        if row.status == "opened" and row.decision_round_ts == openable_round_ts
+    })
     live_position_snapshots = load_module("实盘交易持仓快照", lambda: live_experiment.latest_position_snapshots(limit=100), [])
     live_error_records = load_module("实盘交易错误记录", lambda: live_experiment.recent_error_records(limit=100, since_ms=trading_records_since_ms), [])
     live_zombie_records = load_module("实盘僵尸强平记录", lambda: real_trading.zombie_module().recent_records(limit=100, since_ms=trading_records_since_ms), [])
     live_equity_trend_rows = load_module("实盘交易权益曲线", lambda: _experiment_equity_trend_rows(trading_records_since_ms, db_config.REAL_TRADING_CORE_DB_PATH), [])
     live_trading_equity = _latest_trading_equity_usdt(live_equity_trend_rows) if live_equity_trend_rows else real_trading.config().initial_equity_usdt
+    live_used_margin_usdt = _trading_used_margin_text(live_position_snapshots)
+    live_open_increase_blocked = _trading_open_increase_blocked(live_trading_equity, live_position_snapshots)
     live_holding_scoring = real_trading.holding_scoring()
     live_holding_stop_loss_round_ts, live_holding_stop_loss_checks = load_module("实盘持仓结构止损检查", live_holding_scoring.get_latest_round_checks, (0, []))
     live_holding_portfolio_risk = load_module("实盘持仓组合风险", live_holding_scoring.get_latest_portfolio_risk, None)
@@ -1841,7 +1848,10 @@ def abnormal_wicks():
         trading_equity_trend_rows=trading_equity_trend_rows,
         zombie_force_liquidation_records=zombie_force_liquidation_records,
         live_trade_records=live_trade_records,
+        live_new_open_symbols=live_new_open_symbols,
         live_position_snapshots=live_position_snapshots,
+        live_used_margin_usdt=live_used_margin_usdt,
+        live_open_increase_blocked=live_open_increase_blocked,
         live_error_records=live_error_records,
         live_zombie_records=live_zombie_records,
         live_equity_trend_rows=live_equity_trend_rows,
