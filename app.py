@@ -196,6 +196,7 @@ def _database_schema_requirements() -> dict[str, dict[str, set[str]]]:
             "market_filter_settings": {"id", "updated_at"},
             "dynamic_open_threshold_settings": {"id", "updated_at"},
             "weak_market_profit_adjustment_settings": {"id", "updated_at"},
+            "dynamic_profit_protection_settings": {"id", "updated_at"},
             "scoring_rule_weights": {"rule_id", "weight"},
             "scoring_rule_election": {"rule_id", "status"},
             "scoring_rule_election_config": {"id", "optional_min"},

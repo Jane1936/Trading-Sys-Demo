@@ -3214,6 +3214,21 @@
       </form>
     </div>
     <div class="card feature-config-yellow">
+      <div class="header"><h2>动态利润保护配置</h2></div>
+      <div class="tip">按浮盈历史最高到达档位动态保护；默认规则为：浮盈到达过(2R, 3R] 回撤≥40%、浮盈到达过(3R, 4R] 回撤≥30%、浮盈到达过4R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓。下方可启停整条规则，并调整三个档位起点及对应回撤阈值；该配置由模拟盘与实盘动态利润保护模块共同使用，并从各自下一轮扫描开始生效。</div>
+      <div id="dynamic-profit-protection-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
+      <form id="dynamic-profit-protection-settings-form" class="score-weight-actions">
+        <label><input id="dynamic-profit-protection-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.enabled else '' }}> 启用“浮盈历史最高到达档位动态保护”</label>
+        <label>第1档起点（R，严格大于）<input id="dynamic-profit-tier-2-r" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_2_min_r }}"></label>
+        <label>第2档起点（R，严格大于）<input id="dynamic-profit-tier-3-r" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_3_min_r }}"></label>
+        <label>最高档起点（R，严格大于）<input id="dynamic-profit-tier-4-r" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_4_min_r }}"></label>
+        <label>第1档回撤阈值（%）<input id="dynamic-profit-tier-2-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_2_drawdown_ratio * 100 }}"></label>
+        <label>第2档回撤阈值（%）<input id="dynamic-profit-tier-3-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_3_drawdown_ratio * 100 }}"></label>
+        <label>最高档回撤阈值（%）<input id="dynamic-profit-tier-4-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_4_drawdown_ratio * 100 }}"></label>
+        <button class="btn btn-success" type="submit">保存动态利润保护配置</button>
+      </form>
+    </div>
+    <div class="card feature-config-yellow">
       <div class="header"><h2>减仓模块配置</h2></div>
       <div class="tip">规则二与规则五可独立启停，并可分别设置触发后卖出当前仓位的比例。保存后从减仓条件模块下一轮判断开始生效。</div>
       <div id="reduction-module-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
@@ -3354,7 +3369,7 @@
     let scoreTrendChart = null;
     let experimentEquityTrendChart = null;
     let liveExperimentEquityTrendChart = null;
-    const DYNAMIC_PROFIT_PROTECTION_RULE_NOTE = '每分钟读取最新1分钟K线 high/close，维护“开仓以来最高价”；按浮盈历史最高到达档位动态保护：浮盈到达过(2R, 3R] 回撤≥40%、浮盈到达过(3R, 4R] 回撤≥30%、浮盈到达过4R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓；三档按优先级递增，仅触发最高命中的一个条件。';
+    const DYNAMIC_PROFIT_PROTECTION_RULE_NOTE = '每分钟读取最新1分钟K线 high/close，维护“开仓以来最高价”；当前共享配置{{ "已启用" if dynamic_profit_protection_settings.enabled else "已关闭" }}：浮盈到达过({{ dynamic_profit_protection_settings.tier_2_min_r }}R, {{ dynamic_profit_protection_settings.tier_3_min_r }}R] 回撤≥{{ dynamic_profit_protection_settings.tier_2_drawdown_ratio * 100 }}%、浮盈到达过({{ dynamic_profit_protection_settings.tier_3_min_r }}R, {{ dynamic_profit_protection_settings.tier_4_min_r }}R] 回撤≥{{ dynamic_profit_protection_settings.tier_3_drawdown_ratio * 100 }}%、浮盈到达过{{ dynamic_profit_protection_settings.tier_4_min_r }}R以上 回撤≥{{ dynamic_profit_protection_settings.tier_4_drawdown_ratio * 100 }}% 时，立即调用 reduceOnly MARKET 市价单全部平仓；三档按优先级递增，仅触发最高命中的一个条件。';
     const TRAILING_STOP_RULE_NOTE = '仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；先用最近4条15分钟K线判断“预触发移动追踪止盈”（最近第1条close < 最近第2/3/4条low的最小值）；对本轮预触发symbol每分钟读取 klines_1m 最新 high/close，维护“开仓以来最高价”，计算“波动率”=最新 ATR(14) / 最近第2条15分钟K线 close；若波动率 > 0.03，则当最新close相对开仓以来最高价回撤 > 2 × ATR(14) 时打上“移动追踪止盈”tag，否则回撤 > 2.5 × ATR(14) 时打上“移动追踪止盈”tag，并调用市价单接口全部平仓。';
 
     function escapeHtml(value) {
@@ -3507,6 +3522,40 @@
           message.textContent = `配置已保存：规则二${result.rule2.enabled ? '开启' : '关闭'}、减仓 ${result.rule2.reduction_fraction * 100}%；规则五${result.rule5.enabled ? '开启' : '关闭'}、减仓 ${result.rule5.reduction_fraction * 100}%。`;
         } catch (err) { message.textContent = `减仓模块配置保存失败：${err.message || err}`; message.classList.add('error'); }
         finally { button.disabled = false; }
+      });
+    })();
+
+    (function initDynamicProfitProtectionSettingsForm() {
+      const form = document.getElementById('dynamic-profit-protection-settings-form');
+      const message = document.getElementById('dynamic-profit-protection-settings-message');
+      if (!form || !message) return;
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        const button = form.querySelector('button[type="submit"]');
+        const payload = {
+          enabled: document.getElementById('dynamic-profit-protection-enabled').checked,
+          tier_2_min_r: Number(document.getElementById('dynamic-profit-tier-2-r').value),
+          tier_3_min_r: Number(document.getElementById('dynamic-profit-tier-3-r').value),
+          tier_4_min_r: Number(document.getElementById('dynamic-profit-tier-4-r').value),
+          tier_2_drawdown_ratio: Number(document.getElementById('dynamic-profit-tier-2-drawdown').value) / 100,
+          tier_3_drawdown_ratio: Number(document.getElementById('dynamic-profit-tier-3-drawdown').value) / 100,
+          tier_4_drawdown_ratio: Number(document.getElementById('dynamic-profit-tier-4-drawdown').value) / 100,
+        };
+        button.disabled = true;
+        message.textContent = '正在保存动态利润保护配置…';
+        message.classList.remove('error');
+        try {
+          const response = await fetch('/api/dynamic-profit-protection-settings', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+          message.textContent = `配置已保存并同时应用于模拟盘和实盘：保护${result.enabled ? '开启' : '关闭'}；(${result.tier_2_min_r}R, ${result.tier_3_min_r}R] 回撤≥${result.tier_2_drawdown_ratio * 100}%，(${result.tier_3_min_r}R, ${result.tier_4_min_r}R] 回撤≥${result.tier_3_drawdown_ratio * 100}%，${result.tier_4_min_r}R以上回撤≥${result.tier_4_drawdown_ratio * 100}%。`;
+        } catch (err) {
+          message.textContent = `动态利润保护配置保存失败：${err.message || err}`;
+          message.classList.add('error');
+        } finally { button.disabled = false; }
       });
     })();
 

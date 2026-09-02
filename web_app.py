@@ -30,6 +30,10 @@ from openable_symbol_settings import get_settings as get_openable_symbol_setting
 from pre_safety_module import PreSafetyModule
 from partial_take_profit import PartialTakeProfitStrategy
 from dynamic_profit_protection import DynamicProfitProtection
+from dynamic_profit_protection_settings import (
+    get_settings as get_dynamic_profit_protection_settings,
+    set_settings as set_dynamic_profit_protection_settings,
+)
 from trailing_stop_tracker import TrailingStopTracker
 from trailing_reduction_tracker import TrailingReductionTracker
 from holding_position_scoring import HoldingPositionScoringSystem
@@ -1439,6 +1443,21 @@ def update_position_limit_settings_api():
     return jsonify(settings)
 
 
+@app.get("/api/dynamic-profit-protection-settings")
+def dynamic_profit_protection_settings_api():
+    return jsonify(get_dynamic_profit_protection_settings(CONFIG_DB_PATH))
+
+
+@app.put("/api/dynamic-profit-protection-settings")
+def update_dynamic_profit_protection_settings_api():
+    try:
+        return jsonify(set_dynamic_profit_protection_settings(
+            request.get_json(silent=True) or {}, CONFIG_DB_PATH
+        ))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
 @app.get("/api/dynamic-open-threshold-settings")
 def dynamic_open_threshold_settings_api():
     return jsonify(get_dynamic_open_threshold_settings(CONFIG_DB_PATH))
@@ -1933,6 +1952,7 @@ def abnormal_wicks():
         btc_total_pages=btc_total_pages,
         feature_flags=feature_flags.list_feature_flags(CONFIG_DB_PATH),
         position_limit_settings=get_position_limit_settings(CONFIG_DB_PATH),
+        dynamic_profit_protection_settings=get_dynamic_profit_protection_settings(CONFIG_DB_PATH),
         market_filter_settings=get_market_filter_settings(CONFIG_DB_PATH),
         dynamic_open_threshold_settings=get_dynamic_open_threshold_settings(CONFIG_DB_PATH),
         scoring_rule_weight_settings=get_rule_score_weight_settings(CONFIG_DB_PATH),
