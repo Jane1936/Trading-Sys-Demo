@@ -18,6 +18,7 @@ from decimal import Decimal, ROUND_DOWN
 from typing import Any
 
 from binance_account_manager import BinanceAccountManager
+from dynamic_profit_protection_settings import DEFAULT_SETTINGS, get_settings
 from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
 from trading_experiment import ExperimentConfig, TradingExperiment
 
@@ -171,18 +172,22 @@ class DynamicProfitProtection:
         equity = helper._fetch_experiment_usdt_equity()
         r_value = equity * self.config.risk_fraction
         positions = helper._fetch_and_store_positions()
+        protection_settings = get_settings()
         now = int(time.time() * 1000)
         checked = eligible = triggered = 0
         for position in positions:
             if self._decimal_from(position.get("positionAmt"), Decimal("0")) == 0:
                 continue
             checked += 1
-            is_eligible, did_trigger = self._evaluate_position(position, equity, r_value, now)
+            is_eligible, did_trigger = self._evaluate_position(
+                position, equity, r_value, now, protection_settings
+            )
             eligible += int(is_eligible)
             triggered += int(did_trigger)
         return {"checked": checked, "eligible": eligible, "triggered": triggered, "r_usdt": self._fmt_decimal(r_value)}
 
-    def _evaluate_position(self, position: dict[str, Any], equity: Decimal, r_value: Decimal, now: int) -> tuple[bool, bool]:
+    def _evaluate_position(self, position: dict[str, Any], equity: Decimal, r_value: Decimal, now: int, protection_settings: dict[str, bool | float] | None = None) -> tuple[bool, bool]:
+        protection_settings = protection_settings or DEFAULT_SETTINGS
         exchange_symbol = str(position.get("symbol", "")).upper()
         symbol = self._base_symbol(exchange_symbol)
         amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
@@ -207,10 +212,15 @@ class DynamicProfitProtection:
             )
             highest_profit = max(Decimal("0"), (highest - entry_price) * amount)
             highest_r_multiple = highest_profit / r_value if r_value > 0 else Decimal("0")
-            current_tier, threshold = self._tier_and_threshold_for_reached_r_multiple(highest_r_multiple)
-            eligible = eligible and threshold > 0
+            current_tier, threshold = self._tier_and_threshold_for_reached_r_multiple(
+                highest_r_multiple, protection_settings
+            )
+            eligible = eligible and bool(protection_settings["enabled"]) and threshold > 0
             if amount <= 0:
                 reason = "short_position_not_supported_by_highest_price_rule"
+                eligible = False
+            elif not protection_settings["enabled"]:
+                reason = "highest_profit_tier_dynamic_protection_disabled"
                 eligible = False
             elif threshold <= 0:
                 reason = "highest_unrealized_pnl_never_reached_dynamic_profit_protection_band"
@@ -238,13 +248,17 @@ class DynamicProfitProtection:
         return eligible, False
 
     @staticmethod
-    def _tier_and_threshold_for_reached_r_multiple(r_multiple: Decimal) -> tuple[str, Decimal]:
-        if r_multiple > Decimal("4"):
-            return "4R以上", Decimal("0.20")
-        if Decimal("3") < r_multiple <= Decimal("4"):
-            return "(3R, 4R]", Decimal("0.30")
-        if Decimal("2") < r_multiple <= Decimal("3"):
-            return "(2R, 3R]", Decimal("0.40")
+    def _tier_and_threshold_for_reached_r_multiple(r_multiple: Decimal, settings: dict[str, bool | float] | None = None) -> tuple[str, Decimal]:
+        settings = settings or DEFAULT_SETTINGS
+        tier_2 = Decimal(str(settings["tier_2_min_r"]))
+        tier_3 = Decimal(str(settings["tier_3_min_r"]))
+        tier_4 = Decimal(str(settings["tier_4_min_r"]))
+        if r_multiple > tier_4:
+            return f"{tier_4.normalize()}R以上", Decimal(str(settings["tier_4_drawdown_ratio"]))
+        if tier_3 < r_multiple <= tier_4:
+            return f"({tier_3.normalize()}R, {tier_4.normalize()}R]", Decimal(str(settings["tier_3_drawdown_ratio"]))
+        if tier_2 < r_multiple <= tier_3:
+            return f"({tier_2.normalize()}R, {tier_3.normalize()}R]", Decimal(str(settings["tier_2_drawdown_ratio"]))
         return "未达档", Decimal("0")
 
     def _execute_close(self, exchange_symbol: str, symbol: str, amount: Decimal, now: int) -> tuple[Decimal, str, str, str]:

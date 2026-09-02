@@ -11,6 +11,7 @@ import openable_symbol_settings
 import scoring_rule_election
 import weak_market_profit_adjustment
 import position_limit_settings
+import dynamic_profit_protection_settings
 from dynamic_open_threshold import get_settings as get_dynamic_open_threshold_settings
 from scoring_system import init_rule_score_weight_settings
 
@@ -22,6 +23,7 @@ MIGRATED_TABLES = (
     "market_filter_settings",
     "dynamic_open_threshold_settings",
     "weak_market_profit_adjustment_settings",
+    "dynamic_profit_protection_settings",
     "scoring_rule_weights",
     "scoring_rule_election",
     "scoring_rule_election_config",
@@ -37,6 +39,7 @@ def _seed_config_database(config_db_path: str) -> None:
     scoring_rule_election.init_settings(config_db_path)
     openable_symbol_settings.get_settings(config_db_path)
     position_limit_settings.get_settings(config_db_path)
+    dynamic_profit_protection_settings.get_settings(config_db_path)
 
 
 def _source_table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
