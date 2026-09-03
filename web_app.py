@@ -30,6 +30,7 @@ from openable_symbol_settings import get_settings as get_openable_symbol_setting
 from pre_safety_module import PreSafetyModule
 from partial_take_profit import PartialTakeProfitStrategy
 from dynamic_profit_protection import DynamicProfitProtection
+from hard_take_profit import HardTakeProfit
 from dynamic_profit_protection_settings import (
     get_settings as get_dynamic_profit_protection_settings,
     set_settings as set_dynamic_profit_protection_settings,
@@ -1083,6 +1084,18 @@ def dynamic_profit_protection_summary_api():
         return jsonify({"error": str(exc)}), 502
 
 
+def _hard_take_profit_payload() -> dict:
+    return HardTakeProfit(db_path=_trading_db_path()).summary_payload()
+
+
+@app.get("/api/hard-take-profit/summary")
+def hard_take_profit_summary_api():
+    try:
+        return jsonify(_hard_take_profit_payload())
+    except sqlite3.Error as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
 def _trailing_stop_payload() -> dict:
     return TrailingStopTracker(db_path=_trading_db_path()).summary_payload()
 
@@ -1799,6 +1812,10 @@ def abnormal_wicks():
     dynamic_profit_protection_round_ts = dynamic_profit_protection_payload["round_ts"]
     dynamic_profit_protection_checks = dynamic_profit_protection_payload["checks"]
     dynamic_profit_protection_records = dynamic_profit_protection_payload["records"]
+    hard_take_profit_payload = load_module("硬止盈", _hard_take_profit_payload, {"round_ts": 0, "checks": [], "records": []})
+    hard_take_profit_round_ts = hard_take_profit_payload["round_ts"]
+    hard_take_profit_checks = hard_take_profit_payload["checks"]
+    hard_take_profit_records = hard_take_profit_payload["records"]
     trailing_stop_tracker = TrailingStopTracker(db_path=_trading_db_path())
     trailing_stop_round_ts, trailing_stop_checks = load_module("移动追踪止盈检查", trailing_stop_tracker.get_latest_round_checks, (0, []))
     trailing_stop_records = load_module("移动追踪止盈记录", lambda: trailing_stop_tracker.recent_action_records(limit=100), [])
@@ -1933,6 +1950,9 @@ def abnormal_wicks():
         dynamic_profit_protection_round_ts=dynamic_profit_protection_round_ts,
         dynamic_profit_protection_checks=dynamic_profit_protection_checks,
         dynamic_profit_protection_records=dynamic_profit_protection_records,
+        hard_take_profit_round_ts=hard_take_profit_round_ts,
+        hard_take_profit_checks=hard_take_profit_checks,
+        hard_take_profit_records=hard_take_profit_records,
         trailing_stop_round_ts=trailing_stop_round_ts,
         trailing_stop_checks=trailing_stop_checks,
         trailing_stop_records=trailing_stop_records,
