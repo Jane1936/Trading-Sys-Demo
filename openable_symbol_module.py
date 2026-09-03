@@ -53,7 +53,12 @@ class OpenableRoundSummary:
     decision_round_ts: int
     evaluated_at: int
     candidate_count: int
-    qualified_symbols: tuple[OpenableSymbol, ...]
+    candidate_symbols: tuple[OpenableSymbol, ...]
+
+    @property
+    def qualified_symbols(self) -> tuple[OpenableSymbol, ...]:
+        """Keep the qualified subset available to existing callers."""
+        return tuple(row for row in self.candidate_symbols if row.qualified)
 
 
 class OpenableSymbolModule:
@@ -470,7 +475,7 @@ class OpenableSymbolModule:
         return int(latest_round_ts), [self._row_to_dataclass(row) for row in rows]
 
     def recent_round_summaries(self, limit: int = 100) -> List[OpenableRoundSummary]:
-        """Return the most recent persisted evaluation rounds and their qualified symbols."""
+        """Return recent rounds with every persisted candidate and its decision details."""
         if limit <= 0:
             return []
         with self._connect() as conn:
@@ -514,7 +519,7 @@ class OpenableSymbolModule:
             decision_round_ts=rows[0].decision_round_ts,
             evaluated_at=max(row.evaluated_at for row in rows),
             candidate_count=len(rows),
-            qualified_symbols=tuple(row for row in rows if row.qualified),
+            candidate_symbols=tuple(rows),
         )
 
     @staticmethod
