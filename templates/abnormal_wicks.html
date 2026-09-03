@@ -2030,7 +2030,7 @@
         <div class="critical-section sky-theme-section" aria-label="硬止盈1分钟扫描结果">
           <div class="symbol-strip">
             <div class="section-title-row"><strong>硬止盈模块：1分钟扫描结果</strong><button id="refresh-hard-take-profit" class="btn btn-primary btn-small" type="button">刷新</button><span id="hard-take-profit-refresh-status" class="muted">仅刷新本模块的最新信息</span></div>
-            <div id="hard-take-profit-round-note" class="muted">{% if hard_take_profit_round_ts %}最近判断轮次：{{ hard_take_profit_round_ts|fmt_ms_datetime }}。独立扫描全部已持仓 symbol；未变现盈利率达到默认 20% 时，调用 reduceOnly MARKET 市价单全部平仓。{% else %}暂无硬止盈扫描结果。{% endif %}</div>
+            <div id="hard-take-profit-round-note" class="muted">{% if hard_take_profit_round_ts %}最近判断轮次：{{ hard_take_profit_round_ts|fmt_ms_datetime }}。独立扫描全部已持仓 symbol；未变现盈利率达到当前配置 {{ hard_take_profit_settings.profit_ratio * 100 }}% 时，调用 reduceOnly MARKET 市价单全部平仓。{% else %}暂无硬止盈扫描结果。{% endif %}</div>
           </div>
           <div class="table-wrap"><table><thead><tr><th>checked_at</th><th>symbol</th><th>entry</th><th>position</th><th>未变现盈利</th><th>持仓名义价值</th><th>盈利率/阈值</th><th>触发</th><th>全部平仓单</th><th>reason</th></tr></thead><tbody id="hard-take-profit-checks-body">
           {% for row in hard_take_profit_checks %}<tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td>{{ row.unrealized_pnl }}</td><td>{{ row.position_notional }}</td><td>{{ row.profit_ratio }} / {{ row.profit_threshold }}</td><td>{{ '是' if row.triggered else '否' }}</td><td>{{ row.close_quantity }} / {{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="10">暂无硬止盈扫描结果</td></tr>{% endfor %}
@@ -3216,6 +3216,17 @@
       </div>
     </div>
     <div class="card feature-config-yellow">
+      <div class="header"><h2>硬止盈配置</h2></div>
+      <div class="tip">设置模拟盘持仓触发全部平仓的未变现盈利率；默认 20%，保存后从硬止盈模块下一轮扫描开始生效。</div>
+      <div id="hard-take-profit-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
+      <form id="hard-take-profit-settings-form" class="score-weight-actions">
+        <label>硬止盈幅度（%）
+          <input id="hard-take-profit-ratio" type="number" min="0.1" max="100" step="0.1" required value="{{ hard_take_profit_settings.profit_ratio * 100 }}">
+        </label>
+        <button class="btn btn-success" type="submit">保存硬止盈配置</button>
+      </form>
+    </div>
+    <div class="card feature-config-yellow">
       <div class="header"><h2>最大同时持仓仓位个数</h2></div>
       <div class="tip">每个 symbol 新开仓前都会重新查询当前已持仓仓位个数；仅当已持仓个数小于对应配置值时才允许开仓。模拟盘与实盘配置相互独立。</div>
       <div id="position-limit-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
@@ -3515,6 +3526,26 @@
           message.textContent = `最大持仓配置保存失败：${err.message || err}`;
           message.classList.add('error');
         } finally { button.disabled = false; }
+      });
+    })();
+
+    (function initHardTakeProfitSettingsForm() {
+      const form = document.getElementById('hard-take-profit-settings-form');
+      const message = document.getElementById('hard-take-profit-settings-message');
+      if (!form || !message) return;
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        const button = form.querySelector('button[type="submit"]');
+        const payload = {profit_ratio: Number(document.getElementById('hard-take-profit-ratio').value) / 100};
+        button.disabled = true; message.textContent = '正在保存硬止盈配置…'; message.classList.remove('error');
+        try {
+          const response = await fetch('/api/hard-take-profit-settings', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+          message.textContent = `配置已保存：未变现盈利率达到 ${result.profit_ratio * 100}% 时全部平仓。`;
+        } catch (err) { message.textContent = `硬止盈配置保存失败：${err.message || err}`; message.classList.add('error'); }
+        finally { button.disabled = false; }
       });
     })();
 

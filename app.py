@@ -13,6 +13,7 @@ import sqlite3
 import threading
 import time
 import traceback
+from decimal import Decimal
 from pathlib import Path
 from typing import Callable, Iterable, List
 
@@ -38,6 +39,7 @@ from pre_safety_module import PreSafetyModule
 from partial_take_profit import PartialTakeProfitStrategy
 from dynamic_profit_protection import DynamicProfitProtection
 from hard_take_profit import HardTakeProfit
+from hard_take_profit_settings import get_settings as get_hard_take_profit_settings
 from trailing_stop_tracker import TrailingStopTracker
 from trailing_reduction_tracker import TrailingReductionTracker
 from holding_position_scoring import HoldingPositionScoringSystem
@@ -1059,17 +1061,23 @@ def start_break_even_take_profit_task() -> None:
                 recover_after_worker_error(exc)
                 print(f"⚠️ exit-order reconcile failed: {exc}")
 
-            # Hard take-profit is intentionally independent of all feature flags and
-            # preceding protection modules. It scans every currently held symbol.
-            try:
-                hard_result = hard_take_profit.run_round()
-                print(
-                    f"🟢 hard take-profit checked={hard_result.get('checked', 0)} "
-                    f"triggered={hard_result.get('triggered', 0)}"
-                )
-            except Exception as exc:
-                recover_after_worker_error(exc)
-                print(f"⚠️ hard take-profit failed: {exc}")
+            # This protection remains independent of preceding modules, but has its
+            # own switch and reloads its threshold before every scan.
+            if feature_flags.is_feature_enabled(feature_flags.HARD_TAKE_PROFIT):
+                try:
+                    hard_take_profit.profit_threshold = Decimal(str(
+                        get_hard_take_profit_settings()["profit_ratio"]
+                    ))
+                    hard_result = hard_take_profit.run_round()
+                    print(
+                        f"🟢 hard take-profit checked={hard_result.get('checked', 0)} "
+                        f"triggered={hard_result.get('triggered', 0)}"
+                    )
+                except Exception as exc:
+                    recover_after_worker_error(exc)
+                    print(f"⚠️ hard take-profit failed: {exc}")
+            else:
+                print("⏸️ hard take-profit skipped: feature flag disabled")
 
             if feature_flags.is_feature_enabled(feature_flags.BREAK_EVEN_TAKE_PROFIT):
               try:
