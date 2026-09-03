@@ -46,6 +46,16 @@ class OpenableSymbol:
     previous_score_band: str = "NA"
 
 
+@dataclass(frozen=True)
+class OpenableRoundSummary:
+    """A persisted openable-symbol evaluation round for dashboard history."""
+
+    decision_round_ts: int
+    evaluated_at: int
+    candidate_count: int
+    qualified_symbols: tuple[OpenableSymbol, ...]
+
+
 class OpenableSymbolModule:
     """Persist symbols that can be considered for opening in this round."""
 
@@ -458,6 +468,54 @@ class OpenableSymbolModule:
             ).fetchall()
 
         return int(latest_round_ts), [self._row_to_dataclass(row) for row in rows]
+
+    def recent_round_summaries(self, limit: int = 100) -> List[OpenableRoundSummary]:
+        """Return the most recent persisted evaluation rounds and their qualified symbols."""
+        if limit <= 0:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT symbol, decision_round_ts, total_score, score_band,
+                       previous_total_score, previous_score_band,
+                       stop_loss_distance_ratio, distance_threshold, stop_loss_distance_tier,
+                       opening_leverage, distance_qualified, qualified, reason, evaluated_at
+                FROM {self.TABLE_NAME}
+                WHERE decision_round_ts IN (
+                    SELECT DISTINCT decision_round_ts
+                    FROM {self.TABLE_NAME}
+                    ORDER BY decision_round_ts DESC
+                    LIMIT ?
+                )
+                ORDER BY decision_round_ts DESC, qualified DESC, total_score DESC, symbol ASC
+                """,
+                (int(limit),),
+            ).fetchall()
+
+        rounds: list[OpenableRoundSummary] = []
+        current_round_ts: int | None = None
+        current_rows: list[OpenableSymbol] = []
+        for row in rows:
+            item = self._row_to_dataclass(row)
+            if current_round_ts is not None and item.decision_round_ts != current_round_ts:
+                rounds.append(self._round_summary(current_rows))
+                if len(rounds) == limit:
+                    break
+                current_rows = []
+            current_round_ts = item.decision_round_ts
+            current_rows.append(item)
+        if current_rows and len(rounds) < limit:
+            rounds.append(self._round_summary(current_rows))
+        return rounds
+
+    @staticmethod
+    def _round_summary(rows: list[OpenableSymbol]) -> OpenableRoundSummary:
+        return OpenableRoundSummary(
+            decision_round_ts=rows[0].decision_round_ts,
+            evaluated_at=max(row.evaluated_at for row in rows),
+            candidate_count=len(rows),
+            qualified_symbols=tuple(row for row in rows if row.qualified),
+        )
 
     @staticmethod
     def _row_to_dataclass(row: sqlite3.Row) -> OpenableSymbol:

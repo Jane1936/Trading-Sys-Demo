@@ -21,6 +21,14 @@ def test_simulation_tab_owns_paper_trading_panels() -> None:
     assert "账户信息" not in strategy_section
     assert 'data-strategy-tab="strategy-openable"' in strategy_section
     assert 'data-strategy-tab="strategy-cooldown"' in strategy_section
+    assert "可开仓symbol情况记录" in strategy_section
+    assert "openable_round_history" in strategy_section
+    history_title = strategy_section.index("可开仓symbol情况记录")
+    history_section = strategy_section[
+        strategy_section.rfind('<div class="collapsible-section', 0, history_title):
+    ]
+    assert 'data-collapsible data-collapsed-limit="10"' in history_section
+    assert "{% if loop.index > 10 %}collapsed-extra{% endif %}" in history_section
     assert 'data-simulation-tab="strategy-holding-score">持仓评分系统' in simulation_section
     assert 'data-simulation-tab="strategy-filled-orders">已成交订单分析' in simulation_section
     assert 'data-simulation-tab="strategy-account">账户信息' in simulation_section

@@ -1154,6 +1154,50 @@
             </tbody>
           </table>
         </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>可开仓symbol情况记录</strong></div>
+              <div class="muted">展示最近 {{ openable_round_history|length }} 轮已保存的可开仓评估结果。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>评估轮次</th>
+                  <th>候选symbol数</th>
+                  <th>最终可开仓symbol</th>
+                  <th>评估时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for round in openable_round_history %}
+                <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                  <td>{{ round.decision_round_ts|fmt_ms_datetime }}</td>
+                  <td>{{ round.candidate_count }}</td>
+                  <td>
+                    {% if round.qualified_symbols %}
+                    <div class="chips">
+                      {% for row in round.qualified_symbols %}
+                      <span class="chip" title="总分 {{ row.total_score }}；止损距离档位 {{ row.stop_loss_distance_tier }}；杠杆 {{ row.opening_leverage }}">{{ row.symbol }} {{ row.opening_leverage }}</span>
+                      {% endfor %}
+                    </div>
+                    {% else %}
+                    <span class="muted">无</span>
+                    {% endif %}
+                  </td>
+                  <td>{{ round.evaluated_at|fmt_ms_datetime }}</td>
+                </tr>
+                {% else %}
+                <tr><td class="empty" colspan="4">暂无可开仓symbol情况记录</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
 

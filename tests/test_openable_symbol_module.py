@@ -111,3 +111,30 @@ def test_same_or_higher_previous_score_band_remains_openable(tmp_path):
 
     assert rows["SAME"].qualified is True
     assert rows["HIGHER"].qualified is True
+
+
+def test_recent_round_summaries_keep_each_round_and_only_qualified_symbols(tmp_path):
+    db_path = tmp_path / "klines.db"
+    module = OpenableSymbolModule(db_path=str(db_path))
+    module.init_table()
+    with module._connect() as conn:
+        conn.executemany(
+            """
+            INSERT INTO current_round_openable_symbols
+            (symbol, decision_round_ts, total_score, score_band, stop_loss_distance_tier,
+             opening_leverage, distance_qualified, qualified, reason, evaluated_at)
+            VALUES (?, ?, ?, '标准试错单', 'A档', '8x', 1, ?, 'test', ?)
+            """,
+            [
+                ("OLDPASS", 100, 80, 1, 1000),
+                ("NEWPASS", 200, 79, 1, 2000),
+                ("NEWFAIL", 200, 78, 0, 2001),
+            ],
+        )
+
+    summaries = module.recent_round_summaries()
+
+    assert [summary.decision_round_ts for summary in summaries] == [200, 100]
+    assert summaries[0].candidate_count == 2
+    assert [row.symbol for row in summaries[0].qualified_symbols] == ["NEWPASS"]
+    assert summaries[0].evaluated_at == 2001
