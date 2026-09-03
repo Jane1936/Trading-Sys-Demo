@@ -10,13 +10,19 @@ from trading_experiment import TradingExperiment
 
 
 class FakeAccountManager:
-    def __init__(self, unrealized_profit="50"):
+    def __init__(self, unrealized_profit="50", filled_orders=None):
         self.unrealized_profit = unrealized_profit
+        self.filled_orders = filled_orders or []
+        self.filled_order_queries = []
         self.signed_deletes = []
         self.signed_posts = []
 
     def validate_config(self):
         return None
+
+    def futures_filled_orders(self, start_time, end_time, limit=1000):
+        self.filled_order_queries.append((start_time, end_time, limit))
+        return {"orders": self.filled_orders}
 
     def _signed_get(self, endpoint, params=None):
         if endpoint == "/fapi/v3/balance":
@@ -143,6 +149,49 @@ def test_dynamic_profit_protection_does_not_close_below_2r():
     assert result["triggered"] == 0
     assert checks[0].eligible is False
     assert account.signed_posts == []
+
+
+def test_dynamic_profit_protection_totals_realized_pnl_since_latest_open_once_per_round():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = str(Path(tmp) / "k.db")
+        _seed_db(db_path, close=10.5, high=11.9)
+        account = FakeAccountManager(
+            unrealized_profit="19",
+            filled_orders=[
+                {"symbol": "BANKUSDT", "time": 0, "realized_pnl": "99"},
+                {"symbol": "BANKUSDT", "time": 2, "realized_pnl": "3.25"},
+                {"symbol": "BANKUSDT", "time": 3, "realized_pnl": "-1.5"},
+                {"symbol": "OTHERUSDT", "time": 4, "realized_pnl": "50"},
+            ],
+        )
+        tracker = DynamicProfitProtection(db_path=db_path, account_manager=account)
+        tracker.run_round()
+        _, checks = tracker.get_latest_round_checks()
+
+    assert len(account.filled_order_queries) == 1
+    assert account.filled_order_queries[0][0] == 1
+    assert checks[0].realized_pnl_since_open == "1.75"
+    assert checks[0].cycle_total_pnl == "20.75"
+
+
+def test_dynamic_profit_protection_keeps_scanning_when_realized_pnl_is_unavailable(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = str(Path(tmp) / "k.db")
+        _seed_db(db_path, close=10.5, high=11.9)
+        account = FakeAccountManager(unrealized_profit="19")
+        monkeypatch.setattr(
+            account,
+            "futures_filled_orders",
+            lambda **kwargs: (_ for _ in ()).throw(RuntimeError("temporarily unavailable")),
+        )
+        tracker = DynamicProfitProtection(db_path=db_path, account_manager=account)
+
+        result = tracker.run_round()
+        _, checks = tracker.get_latest_round_checks()
+
+    assert result["checked"] == 1
+    assert checks[0].realized_pnl_since_open == ""
+    assert checks[0].cycle_total_pnl == ""
 
 
 def test_dynamic_profit_protection_uses_highest_reached_tier_priority_over_current_profit():

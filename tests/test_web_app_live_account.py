@@ -83,8 +83,8 @@ def test_live_high_frequency_summary_reads_only_requested_module(monkeypatch):
         "checks": [{"symbol": "BTC", "reason": "latest"}],
         "records": [{"symbol": "BTC", "status": "submitted"}],
     }
-    assert len(payload["tables"]["check_columns"]) == 17
-    assert len(payload["tables"]["record_columns"]) == 16
+    assert len(payload["tables"]["check_columns"]) == 19
+    assert len(payload["tables"]["record_columns"]) == 18
 
 
 def test_live_hard_take_profit_summary_exposes_matching_tables(monkeypatch):
