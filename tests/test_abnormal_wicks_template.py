@@ -581,9 +581,9 @@ def test_partial_take_profit_displays_merged_error_records():
 def test_dynamic_profit_protection_displays_updated_profit_tiers():
     template = Path("templates/abnormal_wicks.html").read_text()
 
-    assert "浮盈到达过(2R, 3R] 回撤≥40%" in template
-    assert "浮盈到达过(3R, 4R] 回撤≥30%" in template
-    assert "浮盈到达过4R以上 回撤≥20%" in template
+    assert "周期累积盈亏到达过(2R, 3R] 回撤≥40%" in template
+    assert "周期累积盈亏到达过(3R, 4R] 回撤≥30%" in template
+    assert "周期累积盈亏到达过4R以上 回撤≥20%" in template
     assert "浮盈到达过(2R, 4R]" not in template
     assert "浮盈到达过7R以上" not in template
 
@@ -591,7 +591,7 @@ def test_dynamic_profit_protection_displays_updated_profit_tiers():
 def test_dynamic_profit_protection_displays_highest_profit_time():
     template = Path("templates/abnormal_wicks.html").read_text()
 
-    assert template.count("最高浮盈出现时间") >= 2
+    assert template.count("历史最高出现时间") >= 2
     assert "row.highest_profit_at|fmt_ms_datetime" in template
     assert "formatMsDatetime(row.highest_profit_at)" in template
 
@@ -599,9 +599,9 @@ def test_dynamic_profit_protection_displays_highest_profit_time():
 def test_dynamic_profit_protection_displays_historical_highest_profit_before_time():
     template = Path("templates/abnormal_wicks.html").read_text()
 
-    assert template.count("历史最高浮盈") >= 2
-    assert template.count("<th>历史最高浮盈</th><th>最高浮盈出现时间</th>") == 2
-    assert "row.highest_unrealized_pnl" in template
+    assert template.count("周期累积盈亏历史最高") >= 2
+    assert template.count("<th>周期累积盈亏历史最高</th><th>历史最高出现时间</th>") == 2
+    assert "row.highest_cycle_total_pnl" in template
 
 
 def test_trailing_stop_action_records_show_atr_and_volatility_without_total_score():

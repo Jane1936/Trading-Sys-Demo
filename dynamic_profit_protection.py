@@ -1,9 +1,9 @@
 """Dynamic profit protection for open experiment positions.
 
-Runs once per minute before trailing stop. It reads latest 1m kline close,
-maintains the highest 1m high since open, and closes the full position by
-reduce-only MARKET order when a position has reached a configured historical
-profit R tier and latest close gives back enough of the open-to-high profit.
+Runs once per minute before trailing stop. It samples each position cycle's
+accumulated PnL (realized PnL since open plus current unrealized PnL), maintains
+its historical maximum, and closes the full position by reduce-only MARKET
+order when that maximum reached a configured R tier and gives back enough.
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ class DynamicProfitProtectionCheck:
     latest_1m_close: str
     highest_since_open: str
     highest_unrealized_pnl: str
+    highest_cycle_total_pnl: str
     highest_profit_at: int
     profit_drawdown_ratio: str
     drawdown_threshold: str
@@ -101,6 +102,7 @@ class DynamicProfitProtection:
                     latest_1m_high TEXT NOT NULL DEFAULT '0',
                     latest_1m_close TEXT NOT NULL DEFAULT '0',
                     highest_since_open TEXT NOT NULL DEFAULT '0',
+                    highest_cycle_total_pnl TEXT NOT NULL DEFAULT '0',
                     highest_profit_at INTEGER NOT NULL DEFAULT 0,
                     profit_drawdown_ratio TEXT NOT NULL DEFAULT '0',
                     drawdown_threshold TEXT NOT NULL DEFAULT '0',
@@ -121,6 +123,7 @@ class DynamicProfitProtection:
                 "realized_pnl_since_open": "TEXT NOT NULL DEFAULT ''", "cycle_total_pnl": "TEXT NOT NULL DEFAULT ''",
                 "latest_1m_high": "TEXT NOT NULL DEFAULT '0'", "latest_1m_close": "TEXT NOT NULL DEFAULT '0'",
                 "highest_since_open": "TEXT NOT NULL DEFAULT '0'", "profit_drawdown_ratio": "TEXT NOT NULL DEFAULT '0'",
+                "highest_cycle_total_pnl": "TEXT NOT NULL DEFAULT '0'",
                 "highest_profit_at": "INTEGER NOT NULL DEFAULT 0",
                 "drawdown_threshold": "TEXT NOT NULL DEFAULT '0'", "current_tier": "TEXT NOT NULL DEFAULT '未达档'", "triggered": "INTEGER NOT NULL DEFAULT 0",
                 "close_quantity": "TEXT NOT NULL DEFAULT '0'", "close_order_id": "TEXT NOT NULL DEFAULT ''",
@@ -159,6 +162,7 @@ class DynamicProfitProtection:
                     latest_1m_high TEXT NOT NULL DEFAULT '0',
                     latest_1m_close TEXT NOT NULL DEFAULT '0',
                     highest_since_open TEXT NOT NULL DEFAULT '0',
+                    highest_cycle_total_pnl TEXT NOT NULL DEFAULT '0',
                     highest_profit_at INTEGER NOT NULL DEFAULT 0,
                     profit_drawdown_ratio TEXT NOT NULL DEFAULT '0',
                     drawdown_threshold TEXT NOT NULL DEFAULT '0',
@@ -172,7 +176,7 @@ class DynamicProfitProtection:
                 )
             """)
             record_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({self.RECORDS_TABLE})")}
-            for column in ("realized_pnl_since_open", "cycle_total_pnl"):
+            for column in ("realized_pnl_since_open", "cycle_total_pnl", "highest_cycle_total_pnl"):
                 if column not in record_columns:
                     conn.execute(f"ALTER TABLE {self.RECORDS_TABLE} ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
             conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.RECORDS_TABLE}_checked ON {self.RECORDS_TABLE}(checked_at DESC, symbol ASC)")
@@ -217,58 +221,67 @@ class DynamicProfitProtection:
         entry_price = self._decimal_from(position.get("entryPrice"), Decimal("0"))
         pnl = self._decimal_from(position.get("unRealizedProfit", position.get("unrealizedProfit")), Decimal("0"))
         cycle_total_pnl = pnl + realized_pnl_since_open if realized_pnl_since_open is not None else None
-        r_multiple = pnl / r_value if r_value > 0 else Decimal("0")
+        r_multiple = cycle_total_pnl / r_value if cycle_total_pnl is not None and r_value > 0 else Decimal("0")
         close_quantity = Decimal("0"); close_order_id = ""; close_status = "not_required"
-        high = close = highest = drawdown = threshold = highest_profit = highest_r_multiple = Decimal("0")
+        high = close = highest = drawdown = threshold = highest_cycle_pnl = highest_r_multiple = Decimal("0")
         highest_at = 0
         open_trade_id = open_time = 0
         current_tier = "未达档"
         eligible = amount > 0 and entry_price > 0 and r_value > 0
         try:
             open_trade_id, open_time = open_trade or self._latest_open_trade(symbol)
-            high, close = self._latest_1m_high_close_since(symbol, open_time)
-            previous_highest, previous_highest_at = self._previous_highest_since_open(symbol, open_trade_id, open_time)
-            kline_highest, kline_highest_at = self._highest_1m_high_since(symbol, open_time)
-            highest, highest_at = self._newer_open_highest(
-                open_time,
-                (previous_highest, previous_highest_at),
-                (kline_highest, kline_highest_at),
+            # Retain price fields as diagnostics for existing operational views;
+            # price data no longer participates in the protection decision.
+            try:
+                high, close = self._latest_1m_high_close_since(symbol, open_time)
+                highest, _ = self._highest_1m_high_since(symbol, open_time)
+            except (RuntimeError, sqlite3.Error):
+                pass
+            previous_highest, previous_highest_at = self._previous_highest_cycle_pnl(
+                symbol, open_trade_id, open_time
             )
-            highest_profit = max(Decimal("0"), (highest - entry_price) * amount)
-            highest_r_multiple = highest_profit / r_value if r_value > 0 else Decimal("0")
+            if cycle_total_pnl is not None:
+                highest_cycle_pnl, highest_at = max(
+                    (previous_highest, previous_highest_at),
+                    (cycle_total_pnl, now),
+                    key=lambda candidate: (candidate[0], -candidate[1]),
+                )
+            else:
+                highest_cycle_pnl, highest_at = previous_highest, previous_highest_at
+            highest_r_multiple = highest_cycle_pnl / r_value if r_value > 0 else Decimal("0")
             current_tier, threshold = self._tier_and_threshold_for_reached_r_multiple(
                 highest_r_multiple, protection_settings
             )
-            eligible = eligible and bool(protection_settings["enabled"]) and threshold > 0
+            eligible = eligible and cycle_total_pnl is not None and bool(protection_settings["enabled"]) and threshold > 0
             if amount <= 0:
-                reason = "short_position_not_supported_by_highest_price_rule"
+                reason = "short_position_not_supported_by_dynamic_profit_protection"
+                eligible = False
+            elif cycle_total_pnl is None:
+                reason = "cycle_total_pnl_unavailable"
                 eligible = False
             elif not protection_settings["enabled"]:
-                reason = "highest_profit_tier_dynamic_protection_disabled"
+                reason = "highest_cycle_pnl_tier_dynamic_protection_disabled"
                 eligible = False
             elif threshold <= 0:
-                reason = "highest_unrealized_pnl_never_reached_dynamic_profit_protection_band"
-                eligible = False
-            elif highest <= entry_price or close <= 0:
-                reason = "missing_valid_highest_or_close"
+                reason = "highest_cycle_total_pnl_never_reached_dynamic_profit_protection_band"
                 eligible = False
             else:
-                drawdown = max(Decimal("0"), (highest - close) / (highest - entry_price))
+                drawdown = max(Decimal("0"), (highest_cycle_pnl - cycle_total_pnl) / highest_cycle_pnl)
                 if drawdown >= threshold:
                     if self._has_close_record(symbol, open_trade_id):
                         reason = "dynamic_profit_protection_already_completed"
                     else:
                         close_quantity, close_order_id, close_status, action_reason = self._execute_close(exchange_symbol, symbol, amount, now)
-                        reason = f"dynamic_profit_protection_triggered; tier={current_tier}; highest_profit_r={self._fmt_decimal(highest_r_multiple)}; current_profit_r={self._fmt_decimal(r_multiple)}; drawdown={self._fmt_decimal(drawdown)}; threshold={self._fmt_decimal(threshold)}; {action_reason}"
-                        action_values = (symbol, now, open_trade_id, open_time, entry_price, amount, equity, r_value, pnl, realized_pnl_since_open, cycle_total_pnl, r_multiple, high, close, highest, highest_at, drawdown, threshold, current_tier, close_status == "submitted", close_quantity, close_order_id, close_status, eligible, reason)
+                        reason = f"dynamic_profit_protection_triggered; tier={current_tier}; highest_cycle_pnl_r={self._fmt_decimal(highest_r_multiple)}; current_cycle_pnl_r={self._fmt_decimal(r_multiple)}; drawdown={self._fmt_decimal(drawdown)}; threshold={self._fmt_decimal(threshold)}; {action_reason}"
+                        action_values = (symbol, now, open_trade_id, open_time, entry_price, amount, equity, r_value, pnl, realized_pnl_since_open, cycle_total_pnl, r_multiple, high, close, highest, highest_cycle_pnl, highest_at, drawdown, threshold, current_tier, close_status == "submitted", close_quantity, close_order_id, close_status, eligible, reason)
                         self._insert_check(*action_values)
                         self._upsert_action_record(*action_values)
                         return eligible, close_status == "submitted"
                 else:
-                    reason = f"dynamic_profit_protection_not_triggered; tier={current_tier}; highest_profit_r={self._fmt_decimal(highest_r_multiple)}; current_profit_r={self._fmt_decimal(r_multiple)}; drawdown_lt_threshold"
+                    reason = f"dynamic_profit_protection_not_triggered; tier={current_tier}; highest_cycle_pnl_r={self._fmt_decimal(highest_r_multiple)}; current_cycle_pnl_r={self._fmt_decimal(r_multiple)}; drawdown_lt_threshold"
         except Exception as exc:
             reason = f"dynamic_profit_protection_failed: {type(exc).__name__}: {exc}"
-        self._insert_check(symbol, now, open_trade_id, open_time, entry_price, amount, equity, r_value, pnl, realized_pnl_since_open, cycle_total_pnl, r_multiple, high, close, highest, highest_at, drawdown, threshold, current_tier, False, close_quantity, close_order_id, close_status, eligible, reason)
+        self._insert_check(symbol, now, open_trade_id, open_time, entry_price, amount, equity, r_value, pnl, realized_pnl_since_open, cycle_total_pnl, r_multiple, high, close, highest, highest_cycle_pnl, highest_at, drawdown, threshold, current_tier, False, close_quantity, close_order_id, close_status, eligible, reason)
         return eligible, False
 
     def _realized_pnl_since_open(self, positions: list[dict[str, Any]], open_trades: dict[str, tuple[int, int]], now: int) -> dict[str, Decimal]:
@@ -399,6 +412,22 @@ class DynamicProfitProtection:
             return Decimal("0"), 0
         return self._decimal_from(row["highest_since_open"], Decimal("0")), highest_at
 
+    def _previous_highest_cycle_pnl(self, symbol: str, open_trade_id: int, opened_at: int) -> tuple[Decimal, int]:
+        """Return the sampled cycle-PnL maximum for this exact open lifecycle."""
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT highest_cycle_total_pnl, highest_profit_at FROM {self.CHECKS_TABLE} "
+                "WHERE symbol = ? AND open_trade_id = ? AND opened_at = ? AND checked_at >= ? "
+                "ORDER BY checked_at DESC, id DESC LIMIT 1",
+                (symbol, int(open_trade_id), int(opened_at), int(opened_at)),
+            ).fetchone()
+        if row is None:
+            return Decimal("0"), 0
+        highest_at = int(row["highest_profit_at"] or 0)
+        if highest_at < opened_at:
+            return Decimal("0"), 0
+        return self._decimal_from(row["highest_cycle_total_pnl"], Decimal("0")), highest_at
+
     @staticmethod
     def _newer_open_highest(
         opened_at: int, *candidates: tuple[Decimal, int]
@@ -421,15 +450,15 @@ class DynamicProfitProtection:
             else (Decimal("0"), 0)
         )
 
-    def _insert_check(self, symbol: str, checked_at: int, open_trade_id: int, opened_at: int, entry: Decimal, amount: Decimal, equity: Decimal, r_value: Decimal, pnl: Decimal, realized_pnl_since_open: Decimal | None, cycle_total_pnl: Decimal | None, r_multiple: Decimal, high: Decimal, close: Decimal, highest: Decimal, highest_at: int, drawdown: Decimal, threshold: Decimal, current_tier: str, triggered: bool, close_quantity: Decimal, close_order_id: str, close_status: str, eligible: bool, reason: str) -> None:
+    def _insert_check(self, symbol: str, checked_at: int, open_trade_id: int, opened_at: int, entry: Decimal, amount: Decimal, equity: Decimal, r_value: Decimal, pnl: Decimal, realized_pnl_since_open: Decimal | None, cycle_total_pnl: Decimal | None, r_multiple: Decimal, high: Decimal, close: Decimal, highest: Decimal, highest_cycle_pnl: Decimal, highest_at: int, drawdown: Decimal, threshold: Decimal, current_tier: str, triggered: bool, close_quantity: Decimal, close_order_id: str, close_status: str, eligible: bool, reason: str) -> None:
         with self._connect() as conn:
-            conn.execute(f"INSERT INTO {self.CHECKS_TABLE} (symbol, checked_at, open_trade_id, opened_at, entry_price, position_amt, account_equity_usdt, r_usdt, unrealized_pnl, realized_pnl_since_open, cycle_total_pnl, profit_r_multiple, latest_1m_high, latest_1m_close, highest_since_open, highest_profit_at, profit_drawdown_ratio, drawdown_threshold, current_tier, triggered, close_quantity, close_order_id, close_status, eligible, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, int(open_trade_id), int(opened_at), self._fmt_decimal(entry), self._fmt_decimal(amount), self._fmt_decimal(equity), self._fmt_decimal(r_value), self._fmt_decimal(pnl), self._fmt_optional_decimal(realized_pnl_since_open), self._fmt_optional_decimal(cycle_total_pnl), self._fmt_decimal(r_multiple), self._fmt_decimal(high), self._fmt_decimal(close), self._fmt_decimal(highest), int(highest_at), self._fmt_decimal(drawdown), self._fmt_decimal(threshold), current_tier, int(triggered), self._fmt_decimal(close_quantity), close_order_id, close_status, int(eligible), reason))
+            conn.execute(f"INSERT INTO {self.CHECKS_TABLE} (symbol, checked_at, open_trade_id, opened_at, entry_price, position_amt, account_equity_usdt, r_usdt, unrealized_pnl, realized_pnl_since_open, cycle_total_pnl, profit_r_multiple, latest_1m_high, latest_1m_close, highest_since_open, highest_cycle_total_pnl, highest_profit_at, profit_drawdown_ratio, drawdown_threshold, current_tier, triggered, close_quantity, close_order_id, close_status, eligible, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (symbol, checked_at, int(open_trade_id), int(opened_at), self._fmt_decimal(entry), self._fmt_decimal(amount), self._fmt_decimal(equity), self._fmt_decimal(r_value), self._fmt_decimal(pnl), self._fmt_optional_decimal(realized_pnl_since_open), self._fmt_optional_decimal(cycle_total_pnl), self._fmt_decimal(r_multiple), self._fmt_decimal(high), self._fmt_decimal(close), self._fmt_decimal(highest), self._fmt_decimal(highest_cycle_pnl), int(highest_at), self._fmt_decimal(drawdown), self._fmt_decimal(threshold), current_tier, int(triggered), self._fmt_decimal(close_quantity), close_order_id, close_status, int(eligible), reason))
 
-    def _upsert_action_record(self, symbol: str, checked_at: int, open_trade_id: int, opened_at: int, entry: Decimal, amount: Decimal, equity: Decimal, r_value: Decimal, pnl: Decimal, realized_pnl_since_open: Decimal | None, cycle_total_pnl: Decimal | None, r_multiple: Decimal, high: Decimal, close: Decimal, highest: Decimal, highest_at: int, drawdown: Decimal, threshold: Decimal, current_tier: str, triggered: bool, close_quantity: Decimal, close_order_id: str, close_status: str, eligible: bool, reason: str) -> None:
+    def _upsert_action_record(self, symbol: str, checked_at: int, open_trade_id: int, opened_at: int, entry: Decimal, amount: Decimal, equity: Decimal, r_value: Decimal, pnl: Decimal, realized_pnl_since_open: Decimal | None, cycle_total_pnl: Decimal | None, r_multiple: Decimal, high: Decimal, close: Decimal, highest: Decimal, highest_cycle_pnl: Decimal, highest_at: int, drawdown: Decimal, threshold: Decimal, current_tier: str, triggered: bool, close_quantity: Decimal, close_order_id: str, close_status: str, eligible: bool, reason: str) -> None:
         """Insert an action attempt, updating only an earlier unsuccessful attempt."""
         record_key = f"{symbol}:{int(open_trade_id)}:close"
-        columns = "symbol, checked_at, open_trade_id, opened_at, entry_price, position_amt, account_equity_usdt, r_usdt, unrealized_pnl, realized_pnl_since_open, cycle_total_pnl, profit_r_multiple, latest_1m_high, latest_1m_close, highest_since_open, highest_profit_at, profit_drawdown_ratio, drawdown_threshold, current_tier, triggered, close_quantity, close_order_id, close_status, eligible, reason"
-        values = (symbol, checked_at, int(open_trade_id), int(opened_at), self._fmt_decimal(entry), self._fmt_decimal(amount), self._fmt_decimal(equity), self._fmt_decimal(r_value), self._fmt_decimal(pnl), self._fmt_optional_decimal(realized_pnl_since_open), self._fmt_optional_decimal(cycle_total_pnl), self._fmt_decimal(r_multiple), self._fmt_decimal(high), self._fmt_decimal(close), self._fmt_decimal(highest), int(highest_at), self._fmt_decimal(drawdown), self._fmt_decimal(threshold), current_tier, int(triggered), self._fmt_decimal(close_quantity), close_order_id, close_status, int(eligible), reason)
+        columns = "symbol, checked_at, open_trade_id, opened_at, entry_price, position_amt, account_equity_usdt, r_usdt, unrealized_pnl, realized_pnl_since_open, cycle_total_pnl, profit_r_multiple, latest_1m_high, latest_1m_close, highest_since_open, highest_cycle_total_pnl, highest_profit_at, profit_drawdown_ratio, drawdown_threshold, current_tier, triggered, close_quantity, close_order_id, close_status, eligible, reason"
+        values = (symbol, checked_at, int(open_trade_id), int(opened_at), self._fmt_decimal(entry), self._fmt_decimal(amount), self._fmt_decimal(equity), self._fmt_decimal(r_value), self._fmt_decimal(pnl), self._fmt_optional_decimal(realized_pnl_since_open), self._fmt_optional_decimal(cycle_total_pnl), self._fmt_decimal(r_multiple), self._fmt_decimal(high), self._fmt_decimal(close), self._fmt_decimal(highest), self._fmt_decimal(highest_cycle_pnl), int(highest_at), self._fmt_decimal(drawdown), self._fmt_decimal(threshold), current_tier, int(triggered), self._fmt_decimal(close_quantity), close_order_id, close_status, int(eligible), reason)
         updates = ", ".join(f"{column}=excluded.{column}" for column in columns.split(", "))
         with self._info_connect() as conn:
             conn.execute(

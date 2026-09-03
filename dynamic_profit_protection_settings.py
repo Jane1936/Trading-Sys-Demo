@@ -25,7 +25,7 @@ def _validate_settings(payload: dict) -> dict[str, bool | float]:
     if not isinstance(payload, dict) or set(payload) != set(DEFAULT_SETTINGS):
         raise ValueError("必须提供动态利润保护的启用状态、三个R档位和三个回撤阈值")
     if not isinstance(payload.get("enabled"), bool):
-        raise ValueError("浮盈历史最高到达档位动态保护的启用状态必须是布尔值")
+        raise ValueError("周期累积盈亏历史最高到达档位动态保护的启用状态必须是布尔值")
     try:
         values = {
             key: float(payload[key])

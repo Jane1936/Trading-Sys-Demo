@@ -106,6 +106,8 @@ def test_dynamic_profit_protection_closes_when_2r_to_3r_profit_draws_down_40_per
         _seed_db(db_path, close=11.8, high=13)
         account = FakeAccountManager(unrealized_profit="30")
         tracker = DynamicProfitProtection(db_path=db_path, account_manager=account)
+        assert tracker.run_round()["triggered"] == 0
+        account.unrealized_profit = "18"
         result = tracker.run_round()
         _, checks = tracker.get_latest_round_checks()
 
@@ -121,9 +123,11 @@ def test_dynamic_profit_protection_updates_failed_action_record_on_retry():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = str(Path(tmp) / "k.db")
         _seed_db(db_path, close=11.8, high=13)
-        account = FailingOnceAccountManager()
+        account = FailingOnceAccountManager(unrealized_profit="30")
         tracker = DynamicProfitProtection(db_path=db_path, account_manager=account)
 
+        assert tracker.run_round()["triggered"] == 0
+        account.unrealized_profit = "18"
         assert tracker.run_round()["triggered"] == 0
         failed = tracker.recent_action_records()
         assert len(failed) == 1
@@ -198,14 +202,16 @@ def test_dynamic_profit_protection_uses_highest_reached_tier_priority_over_curre
     with tempfile.TemporaryDirectory() as tmp:
         db_path = str(Path(tmp) / "k.db")
         _seed_db(db_path, close=22, high=50)
-        account = FakeAccountManager(unrealized_profit="60")
+        account = FakeAccountManager(unrealized_profit="125")
         tracker = DynamicProfitProtection(db_path=db_path, account_manager=account)
+        assert tracker.run_round()["triggered"] == 0
+        account.unrealized_profit = "60"
         result = tracker.run_round()
         _, checks = tracker.get_latest_round_checks()
 
     assert result["triggered"] == 1
     assert checks[0].current_tier == "4R以上"
-    assert checks[0].highest_unrealized_pnl == "400"
+    assert checks[0].highest_cycle_total_pnl == "125"
     assert checks[0].drawdown_threshold == "0.2"
     assert "tier=4R以上" in checks[0].reason
     assert account.signed_posts[-1][1]["type"] == "MARKET"
@@ -242,7 +248,8 @@ def test_dynamic_profit_protection_resets_highest_for_latest_open_trade_even_if_
         _, checks = tracker.get_latest_round_checks()
 
     assert checks[0].highest_since_open == "13"
-    assert checks[0].highest_profit_at == 2000
+    assert checks[0].highest_cycle_total_pnl == "20"
+    assert checks[0].highest_profit_at == checks[0].checked_at
     assert checks[0].opened_at == 2000
     assert checks[0].open_trade_id > 0
 
@@ -258,7 +265,7 @@ def test_dynamic_profit_protection_rejects_high_candidates_before_latest_open():
     assert highest_at == 2_000
 
 
-def test_dynamic_profit_protection_records_first_time_of_equal_post_open_high():
+def test_dynamic_profit_protection_records_first_time_of_equal_cycle_pnl_high():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = str(Path(tmp) / "k.db")
         _seed_db(db_path, close=12, high=13)
@@ -270,7 +277,8 @@ def test_dynamic_profit_protection_records_first_time_of_equal_post_open_high():
         _, checks = tracker.get_latest_round_checks()
 
     assert checks[0].highest_since_open == "13"
-    assert checks[0].highest_profit_at == 1000
+    assert checks[0].highest_cycle_total_pnl == "20"
+    assert checks[0].highest_profit_at == checks[0].checked_at
 
 
 def test_dynamic_profit_protection_migrates_legacy_high_timestamp_name():
