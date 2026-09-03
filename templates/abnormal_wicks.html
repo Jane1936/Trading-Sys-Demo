@@ -2673,7 +2673,7 @@
         <button class="bookmark-tab" type="button" role="tab" aria-selected="false" data-live-tab="live-account">账户信息</button>
       </div>
       <div id="live-holding-score" class="live-subpanel" role="tabpanel">
-        <div class="experiment-note">低频持仓评分数据写入 <code>real_trading_core.db</code>；五个高频保护模块的判断与操作记录分别写入 <code>real_trading.db</code> 和 <code>real_trading_info.db</code>。行情与评分只读共享，所有订单接口均使用 Binance 实盘 API，与模拟盘完全独立。</div>
+        <div class="experiment-note">低频持仓评分数据写入 <code>real_trading_core.db</code>；六个高频保护模块的判断与操作记录分别写入 <code>real_trading_core.db</code> 和 <code>real_trading_info.db</code>。行情与评分只读共享，所有订单接口均使用 Binance 实盘 API，与模拟盘完全独立。</div>
         <div class="holding-module-tabs" role="tablist" aria-label="实盘持仓评分系统模块">
           <button class="holding-module-tab active" type="button" role="tab" aria-selected="true" data-holding-module-tab="live-holding-module-stop-loss">止损规则</button>
           <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="live-holding-module-reduction">减仓</button>
@@ -3160,7 +3160,7 @@
 
         {% for module in live_high_frequency_modules %}
         <div id="{{ module.key }}" class="holding-module-panel" role="tabpanel">
-          <div class="experiment-note"><div>{{ module.label }}判断结果存储于 <code>real_trading.db</code>，操作记录存储于 <code>real_trading_info.db</code>；订单使用 Binance 实盘接口。</div><div><button class="btn btn-primary btn-small live-module-refresh" type="button" data-live-module="{{ module.api_key }}">刷新</button> <span class="muted live-module-refresh-status">仅刷新本模块最新数据</span></div><div class="muted live-high-frequency-round-note">最近轮次：{{ module.round_ts|fmt_ms_datetime if module.round_ts else '-' }}</div></div>
+          <div class="experiment-note"><div>{{ module.label }}判断结果存储于 <code>real_trading_core.db</code>，操作记录存储于 <code>real_trading_info.db</code>；订单使用 Binance 实盘接口。{% if module.api_key == 'hard-take-profit' %}当前硬止盈阈值与模拟盘共用“硬止盈配置”。{% endif %}</div><div><button class="btn btn-primary btn-small live-module-refresh" type="button" data-live-module="{{ module.api_key }}">刷新</button> <span class="muted live-module-refresh-status">仅刷新本模块最新数据</span></div><div class="muted live-high-frequency-round-note">最近轮次：{{ module.round_ts|fmt_ms_datetime if module.round_ts else '-' }}</div></div>
           <div class="critical-section sky-theme-section"><div class="symbol-strip"><div><strong>实盘{{ module.label }}判断结果</strong><div class="muted">字段与模拟盘对应模块保持一致；新开仓但尚未完成本模块扫描的 symbol 会标记为“待扫描”。</div></div></div><div class="table-wrap"><table><thead><tr>{% for column in module.tables.check_columns %}<th>{{ column[0] }}</th>{% endfor %}</tr></thead><tbody class="live-high-frequency-checks-body">{% for row in module.checks %}<tr>{% for column in module.tables.check_columns %}<td>{% if column[2] == 'time' %}{{ row.get(column[1])|fmt_ms_datetime if row.get(column[1]) else '-' }}{% elif column[2] == 'bool' %}{{ '是' if row.get(column[1]) else '否' }}{% else %}{{ row.get(column[1]) if row.get(column[1]) is not none and row.get(column[1]) != '' else '-' }}{% endif %}</td>{% endfor %}</tr>{% else %}<tr><td class="empty" colspan="{{ module.tables.check_columns|length }}">暂无实盘{{ module.label }}判断结果</td></tr>{% endfor %}</tbody></table></div></div>
           <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10"><div class="symbol-strip collapsible-header"><div><strong>实盘{{ module.label }}操作记录</strong><div class="muted">默认展示最新 10 条，字段与模拟盘对应操作记录保持一致。</div></div><button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button></div><div class="table-wrap"><table><thead><tr>{% for column in module.tables.record_columns %}<th>{{ column[0] }}</th>{% endfor %}</tr></thead><tbody class="live-high-frequency-records-body">{% for row in module.records %}<tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">{% for column in module.tables.record_columns %}<td>{% if column[2] == 'time' %}{{ row.get(column[1])|fmt_ms_datetime if row.get(column[1]) else '-' }}{% elif column[2] == 'bool' %}{{ '是' if row.get(column[1]) else '否' }}{% else %}{{ row.get(column[1]) if row.get(column[1]) is not none and row.get(column[1]) != '' else '-' }}{% endif %}</td>{% endfor %}</tr>{% else %}<tr><td class="empty" colspan="{{ module.tables.record_columns|length }}">暂无实盘{{ module.label }}操作记录</td></tr>{% endfor %}</tbody></table></div></div>
         </div>
@@ -3261,7 +3261,7 @@
     </div>
     <div class="card feature-config-yellow">
       <div class="header"><h2>硬止盈配置</h2></div>
-      <div class="tip">设置模拟盘持仓触发全部平仓的未变现盈利率；默认 20%，保存后从硬止盈模块下一轮扫描开始生效。</div>
+      <div class="tip">设置模拟盘与实盘持仓触发全部平仓的未变现盈利率；默认 20%，保存后从两个硬止盈模块下一轮扫描开始生效。</div>
       <div id="hard-take-profit-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
       <form id="hard-take-profit-settings-form" class="score-weight-actions">
         <label>硬止盈幅度（%）

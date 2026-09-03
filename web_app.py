@@ -1171,7 +1171,8 @@ LIVE_HIGH_FREQUENCY_MODULES = {
     "partial-take-profit": (1, "分批止盈", "recent_records"),
     "trailing-reduction": (2, "移动追踪减仓", "recent_action_records"),
     "dynamic-profit-protection": (3, "动态利润保护", "recent_action_records"),
-    "trailing-stop": (4, "移动追踪止盈", "recent_action_records"),
+    "hard-take-profit": (4, "硬止盈", "recent_action_records"),
+    "trailing-stop": (5, "移动追踪止盈", "recent_action_records"),
 }
 
 LIVE_MODULE_TABLES = {
@@ -1190,6 +1191,10 @@ LIVE_MODULE_TABLES = {
     "dynamic-profit-protection": {
         "check_columns": (("检查时间", "checked_at", "time"), ("symbol", "symbol", "text"), ("开仓价", "entry_price", "text"), ("持仓数量", "position_amt", "text"), ("浮盈", "unrealized_pnl", "text"), ("R", "r_usdt", "text"), ("最新high", "latest_1m_high", "text"), ("最新close", "latest_1m_close", "text"), ("开仓以来最高价", "highest_since_open", "text"), ("历史最高浮盈", "highest_unrealized_pnl", "text"), ("最高浮盈时间", "highest_profit_at", "time"), ("当前档位", "current_tier", "text"), ("回撤", "profit_drawdown_ratio", "text"), ("阈值", "drawdown_threshold", "text"), ("触发", "triggered", "bool"), ("满足前提", "eligible", "bool"), ("原因", "reason", "text")),
         "record_columns": (("操作时间", "checked_at", "time"), ("symbol", "symbol", "text"), ("持仓数量", "position_amt", "text"), ("开仓价", "entry_price", "text"), ("R", "r_usdt", "text"), ("浮盈倍数", "profit_r_multiple", "text"), ("close", "latest_1m_close", "text"), ("最高价", "highest_since_open", "text"), ("历史最高浮盈", "highest_unrealized_pnl", "text"), ("当前档位", "current_tier", "text"), ("回撤", "profit_drawdown_ratio", "text"), ("阈值", "drawdown_threshold", "text"), ("平仓数量", "close_quantity", "text"), ("订单ID", "close_order_id", "text"), ("状态", "close_status", "text"), ("原因", "reason", "text")),
+    },
+    "hard-take-profit": {
+        "check_columns": (("检查时间", "checked_at", "time"), ("symbol", "symbol", "text"), ("开仓价", "entry_price", "text"), ("持仓数量", "position_amt", "text"), ("未变现盈利", "unrealized_pnl", "text"), ("持仓名义价值", "position_notional", "text"), ("盈利率", "profit_ratio", "text"), ("阈值", "profit_threshold", "text"), ("触发", "triggered", "bool"), ("全部平仓单", "close_order_id", "text"), ("状态", "close_status", "text"), ("原因", "reason", "text")),
+        "record_columns": (("操作时间", "checked_at", "time"), ("symbol", "symbol", "text"), ("持仓数量", "position_amt", "text"), ("开仓价", "entry_price", "text"), ("未变现盈利", "unrealized_pnl", "text"), ("持仓名义价值", "position_notional", "text"), ("盈利率", "profit_ratio", "text"), ("阈值", "profit_threshold", "text"), ("平仓数量", "close_quantity", "text"), ("订单ID", "close_order_id", "text"), ("状态", "close_status", "text"), ("原因", "reason", "text")),
     },
     "trailing-stop": {
         "check_columns": (("检查时间", "checked_at", "time"), ("symbol", "symbol", "text"), ("开仓价", "entry_price", "text"), ("持仓数量", "position_amt", "text"), ("持仓小时", "holding_hours", "text"), ("1m high", "kline_high", "text"), ("1m close", "latest_1m_close", "text"), ("开仓以来最高价", "highest_since_open", "text"), ("价格回撤", "price_drawdown", "text"), ("回撤阈值", "drawdown_threshold", "text"), ("ATR(14)", "atr14", "text"), ("波动率", "volatility", "text"), ("tag", "tag", "text"), ("触发止盈", "trailing_stop_triggered", "bool"), ("满足前提", "eligible", "bool"), ("原因", "reason", "text")),
@@ -1788,13 +1793,14 @@ def abnormal_wicks():
     live_holding_reduction_checks = _sync_live_module_checks(live_holding_reduction_checks, live_position_snapshots)
     live_holding_increase_checks = _sync_live_module_checks(live_holding_increase_checks, live_position_snapshots)
     live_holding_portfolio_risk = _sync_live_portfolio_risk(live_holding_portfolio_risk, live_position_snapshots)
-    live_break_even, live_partial, live_trailing_reduction, live_dynamic, live_trailing_stop = real_trading.high_frequency_modules()
+    live_break_even, live_partial, live_trailing_reduction, live_dynamic, live_hard, live_trailing_stop = real_trading.high_frequency_modules()
     live_high_frequency_modules = []
     for key, label, module, records_loader in (
         ("break-even", "保本止盈", live_break_even, lambda m: m.recent_records(limit=100)),
         ("partial-take-profit", "分批止盈", live_partial, lambda m: m.recent_records(limit=100)),
         ("trailing-reduction", "移动追踪减仓", live_trailing_reduction, lambda m: m.recent_action_records(limit=100)),
         ("dynamic-profit-protection", "动态利润保护", live_dynamic, lambda m: m.recent_action_records(limit=100)),
+        ("hard-take-profit", "硬止盈", live_hard, lambda m: m.recent_action_records(limit=100)),
         ("trailing-stop", "移动追踪止盈", live_trailing_stop, lambda m: m.recent_action_records(limit=100)),
     ):
         round_ts, checks = load_module(f"实盘{label}检查", module.get_latest_round_checks, (0, []))

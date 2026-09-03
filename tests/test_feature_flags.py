@@ -36,6 +36,7 @@ def test_feature_flags_seed_enabled_by_default(tmp_path):
         feature_flags.REAL_TRAILING_REDUCTION,
         feature_flags.REAL_TRAILING_STOP,
         feature_flags.REAL_DYNAMIC_PROFIT_PROTECTION,
+        feature_flags.REAL_HARD_TAKE_PROFIT,
     ]
     assert all(
         flag.enabled == (flag.key not in {
@@ -49,6 +50,7 @@ def test_feature_flags_seed_enabled_by_default(tmp_path):
             feature_flags.REAL_TRAILING_REDUCTION,
             feature_flags.REAL_TRAILING_STOP,
             feature_flags.REAL_DYNAMIC_PROFIT_PROTECTION,
+            feature_flags.REAL_HARD_TAKE_PROFIT,
         })
         for flag in flags
     )
@@ -64,6 +66,7 @@ def test_feature_flags_seed_enabled_by_default(tmp_path):
             feature_flags.REAL_TRAILING_REDUCTION,
             feature_flags.REAL_DYNAMIC_PROFIT_PROTECTION,
             feature_flags.REAL_TRAILING_STOP,
+            feature_flags.REAL_HARD_TAKE_PROFIT,
         }
     } == {
         "实盘保本止盈",
@@ -71,6 +74,7 @@ def test_feature_flags_seed_enabled_by_default(tmp_path):
         "实盘移动追踪减仓",
         "实盘动态利润保护",
         "实盘移动追踪止盈",
+        "实盘硬止盈",
     }
 
 
@@ -82,6 +86,7 @@ def test_real_holding_flags_default_off_and_can_be_enabled(tmp_path):
         feature_flags.REAL_REDUCTION_CONDITIONS,
         feature_flags.REAL_INCREASE_CONDITIONS,
         feature_flags.REAL_PORTFOLIO_RISK,
+        feature_flags.REAL_HARD_TAKE_PROFIT,
     ):
         assert feature_flags.get_feature_flag(key, db_path).enabled is False
         assert feature_flags.set_feature_flag(key, True, db_path).enabled is True

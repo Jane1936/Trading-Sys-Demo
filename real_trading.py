@@ -19,6 +19,7 @@ from break_even_take_profit import BreakEvenTakeProfitStrategy
 from partial_take_profit import PartialTakeProfitStrategy
 from trailing_reduction_tracker import TrailingReductionTracker
 from dynamic_profit_protection import DynamicProfitProtection
+from hard_take_profit import HardTakeProfit
 from trailing_stop_tracker import TrailingStopTracker
 from position_limit_settings import get_settings as get_position_limit_settings
 
@@ -74,6 +75,7 @@ def high_frequency_modules():
         PartialTakeProfitStrategy(**kwargs, config=config()),
         TrailingReductionTracker(**kwargs, config=config()),
         DynamicProfitProtection(**kwargs, config=config()),
+        HardTakeProfit(**kwargs, config=config()),
         TrailingStopTracker(**kwargs),
     )
 

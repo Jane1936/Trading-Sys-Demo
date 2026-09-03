@@ -1,4 +1,6 @@
 import inspect
+from contextlib import nullcontext
+from decimal import Decimal
 
 import app
 
@@ -76,6 +78,39 @@ def test_profit_task_relies_on_process_startup_schema_barrier():
     assert ".init_tables()" not in source
     assert ".init_table()" not in source
     assert "profit protection task initialization failed" not in source
+
+
+def test_live_hard_take_profit_uses_shared_threshold_and_independent_switch(monkeypatch):
+    calls = []
+
+    class Module:
+        profit_threshold = Decimal("0.20")
+
+        def __init__(self, label):
+            self.label = label
+
+        def run_round(self):
+            calls.append((self.label, self.profit_threshold))
+            return {"checked": 1}
+
+    modules = tuple(Module(label) for label in (
+        "break-even", "partial", "reduction", "dynamic", "hard", "trailing"
+    ))
+    monkeypatch.setattr(app.real_trading, "high_frequency_modules", lambda: modules)
+    monkeypatch.setattr(
+        app.real_trading, "experiment",
+        lambda: type("Experiment", (), {"reconcile_missing_exit_orders": lambda self: None})(),
+    )
+    monkeypatch.setattr(app, "get_hard_take_profit_settings", lambda: {"profit_ratio": 0.35})
+    monkeypatch.setattr(
+        app.feature_flags, "is_feature_enabled",
+        lambda flag: flag == app.feature_flags.REAL_HARD_TAKE_PROFIT,
+    )
+    monkeypatch.setattr(app.db_config, "sqlite_connection_scope", lambda *args, **kwargs: nullcontext())
+
+    app._run_live_high_frequency_round()
+
+    assert calls == [("hard", Decimal("0.35"))]
 
 
 def test_first_experiment_refreshes_holding_scoring_after_open(monkeypatch):

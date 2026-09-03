@@ -69,7 +69,20 @@ def test_real_high_frequency_modules_use_live_api_and_split_databases(tmp_path, 
 
     modules = real_trading.high_frequency_modules()
 
-    assert len(modules) == 5
+    assert len(modules) == 6
     assert all(module.db_path == str(live_db) for module in modules)
     assert all(module.info_db_path == str(live_info) for module in modules)
     assert all(module.account_manager.testnet is False for module in modules)
+
+    hard_take_profit = modules[4]
+    hard_take_profit.init_tables()
+    assert hard_take_profit.core_db_path == str(live_core)
+    assert hard_take_profit.info_db_path == str(live_info)
+    with db_config.connect_sqlite(str(live_core)) as conn:
+        assert conn.execute(
+            "SELECT name FROM sqlite_master WHERE name='hard_take_profit_checks'"
+        ).fetchone()
+    with db_config.connect_sqlite(str(live_info)) as conn:
+        assert conn.execute(
+            "SELECT name FROM sqlite_master WHERE name='hard_take_profit_records'"
+        ).fetchone()

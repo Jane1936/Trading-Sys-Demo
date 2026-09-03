@@ -1149,12 +1149,14 @@ def start_break_even_take_profit_task() -> None:
 
 
 def _run_live_high_frequency_round() -> None:
-    """Run the five live protection modules with isolated DBs and live REST."""
-    break_even, partial, _reduction, dynamic, trailing = real_trading.high_frequency_modules()
+    """Run the live protection modules with isolated DBs and live REST."""
+    break_even, partial, _reduction, dynamic, hard, trailing = real_trading.high_frequency_modules()
+    hard.profit_threshold = Decimal(str(get_hard_take_profit_settings()["profit_ratio"]))
     modules = (
         (feature_flags.REAL_BREAK_EVEN_TAKE_PROFIT, "live break-even", break_even.run_round),
         (feature_flags.REAL_PARTIAL_TAKE_PROFIT, "live partial take-profit", partial.run_round),
         (feature_flags.REAL_DYNAMIC_PROFIT_PROTECTION, "live dynamic profit protection", dynamic.run_round),
+        (feature_flags.REAL_HARD_TAKE_PROFIT, "live hard take-profit", hard.run_round),
         (feature_flags.REAL_TRAILING_STOP, "live trailing stop", trailing.run_round),
     )
     with db_config.sqlite_connection_scope(

@@ -66,7 +66,7 @@ class FakeLiveExperiment:
 
 
 def test_live_high_frequency_summary_reads_only_requested_module(monkeypatch):
-    modules = [FakeLiveModule() for _ in range(5)]
+    modules = [FakeLiveModule() for _ in range(6)]
     monkeypatch.setattr(web_app.real_trading, "high_frequency_modules", lambda: tuple(modules))
     monkeypatch.setattr(web_app.real_trading, "experiment", lambda: FakeLiveExperiment())
 
@@ -85,6 +85,25 @@ def test_live_high_frequency_summary_reads_only_requested_module(monkeypatch):
     }
     assert len(payload["tables"]["check_columns"]) == 17
     assert len(payload["tables"]["record_columns"]) == 16
+
+
+def test_live_hard_take_profit_summary_exposes_matching_tables(monkeypatch):
+    modules = [FakeLiveModule() for _ in range(6)]
+    monkeypatch.setattr(web_app.real_trading, "high_frequency_modules", lambda: tuple(modules))
+    monkeypatch.setattr(web_app.real_trading, "experiment", lambda: FakeLiveExperiment())
+
+    response = web_app.app.test_client().get(
+        "/api/live/high-frequency/hard-take-profit/summary"
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["label"] == "硬止盈"
+    assert [column[1] for column in payload["tables"]["check_columns"]] == [
+        "checked_at", "symbol", "entry_price", "position_amt", "unrealized_pnl",
+        "position_notional", "profit_ratio", "profit_threshold", "triggered",
+        "close_order_id", "close_status", "reason",
+    ]
 
 
 def test_unknown_live_high_frequency_module_is_rejected():
