@@ -20,6 +20,7 @@ REAL_BREAK_EVEN_TAKE_PROFIT = "real_break_even_take_profit"
 REAL_PARTIAL_TAKE_PROFIT = "real_partial_take_profit"
 REAL_TRAILING_REDUCTION = "real_trailing_reduction"
 REAL_DYNAMIC_PROFIT_PROTECTION = "real_dynamic_profit_protection"
+REAL_HARD_TAKE_PROFIT = "real_hard_take_profit"
 REAL_TRAILING_STOP = "real_trailing_stop"
 MARKET_FILTER = "market_filter"
 TRAILING_STOP = "trailing_stop"
@@ -97,6 +98,7 @@ FEATURE_FLAG_DEFINITIONS: tuple[FeatureFlagDefinition, ...] = (
     FeatureFlagDefinition(REAL_PARTIAL_TAKE_PROFIT, "实盘分批止盈", "控制实盘分批止盈的每分钟扫描及实盘减仓操作。"),
     FeatureFlagDefinition(REAL_TRAILING_REDUCTION, "实盘移动追踪减仓", "控制实盘移动追踪减仓判断、刷新及实盘减仓操作。"),
     FeatureFlagDefinition(REAL_DYNAMIC_PROFIT_PROTECTION, "实盘动态利润保护", "控制实盘动态利润保护的每分钟扫描及实盘平仓操作。"),
+    FeatureFlagDefinition(REAL_HARD_TAKE_PROFIT, "实盘硬止盈", "控制实盘硬止盈模块的每分钟扫描及实盘全部平仓操作。"),
     FeatureFlagDefinition(REAL_TRAILING_STOP, "实盘移动追踪止盈", "控制实盘移动追踪止盈的每分钟扫描及实盘平仓操作。"),
     FeatureFlagDefinition(BREAK_EVEN_TAKE_PROFIT, "模拟盘保本止盈策略", "控制保本止盈的每分钟扫描及平仓操作。"),
     FeatureFlagDefinition(PARTIAL_TAKE_PROFIT, "模拟盘分批止盈规则", "控制分批止盈的每分钟扫描及减仓操作。"),
@@ -190,6 +192,7 @@ def init_feature_flags(db_path: str | None = None) -> None:
                             REAL_PARTIAL_TAKE_PROFIT,
                             REAL_TRAILING_REDUCTION,
                             REAL_DYNAMIC_PROFIT_PROTECTION,
+                            REAL_HARD_TAKE_PROFIT,
                             REAL_TRAILING_STOP,
                         } else 1,
                         now_ms,
@@ -222,7 +225,8 @@ def list_feature_flags(db_path: str | None = None) -> list[FeatureFlag]:
                 WHEN 'real_partial_take_profit' THEN 21
                 WHEN 'real_trailing_reduction' THEN 22
                 WHEN 'real_trailing_stop' THEN 23
-                WHEN 'real_dynamic_profit_protection' THEN 24 ELSE 99 END, key
+                WHEN 'real_dynamic_profit_protection' THEN 24
+                WHEN 'real_hard_take_profit' THEN 25 ELSE 99 END, key
             """,
         ).fetchall()
     return [
@@ -277,6 +281,7 @@ def is_feature_enabled(key: str, db_path: str | None = None) -> bool:
             REAL_PARTIAL_TAKE_PROFIT,
             REAL_TRAILING_REDUCTION,
             REAL_DYNAMIC_PROFIT_PROTECTION,
+            REAL_HARD_TAKE_PROFIT,
             REAL_TRAILING_STOP,
         }
         fallback = "disabled" if fail_closed else "enabled"
