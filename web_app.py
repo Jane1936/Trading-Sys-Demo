@@ -406,8 +406,9 @@ def _filled_order_exit_reason_matches(
     userTrades returns symbols like BTCUSDT.  The audit rows are written at order
     submission time, so a small time tolerance is used around the fill time.
     Force-liquidation records are matched before BUY fills are checked against
-    position increase records.  Stored Binance order ids are preferred, with
-    symbol/time/quantity retained as the fallback for legacy or incomplete rows.
+    position increase records.  Automated hard take-profit and force-liquidation
+    records prefer stored Binance order ids, with symbol/time/quantity retained
+    as the fallback for legacy or incomplete rows.
     """
     side = str(order.get("side", "")).upper()
     if side not in {"SELL", "BUY"}:
@@ -500,6 +501,38 @@ def _filled_order_exit_reason_matches(
                     matches.append({"type": "加仓", "matched_at": str(row["matched_at"] or "")})
                     break
         return matches
+
+    if _table_exists(conn, HardTakeProfit.RECORDS_TABLE, schema=info_schema):
+        hard_take_profit_table = _qualified_table(
+            info_schema, HardTakeProfit.RECORDS_TABLE
+        )
+        rows = conn.execute(
+            f"""
+            SELECT checked_at AS matched_at, close_quantity, close_order_id
+            FROM {hard_take_profit_table}
+            WHERE symbol = ?
+              AND triggered = 1
+              AND close_status = 'submitted'
+              AND checked_at BETWEEN ? AND ?
+            ORDER BY ABS(checked_at - ?) ASC, id DESC
+            """,
+            (
+                symbol,
+                order_time - time_tolerance_ms,
+                order_time + time_tolerance_ms,
+                order_time,
+            ),
+        ).fetchall()
+        expected_order_id = str(order.get("order_id", "") or "").strip()
+        for row in rows:
+            stored_order_id = str(row["close_order_id"] or "").strip()
+            if (stored_order_id and stored_order_id == expected_order_id) or _decimal_text_equal(
+                row["close_quantity"], quantity
+            ):
+                matches.append(
+                    {"type": "自动化硬止盈", "matched_at": str(row["matched_at"] or "")}
+                )
+                break
 
     if _table_exists(conn, HoldingPositionScoringSystem.RECORDS_TABLE, schema=core_schema):
         stop_loss_table = _qualified_table(core_schema, HoldingPositionScoringSystem.RECORDS_TABLE)
@@ -632,6 +665,8 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
     if side not in {"SELL", "BUY"}:
         return ""
 
+    if "自动化硬止盈" in match_types:
+        return "自动化硬止盈"
     if "减仓失败强平" in match_types:
         return "减仓失败强平"
     if "僵尸强平" in match_types:
