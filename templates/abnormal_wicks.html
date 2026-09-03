@@ -2095,7 +2095,7 @@
           </div>
           <div class="muted">后台每分钟自动扫描，且执行顺序在“移动追踪止盈规则”之前。</div>
           {% if dynamic_profit_protection_round_ts %}
-            <div id="dynamic-profit-protection-round-note" class="muted">最近判断轮次：{{ dynamic_profit_protection_round_ts|fmt_ms_datetime }}。每分钟读取最新1分钟K线 high/close，维护“开仓以来最高价”；按浮盈历史最高到达档位动态保护：浮盈到达过(2R, 3R] 回撤≥40%、浮盈到达过(3R, 4R] 回撤≥30%、浮盈到达过4R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓；三档按优先级递增，仅触发最高命中的一个条件。</div>
+            <div id="dynamic-profit-protection-round-note" class="muted">最近判断轮次：{{ dynamic_profit_protection_round_ts|fmt_ms_datetime }}。每分钟计算“开仓后已实现盈亏 + 当前浮盈”，维护周期累积盈亏历史最高值；按周期累积盈亏历史最高到达档位动态保护：周期累积盈亏到达过(2R, 3R] 回撤≥40%、周期累积盈亏到达过(3R, 4R] 回撤≥30%、周期累积盈亏到达过4R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓；三档按优先级递增，仅触发最高命中的一个条件。</div>
           {% else %}
             <div id="dynamic-profit-protection-round-note" class="muted">暂无动态利润保护扫描结果。</div>
           {% endif %}
@@ -2103,7 +2103,7 @@
           {% if eligible_dynamic_profit_checks %}
             <div id="dynamic-profit-protection-eligible-chips" class="chips">
               {% for row in eligible_dynamic_profit_checks %}
-                <span class="chip" title="当下浮盈 {{ row.unrealized_pnl }}，R倍数 {{ row.profit_r_multiple }}">{{ row.symbol }}</span>
+                <span class="chip" title="周期累积盈亏 {{ row.cycle_total_pnl }}，R倍数 {{ row.profit_r_multiple }}">{{ row.symbol }}</span>
               {% endfor %}
             </div>
           {% else %}
@@ -2112,10 +2112,10 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>checked_at</th><th>symbol</th><th>entry</th><th>position</th><th>浮盈/R</th><th>新开仓后已实现盈亏</th><th>周期累计盈亏</th><th>最新 high/close</th><th>开仓以来最高价</th><th>历史最高浮盈</th><th>最高浮盈出现时间</th><th>当前档位</th><th>回撤/阈值</th><th>触发</th><th>全部平仓单</th><th>满足前提</th><th>reason</th></tr></thead>
+            <thead><tr><th>checked_at</th><th>symbol</th><th>entry</th><th>position</th><th>浮盈/周期盈亏R</th><th>新开仓后已实现盈亏</th><th>周期累计盈亏</th><th>最新 high/close</th><th>开仓以来最高价</th><th>周期累积盈亏历史最高</th><th>历史最高出现时间</th><th>当前档位</th><th>回撤/阈值</th><th>触发</th><th>全部平仓单</th><th>满足前提</th><th>reason</th></tr></thead>
             <tbody id="dynamic-profit-protection-checks-body">
               {% for row in dynamic_profit_protection_checks %}
-              <tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td>{{ row.unrealized_pnl }} / {{ row.profit_r_multiple }}R</td><td>{{ row.realized_pnl_since_open or '-' }}</td><td>{{ row.cycle_total_pnl or '-' }}</td><td>{{ row.latest_1m_high }} / {{ row.latest_1m_close }}</td><td>{{ row.highest_since_open }}</td><td>{{ row.highest_unrealized_pnl }}</td><td>{{ row.highest_profit_at|fmt_ms_datetime if row.highest_profit_at else '-' }}</td><td>{{ row.current_tier }}</td><td>{{ row.profit_drawdown_ratio }} / {{ row.drawdown_threshold }}</td><td><span class="status-badge {{ 'status-pass' if row.triggered else 'status-fail' }}">{{ '是' if row.triggered else '否' }}</span></td><td>{{ row.close_quantity }} / {{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td><td>{{ row.reason }}</td></tr>
+              <tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td>{{ row.unrealized_pnl }} / {{ row.profit_r_multiple }}R</td><td>{{ row.realized_pnl_since_open or '-' }}</td><td>{{ row.cycle_total_pnl or '-' }}</td><td>{{ row.latest_1m_high }} / {{ row.latest_1m_close }}</td><td>{{ row.highest_since_open }}</td><td>{{ row.highest_cycle_total_pnl }}</td><td>{{ row.highest_profit_at|fmt_ms_datetime if row.highest_profit_at else '-' }}</td><td>{{ row.current_tier }}</td><td>{{ row.profit_drawdown_ratio }} / {{ row.drawdown_threshold }}</td><td><span class="status-badge {{ 'status-pass' if row.triggered else 'status-fail' }}">{{ '是' if row.triggered else '否' }}</span></td><td>{{ row.close_quantity }} / {{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td><td>{{ row.reason }}</td></tr>
               {% else %}<tr><td class="empty" colspan="17">暂无动态利润保护扫描结果</td></tr>{% endfor %}
             </tbody>
           </table>
@@ -2124,8 +2124,8 @@
         <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
           <div class="symbol-strip collapsible-header"><div><div><strong>动态利润保护记录</strong></div><div class="muted">记录动态利润保护触发后的全部平仓数量、订单ID、接口状态与触发原因。</div></div><button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button></div>
           <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
-          <div class="table-wrap"><table><thead><tr><th>checked_at</th><th>symbol</th><th>position_amt</th><th>entry_price</th><th>R值/浮盈倍数</th><th>新开仓后已实现盈亏</th><th>周期累计盈亏</th><th>close/最高价</th><th>历史最高浮盈</th><th>最高浮盈出现时间</th><th>当前档位</th><th>回撤/阈值</th><th>close_quantity</th><th>close_order_id / status</th><th>reason</th></tr></thead><tbody id="dynamic-profit-protection-records-body">
-            {% for row in dynamic_profit_protection_records %}<tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}"><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.position_amt }}</td><td>{{ row.entry_price }}</td><td>{{ row.r_usdt }} / {{ row.profit_r_multiple }}R</td><td>{{ row.realized_pnl_since_open or '-' }}</td><td>{{ row.cycle_total_pnl or '-' }}</td><td>{{ row.latest_1m_close }} / {{ row.highest_since_open }}</td><td>{{ row.highest_unrealized_pnl }}</td><td>{{ row.highest_profit_at|fmt_ms_datetime if row.highest_profit_at else '-' }}</td><td>{{ row.current_tier }}</td><td>{{ row.profit_drawdown_ratio }} / {{ row.drawdown_threshold }}</td><td>{{ row.close_quantity }}</td><td>{{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td>{{ row.reason }}</td></tr>
+          <div class="table-wrap"><table><thead><tr><th>checked_at</th><th>symbol</th><th>position_amt</th><th>entry_price</th><th>R值/周期盈亏倍数</th><th>新开仓后已实现盈亏</th><th>周期累计盈亏</th><th>close/最高价</th><th>周期累积盈亏历史最高</th><th>历史最高出现时间</th><th>当前档位</th><th>回撤/阈值</th><th>close_quantity</th><th>close_order_id / status</th><th>reason</th></tr></thead><tbody id="dynamic-profit-protection-records-body">
+            {% for row in dynamic_profit_protection_records %}<tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}"><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.position_amt }}</td><td>{{ row.entry_price }}</td><td>{{ row.r_usdt }} / {{ row.profit_r_multiple }}R</td><td>{{ row.realized_pnl_since_open or '-' }}</td><td>{{ row.cycle_total_pnl or '-' }}</td><td>{{ row.latest_1m_close }} / {{ row.highest_since_open }}</td><td>{{ row.highest_cycle_total_pnl }}</td><td>{{ row.highest_profit_at|fmt_ms_datetime if row.highest_profit_at else '-' }}</td><td>{{ row.current_tier }}</td><td>{{ row.profit_drawdown_ratio }} / {{ row.drawdown_threshold }}</td><td>{{ row.close_quantity }}</td><td>{{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td>{{ row.reason }}</td></tr>
             {% else %}<tr><td class="empty" colspan="15">暂无动态利润保护记录</td></tr>{% endfor %}
           </tbody></table></div>
         </div>
@@ -3286,10 +3286,10 @@
     </div>
     <div class="card feature-config-yellow">
       <div class="header"><h2>动态利润保护配置</h2></div>
-      <div class="tip">按浮盈历史最高到达档位动态保护；默认规则为：浮盈到达过(2R, 3R] 回撤≥40%、浮盈到达过(3R, 4R] 回撤≥30%、浮盈到达过4R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓。下方可启停整条规则，并调整三个档位起点及对应回撤阈值；该配置由模拟盘与实盘动态利润保护模块共同使用，并从各自下一轮扫描开始生效。</div>
+      <div class="tip">按周期累积盈亏历史最高到达档位动态保护；周期累积盈亏为开仓后已实现盈亏与当前浮盈之和。默认规则为：周期累积盈亏到达过(2R, 3R] 回撤≥40%、周期累积盈亏到达过(3R, 4R] 回撤≥30%、周期累积盈亏到达过4R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓。下方可启停整条规则，并调整三个档位起点及对应回撤阈值；该配置由模拟盘与实盘动态利润保护模块共同使用，并从各自下一轮扫描开始生效。</div>
       <div id="dynamic-profit-protection-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
       <form id="dynamic-profit-protection-settings-form" class="score-weight-actions">
-        <label><input id="dynamic-profit-protection-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.enabled else '' }}> 启用“浮盈历史最高到达档位动态保护”</label>
+        <label><input id="dynamic-profit-protection-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.enabled else '' }}> 启用“周期累积盈亏历史最高到达档位动态保护”</label>
         <label>第1档起点（R，严格大于）<input id="dynamic-profit-tier-2-r" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_2_min_r }}"></label>
         <label>第2档起点（R，严格大于）<input id="dynamic-profit-tier-3-r" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_3_min_r }}"></label>
         <label>最高档起点（R，严格大于）<input id="dynamic-profit-tier-4-r" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_4_min_r }}"></label>
@@ -3440,7 +3440,7 @@
     let scoreTrendChart = null;
     let experimentEquityTrendChart = null;
     let liveExperimentEquityTrendChart = null;
-    const DYNAMIC_PROFIT_PROTECTION_RULE_NOTE = '每分钟读取最新1分钟K线 high/close，维护“开仓以来最高价”；当前共享配置{{ "已启用" if dynamic_profit_protection_settings.enabled else "已关闭" }}：浮盈到达过({{ dynamic_profit_protection_settings.tier_2_min_r }}R, {{ dynamic_profit_protection_settings.tier_3_min_r }}R] 回撤≥{{ dynamic_profit_protection_settings.tier_2_drawdown_ratio * 100 }}%、浮盈到达过({{ dynamic_profit_protection_settings.tier_3_min_r }}R, {{ dynamic_profit_protection_settings.tier_4_min_r }}R] 回撤≥{{ dynamic_profit_protection_settings.tier_3_drawdown_ratio * 100 }}%、浮盈到达过{{ dynamic_profit_protection_settings.tier_4_min_r }}R以上 回撤≥{{ dynamic_profit_protection_settings.tier_4_drawdown_ratio * 100 }}% 时，立即调用 reduceOnly MARKET 市价单全部平仓；三档按优先级递增，仅触发最高命中的一个条件。';
+    const DYNAMIC_PROFIT_PROTECTION_RULE_NOTE = '每分钟计算“开仓后已实现盈亏 + 当前浮盈”，维护周期累积盈亏历史最高值；当前共享配置{{ "已启用" if dynamic_profit_protection_settings.enabled else "已关闭" }}：周期累积盈亏到达过({{ dynamic_profit_protection_settings.tier_2_min_r }}R, {{ dynamic_profit_protection_settings.tier_3_min_r }}R] 回撤≥{{ dynamic_profit_protection_settings.tier_2_drawdown_ratio * 100 }}%、周期累积盈亏到达过({{ dynamic_profit_protection_settings.tier_3_min_r }}R, {{ dynamic_profit_protection_settings.tier_4_min_r }}R] 回撤≥{{ dynamic_profit_protection_settings.tier_3_drawdown_ratio * 100 }}%、周期累积盈亏到达过{{ dynamic_profit_protection_settings.tier_4_min_r }}R以上 回撤≥{{ dynamic_profit_protection_settings.tier_4_drawdown_ratio * 100 }}% 时，立即调用 reduceOnly MARKET 市价单全部平仓；三档按优先级递增，仅触发最高命中的一个条件。';
     const TRAILING_STOP_RULE_NOTE = '仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；先用最近4条15分钟K线判断“预触发移动追踪止盈”（最近第1条close < 最近第2/3/4条low的最小值）；对本轮预触发symbol每分钟读取 klines_1m 最新 high/close，维护“开仓以来最高价”，计算“波动率”=最新 ATR(14) / 最近第2条15分钟K线 close；若波动率 > 0.03，则当最新close相对开仓以来最高价回撤 > 2 × ATR(14) 时打上“移动追踪止盈”tag，否则回撤 > 2.5 × ATR(14) 时打上“移动追踪止盈”tag，并调用市价单接口全部平仓。';
 
     function escapeHtml(value) {
@@ -4288,14 +4288,14 @@
       const rowsEl = document.getElementById('dynamic-profit-protection-checks-body');
       if (!rowsEl) return;
       if (!rows.length) { rowsEl.innerHTML = '<tr><td class="empty" colspan="17">暂无动态利润保护扫描结果</td></tr>'; return; }
-      rowsEl.innerHTML = rows.map(row => `<tr><td>${formatMsDatetime(row.checked_at)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.entry_price)}</td><td>${escapeHtml(row.position_amt)}</td><td>${escapeHtml(row.unrealized_pnl)} / ${escapeHtml(row.profit_r_multiple)}R</td><td>${escapeHtml(row.realized_pnl_since_open || '-')}</td><td>${escapeHtml(row.cycle_total_pnl || '-')}</td><td>${escapeHtml(row.latest_1m_high)} / ${escapeHtml(row.latest_1m_close)}</td><td>${escapeHtml(row.highest_since_open)}</td><td>${escapeHtml(row.highest_unrealized_pnl)}</td><td>${row.highest_profit_at ? formatMsDatetime(row.highest_profit_at) : '-'}</td><td>${escapeHtml(row.current_tier || '未达档')}</td><td>${escapeHtml(row.profit_drawdown_ratio)} / ${escapeHtml(row.drawdown_threshold)}</td><td>${statusBadge(row.triggered)}</td><td>${escapeHtml(row.close_quantity)} / ${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td><td>${statusBadge(row.eligible)}</td><td>${escapeHtml(row.reason)}</td></tr>`).join('');
+      rowsEl.innerHTML = rows.map(row => `<tr><td>${formatMsDatetime(row.checked_at)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.entry_price)}</td><td>${escapeHtml(row.position_amt)}</td><td>${escapeHtml(row.unrealized_pnl)} / ${escapeHtml(row.profit_r_multiple)}R</td><td>${escapeHtml(row.realized_pnl_since_open || '-')}</td><td>${escapeHtml(row.cycle_total_pnl || '-')}</td><td>${escapeHtml(row.latest_1m_high)} / ${escapeHtml(row.latest_1m_close)}</td><td>${escapeHtml(row.highest_since_open)}</td><td>${escapeHtml(row.highest_cycle_total_pnl)}</td><td>${row.highest_profit_at ? formatMsDatetime(row.highest_profit_at) : '-'}</td><td>${escapeHtml(row.current_tier || '未达档')}</td><td>${escapeHtml(row.profit_drawdown_ratio)} / ${escapeHtml(row.drawdown_threshold)}</td><td>${statusBadge(row.triggered)}</td><td>${escapeHtml(row.close_quantity)} / ${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td><td>${statusBadge(row.eligible)}</td><td>${escapeHtml(row.reason)}</td></tr>`).join('');
     }
 
     function renderDynamicProfitProtectionRecords(rows) {
       const rowsEl = document.getElementById('dynamic-profit-protection-records-body');
       if (!rowsEl) return;
       if (!rows.length) { rowsEl.innerHTML = '<tr><td class="empty" colspan="15">暂无动态利润保护记录</td></tr>'; return; }
-      rowsEl.innerHTML = rows.map((row, index) => `<tr class="${index >= 10 ? 'collapsed-extra' : ''}"><td>${formatMsDatetime(row.checked_at)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.position_amt)}</td><td>${escapeHtml(row.entry_price)}</td><td>${escapeHtml(row.r_usdt)} / ${escapeHtml(row.profit_r_multiple)}R</td><td>${escapeHtml(row.realized_pnl_since_open || '-')}</td><td>${escapeHtml(row.cycle_total_pnl || '-')}</td><td>${escapeHtml(row.latest_1m_close)} / ${escapeHtml(row.highest_since_open)}</td><td>${escapeHtml(row.highest_unrealized_pnl)}</td><td>${row.highest_profit_at ? formatMsDatetime(row.highest_profit_at) : '-'}</td><td>${escapeHtml(row.current_tier || '未达档')}</td><td>${escapeHtml(row.profit_drawdown_ratio)} / ${escapeHtml(row.drawdown_threshold)}</td><td>${escapeHtml(row.close_quantity)}</td><td>${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td><td>${escapeHtml(row.reason)}</td></tr>`).join('');
+      rowsEl.innerHTML = rows.map((row, index) => `<tr class="${index >= 10 ? 'collapsed-extra' : ''}"><td>${formatMsDatetime(row.checked_at)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.position_amt)}</td><td>${escapeHtml(row.entry_price)}</td><td>${escapeHtml(row.r_usdt)} / ${escapeHtml(row.profit_r_multiple)}R</td><td>${escapeHtml(row.realized_pnl_since_open || '-')}</td><td>${escapeHtml(row.cycle_total_pnl || '-')}</td><td>${escapeHtml(row.latest_1m_close)} / ${escapeHtml(row.highest_since_open)}</td><td>${escapeHtml(row.highest_cycle_total_pnl)}</td><td>${row.highest_profit_at ? formatMsDatetime(row.highest_profit_at) : '-'}</td><td>${escapeHtml(row.current_tier || '未达档')}</td><td>${escapeHtml(row.profit_drawdown_ratio)} / ${escapeHtml(row.drawdown_threshold)}</td><td>${escapeHtml(row.close_quantity)}</td><td>${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td><td>${escapeHtml(row.reason)}</td></tr>`).join('');
     }
 
     function renderHardTakeProfitSummary(payload) {
@@ -4333,7 +4333,7 @@
       const chipsEl = document.getElementById('dynamic-profit-protection-eligible-chips');
       if (chipsEl) {
         const eligibleRows = (payload.checks || []).filter(row => row.eligible);
-        chipsEl.innerHTML = eligibleRows.length ? eligibleRows.map(row => `<span class="chip" title="当下浮盈 ${escapeHtml(row.unrealized_pnl)}，R倍数 ${escapeHtml(row.profit_r_multiple)}">${escapeHtml(row.symbol)}</span>`).join('') : '<span class="chip">本轮无满足动态利润保护前提的symbol</span>';
+        chipsEl.innerHTML = eligibleRows.length ? eligibleRows.map(row => `<span class="chip" title="周期累积盈亏 ${escapeHtml(row.cycle_total_pnl)}，R倍数 ${escapeHtml(row.profit_r_multiple)}">${escapeHtml(row.symbol)}</span>`).join('') : '<span class="chip">本轮无满足动态利润保护前提的symbol</span>';
       }
       renderDynamicProfitProtectionChecks(payload.checks || []);
       renderDynamicProfitProtectionRecords(payload.records || []);
