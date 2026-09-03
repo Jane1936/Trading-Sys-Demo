@@ -1234,6 +1234,7 @@
           <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-break-even">保本止盈策略</button>
           <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-partial-take-profit">分批止盈规则</button>
           <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-trailing-reduction">移动追踪减仓模块</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-hard-take-profit">硬止盈板块</button>
           <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-dynamic-profit-protection">动态利润保护板块</button>
           <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-trailing-stop">移动追踪止盈规则</button>
         </div>
@@ -2024,6 +2025,21 @@
         </div>
         </div>
 
+
+        <div id="holding-module-hard-take-profit" class="holding-module-panel" role="tabpanel">
+        <div class="critical-section sky-theme-section" aria-label="硬止盈1分钟扫描结果">
+          <div class="symbol-strip">
+            <div class="section-title-row"><strong>硬止盈模块：1分钟扫描结果</strong><button id="refresh-hard-take-profit" class="btn btn-primary btn-small" type="button">刷新</button><span id="hard-take-profit-refresh-status" class="muted">仅刷新本模块的最新信息</span></div>
+            <div id="hard-take-profit-round-note" class="muted">{% if hard_take_profit_round_ts %}最近判断轮次：{{ hard_take_profit_round_ts|fmt_ms_datetime }}。独立扫描全部已持仓 symbol；未变现盈利率达到默认 20% 时，调用 reduceOnly MARKET 市价单全部平仓。{% else %}暂无硬止盈扫描结果。{% endif %}</div>
+          </div>
+          <div class="table-wrap"><table><thead><tr><th>checked_at</th><th>symbol</th><th>entry</th><th>position</th><th>未变现盈利</th><th>持仓名义价值</th><th>盈利率/阈值</th><th>触发</th><th>全部平仓单</th><th>reason</th></tr></thead><tbody id="hard-take-profit-checks-body">
+          {% for row in hard_take_profit_checks %}<tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td>{{ row.unrealized_pnl }}</td><td>{{ row.position_notional }}</td><td>{{ row.profit_ratio }} / {{ row.profit_threshold }}</td><td>{{ '是' if row.triggered else '否' }}</td><td>{{ row.close_quantity }} / {{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="10">暂无硬止盈扫描结果</td></tr>{% endfor %}
+          </tbody></table></div>
+        </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10"><div class="symbol-strip collapsible-header"><div><strong>硬止盈操作记录</strong><div class="muted">操作记录存储于 trading_info.db；默认展示最新 10 条。</div></div><button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button></div><div class="table-wrap"><table><thead><tr><th>操作时间</th><th>symbol</th><th>持仓数量</th><th>开仓价</th><th>未变现盈利</th><th>盈利率/阈值</th><th>平仓数量</th><th>订单ID / 状态</th><th>原因</th></tr></thead><tbody id="hard-take-profit-records-body">
+        {% for row in hard_take_profit_records %}<tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}"><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.position_amt }}</td><td>{{ row.entry_price }}</td><td>{{ row.unrealized_pnl }}</td><td>{{ row.profit_ratio }} / {{ row.profit_threshold }}</td><td>{{ row.close_quantity }}</td><td>{{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="9">暂无硬止盈操作记录</td></tr>{% endfor %}
+        </tbody></table></div></div>
+        </div>
 
         <div id="holding-module-dynamic-profit-protection" class="holding-module-panel" role="tabpanel">
         <div class="critical-section sky-theme-section" aria-label="动态利润保护1分钟扫描结果">
@@ -4206,6 +4222,35 @@
       if (!rows.length) { rowsEl.innerHTML = '<tr><td class="empty" colspan="13">暂无动态利润保护记录</td></tr>'; return; }
       rowsEl.innerHTML = rows.map((row, index) => `<tr class="${index >= 10 ? 'collapsed-extra' : ''}"><td>${formatMsDatetime(row.checked_at)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.position_amt)}</td><td>${escapeHtml(row.entry_price)}</td><td>${escapeHtml(row.r_usdt)} / ${escapeHtml(row.profit_r_multiple)}R</td><td>${escapeHtml(row.latest_1m_close)} / ${escapeHtml(row.highest_since_open)}</td><td>${escapeHtml(row.highest_unrealized_pnl)}</td><td>${row.highest_profit_at ? formatMsDatetime(row.highest_profit_at) : '-'}</td><td>${escapeHtml(row.current_tier || '未达档')}</td><td>${escapeHtml(row.profit_drawdown_ratio)} / ${escapeHtml(row.drawdown_threshold)}</td><td>${escapeHtml(row.close_quantity)}</td><td>${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td><td>${escapeHtml(row.reason)}</td></tr>`).join('');
     }
+
+    function renderHardTakeProfitSummary(payload) {
+      const note = document.getElementById('hard-take-profit-round-note');
+      if (note) note.textContent = payload.round_ts ? `最近判断轮次：${formatMsDatetime(payload.round_ts)}。独立扫描全部已持仓 symbol；未变现盈利率达到默认 20% 时，调用 reduceOnly MARKET 市价单全部平仓。` : '暂无硬止盈扫描结果。';
+      const checks = payload.checks || [];
+      const records = payload.records || [];
+      const checksBody = document.getElementById('hard-take-profit-checks-body');
+      const recordsBody = document.getElementById('hard-take-profit-records-body');
+      if (checksBody) checksBody.innerHTML = checks.length ? checks.map(row => `<tr><td>${formatMsDatetime(row.checked_at)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.entry_price)}</td><td>${escapeHtml(row.position_amt)}</td><td>${escapeHtml(row.unrealized_pnl)}</td><td>${escapeHtml(row.position_notional)}</td><td>${escapeHtml(row.profit_ratio)} / ${escapeHtml(row.profit_threshold)}</td><td>${row.triggered ? '是' : '否'}</td><td>${escapeHtml(row.close_quantity)} / ${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td><td>${escapeHtml(row.reason)}</td></tr>`).join('') : '<tr><td class="empty" colspan="10">暂无硬止盈扫描结果</td></tr>';
+      if (recordsBody) recordsBody.innerHTML = records.length ? records.map((row, index) => `<tr class="${index >= 10 ? 'collapsed-extra' : ''}"><td>${formatMsDatetime(row.checked_at)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.position_amt)}</td><td>${escapeHtml(row.entry_price)}</td><td>${escapeHtml(row.unrealized_pnl)}</td><td>${escapeHtml(row.profit_ratio)} / ${escapeHtml(row.profit_threshold)}</td><td>${escapeHtml(row.close_quantity)}</td><td>${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td><td>${escapeHtml(row.reason)}</td></tr>`).join('') : '<tr><td class="empty" colspan="9">暂无硬止盈操作记录</td></tr>';
+    }
+
+    (function initHardTakeProfitRefresh() {
+      const btn = document.getElementById('refresh-hard-take-profit');
+      const status = document.getElementById('hard-take-profit-refresh-status');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        btn.disabled = true; btn.textContent = '刷新中...';
+        if (status) status.textContent = '正在获取硬止盈模块最新信息...';
+        try {
+          const response = await fetch('/api/hard-take-profit/summary', {headers: {'Accept': 'application/json'}});
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          renderHardTakeProfitSummary(payload);
+          if (status) status.textContent = `刷新完成：扫描结果 ${payload.checks?.length || 0} 条，操作记录 ${payload.records?.length || 0} 条。`;
+        } catch (error) { if (status) status.textContent = `刷新失败：${error.message}`; }
+        finally { btn.disabled = false; btn.textContent = '刷新'; }
+      });
+    })();
 
     function renderDynamicProfitProtectionSummary(payload) {
       const roundNoteEl = document.getElementById('dynamic-profit-protection-round-note');
