@@ -209,6 +209,51 @@ def test_automated_hard_take_profit_match_falls_back_to_quantity(tmp_path, monke
     assert annotated["orders"][0]["exit_reason"] == "自动化硬止盈"
 
 
+def test_automated_hard_take_profit_match_supports_legacy_table_without_order_id(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "orders.db"
+    _create_exit_reason_tables(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(f"ALTER TABLE {HardTakeProfit.RECORDS_TABLE} RENAME TO old_hard_tp")
+        conn.execute(
+            f"""
+            CREATE TABLE {HardTakeProfit.RECORDS_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                checked_at INTEGER NOT NULL,
+                close_quantity TEXT NOT NULL,
+                triggered INTEGER NOT NULL,
+                close_status TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            f"INSERT INTO {HardTakeProfit.RECORDS_TABLE} "
+            "(symbol, checked_at, close_quantity, triggered, close_status) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("BANK", 1000, "2.00", 1, "submitted"),
+        )
+
+    monkeypatch.setattr(web_app, "DB_PATH", str(db_path))
+    payload = {
+        "orders": [
+            {
+                "symbol": "BANKUSDT",
+                "order_id": "98765",
+                "side": "SELL",
+                "time": 1000,
+                "quantity": "2",
+                "realized_pnl": "1",
+            }
+        ]
+    }
+
+    annotated = web_app._annotate_filled_order_exit_reasons(payload)
+
+    assert annotated["orders"][0]["exit_reason"] == "自动化硬止盈"
+
+
 def test_filled_sell_order_exit_reason_uses_zombie_force_liquidation_match(tmp_path, monkeypatch):
     db_path = tmp_path / "orders.db"
     _create_exit_reason_tables(db_path)
