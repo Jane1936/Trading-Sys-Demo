@@ -1703,6 +1703,11 @@ def abnormal_wicks():
         else (None, []),
         (None, []),
     )
+    openable_round_history = load_module(
+        "可开仓 Symbol 情况记录",
+        lambda: openable.recent_round_summaries(limit=100),
+        [],
+    )
     market_filter = MarketFilterModule(db_path=_market_db_path())
     market_filter_results = load_module("市场行情过滤", lambda: market_filter.recent_results(limit=100, days=7), [])
     weak_market_profit_adjustment = WeakMarketProfitAdjustmentModule(db_path=_market_db_path())
@@ -1902,6 +1907,7 @@ def abnormal_wicks():
         scoring_symbol_errors=scoring_symbol_errors,
         openable_round_ts=openable_round_ts,
         openable_symbols=openable_symbols,
+        openable_round_history=openable_round_history,
         score_band_configs=score_band_configs,
         score_distance_threshold_text=score_distance_threshold_text,
         score_leverage_mapping_text=score_leverage_mapping_text,
