@@ -241,10 +241,13 @@ def test_filled_orders_exit_reason_tip_includes_zombie_force_liquidation():
     template = Path("templates/abnormal_wicks.html").read_text()
 
     tip_index = template.index("止盈/止损原因显示规则")
+    automated_hard_take_profit_index = template.index(
+        "自动化硬止盈（硬止盈操作记录）", tip_index
+    )
     zombie_index = template.index("僵尸强平（僵尸单强平操作记录）", tip_index)
     structural_index = template.index("结构止损（止损记录）", tip_index)
 
-    assert tip_index < zombie_index < structural_index
+    assert tip_index < automated_hard_take_profit_index < zombie_index < structural_index
 
 
 
