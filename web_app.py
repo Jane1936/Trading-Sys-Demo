@@ -506,9 +506,25 @@ def _filled_order_exit_reason_matches(
         hard_take_profit_table = _qualified_table(
             info_schema, HardTakeProfit.RECORDS_TABLE
         )
+        # ``CREATE TABLE IF NOT EXISTS`` does not migrate databases created by
+        # older deployments.  In particular, production may already have this
+        # table without ``close_order_id``.  Keep the analysis query compatible
+        # with those rows instead of letting one optional column abort all
+        # filled-order annotations.
+        hard_take_profit_columns = {
+            row["name"]
+            for row in conn.execute(
+                f"PRAGMA {db_config.quote_identifier(info_schema)}.table_info("
+                f"{db_config.quote_identifier(HardTakeProfit.RECORDS_TABLE)})"
+            ).fetchall()
+        }
+        hard_take_profit_order_id_select = (
+            "close_order_id" if "close_order_id" in hard_take_profit_columns
+            else "'' AS close_order_id"
+        )
         rows = conn.execute(
             f"""
-            SELECT checked_at AS matched_at, close_quantity, close_order_id
+            SELECT checked_at AS matched_at, close_quantity, {hard_take_profit_order_id_select}
             FROM {hard_take_profit_table}
             WHERE symbol = ?
               AND triggered = 1
@@ -945,6 +961,9 @@ def live_account_filled_orders_api():
         return jsonify({"error": f"Binance live filled orders request failed: {exc}"}), 502
     except RuntimeError as exc:
         return jsonify({"error": str(exc)}), 502
+    except Exception as exc:
+        app.logger.exception("Unexpected live filled-orders query failure")
+        return jsonify({"error": f"Unexpected live filled-orders query failure: {exc}"}), 500
 
 
 FILLED_ORDER_EXPORT_COLUMNS = (

@@ -49,6 +49,23 @@ def test_live_filled_orders_route_supports_days_and_explicit_range(monkeypatch):
     ]
 
 
+def test_live_filled_orders_route_returns_json_for_unexpected_annotation_error(monkeypatch):
+    monkeypatch.setattr(web_app.BinanceAccountManager, "live", lambda: FakeLiveManager())
+    monkeypatch.setattr(
+        web_app,
+        "_annotate_filled_order_exit_reasons",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("database unavailable")),
+    )
+
+    response = web_app.app.test_client().get("/api/live/account/filled-orders?days=7")
+
+    assert response.status_code == 500
+    assert response.is_json
+    assert response.get_json() == {
+        "error": "Unexpected live filled-orders query failure: database unavailable"
+    }
+
+
 class FakeLiveModule:
     def get_latest_round_checks(self):
         return 1234, [{"symbol": "BTC", "reason": "latest"}]
