@@ -113,7 +113,7 @@ def test_same_or_higher_previous_score_band_remains_openable(tmp_path):
     assert rows["HIGHER"].qualified is True
 
 
-def test_recent_round_summaries_keep_each_round_and_only_qualified_symbols(tmp_path):
+def test_recent_round_summaries_keep_every_candidate_and_qualified_subset(tmp_path):
     db_path = tmp_path / "klines.db"
     module = OpenableSymbolModule(db_path=str(db_path))
     module.init_table()
@@ -136,5 +136,6 @@ def test_recent_round_summaries_keep_each_round_and_only_qualified_symbols(tmp_p
 
     assert [summary.decision_round_ts for summary in summaries] == [200, 100]
     assert summaries[0].candidate_count == 2
+    assert [row.symbol for row in summaries[0].candidate_symbols] == ["NEWPASS", "NEWFAIL"]
     assert [row.symbol for row in summaries[0].qualified_symbols] == ["NEWPASS"]
     assert summaries[0].evaluated_at == 2001

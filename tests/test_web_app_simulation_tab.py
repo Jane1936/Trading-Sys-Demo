@@ -23,6 +23,10 @@ def test_simulation_tab_owns_paper_trading_panels() -> None:
     assert 'data-strategy-tab="strategy-cooldown"' in strategy_section
     assert "可开仓symbol情况记录" in strategy_section
     assert "openable_round_history" in strategy_section
+    assert "所有候选symbol详情" in strategy_section
+    assert "round.candidate_symbols" in strategy_section
+    assert "最终可开仓" in strategy_section
+    assert "row.reason" in strategy_section
     history_title = strategy_section.index("可开仓symbol情况记录")
     history_section = strategy_section[
         strategy_section.rfind('<div class="collapsible-section', 0, history_title):

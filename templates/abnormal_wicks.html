@@ -1158,7 +1158,7 @@
           <div class="symbol-strip collapsible-header">
             <div>
               <div><strong>可开仓symbol情况记录</strong></div>
-              <div class="muted">展示最近 {{ openable_round_history|length }} 轮已保存的可开仓评估结果。</div>
+              <div class="muted">展示最近 {{ openable_round_history|length }} 轮所有候选symbol的详细可开仓评估结果。</div>
             </div>
             <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
           </div>
@@ -1169,7 +1169,7 @@
                 <tr>
                   <th>评估轮次</th>
                   <th>候选symbol数</th>
-                  <th>最终可开仓symbol</th>
+                  <th>所有候选symbol详情</th>
                   <th>评估时间</th>
                 </tr>
               </thead>
@@ -1179,11 +1179,36 @@
                   <td>{{ round.decision_round_ts|fmt_ms_datetime }}</td>
                   <td>{{ round.candidate_count }}</td>
                   <td>
-                    {% if round.qualified_symbols %}
-                    <div class="chips">
-                      {% for row in round.qualified_symbols %}
-                      <span class="chip" title="总分 {{ row.total_score }}；止损距离档位 {{ row.stop_loss_distance_tier }}；杠杆 {{ row.opening_leverage }}">{{ row.symbol }} {{ row.opening_leverage }}</span>
-                      {% endfor %}
+                    {% if round.candidate_symbols %}
+                    <div class="table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>symbol</th>
+                            <th>total_score</th>
+                            <th>评分档位</th>
+                            <th>distance_ratio</th>
+                            <th>止损距离档位</th>
+                            <th>杠杆大小</th>
+                            <th>最终可开仓</th>
+                            <th>reason</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {% for row in round.candidate_symbols %}
+                          <tr>
+                            <td>{{ row.symbol }}</td>
+                            <td>{{ row.total_score }}</td>
+                            <td>{{ row.score_band }}</td>
+                            <td>{{ '%.4f%%'|format(row.stop_loss_distance_ratio * 100) if row.stop_loss_distance_ratio is not none else '-' }}</td>
+                            <td>{{ row.stop_loss_distance_tier }}</td>
+                            <td>{{ row.opening_leverage }}</td>
+                            <td><span class="status-badge {{ 'status-pass' if row.qualified else 'status-fail' }}">{{ '是' if row.qualified else '否' }}</span></td>
+                            <td>{{ row.reason }}</td>
+                          </tr>
+                          {% endfor %}
+                        </tbody>
+                      </table>
                     </div>
                     {% else %}
                     <span class="muted">无</span>
