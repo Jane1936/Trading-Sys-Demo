@@ -31,6 +31,7 @@ BREAK_EVEN_TAKE_PROFIT = "break_even_take_profit"
 PARTIAL_TAKE_PROFIT = "partial_take_profit"
 TRAILING_REDUCTION = "trailing_reduction"
 DYNAMIC_PROFIT_PROTECTION = "dynamic_profit_protection"
+HARD_TAKE_PROFIT = "hard_take_profit"
 
 PRIMARY_FEATURE_FLAGS = frozenset(
     {BASE_DATA_COLLECTION, SCORING_SYSTEM, TRADING_SYSTEM, REAL_TRADING_SYSTEM, MARKET_FILTER}
@@ -101,6 +102,7 @@ FEATURE_FLAG_DEFINITIONS: tuple[FeatureFlagDefinition, ...] = (
     FeatureFlagDefinition(PARTIAL_TAKE_PROFIT, "模拟盘分批止盈规则", "控制分批止盈的每分钟扫描及减仓操作。"),
     FeatureFlagDefinition(TRAILING_REDUCTION, "模拟盘移动追踪减仓", "控制移动追踪减仓判断、刷新及减仓操作。"),
     FeatureFlagDefinition(DYNAMIC_PROFIT_PROTECTION, "模拟盘动态利润保护模块", "控制动态利润保护的每分钟扫描及平仓操作。"),
+    FeatureFlagDefinition(HARD_TAKE_PROFIT, "模拟盘硬止盈模块", "控制硬止盈模块的每分钟扫描及全部平仓操作。"),
 )
 
 _DEFINITIONS_BY_KEY = {definition.key: definition for definition in FEATURE_FLAG_DEFINITIONS}
@@ -215,11 +217,12 @@ def list_feature_flags(db_path: str | None = None) -> list[FeatureFlag]:
                 WHEN 'break_even_take_profit' THEN 14 WHEN 'partial_take_profit' THEN 15
                 WHEN 'trailing_reduction' THEN 16 WHEN 'trailing_stop' THEN 17
                 WHEN 'dynamic_profit_protection' THEN 18
-                WHEN 'real_break_even_take_profit' THEN 19
-                WHEN 'real_partial_take_profit' THEN 20
-                WHEN 'real_trailing_reduction' THEN 21
-                WHEN 'real_trailing_stop' THEN 22
-                WHEN 'real_dynamic_profit_protection' THEN 23 ELSE 99 END, key
+                WHEN 'hard_take_profit' THEN 19
+                WHEN 'real_break_even_take_profit' THEN 20
+                WHEN 'real_partial_take_profit' THEN 21
+                WHEN 'real_trailing_reduction' THEN 22
+                WHEN 'real_trailing_stop' THEN 23
+                WHEN 'real_dynamic_profit_protection' THEN 24 ELSE 99 END, key
             """,
         ).fetchall()
     return [

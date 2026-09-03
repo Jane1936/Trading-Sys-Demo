@@ -31,6 +31,10 @@ from pre_safety_module import PreSafetyModule
 from partial_take_profit import PartialTakeProfitStrategy
 from dynamic_profit_protection import DynamicProfitProtection
 from hard_take_profit import HardTakeProfit
+from hard_take_profit_settings import (
+    get_settings as get_hard_take_profit_settings,
+    set_settings as set_hard_take_profit_settings,
+)
 from dynamic_profit_protection_settings import (
     get_settings as get_dynamic_profit_protection_settings,
     set_settings as set_dynamic_profit_protection_settings,
@@ -1471,6 +1475,21 @@ def update_dynamic_profit_protection_settings_api():
         return jsonify({"error": str(exc)}), 400
 
 
+@app.get("/api/hard-take-profit-settings")
+def hard_take_profit_settings_api():
+    return jsonify(get_hard_take_profit_settings(CONFIG_DB_PATH))
+
+
+@app.put("/api/hard-take-profit-settings")
+def update_hard_take_profit_settings_api():
+    try:
+        return jsonify(set_hard_take_profit_settings(
+            request.get_json(silent=True) or {}, CONFIG_DB_PATH
+        ))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
 @app.get("/api/dynamic-open-threshold-settings")
 def dynamic_open_threshold_settings_api():
     return jsonify(get_dynamic_open_threshold_settings(CONFIG_DB_PATH))
@@ -1973,6 +1992,7 @@ def abnormal_wicks():
         feature_flags=feature_flags.list_feature_flags(CONFIG_DB_PATH),
         position_limit_settings=get_position_limit_settings(CONFIG_DB_PATH),
         dynamic_profit_protection_settings=get_dynamic_profit_protection_settings(CONFIG_DB_PATH),
+        hard_take_profit_settings=get_hard_take_profit_settings(CONFIG_DB_PATH),
         market_filter_settings=get_market_filter_settings(CONFIG_DB_PATH),
         dynamic_open_threshold_settings=get_dynamic_open_threshold_settings(CONFIG_DB_PATH),
         scoring_rule_weight_settings=get_rule_score_weight_settings(CONFIG_DB_PATH),

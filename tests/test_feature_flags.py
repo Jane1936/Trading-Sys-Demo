@@ -30,6 +30,7 @@ def test_feature_flags_seed_enabled_by_default(tmp_path):
         feature_flags.TRAILING_REDUCTION,
         feature_flags.TRAILING_STOP,
         feature_flags.DYNAMIC_PROFIT_PROTECTION,
+        feature_flags.HARD_TAKE_PROFIT,
         feature_flags.REAL_BREAK_EVEN_TAKE_PROFIT,
         feature_flags.REAL_PARTIAL_TAKE_PROFIT,
         feature_flags.REAL_TRAILING_REDUCTION,
@@ -121,6 +122,17 @@ def test_trailing_stop_flag_can_be_disabled(tmp_path):
     assert updated.name == "模拟盘移动追踪止盈规则"
     assert updated.enabled is False
     assert feature_flags.is_feature_enabled(feature_flags.TRAILING_STOP, db_path) is False
+
+
+def test_hard_take_profit_flag_defaults_on_and_can_be_disabled(tmp_path):
+    db_path = str(tmp_path / "base_data.db")
+
+    original = feature_flags.get_feature_flag(feature_flags.HARD_TAKE_PROFIT, db_path)
+    updated = feature_flags.set_feature_flag(feature_flags.HARD_TAKE_PROFIT, False, db_path)
+
+    assert original.name == "模拟盘硬止盈模块"
+    assert original.enabled is True
+    assert updated.enabled is False
 
 
 def test_unknown_feature_flag_rejected(tmp_path):
