@@ -29,6 +29,9 @@ MIGRATED_TABLES = (
     "scoring_rule_weights",
     "scoring_rule_election",
     "scoring_rule_election_config",
+    "scoring_rule_election_profiles",
+    "scoring_rule_election_profile_config",
+    "scoring_rule_election_combination",
 )
 
 

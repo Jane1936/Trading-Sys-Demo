@@ -356,11 +356,32 @@ class OpenableSymbolModule:
         previous_band = self._configured_band(previous_total_score) if previous_total_score is not None else None
         previous_score_band_lower = bool(previous_band and band and self.configured_score_bands().index(previous_band) < self.configured_score_bands().index(band))
         election = election or get_rule_election_settings(db_config.CONFIG_DB_PATH)
-        required_ids = [r["rule_id"] for r in election["rules"] if r["status"] == "required"]
-        optional_ids = [r["rule_id"] for r in election["rules"] if r["status"] == "optional"]
-        missing_required = [rule_id for rule_id in required_ids if int(row[f"rule{rule_id}_score"]) <= 0]
-        optional_hits = sum(int(row[f"rule{rule_id}_score"]) > 0 for rule_id in optional_ids)
-        election_qualified = not missing_required and optional_hits >= election["optional_min"]
+        configuration_results = []
+        for config in election["configurations"]:
+            if not config["enabled"]:
+                continue
+            required_ids = [r["rule_id"] for r in config["rules"] if r["status"] == "required"]
+            optional_ids = [r["rule_id"] for r in config["rules"] if r["status"] == "optional"]
+            missing_required = [
+                rule_id for rule_id in required_ids if int(row[f"rule{rule_id}_score"]) <= 0
+            ]
+            optional_hits = sum(
+                int(row[f"rule{rule_id}_score"]) > 0 for rule_id in optional_ids
+            )
+            configuration_results.append({
+                "key": config["key"],
+                "qualified": not missing_required and optional_hits >= config["optional_min"],
+                "missing_required": missing_required,
+                "optional_hits": optional_hits,
+                "optional_min": config["optional_min"],
+            })
+        if election["combination_mode"] == "all":
+            election_qualified = all(result["qualified"] for result in configuration_results)
+        else:
+            election_qualified = any(result["qualified"] for result in configuration_results)
+        failed_configurations = [
+            result["key"] for result in configuration_results if not result["qualified"]
+        ]
         qualified = distance_qualified and not previous_score_band_lower and election_qualified
         if threshold is None:
             reason = "total_score_not_in_openable_distance_band"
@@ -372,10 +393,8 @@ class OpenableSymbolModule:
             reason = "zero_distance_ratio_not_openable"
         elif previous_score_band_lower:
             reason = "previous_score_band_lower_than_current"
-        elif missing_required:
-            reason = "required_scoring_rules_not_hit:" + ",".join(map(str, missing_required))
-        elif optional_hits < election["optional_min"]:
-            reason = f"optional_scoring_rules_not_enough:{optional_hits}/{election['optional_min']}"
+        elif not election_qualified:
+            reason = "scoring_rule_election_not_satisfied:" + ",".join(failed_configurations)
         elif distance_qualified:
             reason = threshold_reason or "total_score_not_cooldown_and_stop_loss_distance_qualified"
         else:
