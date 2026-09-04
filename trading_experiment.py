@@ -33,6 +33,7 @@ class ExperimentConfig:
     exit_order_missing_position_retries: int = 3
     exit_order_missing_position_retry_delay_seconds: Decimal = Decimal("0.5")
     percent_price_ioc_slippage: Decimal = Decimal("0.01")
+    hard_stop_loss_limit_offset: Decimal = Decimal("0.02")
     hard_take_profit_usdt: Decimal = Decimal("55")
 
 
@@ -113,7 +114,7 @@ class TradingExperiment:
     * required margin uses the full formula result, and planned notional is margin * leverage;
     * stop-loss price distance remains capped by min(entry * 10%, equity * 1% / quantity);
     * new entries place a market-triggered hard take-profit order that closes when position PnL reaches 55 USDT;
-    * a market-triggered stop-loss is also placed for the full visible position;
+    * a stop-limit order with a 2% limit offset is also placed for the full visible position;
     * candidates come from the latest qualified openable-symbol round and are
       processed by total_score descending, then symbol ascending.
     """
@@ -579,6 +580,11 @@ class TradingExperiment:
             trigger_reference_price=trigger_reference_price,
             tick_size=exchange_info["tick_size"],
         )
+        stop_loss_limit_price = self._hard_stop_loss_limit_price(
+            stop_loss_price,
+            "SELL",
+            exchange_info["tick_size"],
+        )
 
         tp_order = None
         sl_order = None
@@ -592,9 +598,11 @@ class TradingExperiment:
                 {
                     "symbol": trading_symbol,
                     "side": "SELL",
-                    "type": "STOP_MARKET",
+                    "type": "STOP",
                     "quantity": self._fmt_decimal(stop_loss_quantity),
+                    "price": self._fmt_decimal(stop_loss_limit_price),
                     "stopPrice": self._fmt_decimal(stop_loss_price),
+                    "timeInForce": "GTC",
                     "reduceOnly": "true",
                     "workingType": "MARK_PRICE",
                 },
@@ -908,12 +916,19 @@ class TradingExperiment:
                         created += 1
                 stop_loss_price = self._decimal_from(trade["stop_loss_price"], Decimal("0"))
                 if stop_loss_price > 0 and not self._has_open_exit_order(open_algo_orders, side, {"STOP", "STOP_MARKET"}):
+                    stop_loss_limit_price = self._hard_stop_loss_limit_price(
+                        stop_loss_price,
+                        side,
+                        exchange_info["tick_size"],
+                    )
                     endpoint, params = self._exit_order_request({
                         "symbol": exchange_symbol,
                         "side": side,
-                        "type": "STOP_MARKET",
+                        "type": "STOP",
                         "quantity": self._fmt_decimal(quantity),
+                        "price": self._fmt_decimal(stop_loss_limit_price),
                         "stopPrice": self._fmt_decimal(stop_loss_price),
+                        "timeInForce": "GTC",
                         "reduceOnly": "true",
                         "workingType": "MARK_PRICE",
                     })
@@ -928,6 +943,24 @@ class TradingExperiment:
                 self._record_error(candidate, f"reconcile_exit_orders:{exchange_symbol}", exc)
                 records.append({"symbol": symbol, "status": "failed", "reason": f"{type(exc).__name__}: {exc}"})
         return {"checked": checked, "created": created, "cancelled": cancelled, "errors": errors, "records": records}
+
+    def _hard_stop_loss_limit_price(
+        self,
+        trigger_price: Decimal,
+        side: str,
+        tick_size: Decimal,
+    ) -> Decimal:
+        """Return a stop-limit execution price offset 2% beyond its trigger."""
+        if str(side).upper() == "BUY":
+            return self._ceil_to_tick(
+                trigger_price * (Decimal("1") + self.config.hard_stop_loss_limit_offset),
+                tick_size,
+            )
+        limit_price = self._floor_to_tick(
+            trigger_price * (Decimal("1") - self.config.hard_stop_loss_limit_offset),
+            tick_size,
+        )
+        return limit_price if limit_price > 0 else tick_size
 
     def _cancel_stale_algo_exit_orders(self, live_symbols: set[str]) -> dict[str, Any]:
         """Cancel reduce-only conditional exit orders for symbols with no live position."""

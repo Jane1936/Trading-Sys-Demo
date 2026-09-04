@@ -34,6 +34,7 @@ def test_real_config_uses_100u_without_simulation_reserve_and_10u_take_profit(mo
     assert value.initial_equity_usdt == Decimal("100")
     assert value.total_margin_budget_usdt == Decimal("100")
     assert value.experiment_uninvested_usdt == Decimal("0")
+    assert value.hard_stop_loss_limit_offset == Decimal("0.02")
     assert value.hard_take_profit_usdt == Decimal("10")
 
 
