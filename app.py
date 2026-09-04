@@ -206,6 +206,9 @@ def _database_schema_requirements() -> dict[str, dict[str, set[str]]]:
             "scoring_rule_weights": {"rule_id", "weight"},
             "scoring_rule_election": {"rule_id", "status"},
             "scoring_rule_election_config": {"id", "optional_min"},
+            "scoring_rule_election_profiles": {"config_key", "rule_id", "status"},
+            "scoring_rule_election_profile_config": {"config_key", "enabled", "optional_min"},
+            "scoring_rule_election_combination": {"id", "mode"},
         },
         db_config.SCORING_DB_PATH: {
             "abnormal_wick_events": {"symbol", "decision_round_ts"},

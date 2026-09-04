@@ -59,9 +59,13 @@ def test_initialize_config_database_migrates_only_requested_runtime_config(tmp_p
     weights = DEFAULT_RULE_SCORE_WEIGHTS.copy()
     weights[1] = 42
     set_rule_score_weight_settings(weights, base_db)
-    scoring_rule_election.set_settings(
-        {"rules": _election_rules(3), "optional_min": 0}, base_db
-    )
+    scoring_rule_election.set_settings({
+        "combination_mode": "any",
+        "configurations": [
+            {"key": key, "enabled": key == "A", "rules": _election_rules(3 if key == "A" else 0), "optional_min": 0}
+            for key in "ABCDE"
+        ],
+    }, base_db)
     openable_symbol_settings.set_settings(
         openable_symbol_settings.DEFAULT_SETTINGS, base_db
     )
