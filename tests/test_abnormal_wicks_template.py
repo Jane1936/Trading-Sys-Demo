@@ -630,6 +630,23 @@ def test_trailing_stop_action_records_show_atr_and_volatility_without_total_scor
     assert "row.current_profit_drawdown" not in renderer
 
 
+def test_trailing_stop_action_records_display_holding_time_after_position_amount():
+    template = Path("templates/abnormal_wicks.html").read_text()
+    section_start = template.index("<strong>移动追踪止盈操作记录</strong>")
+    section_end = template.index("</table>", section_start)
+    section = template[section_start:section_end]
+
+    assert section.index("<th>position_amt</th>") < section.index("<th>持仓时间</th>") < section.index("<th>entry_price</th>")
+    assert section.index("{{ row.position_amt }}") < section.index("{{ row.holding_hours }} 小时") < section.index("{{ row.entry_price }}")
+    assert 'colspan="13">暂无移动追踪止盈操作记录' in section
+
+    renderer_start = template.index("function renderTrailingStopRecords(rows)")
+    renderer_end = template.index("function renderTrailingStopSummary(payload)", renderer_start)
+    renderer = template[renderer_start:renderer_end]
+    assert renderer.index("row.position_amt") < renderer.index("row.holding_hours") < renderer.index("row.entry_price")
+    assert 'colspan="13">暂无移动追踪止盈操作记录' in renderer
+
+
 def test_trailing_stop_checks_display_holding_hours():
     template = Path("templates/abnormal_wicks.html").read_text()
     section_start = template.index("<strong>移动追踪止盈规则：1分钟扫描结果</strong>")

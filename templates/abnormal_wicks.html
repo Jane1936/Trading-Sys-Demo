@@ -2251,6 +2251,7 @@
                 <th>checked_at</th>
                 <th>symbol</th>
                 <th>position_amt</th>
+                <th>持仓时间</th>
                 <th>entry_price</th>
                 <th>ATR(14)</th>
                 <th>波动率</th>
@@ -2268,6 +2269,7 @@
                 <td>{{ row.checked_at|fmt_ms_datetime }}</td>
                 <td>{{ row.symbol }}</td>
                 <td>{{ row.position_amt }}</td>
+                <td>{{ row.holding_hours }} 小时</td>
                 <td>{{ row.entry_price }}</td>
                 <td>{{ row.atr14 }}</td>
                 <td>{{ row.volatility or '-' }}</td>
@@ -2279,7 +2281,7 @@
                 <td>{{ row.reason }}</td>
               </tr>
               {% else %}
-              <tr><td class="empty" colspan="12">暂无移动追踪止盈操作记录</td></tr>
+              <tr><td class="empty" colspan="13">暂无移动追踪止盈操作记录</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -4445,7 +4447,7 @@
       const rowsEl = document.getElementById('trailing-stop-records-body');
       if (!rowsEl) return;
       if (!rows.length) {
-        rowsEl.innerHTML = '<tr><td class="empty" colspan="12">暂无移动追踪止盈操作记录</td></tr>';
+        rowsEl.innerHTML = '<tr><td class="empty" colspan="13">暂无移动追踪止盈操作记录</td></tr>';
         return;
       }
       rowsEl.innerHTML = rows.map((row, index) => `
@@ -4453,6 +4455,7 @@
           <td>${formatMsDatetime(row.checked_at)}</td>
           <td>${escapeHtml(row.symbol)}</td>
           <td>${escapeHtml(row.position_amt)}</td>
+          <td>${escapeHtml(row.holding_hours)} 小时</td>
           <td>${escapeHtml(row.entry_price)}</td>
           <td>${escapeHtml(row.atr14)}</td>
           <td>${escapeHtml(row.volatility || '-')}</td>
