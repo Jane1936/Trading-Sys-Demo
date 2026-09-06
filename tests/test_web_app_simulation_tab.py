@@ -169,3 +169,45 @@ def test_simulation_subtab_script_targets_only_simulation_panels() -> None:
     assert "querySelectorAll('.bookmark-tab[data-simulation-tab]')" in template
     assert "querySelectorAll('.simulation-subpanel')" in template
     assert "panel.id === button.dataset[attribute]" in template
+
+
+def test_simulation_page_loads_chart_library_and_serialized_equity_data() -> None:
+    template = SIMULATION_TEMPLATE_PATH.read_text(encoding="utf-8")
+    script = SIMULATION_SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert "echarts@5/dist/echarts.min.js" in template
+    assert 'id="simulation-equity-trend-data"' in template
+    assert "{% for row in trading_equity_trend_rows %}" in template
+    assert "JSON.parse(dataEl.textContent)" in script
+    assert "window.echarts.init(chartEl)" in script
+    assert "refreshExperimentEquityTrendChartLayout" in script
+
+
+def test_simulation_page_wires_account_and_filled_order_controls() -> None:
+    script = SIMULATION_SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert "document.getElementById('query-account-balance')" in script
+    assert "fetch('/api/account/balance'" in script
+    assert "document.getElementById('query-filled-sell-orders')" in script
+    assert "document.getElementById('query-filled-orders-by-time')" in script
+    assert "document.getElementById('export-filled-orders')" in script
+    assert "/api/account/filled-sell-orders?" in script
+    assert "fetch('/api/account/filled-orders/export'" in script
+
+
+def test_simulation_page_wires_every_holding_refresh_control() -> None:
+    template = SIMULATION_TEMPLATE_PATH.read_text(encoding="utf-8")
+    script = SIMULATION_SCRIPT_PATH.read_text(encoding="utf-8")
+    refresh_ids = (
+        "refresh-holding-increase",
+        "refresh-break-even",
+        "refresh-partial-take-profit",
+        "refresh-trailing-reduction",
+        "refresh-hard-take-profit",
+        "refresh-dynamic-profit-protection",
+        "refresh-trailing-stop",
+    )
+
+    for refresh_id in refresh_ids:
+        assert f'id="{refresh_id}"' in template
+        assert f"document.getElementById('{refresh_id}')" in script
