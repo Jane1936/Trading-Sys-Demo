@@ -4,6 +4,7 @@ from pathlib import Path
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "abnormal_wicks.html"
 BASE_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "base.html"
 STYLESHEET_PATH = Path(__file__).resolve().parents[1] / "static" / "dashboard.css"
+SETTINGS_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "settings.html"
 
 
 def test_simulation_tab_owns_paper_trading_panels() -> None:
@@ -13,12 +14,11 @@ def test_simulation_tab_owns_paper_trading_panels() -> None:
     strategy_start = template.index('<section id="tab-strategy"')
     simulation_start = template.index('<section id="tab-simulation"')
     live_start = template.index('<section id="tab-live"')
-    feature_flags_start = template.index('<section id="tab-feature-flags"')
     strategy_section = template[strategy_start:simulation_start]
     simulation_section = template[simulation_start:live_start]
 
     assert 'data-tab="tab-simulation">模拟盘数据</button>' in base_template
-    assert strategy_start < simulation_start < live_start < feature_flags_start
+    assert strategy_start < simulation_start < live_start
     assert "持仓评分系统" not in strategy_section
     assert "已成交订单分析" not in strategy_section
     assert "账户信息" not in strategy_section
@@ -45,8 +45,7 @@ def test_live_tab_has_production_filled_orders_and_account_panels() -> None:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     base_template = BASE_TEMPLATE_PATH.read_text(encoding="utf-8")
     live_start = template.index('<section id="tab-live"')
-    feature_flags_start = template.index('<section id="tab-feature-flags"')
-    live_section = template[live_start:feature_flags_start]
+    live_section = template[live_start:template.index("{% endblock %}", live_start)]
 
     assert 'data-tab="tab-live">实盘数据</button>' in base_template
     assert 'data-live-tab="live-filled-orders">已成交订单分析' in live_section
@@ -59,8 +58,7 @@ def test_live_tab_has_production_filled_orders_and_account_panels() -> None:
 def test_live_account_has_equity_trend_chart_backed_by_live_rows() -> None:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     live_start = template.index('<section id="tab-live"')
-    feature_flags_start = template.index('<section id="tab-feature-flags"')
-    live_section = template[live_start:feature_flags_start]
+    live_section = template[live_start:template.index("{% endblock %}", live_start)]
 
     equity_index = live_section.index('aria-label="实盘实验组USDT净值"')
     chart_index = live_section.index('aria-label="实盘近7天实验组USDT净值变化趋势图"')
@@ -94,8 +92,7 @@ def test_live_zombie_records_are_collapsed_after_latest_ten_rows() -> None:
 def test_live_holding_score_tabs_target_separate_module_panels() -> None:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     live_start = template.index('<section id="tab-live"')
-    feature_flags_start = template.index('<section id="tab-feature-flags"')
-    live_section = template[live_start:feature_flags_start]
+    live_section = template[live_start:template.index("{% endblock %}", live_start)]
     module_names = ("stop-loss", "reduction", "increase", "portfolio-risk")
 
     for module_name in module_names:
@@ -112,8 +109,7 @@ def test_live_holding_score_tabs_target_separate_module_panels() -> None:
 def test_live_holding_modules_render_full_operation_record_tables() -> None:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     live_start = template.index('<section id="tab-live"')
-    feature_flags_start = template.index('<section id="tab-feature-flags"')
-    live_section = template[live_start:feature_flags_start]
+    live_section = template[live_start:template.index("{% endblock %}", live_start)]
 
     assert "止损操作记录（实盘）" in live_section
     assert "减仓操作记录（实盘）" in live_section
@@ -132,8 +128,7 @@ def test_live_holding_modules_render_full_operation_record_tables() -> None:
 def test_live_position_modules_have_scoped_refresh_buttons() -> None:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     live_start = template.index('<section id="tab-live"')
-    feature_flags_start = template.index('<section id="tab-feature-flags"')
-    live_section = template[live_start:feature_flags_start]
+    live_section = template[live_start:template.index("{% endblock %}", live_start)]
 
     assert live_section.count('class="btn btn-primary btn-small live-module-refresh"') == 2
     assert 'data-live-module="holding-increase"' in live_section
@@ -159,7 +154,7 @@ def test_holding_module_tab_script_scopes_updates_to_current_account_panel() -> 
 
 
 def test_feature_flags_page_exposes_live_trading_switch() -> None:
-    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    template = SETTINGS_TEMPLATE_PATH.read_text(encoding="utf-8")
 
     assert "实盘交易系统" in template
     assert "real_trading_system" in template
@@ -167,7 +162,7 @@ def test_feature_flags_page_exposes_live_trading_switch() -> None:
 
 
 def test_live_secondary_feature_switches_are_highlighted() -> None:
-    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    template = SETTINGS_TEMPLATE_PATH.read_text(encoding="utf-8")
     stylesheet = STYLESHEET_PATH.read_text(encoding="utf-8")
 
     assert ".live-secondary-feature-row" in stylesheet
