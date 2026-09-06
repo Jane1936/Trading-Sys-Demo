@@ -64,10 +64,27 @@ def test_live_account_has_equity_trend_chart_backed_by_live_rows() -> None:
 
     assert equity_index < chart_index < zombie_index
     assert "live-experiment-equity-trend-chart" in live_section
+    assert 'id="live-experiment-seven-day-return"' in live_section
+    assert "live_seven_day_return" in live_section
     assert "数据来自实盘开仓、保本止盈、分批止盈扫描记录" in live_section
     assert "{% for r in live_equity_trend_rows %}" in template
     assert "buildExperimentEquityTrendOption(rawRows)" in template
     assert "refreshLiveExperimentEquityTrendChartLayout" in template
+
+
+def test_live_zombie_records_are_collapsed_after_latest_ten_rows() -> None:
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    zombie_start = template.index("僵尸单强平操作记录（实盘）")
+    trade_records_start = template.index("交易实验交易记录（实盘）", zombie_start)
+    zombie_section = template[
+        template.rfind('<div class="collapsible-section', 0, zombie_start):trade_records_start
+    ]
+
+    assert 'class="collapsible-section is-collapsed"' in zombie_section
+    assert 'data-collapsed-limit="10"' in zombie_section
+    assert 'class="collapsible-toggle"' in zombie_section
+    assert "默认折叠，仅展示最新 10 条" in zombie_section
+    assert '{% if loop.index > 10 %}collapsed-extra{% endif %}' in zombie_section
 
 
 def test_live_holding_score_tabs_target_separate_module_panels() -> None:
