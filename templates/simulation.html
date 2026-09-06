@@ -2,6 +2,8 @@
 
 {% block title %}模拟盘数据 - Trading System{% endblock %}
 
+{% block head_extra %}<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>{% endblock %}
+
 {% block navigation %}
   <a class="tab-btn" href="{{ url_for('abnormal_wicks') }}">返回交易控制台</a>
   <a class="tab-btn active" href="{{ url_for('simulation') }}" aria-current="page">模拟盘数据</a>
@@ -1419,5 +1421,6 @@
 {% endblock %}
 
 {% block scripts %}
+  <script id="simulation-equity-trend-data" type="application/json">[{% for row in trading_equity_trend_rows %}[{{ row.recorded_at|tojson }}, {{ row.account_equity_usdt|tojson }}]{% if not loop.last %},{% endif %}{% endfor %}]</script>
   <script src="{{ url_for('static', filename='js/simulation.js') }}" defer></script>
 {% endblock %}
