@@ -2476,6 +2476,10 @@
             <div class="account-metric-label">实验组USDT净值</div>
             <div id="experiment-usdt-equity" class="account-metric-value">-</div>
           </div>
+          <div class="account-metric">
+            <div class="account-metric-label">近7天收益率</div>
+            <div id="experiment-seven-day-return" class="account-metric-value {{ 'pnl-positive' if trading_seven_day_return is not none and trading_seven_day_return > 0 else 'pnl-negative' if trading_seven_day_return is not none and trading_seven_day_return < 0 else 'pnl-zero' }}">{{ '%+.2f%%'|format(trading_seven_day_return) if trading_seven_day_return is not none else '-' }}</div>
+          </div>
           <div class="muted">计算公式：当前USDT总余额 - 未投入实验组USDT额度（4000U）。USDT总初始资金5000U，第一组实验初始投入1000U；盈利后实验组净值可作为动态总保证金预算上限。</div>
         </div>
         <div class="equity-trend-chart-wrap" aria-label="近7天实验组USDT净值变化趋势图">
@@ -3212,7 +3216,7 @@
         <div class="account-summary"><div class="account-metric"><div class="account-metric-label">USDT 总余额</div><div id="live-usdt-balance" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">USDT 可用余额</div><div id="live-usdt-available" class="account-metric-value">-</div></div><div class="account-metric account-metric-highlight"><div class="account-metric-label">USDT 未实现盈亏</div><div id="live-usdt-pnl" class="account-metric-value">-</div></div></div>
         <div class="table-wrap"><table><thead><tr><th>asset</th><th>balance</th><th>available_balance</th><th>cross_wallet_balance</th><th>cross_un_pnl</th><th>account_alias</th></tr></thead><tbody id="live-balance-rows"><tr><td class="empty" colspan="6">点击“查询账户余额”后显示实盘数据</td></tr></tbody></table></div>
         <div class="experiment-note">实盘自动交易与模拟盘使用同一轮“本轮可开仓symbol情况”，但订单通过 Binance 生产接口执行；初始资金预算为 100U。所有实盘交易、持仓快照、僵尸强平和错误仅写入 <code>real_trading_core.db</code>，不会读写模拟盘交易数据库。请在“功能开关”页面开启“实盘交易系统”后再自动下单。</div>
-        <div class="account-summary" aria-label="实盘实验组USDT净值"><div class="account-metric account-metric-highlight"><div class="account-metric-label">实盘实验组USDT净值</div><div class="account-metric-value">{{ live_trading_equity }} U</div></div></div>
+        <div class="account-summary" aria-label="实盘实验组USDT净值"><div class="account-metric account-metric-highlight"><div class="account-metric-label">实盘实验组USDT净值</div><div class="account-metric-value">{{ live_trading_equity }} U</div></div><div class="account-metric"><div class="account-metric-label">近7天收益率</div><div id="live-experiment-seven-day-return" class="account-metric-value {{ 'pnl-positive' if live_seven_day_return is not none and live_seven_day_return > 0 else 'pnl-negative' if live_seven_day_return is not none and live_seven_day_return < 0 else 'pnl-zero' }}">{{ '%+.2f%%'|format(live_seven_day_return) if live_seven_day_return is not none else '-' }}</div></div></div>
         <div class="equity-trend-chart-wrap" aria-label="实盘近7天实验组USDT净值变化趋势图">
           <div class="chart-meta">
             <span><strong>近7天实验组USDT净值变化趋势图</strong></span>
@@ -3220,8 +3224,11 @@
           </div>
           <div id="live-experiment-equity-trend-chart"></div>
         </div>
-        <div class="symbol-strip"><div><strong>僵尸单强平操作记录（实盘）</strong></div></div>
-        <div class="table-wrap"><table><thead><tr><th>时间</th><th>symbol</th><th>方向</th><th>数量</th><th>入场价</th><th>状态</th><th>order_id</th><th>原因</th></tr></thead><tbody>{% for row in live_zombie_records %}<tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.side }}</td><td>{{ row.quantity }}</td><td>{{ row.entry_price }}</td><td>{{ row.status }}</td><td>{{ row.order_id or '-' }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="8">暂无最近7天实盘僵尸单强平操作记录</td></tr>{% endfor %}</tbody></table></div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header"><div><strong>僵尸单强平操作记录（实盘）</strong><div class="muted">展示最近7天内的实盘僵尸单强平记录。</div></div><button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button></div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+          <div class="table-wrap"><table><thead><tr><th>时间</th><th>symbol</th><th>方向</th><th>数量</th><th>入场价</th><th>状态</th><th>order_id</th><th>原因</th></tr></thead><tbody>{% for row in live_zombie_records %}<tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}"><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.side }}</td><td>{{ row.quantity }}</td><td>{{ row.entry_price }}</td><td>{{ row.status }}</td><td>{{ row.order_id or '-' }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="8">暂无最近7天实盘僵尸单强平操作记录</td></tr>{% endfor %}</tbody></table></div>
+        </div>
         <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
           <div class="symbol-strip collapsible-header"><div><div><strong>交易实验交易记录（实盘）</strong></div><div class="muted">只显示最近7天已开仓记录及实盘止盈/止损挂单信息；本轮新开仓 symbol 会用红色徽标高亮。</div></div><button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button></div>
           <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>

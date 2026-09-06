@@ -363,6 +363,29 @@ def _latest_trading_equity_usdt(equity_trend_rows: list[object]) -> object:
     return equity if equity not in (None, "") else DEFAULT_TRADING_EQUITY_USDT
 
 
+def _seven_day_equity_return(equity_trend_rows: list[object]) -> Decimal | None:
+    """Calculate the return between the oldest and newest seven-day equity points."""
+    if len(equity_trend_rows) < 2:
+        return None
+
+    def equity_value(row: object) -> Decimal | None:
+        try:
+            raw_value = row["account_equity_usdt"]
+        except Exception:
+            raw_value = getattr(row, "account_equity_usdt", None)
+        try:
+            value = Decimal(str(raw_value))
+        except Exception:
+            return None
+        return value if value.is_finite() else None
+
+    starting_equity = equity_value(equity_trend_rows[0])
+    ending_equity = equity_value(equity_trend_rows[-1])
+    if starting_equity is None or ending_equity is None or starting_equity <= 0:
+        return None
+    return (ending_equity - starting_equity) / starting_equity * Decimal("100")
+
+
 def _raw_response_contains_order_id(raw_response: object, order_id: object) -> bool:
     """Return whether a stored strategy raw response mentions a Binance order id."""
     expected = str(order_id or "").strip()
@@ -1806,6 +1829,7 @@ def abnormal_wicks():
     trading_used_margin_usdt = _trading_used_margin_text(trading_position_snapshots)
     trading_equity_trend_rows = load_module("交易权益曲线", lambda: _experiment_equity_trend_rows(trading_records_since_ms), [])
     trading_equity = _latest_trading_equity_usdt(trading_equity_trend_rows)
+    trading_seven_day_return = _seven_day_equity_return(trading_equity_trend_rows)
     trading_open_increase_blocked = _trading_open_increase_blocked(trading_equity, trading_position_snapshots)
     trading_error_records = load_module("交易错误记录", lambda: trading_experiment.recent_error_records(limit=100, since_ms=trading_records_since_ms), [])
     zombie_force_liquidation = ZombieForceLiquidationModule(db_path=_trading_db_path())
@@ -1823,6 +1847,7 @@ def abnormal_wicks():
     live_zombie_records = load_module("实盘僵尸强平记录", lambda: real_trading.zombie_module().recent_records(limit=100, since_ms=trading_records_since_ms), [])
     live_equity_trend_rows = load_module("实盘交易权益曲线", lambda: _experiment_equity_trend_rows(trading_records_since_ms, db_config.REAL_TRADING_CORE_DB_PATH), [])
     live_trading_equity = _latest_trading_equity_usdt(live_equity_trend_rows) if live_equity_trend_rows else real_trading.config().initial_equity_usdt
+    live_seven_day_return = _seven_day_equity_return(live_equity_trend_rows)
     live_used_margin_usdt = _trading_used_margin_text(live_position_snapshots)
     live_open_increase_blocked = _trading_open_increase_blocked(live_trading_equity, live_position_snapshots)
     live_holding_scoring = real_trading.holding_scoring()
@@ -1985,6 +2010,7 @@ def abnormal_wicks():
         trading_used_margin_usdt=trading_used_margin_usdt,
         trading_open_increase_blocked=trading_open_increase_blocked,
         trading_equity_usdt=trading_equity,
+        trading_seven_day_return=trading_seven_day_return,
         trading_error_records=trading_error_records,
         trading_equity_trend_rows=trading_equity_trend_rows,
         zombie_force_liquidation_records=zombie_force_liquidation_records,
@@ -1997,6 +2023,7 @@ def abnormal_wicks():
         live_zombie_records=live_zombie_records,
         live_equity_trend_rows=live_equity_trend_rows,
         live_trading_equity=live_trading_equity,
+        live_seven_day_return=live_seven_day_return,
         live_holding_stop_loss_round_ts=live_holding_stop_loss_round_ts,
         live_holding_stop_loss_checks=live_holding_stop_loss_checks,
         live_holding_portfolio_risk=live_holding_portfolio_risk,

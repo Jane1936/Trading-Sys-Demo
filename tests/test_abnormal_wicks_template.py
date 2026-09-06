@@ -1,3 +1,4 @@
+from decimal import Decimal
 from html.parser import HTMLParser
 import sqlite3
 import sys
@@ -11,6 +12,7 @@ from pre_safety_module import PreSafetyModule
 from web_app import (
     DEFAULT_TRADING_EQUITY_USDT,
     _latest_trading_equity_usdt,
+    _seven_day_equity_return,
     _sync_live_module_checks,
     _trading_open_increase_blocked,
     _trading_used_margin_text,
@@ -178,6 +180,25 @@ def test_latest_trading_equity_usdt_reads_last_trend_row_or_default():
     assert _latest_trading_equity_usdt([]) == DEFAULT_TRADING_EQUITY_USDT
 
 
+def test_seven_day_equity_return_uses_oldest_and_latest_trend_points():
+    rows = [
+        {"account_equity_usdt": "1000"},
+        {"account_equity_usdt": "975"},
+        {"account_equity_usdt": "1100"},
+    ]
+
+    assert _seven_day_equity_return(rows) == Decimal("10.0")
+
+
+def test_seven_day_equity_return_requires_two_valid_points_and_positive_start():
+    assert _seven_day_equity_return([]) is None
+    assert _seven_day_equity_return([{"account_equity_usdt": "1000"}]) is None
+    assert _seven_day_equity_return([
+        {"account_equity_usdt": "0"},
+        {"account_equity_usdt": "100"},
+    ]) is None
+
+
 def test_zombie_force_liquidation_records_render_above_trade_records():
     template = Path("templates/abnormal_wicks.html").read_text()
 
@@ -222,6 +243,8 @@ def test_experiment_equity_trend_chart_renders_under_equity_metric():
     assert equity_metric_index < trend_chart_index < trade_records_index
     assert "每15分钟自动刷新" in template
     assert "experiment-equity-trend-chart" in template
+    assert 'id="experiment-seven-day-return"' in template
+    assert "trading_seven_day_return" in template
 
 
 def test_filled_orders_summary_includes_expectancy_metric():
