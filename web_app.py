@@ -359,6 +359,7 @@ def load_simulation_context() -> dict:
         "trading_position_snapshots": positions,
         "trading_used_margin_usdt": _trading_used_margin_text(positions),
         "trading_equity_usdt": equity,
+        "trading_equity_trend_rows": equity_rows,
         "trading_seven_day_return": _seven_day_equity_return(equity_rows),
         "trading_open_increase_blocked": _trading_open_increase_blocked(equity, positions),
         "trading_error_records": load_module(
