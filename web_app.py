@@ -15,7 +15,7 @@ from dataclasses import asdict
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 
-from flask import Flask, jsonify, render_template, request, send_file
+from flask import Flask, jsonify, redirect, render_template, request, send_file, url_for
 import requests
 
 from binance_account_manager import BinanceAccountConfigError, BinanceAccountManager
@@ -216,6 +216,96 @@ def _safe_page_module(label: str, loader, default):
                 error_text += "；检查失败：" + "; ".join(checks)
         app.logger.exception("Dashboard module failed: %s", label)
         return default, {"label": label, "error": error_text}
+
+
+def load_settings_context() -> dict:
+    """Load only the data needed to render the system settings page."""
+    module_errors = []
+
+    def load_setting(label: str, loader, default):
+        value, error = _safe_page_module(label, loader, default)
+        if error:
+            module_errors.append(error)
+        return value
+
+    return {
+        "module_errors": module_errors,
+        "feature_flags": load_setting(
+            "功能开关", lambda: feature_flags.list_feature_flags(CONFIG_DB_PATH), []
+        ),
+        "position_limit_settings": load_setting(
+            "最大持仓配置",
+            lambda: get_position_limit_settings(CONFIG_DB_PATH),
+            {"simulation_max_open_positions": 1, "live_max_open_positions": 1},
+        ),
+        "dynamic_profit_protection_settings": load_setting(
+            "动态利润保护配置",
+            lambda: get_dynamic_profit_protection_settings(CONFIG_DB_PATH),
+            {
+                "enabled": False,
+                "tier_2_min_r": 2,
+                "tier_3_min_r": 3,
+                "tier_4_min_r": 4,
+                "tier_2_drawdown_ratio": 0.4,
+                "tier_3_drawdown_ratio": 0.3,
+                "tier_4_drawdown_ratio": 0.2,
+            },
+        ),
+        "hard_take_profit_settings": load_setting(
+            "硬止盈配置",
+            lambda: get_hard_take_profit_settings(CONFIG_DB_PATH),
+            {"profit_ratio": 0.2},
+        ),
+        "market_filter_settings": load_setting(
+            "独立市场过滤配置",
+            lambda: get_market_filter_settings(CONFIG_DB_PATH),
+            {
+                "btc_siphon_threshold": 0,
+                "market_crash_threshold": 0,
+                "block_duration_minutes": 1,
+            },
+        ),
+        "dynamic_open_threshold_settings": load_setting(
+            "动态开仓门槛配置",
+            lambda: get_dynamic_open_threshold_settings(CONFIG_DB_PATH),
+            {
+                "window_hours": 1,
+                "unrestricted_score": 0,
+                "restricted_score_floor": 0,
+                "min_open_total_score": 0,
+            },
+        ),
+        "scoring_rule_weight_settings": load_setting(
+            "评分规则权重", lambda: get_rule_score_weight_settings(CONFIG_DB_PATH), []
+        ),
+        "scoring_rule_election_settings": load_setting(
+            "评分规则选举",
+            lambda: get_rule_election_settings(CONFIG_DB_PATH),
+            {"combination_mode": "any", "configurations": []},
+        ),
+        "openable_symbol_settings": load_setting(
+            "止损距离与总分映射",
+            lambda: get_openable_symbol_settings(CONFIG_DB_PATH),
+            {
+                "tier_min_percent": 0,
+                "tier_max_percent": {"A档": 0, "B档": 0, "C档": 0},
+                "bands": [],
+            },
+        ),
+        "weak_market_profit_settings": load_setting(
+            "弱势市场止盈配置",
+            lambda: get_weak_market_profit_settings(CONFIG_DB_PATH),
+            {"trigger_r_multiple": 1.4, "take_profit_fraction": 0.5},
+        ),
+        "reduction_module_settings": load_setting(
+            "减仓模块配置",
+            lambda: get_reduction_module_settings(CONFIG_DB_PATH),
+            {
+                "rule2": {"enabled": False, "reduction_fraction": 0.5},
+                "rule5": {"enabled": False, "reduction_fraction": 0.5},
+            },
+        ),
+    }
 
 def _score_band_context() -> tuple[list[dict], str, str, int]:
     module = OpenableSymbolModule(db_path=_scoring_db_path())
@@ -876,6 +966,12 @@ def _annotate_filled_order_exit_reasons(
 @app.get("/")
 def index():
     return "<a href='/safety/abnormal-wicks'>abnormal wick events</a>"
+
+
+@app.get("/settings")
+def settings():
+    initialize_config_database(CONFIG_DB_PATH, BASE_DB_PATH)
+    return render_template("settings.html", **load_settings_context())
 
 
 @app.get("/api/safety/score-trend")
@@ -1712,6 +1808,11 @@ def trading_experiment_run_api():
 
 @app.get("/safety/abnormal-wicks")
 def abnormal_wicks():
+    if request.args.get("active_tab", default="", type=str).strip() == "tab-feature-flags":
+        query = request.args.to_dict(flat=False)
+        query.pop("active_tab", None)
+        return redirect(url_for("settings", **query), code=302)
+
     initialize_config_database(CONFIG_DB_PATH, BASE_DB_PATH)
     limit = request.args.get("limit", default=100, type=int)
     symbol = request.args.get("symbol", default="", type=str).strip()

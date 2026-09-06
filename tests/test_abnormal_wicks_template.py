@@ -756,29 +756,28 @@ def test_market_filter_includes_weak_market_profit_adjustment_ui():
 
 
 def test_feature_flags_include_weak_market_profit_settings_form():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
-    section_index = template.index('<section id="tab-feature-flags"')
-    form_index = template.index('id="weak-market-profit-form"', section_index)
+    template = Path("templates/settings.html").read_text(encoding="utf-8")
+    form_index = template.index('id="weak-market-profit-form"')
     assert template.index("止盈阈值（R）", form_index) > form_index
     assert "take_profit_fraction" in template[form_index:]
 
 
 def test_feature_flags_include_independent_market_filter_settings_form():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
-    section = template[template.index('<section id="tab-feature-flags"'):]
+    section = Path("templates/settings.html").read_text(encoding="utf-8")
+    script = Path("static/js/settings.js").read_text(encoding="utf-8")
 
     assert "独立市场过滤配置" in section
     assert 'id="market-filter-settings-form"' in section
     assert "BTC吸血阈值（%）" in section
     assert "大盘暴跌阈值（%）" in section
     assert "禁止新开仓时间（分钟）" in section
-    assert "fetch('/api/market-filter-settings'" in section
+    assert "fetch('/api/market-filter-settings'" in script
 
 
 def test_feature_flag_configuration_cards_use_requested_theme_colors():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    template = Path("templates/settings.html").read_text(encoding="utf-8")
     stylesheet = Path("static/dashboard.css").read_text(encoding="utf-8")
-    section = template[template.index('<section id="tab-feature-flags"'):]
+    section = template
 
     for title in (
         "独立市场过滤配置",
@@ -860,19 +859,19 @@ def test_add_position_modules_use_light_purple_theme():
 
 
 def test_feature_flags_page_contains_all_rule_weight_controls_and_save_logic():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
-    section = template[template.index('id="tab-feature-flags"'):]
+    section = Path("templates/settings.html").read_text(encoding="utf-8")
+    script = Path("static/js/settings.js").read_text(encoding="utf-8")
 
     assert "评分规则权重" in section
     assert 'id="score-weight-form"' in section
     assert 'data-rule-id="{{ rule.rule_id }}"' in section
     assert "保存全部权重" in section
-    assert "fetch('/api/scoring-rule-weights'" in section
+    assert "fetch('/api/scoring-rule-weights'" in script
 
 
 def test_feature_flags_page_contains_reduction_module_rule_controls():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
-    section = template[template.index('id="tab-feature-flags"'):]
+    section = Path("templates/settings.html").read_text(encoding="utf-8")
+    script = Path("static/js/settings.js").read_text(encoding="utf-8")
 
     assert "减仓模块配置" in section
     reduction_card = section[:section.index("独立市场过滤配置")]
@@ -881,12 +880,12 @@ def test_feature_flags_page_contains_reduction_module_rule_controls():
     assert 'id="reduction-rule5-enabled"' in section
     assert 'id="reduction-rule2-percent"' in section
     assert 'id="reduction-rule5-percent"' in section
-    assert "fetch('/api/reduction-module-settings'" in section
+    assert "fetch('/api/reduction-module-settings'" in script
 
 
 def test_feature_flags_page_contains_scoring_rule_election_below_weights():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
-    section = template[template.index('id="tab-feature-flags"'):]
+    section = Path("templates/settings.html").read_text(encoding="utf-8")
+    script = Path("static/js/settings.js").read_text(encoding="utf-8")
 
     assert section.index("评分规则权重") < section.index("评分规则选举")
     assert 'id="score-election-form"' in section
@@ -894,4 +893,4 @@ def test_feature_flags_page_contains_scoring_rule_election_below_weights():
     assert 'class="score-election-optional-min"' in section
     assert 'id="score-election-combination-mode"' in section
     assert 'data-config-key="{{ config.key }}"' in section
-    assert "fetch('/api/scoring-rule-election'" in section
+    assert "fetch('/api/scoring-rule-election'" in script
