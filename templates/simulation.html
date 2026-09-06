@@ -1,0 +1,1424 @@
+{% extends "base.html" %}
+
+{% block title %}模拟盘数据 - Trading System{% endblock %}
+
+{% block navigation %}
+  <a class="tab-btn" href="{{ url_for('abnormal_wicks') }}">异常插针记录</a>
+  <a class="tab-btn active" href="{{ url_for('simulation') }}" aria-current="page">模拟盘数据</a>
+  <a class="tab-btn" href="{{ url_for('settings') }}">系统配置</a>
+{% endblock %}
+
+{% block content %}
+  <section id="tab-simulation" class="panel active">
+    <div class="card">
+      <div class="header"><h2>模拟盘数据</h2></div>
+      <div class="bookmark-tabs" role="tablist" aria-label="模拟盘数据板块">
+        <button class="bookmark-tab active" type="button" role="tab" aria-selected="true" data-simulation-tab="strategy-holding-score">持仓评分系统</button>
+        <button class="bookmark-tab filled-orders-tab" type="button" role="tab" aria-selected="false" data-simulation-tab="strategy-filled-orders">已成交订单分析</button>
+        <button class="bookmark-tab account-info-tab" type="button" role="tab" aria-selected="false" data-simulation-tab="strategy-account">账户信息</button>
+      </div>
+
+      <div id="strategy-holding-score" class="simulation-subpanel active" role="tabpanel">
+        <div class="holding-module-tabs" role="tablist" aria-label="持仓评分系统模块">
+          <button class="holding-module-tab active" type="button" role="tab" aria-selected="true" data-holding-module-tab="holding-module-stop-loss">持仓评分系统：止损规则判断结果</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-reduction">减仓条件模块</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-increase">加仓条件模块</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-portfolio-risk">组合风险约束</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-break-even">保本止盈策略</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-partial-take-profit">分批止盈规则</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-trailing-reduction">移动追踪减仓模块</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-hard-take-profit">硬止盈板块</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-dynamic-profit-protection">动态利润保护板块</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-trailing-stop">移动追踪止盈规则</button>
+        </div>
+
+        <div id="holding-module-stop-loss" class="holding-module-panel active" role="tabpanel">
+        <div class="critical-section" aria-label="关键持仓止损规则判断结果">
+        <div class="symbol-strip">
+          <div><strong>持仓评分系统：止损规则判断结果</strong></div>
+          {% if holding_stop_loss_round_ts %}
+            <div class="muted">最近判断轮次：{{ holding_stop_loss_round_ts|fmt_ms_datetime }}。每15分钟在15分钟K线收敛后，对当前已持仓 symbol 判断最近两根15m close 是否连续跌破对应结构止损位。</div>
+          {% else %}
+            <div class="muted">暂无持仓评分系统判断结果。</div>
+          {% endif %}
+          {% set triggered_holding_checks = holding_stop_loss_checks|selectattr('triggered')|list %}
+          {% if triggered_holding_checks %}
+            <div class="chips">
+              {% for row in triggered_holding_checks %}
+                <span class="chip" title="{{ row.reason }}">{{ row.symbol }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="chips"><span class="chip">本轮无触发止损规则symbol</span></div>
+          {% endif %}
+        </div>
+        <div class="tip">止损规则：查询最近两条15分钟K线数据，以及最近两条 <code>symbol_structural_stop_losses</code> 结构止损位数据；若最近第1条15m close &lt; 最近第1条 structural_stop_loss，且最近第2条15m close &lt; 最近第2条 structural_stop_loss，则立刻提交 reduceOnly MARKET 订单平掉该持仓，并写入下方止损记录。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>symbol</th>
+                <th>decision_round_ts</th>
+                <th>触发止损</th>
+                <th>latest_15m_open_time</th>
+                <th>latest_15m_close</th>
+                <th>latest_structural_stop_loss</th>
+                <th>prev_15m_open_time</th>
+                <th>prev_15m_close</th>
+                <th>prev_structural_stop_loss</th>
+                <th>reason</th>
+                <th>checked_at</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in holding_stop_loss_checks %}
+              <tr>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                <td><span class="status-badge {{ 'status-fail' if row.triggered else 'status-pass' }}">{{ '是' if row.triggered else '否' }}</span></td>
+                <td>{{ row.latest_15m_open_time|fmt_ms_datetime if row.latest_15m_open_time else '-' }}</td>
+                <td>{{ '%.6f'|format(row.latest_15m_close) if row.latest_15m_close is not none else '-' }}</td>
+                <td>{{ '%.6f'|format(row.latest_structural_stop_loss) if row.latest_structural_stop_loss is not none else '-' }}</td>
+                <td>{{ row.prev_15m_open_time|fmt_ms_datetime if row.prev_15m_open_time else '-' }}</td>
+                <td>{{ '%.6f'|format(row.prev_15m_close) if row.prev_15m_close is not none else '-' }}</td>
+                <td>{{ '%.6f'|format(row.prev_structural_stop_loss) if row.prev_structural_stop_loss is not none else '-' }}</td>
+                <td>{{ row.reason }}</td>
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="11">暂无持仓止损规则判断结果</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
+
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>止损记录</strong></div>
+              <div class="muted">当某个已持仓 symbol 触发止损规则时，会记录提交止损操作的方向、数量、订单状态、订单ID，以及依据订单号查询到的最终已实现盈亏。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>created_at</th>
+                <th>symbol</th>
+                <th>轮次</th>
+                <th>side</th>
+                <th>quantity</th>
+                <th>latest_close / stop_loss</th>
+                <th>prev_close / stop_loss</th>
+                <th>status</th>
+                <th>order_id</th>
+                <th>已实现盈亏</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in holding_stop_loss_records %}
+              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                <td>{{ row.created_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                <td>{{ row.side }}</td>
+                <td>{{ row.quantity }}</td>
+                <td>{{ '%.6f'|format(row.latest_15m_close) }} / {{ '%.6f'|format(row.latest_structural_stop_loss) }}</td>
+                <td>{{ '%.6f'|format(row.prev_15m_close) }} / {{ '%.6f'|format(row.prev_structural_stop_loss) }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
+                <td>{{ row.order_id or '-' }}</td>
+                <td>{{ row.realized_pnl if row.realized_pnl else '-' }}</td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="11">暂无止损记录</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
+        </div>
+
+        <div id="holding-module-reduction" class="holding-module-panel" role="tabpanel">
+        <div class="critical-section" aria-label="减仓条件模块">
+          <div class="symbol-strip">
+            <div><strong>减仓条件模块：本轮执行结果</strong></div>
+            {% if holding_reduction_round_ts %}
+              <div class="muted">最近判断轮次：{{ holding_reduction_round_ts|fmt_ms_datetime }}。每个 symbol 会先检查最近一次开仓后的“分批止盈卖出记录”；如已有成功记录，则标记灰色 tag“已触发过分批止盈”，并跳过减仓条件规则检查。其余 symbol 才继续检查规则二与规则五。</div>
+            {% else %}
+              <div class="muted">暂无减仓条件模块执行结果。</div>
+            {% endif %}
+            {% set triggered_reduction_checks = holding_reduction_checks|selectattr('triggered')|list %}
+            {% if triggered_reduction_checks %}
+              <div class="chips">
+                {% for row in triggered_reduction_checks %}
+                  <span class="reduction-tags" title="{{ row.reason }}"><span class="chip">{{ row.symbol }}</span>{% for tag in row.tag.split('、') %}{% if tag == '已触发过分批止盈' %}<span class="reduction-tag reduction-tag-partial-take-profit">{{ tag }}</span>{% elif tag == '已触发深度弱势' %}<span class="reduction-tag reduction-tag-rule5-triggered">{{ tag }}</span>{% elif tag == '90分钟内已触发趋势走弱' %}<span class="reduction-tag reduction-tag-rule2-cooldown">{{ tag }}</span>{% elif tag == '趋势走弱' or tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>{% elif tag == '绝对分数大幅回撤' %}<span class="reduction-tag reduction-tag-rule3">{{ tag }}</span>{% elif tag == '评分进入危险区' %}<span class="reduction-tag reduction-tag-rule4">{{ tag }}</span>{% elif tag == '中危险区+价格确认' or tag == '深度弱势' %}<span class="reduction-tag reduction-tag-rule5">{{ tag }}</span>{% else %}<span class="reduction-tag reduction-tag-default">{{ tag }}</span>{% endif %}{% endfor %}</span>
+                {% endfor %}
+              </div>
+            {% else %}
+              <div class="chips"><span class="chip">本轮无触发减仓条件symbol</span></div>
+            {% endif %}
+          </div>
+          <div class="tip">规则二：若最近90分钟内已触发过规则二，则本轮跳过规则二检查，并打灰色 tag“90分钟内已触发趋势走弱”；否则若当前价格 &lt; 15分钟EMA16，且当前未变现盈利 &lt; 0.5R；再查询最近3条MACD数据，若最近第3条MACD &gt; 最近第2条MACD &gt; 最近第1条MACD，且最近第1条MACD &lt; 0，则代表该 symbol 触发“趋势走弱”，tag 标记为“趋势走弱”。<br>规则五：对于当前已持仓的 symbol，查询15分钟EMA21、当前价格、“交易实验交易记录”中匹配到的开仓价，以及最近3条15分钟K线。若当前价格 &lt; 15分钟EMA21，且当前价格 ≤ 开仓价，并且最近3条15分钟K线中存在两条及以上满足收盘价低于开盘价，则说明该 symbol 已触发“深度弱势”，tag 标记为“深度弱势”，并将此条减仓记录数据库落表；每个新开仓的 symbol 在它的生命周期内只能触发一次规则五。<br>原规则三（绝对分数大幅回撤）与原规则四（最新总分 &lt; 40分即触发“评分进入危险区”）已删除，不再作为减仓触发条件。<br>减仓操作：若同时满足多个规则，按当前最高优先级规则执行；各规则是否启用及触发后的减仓比例以“功能开关 → 减仓模块配置”为准。触发减仓时会先取消原限价单，按剩余仓位数量重挂新的限价单，再调用市价单接口卖出对应减仓数量。</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>symbol</th>
+                  <th>decision_round_ts</th>
+                  <th>tag</th>
+                  <th>命中规则</th>
+                  <th>最近15m open/close</th>
+                  <th>最近第二条15m open/close</th>
+                  <th>最近第三条15m open/close</th>
+                  <th>current_price</th>
+                  <th>ATR(14)</th>
+                  <th>EMA16 / EMA21</th>
+                  <th>最近3条MACD（第1/第2/第3）</th>
+                  <th>未变现盈亏 / 1R / 2R（规则二阈值0.5R）</th>
+                  <th>开仓总分</th>
+                  <th>开仓价</th>
+                  <th>最新总分</th>
+                  <th>开仓分数回撤</th>
+                  <th>reason</th>
+                  <th>checked_at</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in holding_reduction_checks %}
+                <tr>
+                  <td>{{ row.symbol }}</td>
+                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                  <td>{% if row.tag %}
+                    <span class="reduction-tags">
+                      {% for tag in row.tag.split('、') %}
+                        {% if tag == '已触发过分批止盈' %}<span class="reduction-tag reduction-tag-partial-take-profit">{{ tag }}</span>{% elif tag == '已触发深度弱势' %}<span class="reduction-tag reduction-tag-rule5-triggered">{{ tag }}</span>{% elif tag == '90分钟内已触发趋势走弱' %}<span class="reduction-tag reduction-tag-rule2-cooldown">{{ tag }}</span>{% elif tag == '趋势走弱' or tag == '中等回撤且趋势连续弱化' %}<span class="reduction-tag reduction-tag-rule2">{{ tag }}</span>
+                        {% elif tag == '绝对分数大幅回撤' %}<span class="reduction-tag reduction-tag-rule3">{{ tag }}</span>
+                        {% elif tag == '评分进入危险区' %}<span class="reduction-tag reduction-tag-rule4">{{ tag }}</span>
+                        {% elif tag == '中危险区+价格确认' or tag == '深度弱势' %}<span class="reduction-tag reduction-tag-rule5">{{ tag }}</span>
+                        {% else %}<span class="reduction-tag reduction-tag-default">{{ tag }}</span>{% endif %}
+                      {% endfor %}
+                    </span>
+                  {% else %}-{% endif %}</td>
+                  <td>{{ row.rule_name if row.rule_name else '-' }}</td>
+                  <td>{{ row.latest_15m_open if row.latest_15m_open else '-' }} / {{ row.latest_15m_close if row.latest_15m_close else '-' }}</td>
+                  <td>{{ row.second_15m_open if row.second_15m_open else '-' }} / {{ row.second_15m_close if row.second_15m_close else '-' }}</td>
+                  <td>{{ row.third_15m_open if row.third_15m_open else '-' }} / {{ row.third_15m_close if row.third_15m_close else '-' }}</td>
+                  <td>
+                    {% set current_price_decimal = row.current_price|float %}
+                    {% set open_entry_price_decimal = row.open_entry_price|float %}
+                    <span class="{{ 'reduction-current-price-danger' if open_entry_price_decimal > 0 and current_price_decimal <= open_entry_price_decimal else '' }}">{{ row.current_price }}</span>
+                  </td>
+                  <td>{{ row.atr14 if row.atr14 else '-' }}</td>
+                  <td>
+                    {% set ema16_decimal = row.ema16|float %}
+                    {% set ema21_decimal = row.ema21|float %}
+                    <span class="{{ 'reduction-current-price-danger' if ema16_decimal > current_price_decimal else '' }}">{{ row.ema16 if row.ema16 else '-' }}</span> / <span class="{{ 'reduction-current-price-danger' if ema21_decimal > current_price_decimal else '' }}">{{ row.ema21 if row.ema21 else '-' }}</span>
+                  </td>
+                  <td>{{ row.latest_macd if row.latest_macd else '-' }} / {{ row.second_macd if row.second_macd else '-' }} / {{ row.third_macd if row.third_macd else '-' }}</td>
+                  <td>
+                    {% set one_r = row.one_r_usdt|float %}
+                    {% set pnl_r_multiple = (row.unrealized_pnl|float) / one_r if one_r > 0 else 0 %}
+                    <span class="reduction-metric {{ 'reduction-pnl-strong-profit' if pnl_r_multiple >= 2 else 'reduction-pnl-profit' if pnl_r_multiple >= 1 else 'reduction-metric-neutral' }}">{{ row.unrealized_pnl }}</span> / {{ row.one_r_usdt if row.one_r_usdt else '-' }} / {{ row.two_r_usdt }}
+                  </td>
+                  <td>{{ row.open_total_score if row.open_total_score else '-' }}</td>
+                  <td>{{ row.open_entry_price if row.open_entry_price else '-' }}</td>
+                  <td>{{ row.latest_total_score if row.latest_total_score else '-' }}</td>
+                  <td>
+                    {% set open_score_delta = -(row.score_drawdown|float) %}
+                    <span class="score-delta {{ 'score-delta-positive' if open_score_delta > 0 else 'score-delta-negative' if open_score_delta < 0 else 'score-delta-zero' }}">{{ '%+.2f分'|format(open_score_delta) if open_score_delta != 0 else '0.00分' }}</span>
+                  </td>
+                  <td>{{ row.reason }}</td>
+                  <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                </tr>
+                {% else %}
+                <tr><td class="empty" colspan="18">暂无减仓条件模块执行结果</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>减仓操作记录</strong></div>
+              <div class="muted">记录减仓条件触发后的命中规则、减仓比例、原限价单取消后重挂的新限价单、市价减仓订单ID与接口执行状态；若剩余仓位重挂硬止盈或硬止损失败，错误会写入下方“交易实验错误信息记录”。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>created_at</th>
+                  <th>symbol</th>
+                  <th>轮次</th>
+                  <th>side</th>
+                  <th>命中规则</th>
+                  <th>减仓比例</th>
+                  <th>原仓位 / 减仓 / 剩余</th>
+                  <th>old_limit_order_id</th>
+                  <th>new_limit_order_id</th>
+                  <th>market_order_id</th>
+                  <th>limit_price</th>
+                  <th>status</th>
+                  <th>reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in holding_reduction_records %}
+                <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                  <td>{{ row.created_at|fmt_ms_datetime }}</td>
+                  <td>{{ row.symbol }}</td>
+                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                  <td>{{ row.side }}</td>
+                  <td>{{ row.matched_rule }}</td>
+                  <td>{{ '%.0f%%'|format((row.reduction_percent|float) * 100) }}</td>
+                  <td>{{ row.original_quantity }} / {{ row.reduced_quantity }} / {{ row.remaining_quantity }}</td>
+                  <td>{{ row.old_limit_order_id or '-' }}</td>
+                  <td>{{ row.new_limit_order_id or '-' }}</td>
+                  <td>{{ row.market_order_id or '-' }}</td>
+                  <td>{{ row.limit_price or '-' }}</td>
+                  <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
+                  <td>{{ row.reason }}</td>
+                </tr>
+                {% else %}
+                <tr><td class="empty" colspan="13">暂无减仓操作记录</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>重挂止损失败后强平记录</strong></div>
+              <div class="muted">展示近7天减仓完成后，因重挂止损会立即触发而改用市价单全部平仓的记录。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>created_at</th><th>symbol</th><th>轮次</th><th>side</th><th>强平数量</th><th>减仓订单ID</th><th>强平订单ID</th><th>status</th><th>触发错误</th><th>reason</th></tr></thead>
+              <tbody>
+                {% for row in holding_reduction_stop_failure_liquidations %}
+                <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                  <td>{{ row.created_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.decision_round_ts|fmt_ms_datetime }}</td><td>{{ row.side }}</td><td>{{ row.quantity }}</td><td>{{ row.reduction_market_order_id or '-' }}</td><td>{{ row.liquidation_market_order_id or '-' }}</td><td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td><td>{{ row.trigger_error }}</td><td>{{ row.reason }}</td>
+                </tr>
+                {% else %}<tr><td class="empty" colspan="10">近7天暂无重挂止损失败后强平记录</td></tr>{% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        </div>
+
+
+        <div id="holding-module-increase" class="holding-module-panel" role="tabpanel">
+        <div class="critical-section sky-theme-section" aria-label="加仓条件模块">
+          <div class="symbol-strip">
+            <div><strong>加仓条件模块：本轮判断结果</strong></div>
+            <div>
+              <button id="refresh-holding-increase" class="btn btn-primary btn-small" type="button">刷新</button>
+              <span id="holding-increase-refresh-status" class="muted">可刷新“预触发”symbol的 current_price</span>
+            </div>
+            {% if holding_increase_round_ts %}
+              <div class="muted" id="holding-increase-round-note">最近判断轮次：{{ holding_increase_round_ts|fmt_ms_datetime }}。该15分钟模块在“减仓条件模块”之后执行，并在每轮执行前从“动态加仓阈值（每15分钟执行）”获取本轮加仓阈值；若当前未变现盈利 ≥ 本轮加仓阈值、最新总分 ≥ 上一轮总分 - 5、且最近一次本生命周期内减仓价为空或当前标记价格 ≥ 该减仓价，则触发“第一次加仓”，并立即调用市价单接口买入当前持仓数量的50%（杠杆沿用当前持仓）。每个 symbol 的单次开仓生命周期内最多触发一次。</div>
+            {% else %}
+              <div class="muted" id="holding-increase-round-note">暂无加仓条件模块执行结果。</div>
+            {% endif %}
+            {% set pretrigger_increase_checks = holding_increase_checks|selectattr('tag', 'equalto', '预触发')|list %}
+            {% set triggered_increase_checks = holding_increase_checks|selectattr('triggered')|list %}
+            {% if triggered_increase_checks %}
+              <div class="chips" id="holding-increase-triggered-chips">
+                {% for row in triggered_increase_checks %}
+                  <span class="reduction-tags" title="{{ row.reason }}"><span class="chip">{{ row.symbol }}</span><span class="reduction-tag reduction-tag-default">第一次加仓</span></span>
+                {% endfor %}
+              </div>
+            {% else %}
+              <div class="chips" id="holding-increase-triggered-chips"><span class="chip">本轮无触发第一次加仓symbol</span></div>
+            {% endif %}
+            <div class="chips" id="holding-increase-pretrigger-chips" {% if not pretrigger_increase_checks %}style="display:none;"{% endif %}>
+                {% for row in pretrigger_increase_checks %}
+                  <span class="reduction-tags" title="{{ row.reason }}"><span class="chip">{{ row.symbol }}</span><span class="reduction-tag reduction-tag-default">预触发</span></span>
+                {% endfor %}
+              </div>
+          </div>
+          <div class="tip">条件1：当前未变现盈利 ≥ 本轮加仓阈值（加仓模块每轮执行前，从“动态加仓阈值（每15分钟执行）”获取）；本轮加仓阈值金额 = 实验组USDT净值 × 1% × 本轮阈值R倍数。条件2：最新总分 ≥ 上一轮总分 - 5；条件3：读取本生命周期内最近一次减仓记录对应价格，若存在则当前标记价格需 ≥ 该价格，若不存在减仓记录则跳过。原规则四（最新总分 ≥ 69）已取消，不再作为加仓触发或预触发条件。若不存在减仓记录且满足条件2但不满足条件1，或存在减仓记录且满足条件2和条件3但不满足条件1，则打上“预触发”tag，并由后台每1分钟查询一次最新标记价格；无减仓记录时刷新后满足条件1即可触发；有减仓记录时刷新后仍满足条件3且满足条件1才触发“第一次加仓”并买入当前持仓数量的50%。全部满足后写入“加仓操作记录”，并给该 symbol 打上“第一次加仓”tag；若该 symbol 在本生命周期内已经存在过一次状态不是 skipped 的“第一次加仓”记录，才打上“已完成第一次加仓”tag；若当前已用保证金 + 本次加仓所需保证金超出当前实验组USDT净值，或本次所需保证金超出实验组可用USDT，则先不加仓，并在记录中标记“实验组净值预算不足”或“可用金额不足”，不会标记为已完成，下一轮仍继续参与评估。</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>symbol</th>
+                  <th>decision_round_ts</th>
+                  <th>tag</th>
+                  <th>current_price</th>
+                  <th>未变现盈亏 / 1R</th>
+                  <th>最新总分</th>
+                  <th>上次总分</th>
+                  <th>最近减仓价</th>
+                  <th>开仓时间</th>
+                  <th>reason</th>
+                  <th>checked_at</th>
+                </tr>
+              </thead>
+              <tbody id="holding-increase-checks-body">
+                {% for row in holding_increase_checks %}
+                <tr>
+                  <td>{{ row.symbol }}</td>
+                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                  <td>{% set latest_pretrigger_round = holding_increase_pretrigger_rounds.get(row.symbol) if holding_increase_pretrigger_rounds else none %}{% if row.tag %}<span class="reduction-tag {% if row.tag == '已完成第一次加仓' %}reduction-tag-increase-completed{% else %}reduction-tag-default{% endif %}">{{ row.tag }}</span>{% endif %}{% if latest_pretrigger_round %}<span class="reduction-tag reduction-tag-stale-pretrigger">触发轮次 {{ latest_pretrigger_round|fmt_ms_datetime }} 预触发</span>{% endif %}{% if not row.tag and not latest_pretrigger_round %}-{% endif %}</td>
+                  <td>{{ row.current_price }}</td>
+                  <td>
+                    {% set inc_one_r = row.one_r_usdt|float %}
+                    {% set inc_pnl_r_multiple = (row.unrealized_pnl|float) / inc_one_r if inc_one_r > 0 else 0 %}
+                    <span class="reduction-metric {{ 'reduction-pnl-strong-profit' if inc_pnl_r_multiple >= 1.3 else 'reduction-pnl-profit' if inc_pnl_r_multiple >= 1 else 'reduction-metric-neutral' }}">{{ row.unrealized_pnl }}</span> / {{ row.one_r_usdt }}
+                  </td>
+                  <td>{{ row.latest_total_score if row.latest_total_score else '-' }}</td>
+                  <td>{{ row.previous_total_score if row.previous_total_score else '-' }}</td>
+                  <td>{{ row.latest_reduction_price if row.latest_reduction_price else '无，已跳过条件3' }}</td>
+                  <td>{{ row.open_trade_created_at|fmt_ms_datetime if row.open_trade_created_at else '-' }}</td>
+                  <td>{{ row.reason }}</td>
+                  <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                </tr>
+                {% else %}
+                <tr><td class="empty" colspan="11">暂无加仓条件模块执行结果</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>加仓操作记录（最近7天）</strong></div>
+              <div class="muted">记录每个 symbol 在当前开仓生命周期内首次满足加仓条件的时间、价格、分数与触发原因。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看最近 7 天完整记录。</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>created_at</th>
+                  <th>symbol</th>
+                  <th>轮次</th>
+                  <th>action</th>
+                  <th>current_price</th>
+                  <th>未变现盈亏 / 1R</th>
+                  <th>最新总分 / 上次总分</th>
+                  <th>最近减仓价</th>
+                  <th>加仓数量 / 保证金 / 可用USDT</th>
+                  <th>status</th>
+                  <th>reason</th>
+                </tr>
+              </thead>
+              <tbody id="holding-increase-records-body">
+                {% for row in holding_increase_records %}
+                <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                  <td>{{ row.created_at|fmt_ms_datetime }}</td>
+                  <td>{{ row.symbol }}</td>
+                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                  <td><span class="reduction-tag reduction-tag-default">{{ row.action_name }}</span></td>
+                  <td>{{ row.current_price }}</td>
+                  <td>
+                    {% set rec_one_r = row.one_r_usdt|float %}
+                    {% set rec_pnl_r_multiple = (row.unrealized_pnl|float) / rec_one_r if rec_one_r > 0 else 0 %}
+                    <span class="reduction-metric {{ 'reduction-pnl-strong-profit' if rec_pnl_r_multiple >= 1.3 else 'reduction-pnl-profit' if rec_pnl_r_multiple >= 1 else 'reduction-metric-neutral' }}">{{ row.unrealized_pnl }}</span> / {{ row.one_r_usdt }}
+                  </td>
+                  <td>{{ row.latest_total_score }} / {{ row.previous_total_score }}</td>
+                  <td>{{ row.latest_reduction_price if row.latest_reduction_price else '-' }}</td>
+                  <td>{{ row.increased_quantity if row.increased_quantity else '-' }} / {{ row.required_margin_usdt if row.required_margin_usdt else '-' }} / {{ row.available_experiment_usdt if row.available_experiment_usdt else '-' }}</td>
+                  <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-warn' if row.status == 'skipped' else 'status-fail' }}">{{ row.status }}</span></td>
+                  <td>{{ row.reason }}</td>
+                </tr>
+                {% else %}
+                <tr><td class="empty" colspan="11">最近7天暂无加仓操作记录</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        </div>
+
+
+        <div id="holding-module-portfolio-risk" class="holding-module-panel" role="tabpanel">
+        <div class="critical-section portfolio-risk-section" aria-label="组合风险约束">
+          <div class="symbol-strip">
+            <div><strong>组合风险约束</strong></div>
+            {% if holding_portfolio_risk %}
+              <div class="muted">最近计算轮次：{{ holding_portfolio_risk.decision_round_ts|fmt_ms_datetime }}。该15分钟定时任务在“持仓评分系统：止损规则判断结果”任务完成后自动执行。</div>
+            {% else %}
+              <div class="muted">暂无组合风险约束计算结果。</div>
+            {% endif %}
+            <div class="chips">
+              <span class="chip">当前总风险：{{ holding_portfolio_risk.total_risk if holding_portfolio_risk else '0' }}</span>
+              <span class="chip">持仓数：{{ holding_portfolio_risk.position_count if holding_portfolio_risk else 0 }}（不设数量上限）</span>
+              <span class="chip">实验组USDT净值：{{ holding_portfolio_risk.account_equity_usdt if holding_portfolio_risk else trading_equity_usdt }}</span>
+            </div>
+          </div>
+          <div class="tip">当前总风险 = Σ((第i个仓位的持仓数量 × latest_15m_close) / 当前实验组USDT净值 × 第i个仓位杠杆)。下表按当前全部持仓逐仓展示 risk_i 与最新 total_score；若当前总风险 > 18，会选择 total_score 最低的持仓并立即通过 reduceOnly MARKET 市价单全平。</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>symbol</th>
+                  <th>position_amt</th>
+                  <th>latest_15m_close</th>
+                  <th>account_equity_usdt</th>
+                  <th>leverage</th>
+                  <th>risk_i</th>
+                  <th>total_score</th>
+                  <th>reason</th>
+                  <th>calculated_at</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% if holding_portfolio_risk %}
+                  {% for row in holding_portfolio_risk.positions %}
+                  <tr>
+                    <td>{{ row.symbol }}</td>
+                    <td>{{ row.position_amt }}</td>
+                    <td>{{ row.latest_15m_close }}</td>
+                    <td>{{ row.account_equity_usdt }}</td>
+                    <td>{{ row.leverage }}x</td>
+                    <td>{{ row.risk }}</td>
+                    <td>{{ row.total_score if row.total_score else '-' }}</td>
+                    <td>{{ row.reason }}</td>
+                    <td>{{ row.calculated_at|fmt_ms_datetime }}</td>
+                  </tr>
+                  {% else %}
+                  <tr><td class="empty" colspan="9">当前无持仓，总风险为0</td></tr>
+                  {% endfor %}
+                {% else %}
+                <tr><td class="empty" colspan="9">暂无组合风险约束计算结果</td></tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        </div>
+
+        <div id="holding-module-break-even" class="holding-module-panel" role="tabpanel">
+        <div class="critical-section sky-theme-section" aria-label="关键保本止盈每分钟扫描结果">
+        <div class="symbol-strip">
+          <div><strong>保本止盈策略：每分钟扫描结果</strong></div>
+          <div>
+            <button id="refresh-break-even" class="btn btn-primary btn-small" type="button">刷新</button>
+            <span id="break-even-refresh-status" class="muted">仅刷新保本止盈扫描结果与新建止损单记录</span>
+          </div>
+          {% if break_even_round_ts %}
+            <div class="muted" id="break-even-round-note">最近判断轮次：{{ break_even_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每分钟扫描当前持仓；若未变现盈亏 ≥ R，则取消原止损单并按开仓价新建 reduceOnly STOP_MARKET 条件止损单，等待价格回落到保本价时触发市价平仓。</div>
+          {% else %}
+            <div class="muted" id="break-even-round-note">暂无保本止盈扫描结果。</div>
+          {% endif %}
+          {% set triggered_break_even_checks = break_even_checks|selectattr('triggered')|list %}
+          {% if triggered_break_even_checks %}
+            <div class="chips" id="break-even-triggered-chips">
+              {% for row in triggered_break_even_checks %}
+                <span class="chip" title="{{ row.reason }}">{{ row.symbol }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="chips" id="break-even-triggered-chips"><span class="chip">本轮无触发保本止盈symbol</span></div>
+          {% endif %}
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>实验组USDT净值</th>
+                <th>R</th>
+                <th>未变现盈亏</th>
+                <th>开仓价</th>
+                <th>持仓数量</th>
+                <th>触发保本</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody id="break-even-checks-body">
+              {% for row in break_even_checks %}
+              <tr>
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.account_equity_usdt }}</td>
+                <td>{{ row.r_usdt }}</td>
+                <td>{{ row.unrealized_pnl }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>
+                  {% if row.reason == 'break_even_already_completed' %}
+                    <span class="status-badge status-pass">已完成保本</span>
+                  {% else %}
+                    <span class="status-badge {{ 'status-pass' if row.triggered else 'status-fail' }}">{{ '是' if row.triggered else '否' }}</span>
+                  {% endif %}
+                </td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="9">暂无保本止盈扫描结果</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>保本止盈新建止损单记录</strong></div>
+              <div class="muted">记录被取消的原止损单ID、新建止损单ID、保本止损价格与接口执行状态。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>side</th>
+                <th>position_amt</th>
+                <th>entry_price</th>
+                <th>R / 未变现盈亏</th>
+                <th>old_stop_loss_order_id</th>
+                <th>new_stop_loss_order_id</th>
+                <th>stop_loss_price</th>
+                <th>status</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody id="break-even-records-body">
+              {% for row in break_even_records %}
+              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.side }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.r_usdt }} / {{ row.unrealized_pnl }}</td>
+                <td>{{ row.old_stop_loss_order_id or '-' }}</td>
+                <td>{{ row.new_stop_loss_order_id or '-' }}</td>
+                <td>{{ row.stop_loss_price }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="11">暂无保本止盈止损单记录</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
+        </div>
+
+        <div id="holding-module-partial-take-profit" class="holding-module-panel" role="tabpanel">
+        <div class="critical-section sky-theme-section" aria-label="关键分批止盈每分钟扫描结果">
+        <div class="symbol-strip">
+          <div><strong>分批止盈规则：每分钟扫描结果</strong></div>
+          <button id="refresh-partial-take-profit" class="btn btn-primary btn-small" type="button">刷新</button>
+          <span id="partial-take-profit-refresh-status" class="muted">点击刷新查看最新分批止盈扫描结果与卖出记录</span>
+          {% if partial_take_profit_round_ts %}
+            <div class="muted" id="partial-take-profit-round-note">最近判断轮次：{{ partial_take_profit_round_ts|fmt_ms_datetime }}。R = 实验组USDT净值 × 1%。每分钟在保本止盈执行完成后扫描当前持仓；常态下未变现盈亏 ≥ 2R 卖出30%，市场弱势时动态调整为 ≥ 1.4R 卖出50%。</div>
+          {% else %}
+            <div class="muted" id="partial-take-profit-round-note">暂无分批止盈扫描结果。</div>
+          {% endif %}
+          {% set triggered_partial_take_profit_checks = partial_take_profit_checks|selectattr('triggered')|list %}
+          {% if triggered_partial_take_profit_checks %}
+            <div class="chips" id="partial-take-profit-triggered-chips">
+              {% for row in triggered_partial_take_profit_checks %}
+                <span class="chip" title="{{ row.reason }}">{{ row.symbol }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="chips" id="partial-take-profit-triggered-chips"><span class="chip">本轮无触发分批止盈symbol</span></div>
+          {% endif %}
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>实验组USDT净值</th>
+                <th>R / 2R</th>
+                <th>未变现盈亏</th>
+                <th>开仓价</th>
+                <th>持仓数量</th>
+                <th>触发分批止盈</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody id="partial-take-profit-checks-body">
+              {% for row in partial_take_profit_checks %}
+              <tr>
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.account_equity_usdt }}</td>
+                <td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }}</td>
+                <td>{{ row.unrealized_pnl }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>
+                  {% if row.reason == 'partial_take_profit_already_completed' %}
+                    <span class="status-badge status-pass">已完成分批止盈</span>
+                  {% else %}
+                    <span class="status-badge {{ 'status-pass' if row.triggered else 'status-fail' }}">{{ '是' if row.triggered else '否' }}</span>
+                  {% endif %}
+                </td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="9">暂无分批止盈扫描结果</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>分批止盈卖出记录</strong></div>
+              <div class="muted">记录分批止盈 MARKET 卖出方向、卖出数量、订单ID与接口执行状态。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>side</th>
+                <th>position_amt</th>
+                <th>take_profit_quantity</th>
+                <th>entry_price</th>
+                <th>R / 2R / 未变现盈亏</th>
+                <th>take_profit_order_id / 触发档位</th>
+                <th>status</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody id="partial-take-profit-records-body">
+              {% for row in partial_take_profit_records %}
+              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.side }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>{{ row.take_profit_quantity }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }} / {{ row.unrealized_pnl }}</td>
+                <td>{{ row.take_profit_order_id or '-' }} / {{ row.trigger_label or '-' }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="10">暂无分批止盈卖出记录</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header"><div><div><strong>分批止盈卖出错误记录</strong></div><div class="muted">合并展示交易尝试失败与尚未形成交易尝试记录的扫描异常；source 标明权威数据来源。</div></div><button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button></div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整错误记录。</div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>occurred_at</th><th>symbol</th><th>source</th><th>stage</th><th>error_type</th><th>仓位 / 开仓价</th><th>R / 触发R / 未变现盈亏</th><th>error_message</th></tr></thead>
+            <tbody id="partial-take-profit-errors-body">{% for row in partial_take_profit_errors %}<tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}"><td>{{ row.occurred_at|fmt_ms_datetime }}</td><td>{{ row.symbol or '-' }}</td><td>{{ row.source }}</td><td>{{ row.stage }}</td><td>{{ row.error_type }}</td><td>{{ row.position_amt or '-' }} / {{ row.entry_price or '-' }}</td><td>{{ row.r_usdt or '-' }} / {{ row.trigger_r_usdt or '-' }} / {{ row.unrealized_pnl or '-' }}</td><td>{{ row.error_message }}</td></tr>{% else %}<tr><td class="empty" colspan="8">暂无分批止盈卖出错误记录</td></tr>{% endfor %}</tbody>
+          </table></div>
+        </div>
+        </div>
+
+        <div id="holding-module-trailing-reduction" class="holding-module-panel" role="tabpanel">
+        <div class="critical-section sky-theme-section" aria-label="移动追踪减仓结构破位追踪">
+        <div class="symbol-strip">
+          <div><strong>移动追踪减仓模块：15分钟扫描结果</strong></div>
+          <button id="refresh-trailing-reduction" class="btn btn-primary btn-small" type="button">刷新</button>
+          <span id="trailing-reduction-refresh-status" class="muted">针对本轮“预触发结构破位”symbol更新回撤幅度与开仓以来最高价</span>
+          {% if trailing_reduction_round_ts %}
+            <div id="trailing-reduction-round-note" class="muted">最近判断轮次：{{ trailing_reduction_round_ts|fmt_ms_datetime }}。每个 symbol 会先检查最近一次开仓后的“分批止盈卖出记录”；如已有成功记录，则标记灰色 tag“已触发过分批止盈”，并跳过预触发、结构破位及减仓检查。其余 symbol 才继续执行移动追踪减仓逻辑。</div>
+          {% else %}
+            <div id="trailing-reduction-round-note" class="muted">暂无移动追踪减仓扫描结果。</div>
+          {% endif %}
+          {% set pretriggered_trailing_reduction_checks = trailing_reduction_checks|selectattr('pretriggered')|list %}
+          {% if pretriggered_trailing_reduction_checks %}
+            <div id="trailing-reduction-pretrigger-chips" class="chips">
+              {% for row in pretriggered_trailing_reduction_checks %}
+                <span class="chip" title="{{ row.reason }}">{{ row.symbol }} · {{ row.tag }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div id="trailing-reduction-pretrigger-chips" class="chips"><span class="chip">本轮无预触发结构破位symbol</span></div>
+          {% endif %}
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th><th>symbol</th><th>tag</th><th>R / 2R</th><th>未变现盈亏</th><th>当前价</th><th>最近1/2条15m low</th><th>lowest</th><th>ATR(14)</th><th>最新1m high/close</th><th>开仓以来最高价</th><th>回撤幅度</th><th>开仓价</th><th>持仓数量</th><th>满足&lt;2R</th><th>预触发</th><th>结构破位</th><th>reason</th>
+              </tr>
+            </thead>
+            <tbody id="trailing-reduction-checks-body">
+              {% for row in trailing_reduction_checks %}
+              <tr>
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{% if row.tag == '已触发过分批止盈' %}<span class="reduction-tag reduction-tag-partial-take-profit">{{ row.tag }}</span>{% elif row.latest_pretrigger_round_ts %}<span class="reduction-tag {{ 'reduction-tag-trailing-pretrigger-current' if row.latest_pretrigger_round_ts == row.decision_round_ts else 'reduction-tag-trailing-pretrigger' }}">触发轮次 {{ row.latest_pretrigger_round_ts|fmt_ms_datetime }} 预触发结构破位</span>{% elif row.tag %}<span class="reduction-tag reduction-tag-trailing-pretrigger">{{ row.tag }}</span>{% else %}-{% endif %}</td><td>{{ row.r_usdt }} / {{ row.trigger_r_usdt }}</td><td>{{ row.unrealized_pnl }}</td><td>{% set current_price_decimal = row.current_price|float %}{% set lowest_15m_low_decimal = row.lowest_15m_low|float %}<span class="{{ 'reduction-current-price-danger' if lowest_15m_low_decimal > 0 and current_price_decimal < lowest_15m_low_decimal else '' }}">{{ row.current_price }}</span></td><td>{{ row.latest_15m_low }} / {{ row.second_15m_low }}</td><td>{{ row.lowest_15m_low }}</td><td>{{ row.atr14 or '-' }}</td><td>{{ (row.latest_1m_high or '-') ~ ' / ' ~ (row.latest_1m_close or '-') }}</td><td>{{ row.highest_since_open or '-' }}</td><td>{{ row.price_drawdown or '-' }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.pretriggered else 'status-fail' }}">{{ '是' if row.pretriggered else '否' }}</span></td><td><span class="status-badge {{ 'status-pass' if row.structure_break_triggered else 'status-fail' }}">{{ '是' if row.structure_break_triggered else '否' }}</span></td><td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="18">暂无移动追踪减仓扫描结果</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>移动追踪减仓记录</strong></div>
+              <div class="muted">展示近7天结构破位触发后的市价减仓30%、止盈/止损重建订单与接口状态。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>high/close</th>
+                <th>最高价/ATR/回撤</th>
+                <th>减仓比例</th>
+                <th>原/减/剩数量</th>
+                <th>市价单</th>
+                <th>止盈单</th>
+                <th>止损单</th>
+                <th>状态</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+          <tbody id="trailing-reduction-records-body">
+          {% for row in trailing_reduction_records %}
+            <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}"><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.latest_1m_high }} / {{ row.latest_1m_close }}</td><td>{{ row.highest_since_open }} / {{ row.atr14 }} / {{ row.price_drawdown }}</td><td>{{ row.reduction_percent }}</td><td>{{ row.original_quantity }} / {{ row.reduced_quantity }} / {{ row.remaining_quantity }}</td><td>{{ row.market_order_id or '-' }}</td><td>{{ row.take_profit_order_id or '-' }}</td><td>{{ row.stop_loss_order_id or '-' }}</td><td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td><td>{{ row.reason }}</td></tr>
+          {% else %}<tr><td class="empty" colspan="11">近7天暂无移动追踪减仓记录</td></tr>{% endfor %}
+          </tbody></table>
+        </div>
+        </div>
+        </div>
+        </div>
+
+
+        <div id="holding-module-hard-take-profit" class="holding-module-panel" role="tabpanel">
+        <div class="critical-section sky-theme-section" aria-label="硬止盈1分钟扫描结果">
+          <div class="symbol-strip">
+            <div class="section-title-row"><strong>硬止盈模块：1分钟扫描结果</strong><button id="refresh-hard-take-profit" class="btn btn-primary btn-small" type="button">刷新</button><span id="hard-take-profit-refresh-status" class="muted">仅刷新本模块的最新信息</span></div>
+            <div id="hard-take-profit-round-note" class="muted">{% if hard_take_profit_round_ts %}最近判断轮次：{{ hard_take_profit_round_ts|fmt_ms_datetime }}。独立扫描全部已持仓 symbol；未变现盈利率达到当前配置 {{ hard_take_profit_settings.profit_ratio * 100 }}% 时，调用 reduceOnly MARKET 市价单全部平仓。{% else %}暂无硬止盈扫描结果。{% endif %}</div>
+          </div>
+          <div class="table-wrap"><table><thead><tr><th>checked_at</th><th>symbol</th><th>entry</th><th>position</th><th>未变现盈利</th><th>持仓名义价值</th><th>盈利率/阈值</th><th>触发</th><th>全部平仓单</th><th>reason</th></tr></thead><tbody id="hard-take-profit-checks-body">
+          {% for row in hard_take_profit_checks %}<tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td>{{ row.unrealized_pnl }}</td><td>{{ row.position_notional }}</td><td>{{ row.profit_ratio }} / {{ row.profit_threshold }}</td><td>{{ '是' if row.triggered else '否' }}</td><td>{{ row.close_quantity }} / {{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="10">暂无硬止盈扫描结果</td></tr>{% endfor %}
+          </tbody></table></div>
+        </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10"><div class="symbol-strip collapsible-header"><div><strong>硬止盈操作记录</strong><div class="muted">操作记录存储于 trading_info.db；默认展示最新 10 条。</div></div><button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button></div><div class="table-wrap"><table><thead><tr><th>操作时间</th><th>symbol</th><th>持仓数量</th><th>开仓价</th><th>未变现盈利</th><th>盈利率/阈值</th><th>平仓数量</th><th>订单ID / 状态</th><th>原因</th></tr></thead><tbody id="hard-take-profit-records-body">
+        {% for row in hard_take_profit_records %}<tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}"><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.position_amt }}</td><td>{{ row.entry_price }}</td><td>{{ row.unrealized_pnl }}</td><td>{{ row.profit_ratio }} / {{ row.profit_threshold }}</td><td>{{ row.close_quantity }}</td><td>{{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="9">暂无硬止盈操作记录</td></tr>{% endfor %}
+        </tbody></table></div></div>
+        </div>
+
+        <div id="holding-module-dynamic-profit-protection" class="holding-module-panel" role="tabpanel">
+        <div class="critical-section sky-theme-section" aria-label="动态利润保护1分钟扫描结果">
+        <div class="symbol-strip">
+          <div class="section-title-row">
+            <strong>动态利润保护板块：1分钟扫描结果</strong>
+            <button id="refresh-dynamic-profit-protection" class="btn btn-primary btn-small" type="button">刷新</button>
+            <span id="dynamic-profit-protection-refresh-status" class="muted">仅刷新动态利润保护板块与动态利润保护记录</span>
+          </div>
+          <div class="muted">后台每分钟自动扫描，且执行顺序在“移动追踪止盈规则”之前。</div>
+          {% if dynamic_profit_protection_round_ts %}
+            <div id="dynamic-profit-protection-round-note" class="muted">最近判断轮次：{{ dynamic_profit_protection_round_ts|fmt_ms_datetime }}。每分钟计算“开仓后已实现盈亏 + 当前浮盈”，维护周期累积盈亏历史最高值；按周期累积盈亏历史最高到达档位动态保护：周期累积盈亏到达过(2R, 3R] 回撤≥40%、周期累积盈亏到达过(3R, 4R] 回撤≥30%、周期累积盈亏到达过4R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓；三档按优先级递增，仅触发最高命中的一个条件。</div>
+          {% else %}
+            <div id="dynamic-profit-protection-round-note" class="muted">暂无动态利润保护扫描结果。</div>
+          {% endif %}
+          {% set eligible_dynamic_profit_checks = dynamic_profit_protection_checks|selectattr('eligible')|list %}
+          {% if eligible_dynamic_profit_checks %}
+            <div id="dynamic-profit-protection-eligible-chips" class="chips">
+              {% for row in eligible_dynamic_profit_checks %}
+                <span class="chip" title="周期累积盈亏 {{ row.cycle_total_pnl }}，R倍数 {{ row.profit_r_multiple }}">{{ row.symbol }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div id="dynamic-profit-protection-eligible-chips" class="chips"><span class="chip">本轮无满足动态利润保护前提的symbol</span></div>
+          {% endif %}
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>checked_at</th><th>symbol</th><th>entry</th><th>position</th><th>浮盈/周期盈亏R</th><th>新开仓后已实现盈亏</th><th>周期累计盈亏</th><th>最新 high/close</th><th>开仓以来最高价</th><th>周期累积盈亏历史最高</th><th>历史最高出现时间</th><th>当前档位</th><th>回撤/阈值</th><th>触发</th><th>全部平仓单</th><th>满足前提</th><th>reason</th></tr></thead>
+            <tbody id="dynamic-profit-protection-checks-body">
+              {% for row in dynamic_profit_protection_checks %}
+              <tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td>{{ row.unrealized_pnl }} / {{ row.profit_r_multiple }}R</td><td>{{ row.realized_pnl_since_open or '-' }}</td><td>{{ row.cycle_total_pnl or '-' }}</td><td>{{ row.latest_1m_high }} / {{ row.latest_1m_close }}</td><td>{{ row.highest_since_open }}</td><td>{{ row.highest_cycle_total_pnl }}</td><td>{{ row.highest_profit_at|fmt_ms_datetime if row.highest_profit_at else '-' }}</td><td>{{ row.current_tier }}</td><td>{{ row.profit_drawdown_ratio }} / {{ row.drawdown_threshold }}</td><td><span class="status-badge {{ 'status-pass' if row.triggered else 'status-fail' }}">{{ '是' if row.triggered else '否' }}</span></td><td>{{ row.close_quantity }} / {{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td><td>{{ row.reason }}</td></tr>
+              {% else %}<tr><td class="empty" colspan="17">暂无动态利润保护扫描结果</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header"><div><div><strong>动态利润保护记录</strong></div><div class="muted">记录动态利润保护触发后的全部平仓数量、订单ID、接口状态与触发原因。</div></div><button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button></div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+          <div class="table-wrap"><table><thead><tr><th>checked_at</th><th>symbol</th><th>position_amt</th><th>entry_price</th><th>R值/周期盈亏倍数</th><th>新开仓后已实现盈亏</th><th>周期累计盈亏</th><th>close/最高价</th><th>周期累积盈亏历史最高</th><th>历史最高出现时间</th><th>当前档位</th><th>回撤/阈值</th><th>close_quantity</th><th>close_order_id / status</th><th>reason</th></tr></thead><tbody id="dynamic-profit-protection-records-body">
+            {% for row in dynamic_profit_protection_records %}<tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}"><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.position_amt }}</td><td>{{ row.entry_price }}</td><td>{{ row.r_usdt }} / {{ row.profit_r_multiple }}R</td><td>{{ row.realized_pnl_since_open or '-' }}</td><td>{{ row.cycle_total_pnl or '-' }}</td><td>{{ row.latest_1m_close }} / {{ row.highest_since_open }}</td><td>{{ row.highest_cycle_total_pnl }}</td><td>{{ row.highest_profit_at|fmt_ms_datetime if row.highest_profit_at else '-' }}</td><td>{{ row.current_tier }}</td><td>{{ row.profit_drawdown_ratio }} / {{ row.drawdown_threshold }}</td><td>{{ row.close_quantity }}</td><td>{{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td>{{ row.reason }}</td></tr>
+            {% else %}<tr><td class="empty" colspan="15">暂无动态利润保护记录</td></tr>{% endfor %}
+          </tbody></table></div>
+        </div>
+        </div>
+
+        <div id="holding-module-trailing-stop" class="holding-module-panel" role="tabpanel">
+        <div class="critical-section sky-theme-section" aria-label="移动追踪止盈1分钟扫描结果">
+        <div class="symbol-strip">
+          <div class="section-title-row">
+            <strong>移动追踪止盈规则：1分钟扫描结果</strong>
+            <button id="refresh-trailing-stop" class="btn btn-primary btn-small" type="button">刷新</button>
+            <span id="trailing-stop-refresh-status" class="muted">可单独刷新移动追踪止盈数据</span>
+          </div>
+          {% if trailing_stop_round_ts %}
+            <div id="trailing-stop-round-note" class="muted">最近判断轮次：{{ trailing_stop_round_ts|fmt_ms_datetime }}。仅扫描已触发过分批止盈（浮盈达到过2R）的symbol；先用最近4条15分钟K线判断“预触发移动追踪止盈”（最近第1条close < 最近第2/3/4条low的最小值）；对本轮预触发symbol每分钟读取 klines_1m 最新 high/close，维护“开仓以来最高价”，计算“波动率”=最新 ATR(14) / 最近第2条15分钟K线 close；若波动率 &gt; 0.03，则当最新close相对开仓以来最高价回撤 &gt; 2 × ATR(14) 时打上“移动追踪止盈”tag，否则回撤 &gt; 2.5 × ATR(14) 时打上“移动追踪止盈”tag，并调用市价单接口全部平仓。</div>
+          {% else %}
+            <div id="trailing-stop-round-note" class="muted">暂无移动追踪止盈扫描结果。</div>
+          {% endif %}
+          {% set eligible_trailing_stop_checks = trailing_stop_checks|selectattr('eligible')|list %}
+          {% if eligible_trailing_stop_checks %}
+            <div id="trailing-stop-eligible-chips" class="chips">
+              {% for row in eligible_trailing_stop_checks %}
+                <span class="chip" title="最大未变现盈利 {{ row.max_unrealized_pnl }}">{{ row.symbol }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div id="trailing-stop-eligible-chips" class="chips"><span class="chip">本轮无满足移动追踪止盈前提的symbol</span></div>
+          {% endif %}
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>开仓价</th>
+                <th>持仓数量</th>
+                <th>持仓时间（小时）</th>
+                <th>1m high</th>
+                <th>1m close</th>
+                <th>开仓以来最高价</th>
+                <th>价格回撤 / 阈值</th>
+                <th>ATR(14)</th>
+                <th>波动率</th>
+                <th>tag</th>
+                <th>触发移动追踪止盈</th>
+                <th>取消止盈单</th>
+                <th>全部止盈单</th>
+                <th>最大值时间</th>
+                <th>满足前提</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody id="trailing-stop-checks-body">
+              {% for row in trailing_stop_checks %}
+              <tr>
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>{{ row.holding_hours }}</td>
+                <td>{{ row.kline_high }}</td>
+                <td>{{ row.latest_1m_close }}</td>
+                <td>{{ row.highest_since_open }}</td>
+                <td>{{ row.price_drawdown }} / {{ row.drawdown_threshold }}</td>
+                <td>{{ row.atr14 }}</td>
+                <td>{{ row.volatility or '-' }}</td>
+                <td>{{ row.tag or '-' }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.trailing_stop_triggered else 'status-fail' }}">{{ '是' if row.trailing_stop_triggered else '否' }}</span></td>
+                <td>{{ row.cancel_take_profit_order_id or '-' }} / {{ row.cancel_status }}</td>
+                <td>{{ row.close_quantity }} / {{ row.close_order_id or '-' }} / {{ row.close_status }}</td>
+                <td>{{ row.max_unrealized_pnl_at|fmt_ms_datetime }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.eligible else 'status-fail' }}">{{ '是' if row.eligible else '否' }}</span></td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="18">暂无移动追踪止盈扫描结果</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>移动追踪止盈操作记录</strong></div>
+              <div class="muted">记录移动追踪止盈触发后的原止盈单取消状态、当前仓位 reduceOnly LIMIT IOC 全部止盈数量、订单ID与接口执行状态。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>position_amt</th>
+                <th>entry_price</th>
+                <th>ATR(14)</th>
+                <th>波动率</th>
+                <th>当下 / 最大未变现盈利</th>
+                <th>价格回撤 / 阈值</th>
+                <th>cancel_take_profit_order_id / status</th>
+                <th>close_quantity</th>
+                <th>close_order_id / status</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody id="trailing-stop-records-body">
+              {% for row in trailing_stop_records %}
+              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.atr14 }}</td>
+                <td>{{ row.volatility or '-' }}</td>
+                <td>{{ row.unrealized_pnl_at_high }} / {{ row.max_unrealized_pnl }}</td>
+                <td>{{ row.price_drawdown }} / {{ row.drawdown_threshold }}</td>
+                <td>{{ row.cancel_take_profit_order_id or '-' }} / {{ row.cancel_status }}</td>
+                <td>{{ row.close_quantity }}</td>
+                <td>{{ row.close_order_id or '-' }} / {{ row.close_status }}</td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="12">暂无移动追踪止盈操作记录</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        </div>
+        </div>
+      </div>
+
+      <div id="strategy-filled-orders" class="simulation-subpanel" role="tabpanel">
+        <div class="symbol-strip">
+          <div><strong>已成交订单分析</strong></div>
+          <div class="muted">点击下方按钮后，通过 REST API 按最近天数或手动选择的起止时间查询 Futures 账户成交明细，展示“买入 / BUY”和“卖出 / SELL”方向的已成交记录；同一 symbol、同一 order_id、同一方向的多笔成交会合并展示，已实现盈亏按红正绿负高亮。</div>
+        </div>
+        <div class="filled-orders-query-tools" aria-label="已成交订单查询条件">
+          <div class="filled-orders-query-row">
+            <span class="filled-orders-query-label">按最近天数</span>
+            <label class="control-label" for="filled-orders-days">查询范围</label>
+            <select id="filled-orders-days" class="select-control" aria-label="已成交订单查询天数">
+            <option value="1">近1天</option>
+            <option value="2">近2天</option>
+            <option value="3">近3天</option>
+            <option value="4">近4天</option>
+            <option value="5">近5天</option>
+            <option value="6">近6天</option>
+            <option value="7" selected>近7天</option>
+            <option value="8">近8天</option>
+            <option value="9">近9天</option>
+            <option value="10">近10天</option>
+            <option value="11">近11天</option>
+            <option value="12">近12天</option>
+            <option value="13">近13天</option>
+            <option value="14">近14天</option>
+            <option value="15">近15天</option>
+            <option value="16">近16天</option>
+            <option value="17">近17天</option>
+            <option value="18">近18天</option>
+            <option value="19">近19天</option>
+            <option value="20">近20天</option>
+            <option value="21">近21天</option>
+            <option value="22">近22天</option>
+            <option value="23">近23天</option>
+            <option value="24">近24天</option>
+            <option value="25">近25天</option>
+            <option value="26">近26天</option>
+            <option value="27">近27天</option>
+            <option value="28">近28天</option>
+            <option value="29">近29天</option>
+            <option value="30">近30天</option>
+            </select>
+            <button id="query-filled-sell-orders" class="btn btn-primary" type="button">查询近7天已成交订单</button>
+          </div>
+          <div class="filled-orders-query-row">
+            <span class="filled-orders-query-label">按起止时间</span>
+            <label class="control-label" for="filled-orders-start-time">开始时间</label>
+            <input id="filled-orders-start-time" class="select-control" type="datetime-local" step="3600" aria-label="已成交订单开始时间">
+            <label class="control-label" for="filled-orders-end-time">截止时间</label>
+            <input id="filled-orders-end-time" class="select-control" type="datetime-local" step="3600" aria-label="已成交订单截止时间">
+            <button id="query-filled-orders-by-time" class="btn btn-primary" type="button">按起止时间查询</button>
+          </div>
+          <div class="filled-orders-query-row">
+            <button id="export-filled-orders" class="btn btn-primary" type="button" disabled>导出 Excel 到本地</button>
+            <span id="filled-sell-orders-status" class="muted">尚未查询</span>
+          </div>
+        </div>
+        <div class="filled-orders-filter-row">
+          <label class="control-label" for="filled-orders-score-band">通用筛选器：开仓评分档位</label>
+          <select id="filled-orders-score-band" class="select-control" aria-label="已成交订单开仓评分档位">
+            <option value="all" selected>全部档位</option>
+            {% for band in score_band_configs %}
+            <option value="{{ band.lower }}-{{ band.upper }}">{{ band.label }}（{{ band.lower }}-{{ band.upper }}分）</option>
+            {% endfor %}
+            <option value="unknown">无匹配开仓评分</option>
+          </select>
+        </div>
+        <div id="filled-sell-orders-error" class="account-error"></div>
+        <div class="tip">数据来自 Binance USDⓈ-M Futures <code>userTrades</code> 成交明细；同一 symbol、同一 order_id、同一方向的多笔成交会合并为一行；成交价格为按成交额/成交数量计算的均价。开仓评分来自本地“交易实验交易记录”中同一 symbol 在成交时间前最近一次 opened 记录的 total_score，可按评分档位筛选并计算对应胜率。</div>
+        <div class="tip"><strong>止盈/止损原因显示规则：</strong>SELL 成交优先匹配本地策略记录；自动化硬止盈及强平记录会优先使用 Binance order_id 匹配本地下单记录，无法使用 order_id 时再按 symbol、成交时间（±5分钟）和成交数量匹配。其他策略记录按 symbol、成交时间（±5分钟）和成交数量匹配，命中优先级依次为：自动化硬止盈（硬止盈操作记录）、减仓失败强平（重挂止损失败后强平记录）、僵尸强平（僵尸单强平操作记录）、结构止损（止损记录）、减仓（减仓操作记录）、移动追踪减仓（移动追踪减仓记录）、动态利润保护、移动追踪止盈、分批止盈；若没有匹配到策略记录，则按已实现盈亏判断：realized_pnl &gt; 0 显示“硬止盈”，否则显示“硬止损”。BUY 成交也会优先匹配减仓失败强平记录；否则查询“加仓操作记录”，命中则显示“加仓”，未命中则不显示原因。</div>
+        <div id="filled-orders-summary" class="filled-orders-summary" aria-label="已完成订单统计">
+          <div class="account-metric">
+            <div class="account-metric-label">已完成订单数量</div>
+            <div id="filled-completed-count" class="account-metric-value">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">已完成订单总盈利</div>
+            <div id="filled-total-profit" class="account-metric-value pnl-zero">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">盈利订单总数</div>
+            <div id="filled-profit-count" class="account-metric-value">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">已完成订单胜率</div>
+            <div id="filled-win-rate" class="account-metric-value">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">已完成订单总亏损</div>
+            <div id="filled-total-loss" class="account-metric-value pnl-zero">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">亏损订单总数</div>
+            <div id="filled-loss-count" class="account-metric-value">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">已完成订单平均盈利</div>
+            <div id="filled-average-profit" class="account-metric-value pnl-zero">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">已完成订单平均亏损</div>
+            <div id="filled-average-loss" class="account-metric-value pnl-zero">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">已完成订单盈亏比</div>
+            <div id="filled-profit-loss-ratio" class="account-metric-value">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">已完成订单期望</div>
+            <div id="filled-expectancy" class="account-metric-value pnl-zero">-</div>
+          </div>
+        </div>
+        <div class="table-wrap filled-orders-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>成交时间</th>
+                <th>symbol</th>
+                <th>开仓评分档位</th>
+                <th>开仓杠杆大小</th>
+                <th>开仓总分</th>
+                <th>止盈/止损原因</th>
+                <th>方向</th>
+                <th>order_id</th>
+                <th>成交价格</th>
+                <th>成交数量</th>
+                <th>成交额</th>
+                <th>已实现盈亏</th>
+                <th>手续费</th>
+                {% for rule_id in range(1, 19) %}<th>评分规则{{ rule_id }}</th>{% endfor %}
+                <th>maker</th>
+                <th>trade_id</th>
+              </tr>
+            </thead>
+            <tbody id="filled-sell-orders-rows">
+              <tr><td class="empty" colspan="33">点击“查询近7天已成交订单”后显示数据</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="strategy-account" class="simulation-subpanel" role="tabpanel">
+        <div class="symbol-strip">
+          <div><strong>账户情况</strong></div>
+          <div class="muted">点击下方按钮后，通过 REST API 实时查询 Binance USDⓈ-M Futures 实盘账户余额。该页面使用 <code>BINANCE_REAL_API_KEY</code> / <code>BINANCE_REAL_API_SECRET</code>，默认连接生产环境：<code>https://fapi.binance.com</code>；不要将 <code>BINANCE_REAL_BASE_URL</code> 指向 Demo/Testnet。</div>
+        </div>
+        <div class="toolbar">
+          <button id="query-account-balance" class="btn btn-primary" type="button">查询账户余额</button>
+          <span id="account-balance-status" class="muted">尚未查询</span>
+        </div>
+        <div id="account-balance-error" class="account-error"></div>
+        <div class="account-summary">
+          <div class="account-metric">
+            <div class="account-metric-label">USDT 总余额</div>
+            <div id="account-usdt-balance" class="account-metric-value">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">USDT 可用余额</div>
+            <div id="account-usdt-available" class="account-metric-value">-</div>
+          </div>
+          <div class="account-metric account-metric-highlight">
+            <div class="account-metric-label">USDT 未实现盈亏</div>
+            <div id="account-usdt-pnl" class="account-metric-value">-</div>
+          </div>
+        </div>
+        <div class="tip">下表展示接口返回的全部资产余额；如果只需要看交易常用保证金币种，可优先关注 USDT 行。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>asset</th>
+                <th>balance</th>
+                <th>available_balance</th>
+                <th>cross_wallet_balance</th>
+                <th>cross_un_pnl</th>
+                <th>account_alias</th>
+              </tr>
+            </thead>
+            <tbody id="account-balance-rows">
+              <tr><td class="empty" colspan="6">点击“查询账户余额”后显示数据</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="experiment-note">第一组交易实验：总保证金预算随当前实验组USDT净值动态调整，允许盈利后用更高净值扩大仓位；每次新开仓前查询当前“实验组USDT净值”，按 1% 风险、止损距离和杠杆动态计算保证金：保证金 = (实验组USDT净值 × 1%) ÷ (distance_ratio × 杠杆)，名义仓位 = 保证金 × 杠杆；distance_ratio 和杠杆来自“本轮可开仓symbol情况”，所有单子 distance_ratio 为 0 时杠杆统一为 NA，且最终不可开仓；开多前查询当前持仓和当前总风险，若当前总风险 &gt; 18 且候选总分低于 81、可用余额不足本笔所需保证金或“当前已用保证金 + 本笔新开仓保证金”超出当前实验组USDT净值则不开仓；不再按持仓数量限制新开仓；候选按“最终可开仓=是”的总分降序遍历；若候选 symbol 当前已有持仓则跳过该 symbol 并继续遍历下一个可开仓 symbol；新开仓后会立即通过限价条件单接口设置硬止盈单，按“入场价 + 55USDT / 持仓数量”计算触发/委托价格，浮盈达到55USDT时 reduceOnly 平仓；同时设置止损单；若持仓期间触发“分批止盈规则”卖出30%仓位，或触发持仓评分模块的加仓/减仓导致仓位数量变化，系统会先取消原硬止盈单，再按变化后的实际仓位重新计算“入场价 + 55USDT / 最新持仓数量”，重新挂硬止盈单，仍以利润达到55USDT为目标；止损价格距离仍按 min(入场价 × 10%，实验组USDT净值 × 1% / 持仓数量) 控制。</div>
+        <div class="account-summary" aria-label="实验组USDT净值">
+          <div class="account-metric account-metric-highlight">
+            <div class="account-metric-label">实验组USDT净值</div>
+            <div id="experiment-usdt-equity" class="account-metric-value">-</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">近7天收益率</div>
+            <div id="experiment-seven-day-return" class="account-metric-value {{ 'pnl-positive' if trading_seven_day_return is not none and trading_seven_day_return > 0 else 'pnl-negative' if trading_seven_day_return is not none and trading_seven_day_return < 0 else 'pnl-zero' }}">{{ '%+.2f%%'|format(trading_seven_day_return) if trading_seven_day_return is not none else '-' }}</div>
+          </div>
+          <div class="muted">计算公式：当前USDT总余额 - 未投入实验组USDT额度（4000U）。USDT总初始资金5000U，第一组实验初始投入1000U；盈利后实验组净值可作为动态总保证金预算上限。</div>
+        </div>
+        <div class="equity-trend-chart-wrap" aria-label="近7天实验组USDT净值变化趋势图">
+          <div class="chart-meta">
+            <span><strong>近7天实验组USDT净值变化趋势图</strong></span>
+            <span>随页面每15分钟自动刷新；数据来自开仓、保本止盈、分批止盈扫描记录。</span>
+          </div>
+          <div id="experiment-equity-trend-chart"></div>
+        </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>僵尸单强平操作记录</strong></div>
+              <div class="muted">只显示最近7天内记录；持仓时间一旦达到24小时，无论是否已有保本止盈保护，都会立即触发强平：先取消该 symbol 的所有止盈/止损挂单，再通过 reduceOnly 市价单将当前持仓全部平仓。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+          <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>checked_at</th>
+                <th>symbol</th>
+                <th>opened_at</th>
+                <th>side</th>
+                <th>position_amt</th>
+                <th>quantity</th>
+                <th>entry_price</th>
+                <th>status</th>
+                <th>orderId</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in zombie_force_liquidation_records %}
+              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                <td>{{ row.checked_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.opened_at|fmt_ms_datetime if row.opened_at else '-' }}</td>
+                <td>{{ row.side }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>{{ row.quantity }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.status == 'submitted' else 'status-fail' }}">{{ row.status }}</span></td>
+                <td>{{ row.order_id or '-' }}</td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="10">暂无最近7天僵尸单强平操作记录</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          </div>
+        </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>交易实验交易记录</strong></div>
+              <div class="muted">只显示7天内已开仓记录，以及55USDT硬止盈/止损挂单信息；跳过记录不在此表展示。本轮新开仓 symbol 会用红色徽标高亮。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+          <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>created_at</th>
+                <th>symbol</th>
+                <th>轮次</th>
+                <th>side</th>
+                <th>status</th>
+                <th>total_score</th>
+                <th>leverage</th>
+                <th>allocated_notional_usdt</th>
+                <th>required_margin_usdt</th>
+                <th>account_equity</th>
+                <th>max_loss</th>
+                <th>entry_price</th>
+                <th>quantity</th>
+                <th>notional</th>
+                <th>take_profit_price</th>
+                <th>stop_loss_price</th>
+                <th>stop_loss_calculation</th>
+                <th>tp_order_id</th>
+                <th>sl_order_id</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in trading_trade_records %}
+              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                <td>{{ row.created_at|fmt_ms_datetime }}</td>
+                <td>{% if row.symbol in trading_new_open_symbols %}<span class="new-open-symbol-badge" title="本轮新开仓">{{ row.symbol }}</span>{% else %}{{ row.symbol }}{% endif %}</td>
+                <td>{{ row.decision_round_ts|fmt_ms_datetime if row.decision_round_ts else '-' }}</td>
+                <td>{{ row.side }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.status == 'opened' else 'status-fail' }}">{{ row.status }}</span></td>
+                <td>{{ row.total_score if row.total_score is not none else '-' }}</td>
+                <td>{{ row.leverage if row.leverage is not none else '-' }}</td>
+                <td>{{ row.allocated_notional_usdt }}</td>
+                <td>{{ row.required_margin_usdt }}</td>
+                <td>{{ row.account_equity_usdt }}</td>
+                <td>{{ row.max_loss_usdt }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td>{{ row.quantity }}</td>
+                <td>{{ row.notional_usdt }}</td>
+                <td>{{ row.take_profit_price }}</td>
+                <td>{{ row.stop_loss_price }}</td>
+                <td class="mono-cell">{{ row.stop_loss_calculation or '-' }}</td>
+                <td>{{ row.take_profit_order_id or '-' }}</td>
+                <td>{{ row.stop_loss_order_id or '-' }}</td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="20">暂无交易实验记录；执行实验后显示数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          </div>
+        </div>
+        <div class="critical-section" aria-label="关键交易实验持仓快照">
+          <div class="symbol-strip">
+            <div><strong>交易实验持仓快照</strong></div>
+            <div class="muted">展示最近一次由交易实验模块写入的 Futures 持仓快照。</div>
+            <div class="chips">
+              <span class="chip">已用资金：{{ trading_used_margin_usdt }} USDT</span>
+              {% if trading_open_increase_blocked %}<span class="chip danger">禁止任何新开仓/加仓</span>{% endif %}
+            </div>
+          </div>
+          <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>symbol</th>
+                <th>position_amt</th>
+                <th>entry_price</th>
+                <th>持仓时长(小时)</th>
+                <th>开仓时间</th>
+                <th>mark_price</th>
+                <th>unrealized_pnl</th>
+                <th>leverage</th>
+                <th>notional</th>
+                <th>liquidation_price</th>
+                <th>updated_at</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in trading_position_snapshots %}
+              <tr>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.position_amt }}</td>
+                <td>{{ row.entry_price }}</td>
+                <td class="holding-hours-cell"><span class="holding-hours-badge">⏱ {{ row.holding_hours }}</span></td>
+                <td>{{ row.opened_at|fmt_ms_datetime if row.opened_at else '-' }}</td>
+                <td>{{ row.mark_price }}</td>
+                <td>{{ row.unrealized_pnl }}</td>
+                <td>{{ row.leverage if row.leverage else '-' }}</td>
+                <td>{{ row.notional }}</td>
+                <td>{{ row.liquidation_price }}</td>
+                <td>{{ row.updated_at|fmt_ms_datetime }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="11">暂无交易实验持仓快照；执行实验后显示数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          </div>
+        </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>交易实验错误信息记录</strong></div>
+              <div class="muted">只显示7天内第一组实验和持仓管理模块捕获到的错误信息；用于定位 exchangeInfo 缺失、减仓后硬止盈/硬止损重挂失败等流程问题。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整错误记录。</div>
+          <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>created_at</th>
+                <th>symbol</th>
+                <th>轮次</th>
+                <th>total_score</th>
+                <th>leverage</th>
+                <th>operation</th>
+                <th>error_type</th>
+                <th>error_message</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in trading_error_records %}
+              <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                <td>{{ row.created_at|fmt_ms_datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.decision_round_ts|fmt_ms_datetime if row.decision_round_ts else '-' }}</td>
+                <td>{{ row.total_score if row.total_score is not none else '-' }}</td>
+                <td>{{ row.leverage if row.leverage is not none else '-' }}</td>
+                <td>{{ row.operation }}</td>
+                <td>{{ row.error_type }}</td>
+                <td>{{ row.error_message }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="8">暂无交易实验错误信息记录</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+{% endblock %}
+
+{% block scripts %}
+  <script src="{{ url_for('static', filename='js/simulation.js') }}" defer></script>
+{% endblock %}

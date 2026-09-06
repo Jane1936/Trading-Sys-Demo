@@ -307,6 +307,92 @@ def load_settings_context() -> dict:
         ),
     }
 
+
+def load_simulation_context() -> dict:
+    """Load only paper-trading data required by the simulation page."""
+    module_errors = []
+
+    def load_module(label: str, loader, default):
+        value, error = _safe_page_module(label, loader, default)
+        if error:
+            module_errors.append(error)
+        return value
+
+    since_ms = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp() * 1000)
+    experiment = TradingExperiment(db_path=_trading_db_path())
+    trade_records = load_module(
+        "交易实验记录", lambda: experiment.recent_trade_records(limit=100, since_ms=since_ms), []
+    )
+    positions = load_module("交易持仓快照", lambda: experiment.latest_position_snapshots(limit=100), [])
+    equity_rows = load_module("交易权益曲线", lambda: _experiment_equity_trend_rows(since_ms), [])
+    equity = _latest_trading_equity_usdt(equity_rows)
+
+    holding = HoldingPositionScoringSystem(db_path=_trading_db_path())
+    stop_round, stop_checks = load_module("持仓结构止损检查", holding.get_latest_round_checks, (0, []))
+    reduction_round, reduction_checks = load_module("持仓减仓检查", holding.get_latest_reduction_checks, (0, []))
+    increase_round, increase_checks = load_module("持仓加仓检查", holding.get_latest_increase_checks, (0, []))
+
+    def payload_values(label, loader):
+        payload = load_module(label, loader, {"round_ts": 0, "checks": [], "records": []})
+        return payload["round_ts"], payload["checks"], payload["records"]
+
+    break_even_round, break_even_checks, break_even_records = payload_values("保本止盈", _break_even_payload)
+    trailing_reduction_round, trailing_reduction_checks, trailing_reduction_records = payload_values(
+        "移动追踪减仓", _trailing_reduction_payload
+    )
+    dynamic_round, dynamic_checks, dynamic_records = payload_values("动态利润保护", _dynamic_profit_protection_payload)
+    hard_round, hard_checks, hard_records = payload_values("硬止盈", _hard_take_profit_payload)
+
+    partial = PartialTakeProfitStrategy(db_path=_trading_db_path())
+    partial_round, partial_checks = load_module("分批止盈检查", partial.get_latest_round_checks, (0, []))
+    trailing_stop = TrailingStopTracker(db_path=_trading_db_path())
+    trailing_stop_round, trailing_stop_checks = load_module(
+        "移动追踪止盈检查", trailing_stop.get_latest_round_checks, (0, [])
+    )
+
+    return {
+        "module_errors": module_errors,
+        "active_tab": "tab-simulation",
+        "score_band_configs": [],
+        "trading_trade_records": trade_records,
+        "trading_new_open_symbols": [],
+        "trading_position_snapshots": positions,
+        "trading_used_margin_usdt": _trading_used_margin_text(positions),
+        "trading_equity_usdt": equity,
+        "trading_seven_day_return": _seven_day_equity_return(equity_rows),
+        "trading_open_increase_blocked": _trading_open_increase_blocked(equity, positions),
+        "trading_error_records": load_module(
+            "交易错误记录", lambda: experiment.recent_error_records(limit=100, since_ms=since_ms), []
+        ),
+        "zombie_force_liquidation_records": load_module(
+            "僵尸强平记录",
+            lambda: ZombieForceLiquidationModule(db_path=_trading_db_path()).recent_records(limit=100, since_ms=since_ms),
+            [],
+        ),
+        "holding_stop_loss_round_ts": stop_round,
+        "holding_stop_loss_checks": stop_checks,
+        "holding_portfolio_risk": load_module("持仓组合风险", holding.get_latest_portfolio_risk, None),
+        "holding_reduction_round_ts": reduction_round,
+        "holding_reduction_checks": reduction_checks,
+        "holding_increase_round_ts": increase_round,
+        "holding_increase_checks": increase_checks,
+        "holding_increase_pretrigger_rounds": load_module("持仓加仓预触发", holding.latest_pretrigger_increase_rounds, {}),
+        "holding_stop_loss_records": load_module("持仓结构止损记录", lambda: holding.recent_stop_loss_records(limit=100), []),
+        "holding_reduction_records": load_module("持仓减仓记录", lambda: holding.recent_reduction_records(limit=100), []),
+        "holding_reduction_stop_failure_liquidations": load_module("重挂止损失败后强平记录", lambda: holding.recent_reduction_stop_failure_liquidations(limit=100, since_ms=since_ms), []),
+        "holding_increase_records": load_module("持仓加仓记录", lambda: holding.recent_increase_records(limit=100, since_ms=since_ms), []),
+        "break_even_round_ts": break_even_round, "break_even_checks": break_even_checks, "break_even_records": break_even_records,
+        "partial_take_profit_round_ts": partial_round, "partial_take_profit_checks": partial_checks,
+        "partial_take_profit_records": load_module("分批止盈记录", lambda: partial.recent_records(limit=100), []),
+        "partial_take_profit_errors": load_module("分批止盈错误记录", lambda: partial.recent_errors(limit=100), []),
+        "trailing_reduction_round_ts": trailing_reduction_round, "trailing_reduction_checks": trailing_reduction_checks, "trailing_reduction_records": trailing_reduction_records,
+        "dynamic_profit_protection_round_ts": dynamic_round, "dynamic_profit_protection_checks": dynamic_checks, "dynamic_profit_protection_records": dynamic_records,
+        "hard_take_profit_round_ts": hard_round, "hard_take_profit_checks": hard_checks, "hard_take_profit_records": hard_records,
+        "hard_take_profit_settings": load_module("硬止盈配置", lambda: get_hard_take_profit_settings(CONFIG_DB_PATH), {"profit_ratio": 0.2}),
+        "trailing_stop_round_ts": trailing_stop_round, "trailing_stop_checks": trailing_stop_checks,
+        "trailing_stop_records": load_module("移动追踪止盈记录", lambda: trailing_stop.recent_action_records(limit=100), []),
+    }
+
 def _score_band_context() -> tuple[list[dict], str, str, int]:
     module = OpenableSymbolModule(db_path=_scoring_db_path())
     bands = [
@@ -972,6 +1058,12 @@ def index():
 def settings():
     initialize_config_database(CONFIG_DB_PATH, BASE_DB_PATH)
     return render_template("settings.html", **load_settings_context())
+
+
+@app.get("/trading/simulation")
+def simulation():
+    initialize_config_database(CONFIG_DB_PATH, BASE_DB_PATH)
+    return render_template("simulation.html", **load_simulation_context())
 
 
 @app.get("/api/safety/score-trend")
@@ -1808,10 +1900,15 @@ def trading_experiment_run_api():
 
 @app.get("/safety/abnormal-wicks")
 def abnormal_wicks():
-    if request.args.get("active_tab", default="", type=str).strip() == "tab-feature-flags":
+    legacy_tab_routes = {
+        "tab-feature-flags": "settings",
+        "tab-simulation": "simulation",
+    }
+    legacy_endpoint = legacy_tab_routes.get(request.args.get("active_tab", default="", type=str).strip())
+    if legacy_endpoint:
         query = request.args.to_dict(flat=False)
         query.pop("active_tab", None)
-        return redirect(url_for("settings", **query), code=302)
+        return redirect(url_for(legacy_endpoint, **query), code=302)
 
     initialize_config_database(CONFIG_DB_PATH, BASE_DB_PATH)
     limit = request.args.get("limit", default=100, type=int)
