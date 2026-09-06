@@ -6,6 +6,15 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+
+def _dashboard_templates() -> str:
+    """Return all independently served dashboard templates for shared UI assertions."""
+    return (
+        Path("templates/simulation.html").read_text(encoding="utf-8")
+        + Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    )
+
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pre_safety_module import PreSafetyModule
@@ -21,7 +30,7 @@ from web_app import (
 
 def test_dashboard_uses_shared_base_template_and_static_stylesheet():
     base = Path("templates/base.html").read_text(encoding="utf-8")
-    page = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    page = _dashboard_templates()
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
 
     assert '{% extends "base.html" %}' in page
@@ -155,7 +164,7 @@ def test_pending_live_reduction_check_can_render_numeric_columns():
 
 
 def test_trading_position_snapshots_show_used_margin_summary():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     snapshot_index = template.index("<strong>交易实验持仓快照</strong>")
     used_margin_index = template.index("已用资金：{{ trading_used_margin_usdt }} USDT")
@@ -225,7 +234,7 @@ def test_seven_day_equity_return_requires_two_valid_points_and_positive_start():
 
 
 def test_zombie_force_liquidation_records_render_above_trade_records():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     trend_chart_index = template.index('aria-label="近7天实验组USDT净值变化趋势图"')
     zombie_records_index = template.index("<strong>僵尸单强平操作记录</strong>")
@@ -240,7 +249,7 @@ def test_zombie_force_liquidation_records_render_above_trade_records():
 
 
 def test_zombie_force_liquidation_records_hide_raw_response_column():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     zombie_records_index = template.index("<strong>僵尸单强平操作记录</strong>")
     trade_records_index = template.index("<strong>交易实验交易记录</strong>")
@@ -252,14 +261,14 @@ def test_zombie_force_liquidation_records_hide_raw_response_column():
 
 
 def test_zombie_force_liquidation_copy_describes_24h_hard_limit():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    template = _dashboard_templates()
 
     assert "持仓时间一旦达到24小时" in template
     assert "无论是否已有保本止盈保护" in template
     assert "reduceOnly 市价单将当前持仓全部平仓" in template
 
 def test_experiment_equity_trend_chart_renders_under_equity_metric():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     equity_metric_index = template.index('aria-label="实验组USDT净值"')
     trend_chart_index = template.index('aria-label="近7天实验组USDT净值变化趋势图"')
@@ -273,7 +282,7 @@ def test_experiment_equity_trend_chart_renders_under_equity_metric():
 
 
 def test_filled_orders_summary_includes_expectancy_metric():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     summary_index = template.index('id="filled-orders-summary"')
     expectancy_metric_index = template.index('id="filled-expectancy"')
@@ -286,7 +295,7 @@ def test_filled_orders_summary_includes_expectancy_metric():
 
 
 def test_filled_orders_exit_reason_tip_includes_zombie_force_liquidation():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     tip_index = template.index("止盈/止损原因显示规则")
     automated_hard_take_profit_index = template.index(
@@ -300,7 +309,7 @@ def test_filled_orders_exit_reason_tip_includes_zombie_force_liquidation():
 
 
 def test_filled_orders_query_supports_configurable_days_dropdown():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     panel_index = template.index('<div id="strategy-filled-orders"')
     select_index = template.index('id="filled-orders-days"')
@@ -315,7 +324,7 @@ def test_filled_orders_query_supports_configurable_days_dropdown():
 
 
 def test_filled_orders_query_supports_explicit_time_range_before_common_filter():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     days_query_index = template.index('id="query-filled-sell-orders"')
     start_index = template.index('id="filled-orders-start-time"')
@@ -330,7 +339,7 @@ def test_filled_orders_query_supports_explicit_time_range_before_common_filter()
 
 
 def test_holding_reduction_metrics_have_threshold_highlight_classes():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     assert "<th>ATR(14)</th>" in template
     assert "price_drawdown_percent >= 3.5" not in template
@@ -342,7 +351,7 @@ def test_holding_reduction_metrics_have_threshold_highlight_classes():
 
 
 def test_reduction_stop_failure_liquidation_records_follow_reduction_records():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    template = _dashboard_templates()
 
     reduction_index = template.index("减仓操作记录")
     liquidation_index = template.index("重挂止损失败后强平记录")
@@ -381,7 +390,7 @@ def test_strategy_subpanels_are_not_nested_inside_holding_module_panels():
                     return
 
     parser = StrategyPanelNestingParser()
-    parser.feed(Path("templates/abnormal_wicks.html").read_text(encoding="utf-8"))
+    parser.feed(_dashboard_templates())
 
     assert parser.nested_panels == []
 
@@ -419,7 +428,7 @@ def test_abnormal_wick_recent_event_queries_support_since_filter():
 
 
 def test_abnormal_wicks_template_mentions_recent_limits():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     assert "异常插针记录最多只显示近3天数据" in template
     assert "仅展示最近3天数据" in template
@@ -432,7 +441,7 @@ def test_abnormal_wicks_template_mentions_recent_limits():
 
 
 def test_holding_increase_refresh_updates_module_without_page_reload():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
     init_index = template.index("function renderHoldingIncreaseSummary")
     refresh_index = template.index("/api/holding-increase/refresh-pretrigger")
 
@@ -444,7 +453,7 @@ def test_holding_increase_refresh_updates_module_without_page_reload():
 
 
 def test_trailing_reduction_refresh_updates_module_without_page_reload():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
     init_index = template.index("function renderTrailingReductionSummary")
     refresh_index = template.index("/api/trailing-reduction/refresh-pretrigger")
 
@@ -457,7 +466,7 @@ def test_trailing_reduction_refresh_updates_module_without_page_reload():
 
 
 def test_trailing_reduction_current_price_is_red_below_lowest():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     assert "lowest_15m_low_decimal > 0 and current_price_decimal < lowest_15m_low_decimal" in template
     assert "function trailingReductionCurrentPriceCell" in template
@@ -466,7 +475,7 @@ def test_trailing_reduction_current_price_is_red_below_lowest():
 
 
 def test_holding_increase_tags_have_requested_colors():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
     stylesheet = Path("static/dashboard.css").read_text()
 
     assert ".reduction-tag-stale-pretrigger" in stylesheet
@@ -478,7 +487,7 @@ def test_holding_increase_tags_have_requested_colors():
 
 
 def test_holding_reduction_rule5_lifecycle_tag_is_gray():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
     stylesheet = Path("static/dashboard.css").read_text()
 
     assert ".reduction-tag-rule5-triggered" in stylesheet
@@ -486,7 +495,7 @@ def test_holding_reduction_rule5_lifecycle_tag_is_gray():
     assert 'reduction-tag-rule5-triggered">{{ tag }}' in template
 
 def test_score_page_includes_ma20_skip_warning_at_top():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     score_header_index = template.index("<h2>评分系统</h2>")
     warning_index = template.index("MA20缺失跳过提示")
@@ -507,7 +516,7 @@ def test_score_symbol_error_warning_uses_current_score_round_only():
 
 
 def test_score_page_does_not_require_manual_rule_detail_refresh():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     assert "刷新查看各规则详细数据" not in template
     assert "show-score-rule-details" not in template
@@ -515,14 +524,14 @@ def test_score_page_does_not_require_manual_rule_detail_refresh():
 
 
 def test_score_page_shows_total_score_actual_completion_time():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     assert "实际计算完成时间" in template
     assert "score_total_updated_at" in template
 
 
 def test_abnormal_wicks_template_uses_business_friendly_wick_labels():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     assert "candle_index_open_time" in template
     assert "candle_index_close_time" in template
@@ -539,7 +548,7 @@ def test_abnormal_wicks_template_uses_business_friendly_wick_labels():
 
 
 def test_trading_trade_records_highlight_current_round_new_open_symbols():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     trade_records_index = template.index("<strong>交易实验交易记录</strong>")
     highlight_index = template.index('class="new-open-symbol-badge" title="本轮新开仓"')
@@ -548,7 +557,7 @@ def test_trading_trade_records_highlight_current_round_new_open_symbols():
 
 
 def test_live_trade_records_match_simulation_detail_and_collapsible_ui():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    template = _dashboard_templates()
     start = template.index("<strong>交易实验交易记录（实盘）</strong>")
     end = template.index("<strong>交易实验持仓快照（实盘）</strong>")
     section = template[start:end]
@@ -570,7 +579,7 @@ def test_live_trade_records_match_simulation_detail_and_collapsible_ui():
 
 
 def test_live_position_snapshots_match_simulation_critical_ui_and_fields():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    template = _dashboard_templates()
     marker = 'aria-label="关键实盘交易实验持仓快照"'
     start = template.rindex('<div class="critical-section"', 0, template.index(marker) + 1)
     end = template.index("<strong>交易实验错误信息记录（实盘）</strong>")
@@ -587,7 +596,7 @@ def test_live_position_snapshots_match_simulation_critical_ui_and_fields():
 
 
 def test_live_filled_orders_use_group_tags_linked_highlights_and_simulation_columns():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    template = _dashboard_templates()
     start = template.index('<div id="live-filled-orders"')
     end = template.index('<div id="live-account"', start)
     section = template[start:end]
@@ -608,7 +617,7 @@ def test_live_filled_orders_use_group_tags_linked_highlights_and_simulation_colu
 
 
 def test_dynamic_profit_protection_has_scoped_refresh_button():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     section_index = template.index('<div id="holding-module-dynamic-profit-protection"')
     button_index = template.index('id="refresh-dynamic-profit-protection"', section_index)
@@ -623,7 +632,7 @@ def test_dynamic_profit_protection_has_scoped_refresh_button():
 
 
 def test_partial_take_profit_displays_merged_error_records():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    template = _dashboard_templates()
 
     assert "分批止盈卖出错误记录" in template
     assert 'id="partial-take-profit-errors-body"' in template
@@ -632,7 +641,7 @@ def test_partial_take_profit_displays_merged_error_records():
 
 
 def test_dynamic_profit_protection_displays_updated_profit_tiers():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     assert "周期累积盈亏到达过(2R, 3R] 回撤≥40%" in template
     assert "周期累积盈亏到达过(3R, 4R] 回撤≥30%" in template
@@ -642,7 +651,7 @@ def test_dynamic_profit_protection_displays_updated_profit_tiers():
 
 
 def test_dynamic_profit_protection_displays_highest_profit_time():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     assert template.count("历史最高出现时间") >= 2
     assert "row.highest_profit_at|fmt_ms_datetime" in template
@@ -650,7 +659,7 @@ def test_dynamic_profit_protection_displays_highest_profit_time():
 
 
 def test_dynamic_profit_protection_displays_historical_highest_profit_before_time():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     assert template.count("周期累积盈亏历史最高") >= 2
     assert template.count("<th>周期累积盈亏历史最高</th><th>历史最高出现时间</th>") == 2
@@ -658,7 +667,7 @@ def test_dynamic_profit_protection_displays_historical_highest_profit_before_tim
 
 
 def test_trailing_stop_action_records_show_atr_and_volatility_without_total_score():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
     section_start = template.index("<strong>移动追踪止盈操作记录</strong>")
     section_end = template.index("</table>", section_start)
     section = template[section_start:section_end]
@@ -681,7 +690,7 @@ def test_trailing_stop_action_records_show_atr_and_volatility_without_total_scor
 
 
 def test_trailing_stop_checks_display_holding_hours():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
     section_start = template.index("<strong>移动追踪止盈规则：1分钟扫描结果</strong>")
     section_end = template.index("<strong>移动追踪止盈操作记录</strong>", section_start)
     section = template[section_start:section_end]
@@ -723,7 +732,7 @@ def test_experiment_equity_trend_rows_returns_empty_for_malformed_database():
 
 
 def test_market_filter_uses_collapsible_recent_records_ui():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     section_index = template.index('<section id="tab-market-filter"')
     module_index = template.index("独立市场过滤模块（每15分钟执行）", section_index)
@@ -737,7 +746,7 @@ def test_market_filter_uses_collapsible_recent_records_ui():
 
 
 def test_market_filter_shows_dynamic_threshold_errors_at_page_top():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    template = _dashboard_templates()
     section_index = template.index('<section id="tab-market-filter"')
     error_index = template.index("dynamic_open_threshold_errors", section_index)
     first_module_index = template.index("弱势市场止盈动态调整", section_index)
@@ -748,7 +757,7 @@ def test_market_filter_shows_dynamic_threshold_errors_at_page_top():
 
 
 def test_market_filter_includes_weak_market_profit_adjustment_ui():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    template = _dashboard_templates()
     section_index = template.index('<section id="tab-market-filter"')
     module_index = template.index("弱势市场止盈动态调整（每15分钟执行）", section_index)
     assert template.index("weak_market_profit_adjustment_results", module_index) > module_index
@@ -794,7 +803,7 @@ def test_feature_flag_configuration_cards_use_requested_theme_colors():
 
 
 def test_openable_section_highlights_current_round_open_block_notice():
-    template = Path("templates/abnormal_wicks.html").read_text()
+    template = _dashboard_templates()
 
     openable_index = template.index("本轮可开仓symbol情况")
     notice_index = template.index("open_block_notice", openable_index)
@@ -805,7 +814,7 @@ def test_openable_section_highlights_current_round_open_block_notice():
 
 
 def test_openable_table_shows_previous_round_score_before_distance_ratio():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    template = _dashboard_templates()
     section = template[template.index('id="strategy-openable"'):]
 
     previous_score_index = section.index("<th>上一轮总分</th>")
@@ -819,7 +828,7 @@ def test_openable_table_shows_previous_round_score_before_distance_ratio():
 
 
 def test_market_filter_includes_dynamic_add_position_threshold_ui():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    template = _dashboard_templates()
     section_index = template.index('id="tab-market-filter"')
     module_index = template.index("动态加仓阈值（每15分钟执行）", section_index)
     assert "2R成功率 = 触发笔数 / 样本笔数" in template[module_index:]
@@ -827,7 +836,7 @@ def test_market_filter_includes_dynamic_add_position_threshold_ui():
 
 
 def test_increase_condition_copy_uses_dynamic_round_threshold():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    template = _dashboard_templates()
     section = template[template.index('aria-label="加仓条件模块"'):]
 
     assert "条件1：当前未变现盈利 ≥ 本轮加仓阈值" in section
@@ -837,7 +846,7 @@ def test_increase_condition_copy_uses_dynamic_round_threshold():
 
 
 def test_market_filter_highlights_latest_decisions_and_permission_statuses():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    template = _dashboard_templates()
     section = template[template.index('id="tab-market-filter"'):]
 
     assert section.count("latest-decision-row") >= 5
@@ -847,7 +856,7 @@ def test_market_filter_highlights_latest_decisions_and_permission_statuses():
 
 
 def test_add_position_modules_use_light_purple_theme():
-    template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    template = _dashboard_templates()
     stylesheet = Path("static/dashboard.css").read_text(encoding="utf-8")
     section = template[template.index('id="tab-market-filter"'):]
 
