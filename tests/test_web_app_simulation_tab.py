@@ -23,6 +23,18 @@ def test_simulation_tab_owns_paper_trading_panels() -> None:
     assert 'data-simulation-tab="strategy-account">账户信息' in template
 
 
+def test_simulation_page_uses_standalone_navigation() -> None:
+    template = SIMULATION_TEMPLATE_PATH.read_text(encoding="utf-8")
+    navigation = template.split("{% block navigation %}", 1)[1].split(
+        "{% endblock %}", 1
+    )[0]
+
+    assert "返回交易控制台" in navigation
+    assert "模拟盘数据" in navigation
+    assert "异常插针记录" not in navigation
+    assert "系统配置" not in navigation
+
+
 def test_live_tab_has_production_filled_orders_and_account_panels() -> None:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     base_template = BASE_TEMPLATE_PATH.read_text(encoding="utf-8")
