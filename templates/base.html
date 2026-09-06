@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  {% block meta_refresh %}{% endblock %}
+  <title>{% block title %}Trading System{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}" />
+  {% block head_extra %}{% endblock %}
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar" aria-label="控制台导航">
+      {% block navigation %}
+      <button class="tab-btn {{ 'active' if not active_tab or active_tab == 'tab-abnormal' else '' }}" data-tab="tab-abnormal">异常插针记录</button>
+      <button class="tab-btn {{ 'active' if active_tab == 'tab-btc' else '' }}" data-tab="tab-btc">BTC数据</button>
+      <button class="tab-btn {{ 'active' if active_tab == 'tab-score' else '' }}" data-tab="tab-score">评分系统</button>
+      <button class="tab-btn {{ 'active' if active_tab == 'tab-score-trend' else '' }}" data-tab="tab-score-trend">评分变化趋势</button>
+      <button class="tab-btn {{ 'active' if active_tab == 'tab-market-filter' else '' }}" data-tab="tab-market-filter">市场行情过滤</button>
+      <button class="tab-btn {{ 'active' if active_tab == 'tab-strategy' else '' }}" data-tab="tab-strategy">本轮交易策略</button>
+      <button class="tab-btn {{ 'active' if active_tab == 'tab-simulation' else '' }}" data-tab="tab-simulation">模拟盘数据</button>
+      <button class="tab-btn {{ 'active' if active_tab == 'tab-live' else '' }}" data-tab="tab-live">实盘数据</button>
+      <button class="tab-btn {{ 'active' if active_tab == 'tab-feature-flags' else '' }}" data-tab="tab-feature-flags">功能开关</button>
+      {% endblock %}
+    </aside>
+    <main class="content container">
+      {% if module_errors %}
+      <div class="module-error-banner" role="status" aria-live="polite">
+        <strong>部分模块加载失败，页面已降级展示：</strong>
+        其余模块会继续显示，避免单个模块异常导致整页不可用。
+        <ul>
+          {% for item in module_errors %}
+          <li>{{ item.label }}：{{ item.error }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

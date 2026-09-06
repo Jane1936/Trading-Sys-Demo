@@ -19,6 +19,31 @@ from web_app import (
 )
 
 
+def test_dashboard_uses_shared_base_template_and_static_stylesheet():
+    base = Path("templates/base.html").read_text(encoding="utf-8")
+    page = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+
+    assert '{% extends "base.html" %}' in page
+    assert "<!doctype html>" not in page
+    assert "<style>" not in page
+    assert "{% block content %}" in page
+    assert "{% block scripts %}" in page
+    assert "url_for('static', filename='dashboard.css')" in base
+    assert 'aria-label="控制台导航"' in base
+    assert 'class="module-error-banner"' in base
+    assert "{% block content %}" in base
+    assert "{% block scripts %}" in base
+    assert "COPY static ./static" in dockerfile
+
+
+def test_dashboard_templates_compile_with_inheritance():
+    from web_app import app
+
+    app.jinja_env.get_template("base.html")
+    app.jinja_env.get_template("abnormal_wicks.html")
+
+
 def test_pending_live_increase_check_supplies_template_fields():
     snapshots = [{
         "symbol": "BTCUSDT",
@@ -442,9 +467,10 @@ def test_trailing_reduction_current_price_is_red_below_lowest():
 
 def test_holding_increase_tags_have_requested_colors():
     template = Path("templates/abnormal_wicks.html").read_text()
+    stylesheet = Path("static/dashboard.css").read_text()
 
-    assert ".reduction-tag-stale-pretrigger" in template
-    assert ".reduction-tag-increase-completed" in template
+    assert ".reduction-tag-stale-pretrigger" in stylesheet
+    assert ".reduction-tag-increase-completed" in stylesheet
     assert "row.tag == '已完成第一次加仓'" in template
     assert "tag === '已完成第一次加仓'" in template
     assert "latest_pretrigger_round" in template
@@ -453,8 +479,9 @@ def test_holding_increase_tags_have_requested_colors():
 
 def test_holding_reduction_rule5_lifecycle_tag_is_gray():
     template = Path("templates/abnormal_wicks.html").read_text()
+    stylesheet = Path("static/dashboard.css").read_text()
 
-    assert ".reduction-tag-rule5-triggered" in template
+    assert ".reduction-tag-rule5-triggered" in stylesheet
     assert "tag == '已触发深度弱势'" in template
     assert 'reduction-tag-rule5-triggered">{{ tag }}' in template
 
@@ -750,6 +777,7 @@ def test_feature_flags_include_independent_market_filter_settings_form():
 
 def test_feature_flag_configuration_cards_use_requested_theme_colors():
     template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    stylesheet = Path("static/dashboard.css").read_text(encoding="utf-8")
     section = template[template.index('<section id="tab-feature-flags"'):]
 
     for title in (
@@ -762,8 +790,8 @@ def test_feature_flag_configuration_cards_use_requested_theme_colors():
 
     mapping_index = section.index("止损距离档位与总分映射")
     assert 'class="card feature-config-green"' in section[mapping_index - 100:mapping_index]
-    assert ".feature-config-purple > .header" in template
-    assert ".feature-config-green > .header" in template
+    assert ".feature-config-purple > .header" in stylesheet
+    assert ".feature-config-green > .header" in stylesheet
 
 
 def test_openable_section_highlights_current_round_open_block_notice():
@@ -821,13 +849,14 @@ def test_market_filter_highlights_latest_decisions_and_permission_statuses():
 
 def test_add_position_modules_use_light_purple_theme():
     template = Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+    stylesheet = Path("static/dashboard.css").read_text(encoding="utf-8")
     section = template[template.index('id="tab-market-filter"'):]
 
     permission_index = section.index("加仓权限（每15分钟执行）")
     threshold_index = section.index("动态加仓阈值（每15分钟执行）")
     assert section.rfind("purple-module", 0, permission_index) > 0
     assert section.rfind("purple-module", 0, threshold_index) > permission_index
-    assert ".purple-module .collapsible-header" in template
+    assert ".purple-module .collapsible-header" in stylesheet
 
 
 def test_feature_flags_page_contains_all_rule_weight_controls_and_save_logic():
