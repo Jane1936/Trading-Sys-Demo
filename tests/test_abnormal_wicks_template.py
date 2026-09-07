@@ -12,7 +12,9 @@ def _dashboard_templates() -> str:
     return (
         Path("templates/simulation.html").read_text(encoding="utf-8")
         + Path("templates/live.html").read_text(encoding="utf-8")
+        + Path("templates/market.html").read_text(encoding="utf-8")
         + Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
+        + Path("static/js/market.js").read_text(encoding="utf-8")
     )
 
 
