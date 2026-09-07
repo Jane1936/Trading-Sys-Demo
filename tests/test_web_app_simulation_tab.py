@@ -3,6 +3,8 @@ from pathlib import Path
 
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "abnormal_wicks.html"
 SIMULATION_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "simulation.html"
+LIVE_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "live.html"
+LIVE_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "static" / "js" / "live.js"
 SIMULATION_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "static" / "js" / "simulation.js"
 BASE_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "base.html"
 STYLESHEET_PATH = Path(__file__).resolve().parents[1] / "static" / "dashboard.css"
@@ -36,21 +38,22 @@ def test_simulation_page_uses_standalone_navigation() -> None:
 
 
 def test_live_tab_has_production_filled_orders_and_account_panels() -> None:
-    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    template = LIVE_TEMPLATE_PATH.read_text(encoding="utf-8")
     base_template = BASE_TEMPLATE_PATH.read_text(encoding="utf-8")
     live_start = template.index('<section id="tab-live"')
     live_section = template[live_start:template.index("{% endblock %}", live_start)]
 
-    assert 'data-tab="tab-live">实盘数据</button>' in base_template
+    assert "url_for('live')" in base_template
     assert 'data-live-tab="live-filled-orders">已成交订单分析' in live_section
     assert 'data-live-tab="live-account">账户信息' in live_section
-    assert '/api/live/account/balance' in template
-    assert '/api/live/account/filled-orders' in template
+    script = LIVE_SCRIPT_PATH.read_text(encoding="utf-8")
+    assert '/api/live/account/balance' in script
+    assert '/api/live/account/filled-orders' in script
     assert 'https://fapi.binance.com' in live_section
 
 
 def test_live_account_has_equity_trend_chart_backed_by_live_rows() -> None:
-    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    template = LIVE_TEMPLATE_PATH.read_text(encoding="utf-8")
     live_start = template.index('<section id="tab-live"')
     live_section = template[live_start:template.index("{% endblock %}", live_start)]
 
@@ -63,13 +66,14 @@ def test_live_account_has_equity_trend_chart_backed_by_live_rows() -> None:
     assert 'id="live-experiment-seven-day-return"' in live_section
     assert "live_seven_day_return" in live_section
     assert "数据来自实盘开仓、保本止盈、分批止盈扫描记录" in live_section
-    assert "{% for r in live_equity_trend_rows %}" in template
-    assert "buildExperimentEquityTrendOption(rawRows)" in template
-    assert "refreshLiveExperimentEquityTrendChartLayout" in template
+    assert "{% for row in live_equity_trend_rows %}" in template
+    script = LIVE_SCRIPT_PATH.read_text(encoding="utf-8")
+    assert "live-equity-trend-data" in script
+    assert "resizeEquityChart" in script
 
 
 def test_live_zombie_records_are_collapsed_after_latest_ten_rows() -> None:
-    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    template = LIVE_TEMPLATE_PATH.read_text(encoding="utf-8")
     zombie_start = template.index("僵尸单强平操作记录（实盘）")
     trade_records_start = template.index("交易实验交易记录（实盘）", zombie_start)
     zombie_section = template[
@@ -84,7 +88,7 @@ def test_live_zombie_records_are_collapsed_after_latest_ten_rows() -> None:
 
 
 def test_live_holding_score_tabs_target_separate_module_panels() -> None:
-    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    template = LIVE_TEMPLATE_PATH.read_text(encoding="utf-8")
     live_start = template.index('<section id="tab-live"')
     live_section = template[live_start:template.index("{% endblock %}", live_start)]
     module_names = ("stop-loss", "reduction", "increase", "portfolio-risk")
@@ -101,7 +105,7 @@ def test_live_holding_score_tabs_target_separate_module_panels() -> None:
 
 
 def test_live_holding_modules_render_full_operation_record_tables() -> None:
-    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    template = LIVE_TEMPLATE_PATH.read_text(encoding="utf-8")
     live_start = template.index('<section id="tab-live"')
     live_section = template[live_start:template.index("{% endblock %}", live_start)]
 
@@ -120,7 +124,7 @@ def test_live_holding_modules_render_full_operation_record_tables() -> None:
 
 
 def test_live_position_modules_have_scoped_refresh_buttons() -> None:
-    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    template = LIVE_TEMPLATE_PATH.read_text(encoding="utf-8")
     live_start = template.index('<section id="tab-live"')
     live_section = template[live_start:template.index("{% endblock %}", live_start)]
 
@@ -130,13 +134,14 @@ def test_live_position_modules_have_scoped_refresh_buttons() -> None:
     for label in ("保本止盈", "分批止盈", "移动追踪减仓", "动态利润保护", "移动追踪止盈"):
         assert label in live_section
 
-    assert "/api/live/holding-increase/summary" in template
-    assert "/api/live/high-frequency/${encodeURIComponent(moduleKey)}/summary" in template
+    script = LIVE_SCRIPT_PATH.read_text(encoding="utf-8")
+    assert "/api/live/holding-increase/summary" in script
+    assert "/api/live/high-frequency/${encodeURIComponent(key)}/summary" in script
     assert "仅刷新本模块最新数据" in live_section
     assert "字段与模拟盘对应模块保持一致" in live_section
     assert "module.tables.check_columns" in live_section
     assert "module.tables.record_columns" in live_section
-    assert "liveModuleCell(row, column)" in template
+    assert "live-module-refresh" in script
 
 
 def test_holding_module_tab_script_scopes_updates_to_current_account_panel() -> None:

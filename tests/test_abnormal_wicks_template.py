@@ -11,6 +11,7 @@ def _dashboard_templates() -> str:
     """Return all independently served dashboard templates for shared UI assertions."""
     return (
         Path("templates/simulation.html").read_text(encoding="utf-8")
+        + Path("templates/live.html").read_text(encoding="utf-8")
         + Path("templates/abnormal_wicks.html").read_text(encoding="utf-8")
     )
 
