@@ -394,6 +394,95 @@ def load_simulation_context() -> dict:
         "trailing_stop_records": load_module("移动追踪止盈记录", lambda: trailing_stop.recent_action_records(limit=100), []),
     }
 
+
+def load_live_context() -> dict:
+    """Load only production-trading data required by the live page."""
+    module_errors = []
+
+    def load_module(label: str, loader, default):
+        value, error = _safe_page_module(label, loader, default)
+        if error:
+            module_errors.append(error)
+        return value
+
+    since_ms = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp() * 1000)
+    load_module("实盘交易表初始化", real_trading.initialize, None)
+    experiment = load_module("实盘交易实验模块", real_trading.experiment, None)
+    trade_records = load_module(
+        "实盘交易实验记录",
+        lambda: experiment.recent_trade_records(limit=100, since_ms=since_ms),
+        [],
+    )
+    positions = load_module(
+        "实盘交易持仓快照", lambda: experiment.latest_position_snapshots(limit=100), []
+    )
+    equity_rows = load_module(
+        "实盘交易权益曲线",
+        lambda: _experiment_equity_trend_rows(since_ms, db_config.REAL_TRADING_CORE_DB_PATH),
+        [],
+    )
+    initial_equity = load_module(
+        "实盘初始净值", lambda: real_trading.config().initial_equity_usdt, DEFAULT_TRADING_EQUITY_USDT
+    )
+    equity = _latest_trading_equity_usdt(equity_rows) if equity_rows else initial_equity
+    holding = load_module("实盘持仓评分模块", real_trading.holding_scoring, None)
+    stop_round, stop_checks = load_module("实盘持仓结构止损检查", holding.get_latest_round_checks, (0, []))
+    reduction_round, reduction_checks = load_module("实盘持仓减仓检查", holding.get_latest_reduction_checks, (0, []))
+    increase_round, increase_checks = load_module("实盘持仓加仓检查", holding.get_latest_increase_checks, (0, []))
+    portfolio_risk = load_module("实盘持仓组合风险", holding.get_latest_portfolio_risk, None)
+
+    high_frequency_modules = []
+    modules = load_module("实盘高频保护模块", real_trading.high_frequency_modules, ())
+    definitions = (
+        ("break-even", "保本止盈", "recent_records"),
+        ("partial-take-profit", "分批止盈", "recent_records"),
+        ("trailing-reduction", "移动追踪减仓", "recent_action_records"),
+        ("dynamic-profit-protection", "动态利润保护", "recent_action_records"),
+        ("hard-take-profit", "硬止盈", "recent_action_records"),
+        ("trailing-stop", "移动追踪止盈", "recent_action_records"),
+    )
+    for (key, label, records_method), module in zip(definitions, modules):
+        round_ts, checks = load_module(f"实盘{label}检查", module.get_latest_round_checks, (0, []))
+        records = load_module(
+            f"实盘{label}记录", lambda m=module, method=records_method: getattr(m, method)(limit=100), []
+        )
+        high_frequency_modules.append({
+            "key": f"live-high-frequency-{key}", "api_key": key, "label": label,
+            "round_ts": round_ts, "checks": _sync_live_module_checks(checks, positions),
+            "records": [asdict(row) if hasattr(row, "__dataclass_fields__") else dict(row) for row in records],
+            "tables": LIVE_MODULE_TABLES[key],
+        })
+
+    score_bands, _, _, _ = load_module("实盘订单评分档位配置", _score_band_context, ([], "", "", 0))
+    return {
+        "module_errors": module_errors,
+        "active_tab": "tab-live",
+        "score_band_configs": score_bands,
+        "live_trade_records": trade_records,
+        "live_new_open_symbols": [],
+        "live_position_snapshots": positions,
+        "live_used_margin_usdt": _trading_used_margin_text(positions),
+        "live_open_increase_blocked": _trading_open_increase_blocked(equity, positions),
+        "live_error_records": load_module("实盘交易错误记录", lambda: experiment.recent_error_records(limit=100, since_ms=since_ms), []),
+        "live_zombie_records": load_module("实盘僵尸强平记录", lambda: real_trading.zombie_module().recent_records(limit=100, since_ms=since_ms), []),
+        "live_equity_trend_rows": equity_rows,
+        "live_trading_equity": equity,
+        "live_seven_day_return": _seven_day_equity_return(equity_rows),
+        "live_holding_stop_loss_round_ts": stop_round,
+        "live_holding_stop_loss_checks": _sync_live_module_checks(stop_checks, positions),
+        "live_holding_portfolio_risk": _sync_live_portfolio_risk(portfolio_risk, positions),
+        "live_holding_reduction_round_ts": reduction_round,
+        "live_holding_reduction_checks": _sync_live_module_checks(reduction_checks, positions),
+        "live_holding_increase_round_ts": increase_round,
+        "live_holding_increase_checks": _sync_live_module_checks(increase_checks, positions),
+        "live_holding_increase_pretrigger_rounds": load_module("实盘持仓加仓预触发", holding.latest_pretrigger_increase_rounds, {}),
+        "live_holding_stop_loss_records": load_module("实盘持仓结构止损记录", lambda: holding.recent_stop_loss_records(limit=100), []),
+        "live_holding_reduction_records": load_module("实盘持仓减仓记录", lambda: holding.recent_reduction_records(limit=100), []),
+        "live_holding_reduction_stop_failure_liquidations": load_module("实盘重挂止损失败后强平记录", lambda: holding.recent_reduction_stop_failure_liquidations(limit=100, since_ms=since_ms), []),
+        "live_holding_increase_records": load_module("实盘持仓加仓记录", lambda: holding.recent_increase_records(limit=100, since_ms=since_ms), []),
+        "live_high_frequency_modules": high_frequency_modules,
+    }
+
 def _score_band_context() -> tuple[list[dict], str, str, int]:
     module = OpenableSymbolModule(db_path=_scoring_db_path())
     bands = [
@@ -1065,6 +1154,12 @@ def settings():
 def simulation():
     initialize_config_database(CONFIG_DB_PATH, BASE_DB_PATH)
     return render_template("simulation.html", **load_simulation_context())
+
+
+@app.get("/trading/live")
+def live():
+    initialize_config_database(CONFIG_DB_PATH, BASE_DB_PATH)
+    return render_template("live.html", **load_live_context())
 
 
 @app.get("/api/safety/score-trend")
@@ -1904,6 +1999,7 @@ def abnormal_wicks():
     legacy_tab_routes = {
         "tab-feature-flags": "settings",
         "tab-simulation": "simulation",
+        "tab-live": "live",
     }
     legacy_endpoint = legacy_tab_routes.get(request.args.get("active_tab", default="", type=str).strip())
     if legacy_endpoint:
