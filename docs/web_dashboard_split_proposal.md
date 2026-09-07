@@ -105,7 +105,7 @@ docker run -d \
   --user "$(id -u):$(id -g)" \
   -v /root/trade/data:/app/data \
   -v /root/trade/logs:/app/logs \
-  -p 5000:5000 \
+  -p "${WEB_BIND_IP:-127.0.0.1}:5000:5000" \
   --env-file /root/.env \
   --restart=always \
   trading-sys-demo web
@@ -115,7 +115,7 @@ docker run -d \
 
 1. 代码和模板是在构建镜像时复制进去的，因此实施拆页后必须重新执行 `docker build -t trading-sys-demo .`，仅重启旧容器不会得到新页面。
 2. 如果按本方案新增 `static/js/...`，必须同时在 `Dockerfile` 中加入 `COPY static ./static`；当前镜像只复制 Python 文件、评分配置、`templates` 和入口脚本。
-3. 新旧容器不能同时使用 `--name trade-web` 或同时绑定宿主机 `5000` 端口。简单更新时应先删除旧容器再用原命令启动；需要低停机更新时，可让候选容器使用不同名称和临时端口验证后再切换反向代理。
+3. 新旧容器不能同时使用 `--name trade-web` 或同时绑定宿主机同一地址的 `5000` 端口。简单更新时应先删除旧容器再用原命令启动；需要低停机更新时，可让候选容器使用不同名称和临时端口验证后再切换反向代理。通过 Tailscale 访问时，`WEB_BIND_IP` 应设为服务器的 Tailscale IPv4；未设置则只监听宿主机回环地址，不能设为 `0.0.0.0` 或公网 IP。
 4. 页面拆分不迁移、不重建数据库，也不会改变 `/app/data` 的挂载位置。回滚到旧镜像时仍读取同一批数据库文件。
 5. 应继续保留 `/` 的轻量响应，因为现有 Compose 健康检查访问该地址。拆页时不要把 `/` 改成依赖全部业务数据库查询的聚合页，否则会重新扩大健康检查的故障域。
 

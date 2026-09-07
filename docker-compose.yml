@@ -43,7 +43,10 @@ services:
     user: "${PUID:-1000}:${PGID:-1000}"
     restart: always
     ports:
-      - "5000:5000"
+      # Publish only on the host's Tailscale IPv4 address. Set WEB_BIND_IP to
+      # `tailscale ip -4` on the server; the loopback default fails closed for
+      # fresh installs instead of exposing the dashboard on every interface.
+      - "${WEB_BIND_IP:-127.0.0.1}:5000:5000"
     environment:
       <<: *app-env
     volumes:
