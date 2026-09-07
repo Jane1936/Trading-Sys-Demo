@@ -1205,7 +1205,8 @@ def _annotate_filled_order_exit_reasons(
 
 @app.get("/")
 def index():
-    return "<a href='/safety/abnormal-wicks'>abnormal wick events</a>"
+    """Render the lightweight entry point for every standalone dashboard."""
+    return render_template("home.html")
 
 
 @app.get("/settings")

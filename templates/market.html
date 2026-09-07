@@ -4,7 +4,7 @@
 {% block head_extra %}<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>{% endblock %}
 
 {% block navigation %}
-  <a class="tab-btn" href="{{ url_for('abnormal_wicks') }}">返回交易控制台</a>
+  <a class="tab-btn" href="{{ url_for('index') }}">返回交易控制台</a>
   <button class="tab-btn active" type="button" role="tab" aria-selected="true" aria-controls="tab-btc" data-market-tab="tab-btc">BTC数据</button>
   <button class="tab-btn" type="button" role="tab" aria-selected="false" aria-controls="tab-market-filter" data-market-tab="tab-market-filter">市场行情过滤</button>
 {% endblock %}

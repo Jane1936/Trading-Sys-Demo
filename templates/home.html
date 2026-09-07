@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}交易系统控制台{% endblock %}
+
+{% block navigation %}
+  <div class="sidebar-brand">
+    <span class="sidebar-brand-mark">TS</span>
+    <span><strong>交易系统</strong><small>控制台导航</small></span>
+  </div>
+  <a class="tab-btn home-nav-live" href="{{ url_for('live') }}"><span aria-hidden="true">●</span> 实盘</a>
+  <a class="tab-btn home-nav-simulation" href="{{ url_for('simulation') }}"><span aria-hidden="true">◎</span> 模拟盘</a>
+  <a class="tab-btn home-nav-settings" href="{{ url_for('settings') }}"><span aria-hidden="true">⚙</span> 系统配置</a>
+  <a class="tab-btn home-nav-market" href="{{ url_for('market_safety') }}"><span aria-hidden="true">◇</span> 市场安全</a>
+  <a class="tab-btn home-nav-scoring" href="{{ url_for('scoring') }}"><span aria-hidden="true">★</span> 评分系统与开仓</a>
+{% endblock %}
+
+{% block content %}
+  <section class="home-hero" aria-labelledby="home-title">
+    <div class="home-hero-copy">
+      <span class="home-eyebrow">TRADING SYSTEM</span>
+      <h1 id="home-title">交易系统控制台</h1>
+      <p>所有交易、策略与风控模块的统一入口。选择下方板块，快速进入对应的独立工作台。</p>
+    </div>
+    <div class="home-status" aria-label="系统入口状态">
+      <span class="home-status-dot"></span>
+      <span><strong>5 个工作台</strong><small>导航已就绪</small></span>
+    </div>
+  </section>
+
+  <nav class="home-grid" aria-label="工作台快捷入口">
+    <a class="home-card home-card-live" href="{{ url_for('live') }}">
+      <span class="home-card-number">01</span><span class="home-card-icon" aria-hidden="true">●</span>
+      <span class="home-card-copy"><strong>实盘</strong><small>实时账户、持仓评分与成交分析</small></span>
+      <span class="home-card-arrow" aria-hidden="true">→</span>
+    </a>
+    <a class="home-card home-card-simulation" href="{{ url_for('simulation') }}">
+      <span class="home-card-number">02</span><span class="home-card-icon" aria-hidden="true">◎</span>
+      <span class="home-card-copy"><strong>模拟盘</strong><small>模拟持仓、策略验证与订单复盘</small></span>
+      <span class="home-card-arrow" aria-hidden="true">→</span>
+    </a>
+    <a class="home-card home-card-settings" href="{{ url_for('settings') }}">
+      <span class="home-card-number">03</span><span class="home-card-icon" aria-hidden="true">⚙</span>
+      <span class="home-card-copy"><strong>系统配置</strong><small>功能开关、策略参数与规则权重</small></span>
+      <span class="home-card-arrow" aria-hidden="true">→</span>
+    </a>
+    <a class="home-card home-card-market" href="{{ url_for('market_safety') }}">
+      <span class="home-card-number">04</span><span class="home-card-icon" aria-hidden="true">◇</span>
+      <span class="home-card-copy"><strong>市场安全</strong><small>BTC 行情监控与市场过滤状态</small></span>
+      <span class="home-card-arrow" aria-hidden="true">→</span>
+    </a>
+    <a class="home-card home-card-scoring" href="{{ url_for('scoring') }}">
+      <span class="home-card-number">05</span><span class="home-card-icon" aria-hidden="true">★</span>
+      <span class="home-card-copy"><strong>评分系统与开仓</strong><small>异常行情、综合评分与本轮开仓策略</small></span>
+      <span class="home-card-arrow" aria-hidden="true">→</span>
+    </a>
+  </nav>
+
+  <p class="home-footnote">各板块相互独立，返回本页即可切换工作台。</p>
+{% endblock %}

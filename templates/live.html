@@ -5,7 +5,7 @@
 {% block head_extra %}<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>{% endblock %}
 
 {% block navigation %}
-  <a class="tab-btn" href="{{ url_for('abnormal_wicks') }}">返回交易控制台</a>
+  <a class="tab-btn" href="{{ url_for('index') }}">返回交易控制台</a>
   <a class="tab-btn active" href="{{ url_for('live') }}" aria-current="page">实盘数据</a>
 {% endblock %}
 
