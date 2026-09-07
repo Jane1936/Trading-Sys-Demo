@@ -70,6 +70,8 @@ def test_live_account_has_equity_trend_chart_backed_by_live_rows() -> None:
     script = LIVE_SCRIPT_PATH.read_text(encoding="utf-8")
     assert "live-equity-trend-data" in script
     assert "resizeEquityChart" in script
+    assert "dataZoom: [{ type: 'inside' }, { type: 'slider'" in script
+    assert "lineStyle: { width: 3, color: '#f97316' }" in script
 
 
 def test_live_zombie_records_are_collapsed_after_latest_ten_rows() -> None:
@@ -142,6 +144,22 @@ def test_live_position_modules_have_scoped_refresh_buttons() -> None:
     assert "module.tables.check_columns" in live_section
     assert "module.tables.record_columns" in live_section
     assert "live-module-refresh" in script
+    assert "button.closest('.holding-module-panel')" in script
+    assert "renderModuleRows" in script
+    assert "renderHoldingIncrease" in script
+
+
+def test_live_filled_orders_match_simulation_analysis_and_tab_styles() -> None:
+    template = LIVE_TEMPLATE_PATH.read_text(encoding="utf-8")
+    script = LIVE_SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert 'class="bookmark-tab filled-orders-tab active"' in template
+    assert 'class="bookmark-tab account-info-tab"' in template
+    assert 'aria-label="实盘已完成订单统计"' in template
+    assert "analyzeOrders" in script
+    assert "renderOrderSummary(analysis.summary)" in script
+    assert "filled-order-group-badge" in script
+    assert "bindOrderHighlights" in script
 
 
 def test_holding_module_tab_script_scopes_updates_to_current_account_panel() -> None:
