@@ -513,8 +513,8 @@ def test_score_page_includes_ma20_skip_warning_at_top():
 def test_score_symbol_error_warning_uses_current_score_round_only():
     web_app_source = Path("web_app.py").read_text()
 
-    assert "scoring_symbol_error_round_ts = score_total_round_ts" in web_app_source
-    assert "scoring_symbol_errors = scoring.get_symbol_errors_for_round(score_total_round_ts)" in web_app_source
+    assert "\"scoring_symbol_error_round_ts\": total_round" in web_app_source
+    assert "scoring_system.get_symbol_errors_for_round(total_round)" in web_app_source
     assert "scoring_symbol_error_round_ts, scoring_symbol_errors = scoring.get_latest_symbol_error_round()" not in web_app_source
 
 
@@ -711,7 +711,7 @@ def test_web_page_creates_missing_db_parent_directory():
         original_db_path = web_app.DB_PATH
         web_app.DB_PATH = str(db_path)
         try:
-            response = web_app.app.test_client().get("/safety/abnormal-wicks")
+            response = web_app.app.test_client().get("/strategy/scoring")
         finally:
             web_app.DB_PATH = original_db_path
 

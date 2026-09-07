@@ -2064,25 +2064,8 @@ def trading_experiment_run_api():
         return jsonify({"error": str(exc)}), 502
 
 
-@app.get("/safety/abnormal-wicks")
-def abnormal_wicks():
-    legacy_tab_routes = {
-        "tab-feature-flags": "settings",
-        "tab-btc": "market_safety",
-        "tab-market-filter": "market_safety",
-        "tab-simulation": "simulation",
-        "tab-live": "live",
-    }
-    legacy_endpoint = legacy_tab_routes.get(request.args.get("active_tab", default="", type=str).strip())
-    if legacy_endpoint:
-        query = request.args.to_dict(flat=False)
-        query.pop("active_tab", None)
-        return redirect(url_for(legacy_endpoint, **query), code=302)
-
-    initialize_config_database(CONFIG_DB_PATH, BASE_DB_PATH)
-    limit = request.args.get("limit", default=100, type=int)
-    symbol = request.args.get("symbol", default="", type=str).strip()
-    limit = max(1, min(limit, 1000))
+def load_scoring_context() -> dict:
+    """Load only scoring, abnormal-wick and opening-strategy page data."""
     module_errors = []
 
     def load_module(label: str, loader, default):
@@ -2091,335 +2074,120 @@ def abnormal_wicks():
             module_errors.append(error)
         return value
 
-    module = PreSafetyModule(db_path=_scoring_db_path())
-    load_module("异常插针表初始化", module.init_table, None)
-    abnormal_events_since_ms = int((datetime.now(timezone.utc) - timedelta(days=3)).timestamp() * 1000)
+    limit = max(1, min(request.args.get("limit", default=100, type=int), 1000))
+    symbol = request.args.get("symbol", default="", type=str).strip()
+    safety = PreSafetyModule(db_path=_scoring_db_path())
+    load_module("异常插针表初始化", safety.init_table, None)
+    since_ms = int((datetime.now(timezone.utc) - timedelta(days=3)).timestamp() * 1000)
+    should_load_events = request.args.get("wick_refresh") == "1"
+    events = load_module(
+        "异常插针事件",
+        lambda: safety.get_recent_events_by_symbol(symbol=symbol, limit=limit, since_ms=since_ms)
+        if symbol else safety.get_recent_events(limit=limit, since_ms=since_ms),
+        [],
+    ) if should_load_events else []
+    symbols = load_module("异常插针 Symbol 列表", lambda: safety.get_event_symbols(since_ms=since_ms), [])
+    current_round = load_module("当前决策轮次", safety._decision_round_ts_ms, 0)
+    latest_round, latest_symbols = load_module(
+        "最新异常插针轮次", lambda: safety.get_latest_round_abnormal_symbols(decision_round_ts=current_round), (0, [])
+    )
+
     cooldown = CooldownModule(db_path=_scoring_db_path())
     load_module("冷却表初始化", cooldown.init_table, None)
-    should_load_abnormal_events = request.args.get("wick_refresh") == "1"
-    if should_load_abnormal_events:
-        events = load_module(
-            "异常插针事件",
-            lambda: module.get_recent_events_by_symbol(symbol=symbol, limit=limit, since_ms=abnormal_events_since_ms)
-            if symbol
-            else module.get_recent_events(limit=limit, since_ms=abnormal_events_since_ms),
-            [],
-        )
-    else:
-        events = []
-    symbols = load_module("异常插针 Symbol 列表", lambda: module.get_event_symbols(since_ms=abnormal_events_since_ms), [])
-    current_round_ts = load_module("当前决策轮次", module._decision_round_ts_ms, 0)
-    latest_round_ts, latest_round_symbols = load_module("最新异常插针轮次", lambda: module.get_latest_round_abnormal_symbols(decision_round_ts=current_round_ts), (0, []))
-    cooldown_round_ts, cooldown_symbols = load_module("冷却 Symbol 轮次", lambda: cooldown.get_latest_round_symbols(decision_round_ts=current_round_ts), (0, []))
-    scoring = ScoringSystem(db_path=_scoring_db_path())
-    load_module("评分表初始化", scoring.init_table, None)
-    score_round_ts, round_scores = load_module("评分规则1", scoring.get_latest_round_scores, (0, []))
-    score_rule2_round_ts, round_scores_rule2 = load_module("评分规则2 rule2", scoring.get_latest_round_scores_close_gt_ma20, (0, []))
-    score_rule3_round_ts, round_scores_rule3 = load_module("评分规则3 rule3", scoring.get_latest_round_scores_1h_close_gt_prev, (0, []))
-    score_rule4_round_ts, round_scores_rule4 = load_module("评分规则4 rule4", scoring.get_latest_round_scores_15m_bullish_3of4, (0, []))
-    score_rule5_round_ts, round_scores_rule5 = load_module("评分规则5 rule5", scoring.get_latest_round_scores_15m_close_increasing_3of4, (0, []))
-    score_rule6_round_ts, round_scores_rule6 = load_module("评分规则6 rule6", scoring.get_latest_round_scores_1m_close_gt_5m_ma20, (0, []))
-    score_rule7_round_ts, round_scores_rule7 = load_module("评分规则7 rule7", scoring.get_latest_round_scores_15m_close_near_high_2of4, (0, []))
-    score_rule8_round_ts, round_scores_rule8 = load_module("评分规则8 rule8", scoring.get_latest_round_scores_15m_latest_highest_prev_96, (0, []))
-    score_rule9_round_ts, round_scores_rule9 = load_module("评分规则9 rule9", scoring.get_latest_round_scores_15m_close_desc_3_with_oi_45m, (0, []))
-    score_rule10_round_ts, round_scores_rule10 = load_module("评分规则10 rule10", scoring.get_latest_round_scores_1m_close_gt_60m_open_with_oi_60m, (0, []))
-    score_rule11_round_ts, round_scores_rule11 = load_module("评分规则11 rule11", scoring.get_latest_round_scores_oi_loss_rate_240m, (0, []))
-    score_rule12_round_ts, round_scores_rule12 = load_module("评分规则12 rule12", scoring.get_latest_round_scores_15m_funding_rate_4bars, (0, []))
-    score_rule13_round_ts, round_scores_rule13 = load_module("评分规则13 rule13", scoring.get_latest_round_scores_15m_bullish_volume_breakout, (0, []))
-    score_rule14_round_ts, round_scores_rule14 = load_module("评分规则14 rule14", scoring.get_latest_round_scores_15m_volume_spike_2of3, (0, []))
-    score_rule15_round_ts, round_scores_rule15 = load_module("评分规则15 rule15", scoring.get_latest_round_scores_1h_volume_spike_latest, (0, []))
-    score_rule16_round_ts, round_scores_rule16 = load_module("评分规则16 rule16", scoring.get_latest_round_scores_15m_pullback_low_volume, (0, []))
-    score_rule17_round_ts, round_scores_rule17 = load_module("评分规则17 rule17", scoring.get_latest_round_scores_15m_low_rebound_3bars, (0, []))
-    score_rule18_round_ts, round_scores_rule18 = load_module("评分规则18 rule18", scoring.get_latest_round_scores_structural_stop_loss_distance, (0, []))
-    score_total_round_ts, round_scores_total = load_module("评分总分", scoring.get_latest_round_total_scores, (0, []))
-    score_total_updated_at = load_module("评分更新时间", lambda: scoring.get_total_score_round_updated_at(score_total_round_ts), 0)
-    scoring_ma20_skip_record = load_module("MA20 评分跳过记录", lambda: scoring.get_ma20_skip_record_for_round(score_total_round_ts), None)
-    scoring_symbol_error_round_ts = score_total_round_ts
-    # Keep this lookup pinned to the current score round:
-    # scoring_symbol_errors = scoring.get_symbol_errors_for_round(score_total_round_ts)
-    scoring_symbol_errors = load_module("评分 Symbol 错误", lambda: scoring.get_symbol_errors_for_round(score_total_round_ts), [])
-    score_band_configs, score_distance_threshold_text, score_leverage_mapping_text, openable_min_total_score = _score_band_context()
+    cooldown_round, cooldown_symbols = load_module(
+        "冷却 Symbol 轮次", lambda: cooldown.get_latest_round_symbols(decision_round_ts=current_round), (0, [])
+    )
+    scoring_system = ScoringSystem(db_path=_scoring_db_path())
+    load_module("评分表初始化", scoring_system.init_table, None)
+    rule_loaders = [
+        scoring_system.get_latest_round_scores,
+        scoring_system.get_latest_round_scores_close_gt_ma20,
+        scoring_system.get_latest_round_scores_1h_close_gt_prev,
+        scoring_system.get_latest_round_scores_15m_bullish_3of4,
+        scoring_system.get_latest_round_scores_15m_close_increasing_3of4,
+        scoring_system.get_latest_round_scores_1m_close_gt_5m_ma20,
+        scoring_system.get_latest_round_scores_15m_close_near_high_2of4,
+        scoring_system.get_latest_round_scores_15m_latest_highest_prev_96,
+        scoring_system.get_latest_round_scores_15m_close_desc_3_with_oi_45m,
+        scoring_system.get_latest_round_scores_1m_close_gt_60m_open_with_oi_60m,
+        scoring_system.get_latest_round_scores_oi_loss_rate_240m,
+        scoring_system.get_latest_round_scores_15m_funding_rate_4bars,
+        scoring_system.get_latest_round_scores_15m_bullish_volume_breakout,
+        scoring_system.get_latest_round_scores_15m_volume_spike_2of3,
+        scoring_system.get_latest_round_scores_1h_volume_spike_latest,
+        scoring_system.get_latest_round_scores_15m_pullback_low_volume,
+        scoring_system.get_latest_round_scores_15m_low_rebound_3bars,
+        scoring_system.get_latest_round_scores_structural_stop_loss_distance,
+    ]
+    context = {}
+    for rule_id, loader in enumerate(rule_loaders, 1):
+        round_ts, rows = load_module(f"评分规则{rule_id}", loader, (0, []))
+        context["score_round_ts" if rule_id == 1 else f"score_rule{rule_id}_round_ts"] = round_ts
+        context["round_scores" if rule_id == 1 else f"round_scores_rule{rule_id}"] = rows
+
+    total_round, total_scores = load_module("评分总分", scoring_system.get_latest_round_total_scores, (0, []))
+    bands, distance_text, leverage_text, minimum_score = load_module(
+        "评分档位配置", _score_band_context, ([], "", "", 0)
+    )
     openable = OpenableSymbolModule(db_path=_scoring_db_path())
     load_module("可开仓表初始化", openable.init_table, None)
-    openable_round_ts = score_total_round_ts
     _, openable_symbols = load_module(
         "可开仓模块",
-        lambda: openable.get_latest_round_symbols(decision_round_ts=openable_round_ts)
-        if openable_round_ts
-        else (None, []),
+        lambda: openable.get_latest_round_symbols(decision_round_ts=total_round) if total_round else (None, []),
         (None, []),
     )
-    openable_round_history = load_module(
-        "可开仓 Symbol 情况记录",
-        lambda: openable.recent_round_summaries(limit=100),
-        [],
-    )
-    score_trend_symbols = load_module("评分趋势 Symbol 列表", scoring.get_total_score_symbols, [])
-    requested_score_trend_symbol = request.args.get("score_trend_symbol", default="", type=str).strip()
-    default_score_trend_symbol = round_scores_total[0].symbol if round_scores_total else ""
-    score_trend_symbol = requested_score_trend_symbol or default_score_trend_symbol
-    if score_trend_symbol and score_trend_symbol not in score_trend_symbols:
-        score_trend_symbols = sorted(set(score_trend_symbols) | {score_trend_symbol})
-    score_trend_rows = []
-    trading_experiment = TradingExperiment(db_path=_trading_db_path())
-    trading_records_since_ms = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp() * 1000)
-    trading_trade_records = load_module("交易实验记录", lambda: trading_experiment.recent_trade_records(limit=100, since_ms=trading_records_since_ms), [])
-    trading_new_open_symbols = sorted({
-        row.symbol
-        for row in trading_trade_records
-        if row.status == "opened" and row.decision_round_ts == openable_round_ts
-    })
-    trading_position_snapshots = load_module("交易持仓快照", lambda: trading_experiment.latest_position_snapshots(limit=100), [])
-    trading_used_margin_usdt = _trading_used_margin_text(trading_position_snapshots)
-    trading_equity_trend_rows = load_module("交易权益曲线", lambda: _experiment_equity_trend_rows(trading_records_since_ms), [])
-    trading_equity = _latest_trading_equity_usdt(trading_equity_trend_rows)
-    trading_seven_day_return = _seven_day_equity_return(trading_equity_trend_rows)
-    trading_open_increase_blocked = _trading_open_increase_blocked(trading_equity, trading_position_snapshots)
-    trading_error_records = load_module("交易错误记录", lambda: trading_experiment.recent_error_records(limit=100, since_ms=trading_records_since_ms), [])
-    zombie_force_liquidation = ZombieForceLiquidationModule(db_path=_trading_db_path())
-    zombie_force_liquidation_records = load_module("僵尸强平记录", lambda: zombie_force_liquidation.recent_records(limit=100, since_ms=trading_records_since_ms), [])
-    live_experiment = real_trading.experiment()
-    load_module("实盘交易表初始化", real_trading.initialize, None)
-    live_trade_records = load_module("实盘交易实验记录", lambda: live_experiment.recent_trade_records(limit=100, since_ms=trading_records_since_ms), [])
-    live_new_open_symbols = sorted({
-        row.symbol
-        for row in live_trade_records
-        if row.status == "opened" and row.decision_round_ts == openable_round_ts
-    })
-    live_position_snapshots = load_module("实盘交易持仓快照", lambda: live_experiment.latest_position_snapshots(limit=100), [])
-    live_error_records = load_module("实盘交易错误记录", lambda: live_experiment.recent_error_records(limit=100, since_ms=trading_records_since_ms), [])
-    live_zombie_records = load_module("实盘僵尸强平记录", lambda: real_trading.zombie_module().recent_records(limit=100, since_ms=trading_records_since_ms), [])
-    live_equity_trend_rows = load_module("实盘交易权益曲线", lambda: _experiment_equity_trend_rows(trading_records_since_ms, db_config.REAL_TRADING_CORE_DB_PATH), [])
-    live_trading_equity = _latest_trading_equity_usdt(live_equity_trend_rows) if live_equity_trend_rows else real_trading.config().initial_equity_usdt
-    live_seven_day_return = _seven_day_equity_return(live_equity_trend_rows)
-    live_used_margin_usdt = _trading_used_margin_text(live_position_snapshots)
-    live_open_increase_blocked = _trading_open_increase_blocked(live_trading_equity, live_position_snapshots)
-    live_holding_scoring = real_trading.holding_scoring()
-    live_holding_stop_loss_round_ts, live_holding_stop_loss_checks = load_module("实盘持仓结构止损检查", live_holding_scoring.get_latest_round_checks, (0, []))
-    live_holding_portfolio_risk = load_module("实盘持仓组合风险", live_holding_scoring.get_latest_portfolio_risk, None)
-    live_holding_reduction_round_ts, live_holding_reduction_checks = load_module("实盘持仓减仓检查", live_holding_scoring.get_latest_reduction_checks, (0, []))
-    live_holding_increase_round_ts, live_holding_increase_checks = load_module("实盘持仓加仓检查", live_holding_scoring.get_latest_increase_checks, (0, []))
-    live_holding_increase_pretrigger_rounds = load_module(
-        "实盘持仓加仓预触发", live_holding_scoring.latest_pretrigger_increase_rounds, {}
-    )
-    live_holding_stop_loss_records = load_module("实盘持仓结构止损记录", lambda: live_holding_scoring.recent_stop_loss_records(limit=100), [])
-    live_holding_reduction_records = load_module("实盘持仓减仓记录", lambda: live_holding_scoring.recent_reduction_records(limit=100), [])
-    live_holding_reduction_stop_failure_liquidations = load_module(
-        "实盘重挂止损失败后强平记录",
-        lambda: live_holding_scoring.recent_reduction_stop_failure_liquidations(
-            limit=100, since_ms=trading_records_since_ms
-        ),
-        [],
-    )
-    live_holding_increase_records = load_module("实盘持仓加仓记录", lambda: live_holding_scoring.recent_increase_records(limit=100, since_ms=trading_records_since_ms), [])
-    live_holding_stop_loss_checks = _sync_live_module_checks(live_holding_stop_loss_checks, live_position_snapshots)
-    live_holding_reduction_checks = _sync_live_module_checks(live_holding_reduction_checks, live_position_snapshots)
-    live_holding_increase_checks = _sync_live_module_checks(live_holding_increase_checks, live_position_snapshots)
-    live_holding_portfolio_risk = _sync_live_portfolio_risk(live_holding_portfolio_risk, live_position_snapshots)
-    live_break_even, live_partial, live_trailing_reduction, live_dynamic, live_hard, live_trailing_stop = real_trading.high_frequency_modules()
-    live_high_frequency_modules = []
-    for key, label, module, records_loader in (
-        ("break-even", "保本止盈", live_break_even, lambda m: m.recent_records(limit=100)),
-        ("partial-take-profit", "分批止盈", live_partial, lambda m: m.recent_records(limit=100)),
-        ("trailing-reduction", "移动追踪减仓", live_trailing_reduction, lambda m: m.recent_action_records(limit=100)),
-        ("dynamic-profit-protection", "动态利润保护", live_dynamic, lambda m: m.recent_action_records(limit=100)),
-        ("hard-take-profit", "硬止盈", live_hard, lambda m: m.recent_action_records(limit=100)),
-        ("trailing-stop", "移动追踪止盈", live_trailing_stop, lambda m: m.recent_action_records(limit=100)),
-    ):
-        round_ts, checks = load_module(f"实盘{label}检查", module.get_latest_round_checks, (0, []))
-        records = load_module(f"实盘{label}记录", lambda m=module, loader=records_loader: loader(m), [])
-        live_high_frequency_modules.append({
-            "key": f"live-high-frequency-{key}", "api_key": key,
-            "label": label, "round_ts": round_ts,
-            "checks": _sync_live_module_checks(checks, live_position_snapshots),
-            "records": [asdict(row) if hasattr(row, "__dataclass_fields__") else dict(row) for row in records],
-            "tables": LIVE_MODULE_TABLES[key],
-        })
-    holding_scoring = HoldingPositionScoringSystem(db_path=_trading_db_path())
-    holding_stop_loss_round_ts, holding_stop_loss_checks = load_module("持仓结构止损检查", holding_scoring.get_latest_round_checks, (0, []))
-    holding_portfolio_risk = load_module("持仓组合风险", holding_scoring.get_latest_portfolio_risk, None)
-    holding_reduction_round_ts, holding_reduction_checks = load_module("持仓减仓检查", holding_scoring.get_latest_reduction_checks, (0, []))
-    holding_increase_round_ts, holding_increase_checks = load_module("持仓加仓检查", holding_scoring.get_latest_increase_checks, (0, []))
-    holding_increase_pretrigger_rounds = load_module("持仓加仓预触发", holding_scoring.latest_pretrigger_increase_rounds, {})
-    holding_stop_loss_records = load_module("持仓结构止损记录", lambda: holding_scoring.recent_stop_loss_records(limit=100), [])
-    holding_reduction_records = load_module("持仓减仓记录", lambda: holding_scoring.recent_reduction_records(limit=100), [])
-    holding_reduction_stop_failure_liquidations = load_module(
-        "重挂止损失败后强平记录",
-        lambda: holding_scoring.recent_reduction_stop_failure_liquidations(limit=100, since_ms=trading_records_since_ms),
-        [],
-    )
-    holding_increase_records = load_module("持仓加仓记录", lambda: holding_scoring.recent_increase_records(limit=100, since_ms=trading_records_since_ms), [])
-    break_even_payload = load_module("保本止盈", _break_even_payload, {"round_ts": 0, "checks": [], "records": []})
-    break_even_round_ts = break_even_payload["round_ts"]
-    break_even_checks = break_even_payload["checks"]
-    break_even_records = break_even_payload["records"]
-    partial_take_profit_strategy = PartialTakeProfitStrategy(db_path=_trading_db_path())
-    partial_take_profit_round_ts, partial_take_profit_checks = load_module("分批止盈检查", partial_take_profit_strategy.get_latest_round_checks, (0, []))
-    partial_take_profit_records = load_module("分批止盈记录", lambda: partial_take_profit_strategy.recent_records(limit=100), [])
-    partial_take_profit_errors = load_module("分批止盈错误记录", lambda: partial_take_profit_strategy.recent_errors(limit=100), [])
-    trailing_reduction_payload = load_module("移动追踪减仓", _trailing_reduction_payload, {"round_ts": 0, "checks": [], "records": []})
-    trailing_reduction_round_ts = trailing_reduction_payload["round_ts"]
-    trailing_reduction_checks = trailing_reduction_payload["checks"]
-    trailing_reduction_records = trailing_reduction_payload["records"]
-    dynamic_profit_protection_payload = load_module("动态利润保护", _dynamic_profit_protection_payload, {"round_ts": 0, "checks": [], "records": []})
-    dynamic_profit_protection_round_ts = dynamic_profit_protection_payload["round_ts"]
-    dynamic_profit_protection_checks = dynamic_profit_protection_payload["checks"]
-    dynamic_profit_protection_records = dynamic_profit_protection_payload["records"]
-    hard_take_profit_payload = load_module("硬止盈", _hard_take_profit_payload, {"round_ts": 0, "checks": [], "records": []})
-    hard_take_profit_round_ts = hard_take_profit_payload["round_ts"]
-    hard_take_profit_checks = hard_take_profit_payload["checks"]
-    hard_take_profit_records = hard_take_profit_payload["records"]
-    trailing_stop_tracker = TrailingStopTracker(db_path=_trading_db_path())
-    trailing_stop_round_ts, trailing_stop_checks = load_module("移动追踪止盈检查", trailing_stop_tracker.get_latest_round_checks, (0, []))
-    trailing_stop_records = load_module("移动追踪止盈记录", lambda: trailing_stop_tracker.recent_action_records(limit=100), [])
-
+    trend_symbols = load_module("评分趋势 Symbol 列表", scoring_system.get_total_score_symbols, [])
+    requested_trend = request.args.get("score_trend_symbol", default="", type=str).strip()
+    trend_symbol = requested_trend or (total_scores[0].symbol if total_scores else "")
+    if trend_symbol and trend_symbol not in trend_symbols:
+        trend_symbols = sorted(set(trend_symbols) | {trend_symbol})
     active_tab = request.args.get("active_tab", default="", type=str).strip()
-    if requested_score_trend_symbol:
+    if requested_trend:
         active_tab = "tab-score-trend"
 
-    return render_template(
-        "abnormal_wicks.html",
-        events=events,
-        limit=limit,
-        symbols=symbols,
-        latest_round_ts=latest_round_ts,
-        latest_round_symbols=latest_round_symbols,
-        cooldown_round_ts=cooldown_round_ts,
-        cooldown_symbols=cooldown_symbols,
-        score_round_ts=score_round_ts,
-        round_scores=round_scores,
-        score_rule2_round_ts=score_rule2_round_ts,
-        round_scores_rule2=round_scores_rule2,
-        score_rule3_round_ts=score_rule3_round_ts,
-        round_scores_rule3=round_scores_rule3,
-        score_rule4_round_ts=score_rule4_round_ts,
-        round_scores_rule4=round_scores_rule4,
-        score_rule5_round_ts=score_rule5_round_ts,
-        round_scores_rule5=round_scores_rule5,
-        score_rule6_round_ts=score_rule6_round_ts,
-        round_scores_rule6=round_scores_rule6,
-        score_rule7_round_ts=score_rule7_round_ts,
-        round_scores_rule7=round_scores_rule7,
-        score_rule8_round_ts=score_rule8_round_ts,
-        round_scores_rule8=round_scores_rule8,
-        score_rule9_round_ts=score_rule9_round_ts,
-        round_scores_rule9=round_scores_rule9,
-        score_rule10_round_ts=score_rule10_round_ts,
-        round_scores_rule10=round_scores_rule10,
-        score_rule11_round_ts=score_rule11_round_ts,
-        round_scores_rule11=round_scores_rule11,
-        score_rule12_round_ts=score_rule12_round_ts,
-        round_scores_rule12=round_scores_rule12,
-        score_rule13_round_ts=score_rule13_round_ts,
-        round_scores_rule13=round_scores_rule13,
-        score_rule14_round_ts=score_rule14_round_ts,
-        round_scores_rule14=round_scores_rule14,
-        score_rule15_round_ts=score_rule15_round_ts,
-        round_scores_rule15=round_scores_rule15,
-        score_rule16_round_ts=score_rule16_round_ts,
-        round_scores_rule16=round_scores_rule16,
-        score_rule17_round_ts=score_rule17_round_ts,
-        round_scores_rule17=round_scores_rule17,
-        score_rule18_round_ts=score_rule18_round_ts,
-        round_scores_rule18=round_scores_rule18,
-        structural_stop_loss_coefficient=scoring.structural_stop_loss_coefficient,
-        score_total_round_ts=score_total_round_ts,
-        score_total_updated_at=score_total_updated_at,
-        round_scores_total=round_scores_total,
-        scoring_ma20_skip_record=scoring_ma20_skip_record,
-        scoring_symbol_error_round_ts=scoring_symbol_error_round_ts,
-        scoring_symbol_errors=scoring_symbol_errors,
-        openable_round_ts=openable_round_ts,
-        openable_symbols=openable_symbols,
-        openable_round_history=openable_round_history,
-        score_band_configs=score_band_configs,
-        score_distance_threshold_text=score_distance_threshold_text,
-        score_leverage_mapping_text=score_leverage_mapping_text,
-        openable_min_total_score=openable_min_total_score,
-        trading_trade_records=trading_trade_records,
-        trading_new_open_symbols=trading_new_open_symbols,
-        trading_position_snapshots=trading_position_snapshots,
-        trading_used_margin_usdt=trading_used_margin_usdt,
-        trading_open_increase_blocked=trading_open_increase_blocked,
-        trading_equity_usdt=trading_equity,
-        trading_seven_day_return=trading_seven_day_return,
-        trading_error_records=trading_error_records,
-        trading_equity_trend_rows=trading_equity_trend_rows,
-        zombie_force_liquidation_records=zombie_force_liquidation_records,
-        live_trade_records=live_trade_records,
-        live_new_open_symbols=live_new_open_symbols,
-        live_position_snapshots=live_position_snapshots,
-        live_used_margin_usdt=live_used_margin_usdt,
-        live_open_increase_blocked=live_open_increase_blocked,
-        live_error_records=live_error_records,
-        live_zombie_records=live_zombie_records,
-        live_equity_trend_rows=live_equity_trend_rows,
-        live_trading_equity=live_trading_equity,
-        live_seven_day_return=live_seven_day_return,
-        live_holding_stop_loss_round_ts=live_holding_stop_loss_round_ts,
-        live_holding_stop_loss_checks=live_holding_stop_loss_checks,
-        live_holding_portfolio_risk=live_holding_portfolio_risk,
-        live_holding_reduction_round_ts=live_holding_reduction_round_ts,
-        live_holding_reduction_checks=live_holding_reduction_checks,
-        live_holding_increase_round_ts=live_holding_increase_round_ts,
-        live_holding_increase_checks=live_holding_increase_checks,
-        live_holding_increase_pretrigger_rounds=live_holding_increase_pretrigger_rounds,
-        live_holding_stop_loss_records=live_holding_stop_loss_records,
-        live_holding_reduction_records=live_holding_reduction_records,
-        live_holding_reduction_stop_failure_liquidations=live_holding_reduction_stop_failure_liquidations,
-        live_holding_increase_records=live_holding_increase_records,
-        live_high_frequency_modules=live_high_frequency_modules,
-        holding_stop_loss_round_ts=holding_stop_loss_round_ts,
-        holding_stop_loss_checks=holding_stop_loss_checks,
-        holding_portfolio_risk=holding_portfolio_risk,
-        holding_reduction_round_ts=holding_reduction_round_ts,
-        holding_reduction_checks=holding_reduction_checks,
-        holding_increase_round_ts=holding_increase_round_ts,
-        holding_increase_checks=holding_increase_checks,
-        holding_increase_pretrigger_rounds=holding_increase_pretrigger_rounds,
-        holding_stop_loss_records=holding_stop_loss_records,
-        holding_reduction_records=holding_reduction_records,
-        holding_reduction_stop_failure_liquidations=holding_reduction_stop_failure_liquidations,
-        holding_increase_records=holding_increase_records,
-        break_even_round_ts=break_even_round_ts,
-        break_even_checks=break_even_checks,
-        break_even_records=break_even_records,
-        partial_take_profit_round_ts=partial_take_profit_round_ts,
-        partial_take_profit_checks=partial_take_profit_checks,
-        partial_take_profit_records=partial_take_profit_records,
-        partial_take_profit_errors=partial_take_profit_errors,
-        trailing_reduction_round_ts=trailing_reduction_round_ts,
-        trailing_reduction_checks=trailing_reduction_checks,
-        trailing_reduction_records=trailing_reduction_records,
-        dynamic_profit_protection_round_ts=dynamic_profit_protection_round_ts,
-        dynamic_profit_protection_checks=dynamic_profit_protection_checks,
-        dynamic_profit_protection_records=dynamic_profit_protection_records,
-        hard_take_profit_round_ts=hard_take_profit_round_ts,
-        hard_take_profit_checks=hard_take_profit_checks,
-        hard_take_profit_records=hard_take_profit_records,
-        trailing_stop_round_ts=trailing_stop_round_ts,
-        trailing_stop_checks=trailing_stop_checks,
-        trailing_stop_records=trailing_stop_records,
-        rule_score_weights=scoring.rule_score_weights,
-        score_trend_symbols=score_trend_symbols,
-        score_trend_symbol=score_trend_symbol,
-        score_trend_rows=score_trend_rows,
-        active_tab=active_tab,
-        module_errors=module_errors,
-        selected_symbol=symbol,
-        should_load_abnormal_events=should_load_abnormal_events,
-        feature_flags=feature_flags.list_feature_flags(CONFIG_DB_PATH),
-        position_limit_settings=get_position_limit_settings(CONFIG_DB_PATH),
-        dynamic_profit_protection_settings=get_dynamic_profit_protection_settings(CONFIG_DB_PATH),
-        hard_take_profit_settings=get_hard_take_profit_settings(CONFIG_DB_PATH),
-        market_filter_settings=get_market_filter_settings(CONFIG_DB_PATH),
-        dynamic_open_threshold_settings=get_dynamic_open_threshold_settings(CONFIG_DB_PATH),
-        scoring_rule_weight_settings=get_rule_score_weight_settings(CONFIG_DB_PATH),
-        scoring_rule_election_settings=get_rule_election_settings(CONFIG_DB_PATH),
-        openable_symbol_settings=get_openable_symbol_settings(CONFIG_DB_PATH),
-        weak_market_profit_settings=get_weak_market_profit_settings(CONFIG_DB_PATH),
-        reduction_module_settings=get_reduction_module_settings(CONFIG_DB_PATH),
-    )
+    context.update({
+        "module_errors": module_errors, "active_tab": active_tab,
+        "events": events, "limit": limit, "symbols": symbols, "selected_symbol": symbol,
+        "should_load_abnormal_events": should_load_events,
+        "latest_round_ts": latest_round, "latest_round_symbols": latest_symbols,
+        "cooldown_round_ts": cooldown_round, "cooldown_symbols": cooldown_symbols,
+        "score_total_round_ts": total_round, "round_scores_total": total_scores,
+        "score_total_updated_at": load_module("评分更新时间", lambda: scoring_system.get_total_score_round_updated_at(total_round), 0),
+        "scoring_ma20_skip_record": load_module("MA20 评分跳过记录", lambda: scoring_system.get_ma20_skip_record_for_round(total_round), None),
+        "scoring_symbol_error_round_ts": total_round,
+        "scoring_symbol_errors": load_module("评分 Symbol 错误", lambda: scoring_system.get_symbol_errors_for_round(total_round), []),
+        "structural_stop_loss_coefficient": scoring_system.structural_stop_loss_coefficient,
+        "rule_score_weights": scoring_system.rule_score_weights,
+        "score_band_configs": bands, "score_distance_threshold_text": distance_text,
+        "score_leverage_mapping_text": leverage_text, "openable_min_total_score": minimum_score,
+        "openable_round_ts": total_round, "openable_symbols": openable_symbols,
+        "openable_round_history": load_module("可开仓 Symbol 情况记录", lambda: openable.recent_round_summaries(limit=100), []),
+        "openable_symbol_settings": load_module("止损距离与总分映射", lambda: get_openable_symbol_settings(CONFIG_DB_PATH), {"tier_min_percent": 0, "tier_max_percent": {"A档": 0, "B档": 0, "C档": 0}}),
+        "score_trend_symbols": trend_symbols, "score_trend_symbol": trend_symbol,
+        "score_trend_rows": [], "open_block_notice": "",
+    })
+    return context
+
+
+@app.get("/strategy/scoring")
+def scoring():
+    initialize_config_database(CONFIG_DB_PATH, BASE_DB_PATH)
+    return render_template("scoring.html", **load_scoring_context())
+
+
+@app.get("/safety/abnormal-wicks")
+def abnormal_wicks():
+    """Keep dashboard bookmarks working while serving scoring from its own page."""
+    legacy_routes = {
+        "tab-feature-flags": "settings", "tab-btc": "market_safety",
+        "tab-market-filter": "market_safety", "tab-simulation": "simulation",
+        "tab-live": "live",
+    }
+    endpoint = legacy_routes.get(request.args.get("active_tab", default="", type=str).strip(), "scoring")
+    query = request.args.to_dict(flat=False)
+    if endpoint != "scoring":
+        query.pop("active_tab", None)
+    return redirect(url_for(endpoint, **query), code=302)
 
 
 @app.template_filter("fmt_ms_datetime")
