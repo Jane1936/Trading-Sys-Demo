@@ -1,0 +1,733 @@
+{% extends "base.html" %}
+
+{% block title %}评分系统与开仓页 - Trading System{% endblock %}
+{% block meta_refresh %}<meta http-equiv="refresh" content="900" />{% endblock %}
+{% block head_extra %}<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>{% endblock %}
+
+{% block navigation %}
+  <a class="tab-btn" href="{{ url_for('index') }}">返回交易控制台</a>
+  <button class="tab-btn {{ 'active' if not active_tab or active_tab == 'tab-abnormal' else '' }}" data-tab="tab-abnormal">异常插针记录</button>
+  <button class="tab-btn {{ 'active' if active_tab == 'tab-score' else '' }}" data-tab="tab-score">评分系统</button>
+  <button class="tab-btn {{ 'active' if active_tab == 'tab-score-trend' else '' }}" data-tab="tab-score-trend">评分变化趋势</button>
+  <button class="tab-btn {{ 'active' if active_tab == 'tab-strategy' else '' }}" data-tab="tab-strategy">本轮交易策略</button>
+{% endblock %}
+
+{% block content %}
+  <section id="tab-abnormal" class="panel {{ 'active' if not active_tab or active_tab == 'tab-abnormal' else '' }}">
+  <div class="card">
+  <div class="header"><h2>异常插针记录</h2></div>
+  <div class="symbol-strip">
+    <div><strong>本轮异常插针symbol（15分钟更新）</strong></div>
+    {% if latest_round_ts %}
+      <div class="muted">扫描轮次：{{ latest_round_ts|fmt_ms_datetime }}</div>
+    {% endif %}
+    {% if latest_round_symbols %}
+      <div class="chips">
+        {% for s in latest_round_symbols %}
+          <span class="chip">{{ s }}</span>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="chips">
+        <span class="chip">无</span>
+      </div>
+    {% endif %}
+  </div>
+  <div class="toolbar">
+    <form method="get" action="{{ url_for('scoring') }}" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;">
+      <input type="hidden" name="wick_refresh" value="1" />
+      <label class="field">记录数量
+        <input type="number" name="limit" value="{{ limit }}" min="1" max="1000" />
+      </label>
+      <label class="field">Symbol筛选
+        <select name="symbol">
+          <option value="" {% if not selected_symbol %}selected{% endif %}>全部</option>
+          {% for s in symbols %}
+            <option value="{{ s }}" {% if selected_symbol == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="actions">
+        <button class="btn btn-primary" type="submit">筛选/刷新</button>
+        <a class="btn btn-secondary" href="/safety/abnormal-wicks">重置</a>
+      </div>
+    </form>
+  </div>
+  <div class="tip">时间字段均已转换为日期格式（UTC）。默认不加载历史表格；点击“筛选/刷新”后显示近3天异常插针记录。异常插针记录最多只显示近3天数据。本轮异常插针判定：每个 symbol 在当前15分钟轮次检查最近3根已收盘5m K线，任意一根同时满足长上/下影占比≥70%、整根振幅≥1.5%、同方向长影部分≥实体 abs(close-open) 的2.5倍即入选。</div>
+
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>symbol</th>
+        <th>decision_round_ts</th>
+        <th>candle_index</th>
+        <th>candle_index_open_time</th>
+        <th>candle_index_close_time</th>
+        <th>candle_index_open</th>
+        <th>candle_index_high</th>
+        <th>candle_index_low</th>
+        <th>candle_index_close</th>
+        <th>长上/下影占比</th>
+        <th>振幅度大小</th>
+        <th>同方向长影/实体 ratio</th>
+        <th>是否≥2.5倍</th>
+        <th>detected_at</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in events %}
+      <tr>
+        <td>{{ e.symbol }}</td>
+        <td>{{ e.decision_round_ts|fmt_ms_datetime }}</td>
+        <td>{{ e.candle_index }}</td>
+        <td>{{ e.candle_index_open_time|fmt_ms_datetime }}</td>
+        <td>{{ e.candle_index_close_time|fmt_ms_datetime }}</td>
+        <td>{{ '%.6f'|format(e.open) }}</td>
+        <td>{{ '%.6f'|format(e.high) }}</td>
+        <td>{{ '%.6f'|format(e.low) }}</td>
+        <td>{{ '%.6f'|format(e.close) }}</td>
+        <td>{{ '%.6f'|format(e.cond1_ratio) }}</td>
+        <td>{{ '%.6f'|format(e.cond2_ratio) }}</td>
+        <td>{{ '%.6f'|format(e.cond3_ratio) }}</td>
+        <td>{{ '是' if e.cond3_ratio >= 2.5 else '否' }}</td>
+        <td>{{ e.detected_at|fmt_ms_datetime }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td class="empty" colspan="14">{% if should_load_abnormal_events %}暂无异常插针记录{% else %}默认不显示记录，请点击“筛选/刷新”加载本轮或筛选结果{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  </div>
+  </section>
+
+  <section id="tab-score" class="panel {{ 'active' if active_tab == 'tab-score' else '' }}">
+    <div class="card">
+      <div class="header"><h2>评分系统</h2></div>
+      <div class="tip">评分对象：Universe 扣除本轮异常插针symbol。每15分钟更新。默认展示总分结果；可点击各规则 Tab 查看该规则下所有 symbol 得分明细。</div>
+      {% if scoring_symbol_errors %}
+      <div class="score-ma20-warning score-symbol-error" role="status" aria-live="polite">
+        <strong>本轮数据异常跳过提示：</strong>
+        评分轮次 {{ scoring_symbol_error_round_ts|fmt_ms_datetime }} 中有 {{ scoring_symbol_errors|length }} 个 symbol 在评分规则计算时遇到数据异常。
+        系统已跳过这些 symbol，并继续完成其他 symbol 的评分，避免单个坏数据拖停整轮评分。
+        <div class="missing-symbols">
+          异常symbol：
+          {% for error_row in scoring_symbol_errors[:30] %}
+            <span class="chip" title="{{ error_row.error }}">{{ error_row.symbol }}</span>
+          {% endfor %}
+          {% if scoring_symbol_errors|length > 30 %}
+            <span class="muted">等 {{ scoring_symbol_errors|length }} 个</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+      {% if scoring_ma20_skip_record %}
+      <div class="score-ma20-warning" role="status" aria-live="polite">
+        <strong>15m MA20/EMA20缺失跳过提示：</strong>
+        最近一轮评分在 {{ scoring_ma20_skip_record.decision_round_ts|fmt_ms_datetime }} 轮次（实际检查时间：{{ scoring_ma20_skip_record.created_at|fmt_ms_datetime }}）发现
+        {{ scoring_ma20_skip_record.missing_count }} / {{ scoring_ma20_skip_record.universe_count }}
+        个 universe symbol 缺失本轮同一 open_time 的 15m MA20 或 EMA20（目标 open_time：
+        <code>{{ scoring_ma20_skip_record.target_open_time|fmt_ms_datetime }}</code>）。
+        系统已跳过这些缺失 symbol，并继续对
+        {{ scoring_ma20_skip_record.ready_count }} 个 MA20 与 EMA20 均已收敛的 symbol 评分，避免卡住整个评分系统。
+        <div class="missing-symbols">
+          缺失symbol：
+          {% for skipped_symbol in scoring_ma20_skip_record.missing_symbols[:30] %}
+            <span class="chip">{{ skipped_symbol }}</span>
+          {% endfor %}
+          {% if scoring_ma20_skip_record.missing_count > 30 %}
+            <span class="muted">等 {{ scoring_ma20_skip_record.missing_count }} 个</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+      <div class="toolbar" style="padding-top:0;" id="score-rule-details">
+        <div class="score-tab-group trend">
+          <span class="score-tab-group-label">趋势评分</span>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-1" style="width:auto;">规则1：15m MA20三连降（{{ rule_score_weights[1] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-2" style="width:auto;">规则2：1m收盘&gt;15m MA20且低于EMA20上方6%（{{ rule_score_weights[2] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-3" style="width:auto;">规则3：最近1h收盘&gt;前1h收盘（{{ rule_score_weights[3] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-4" style="width:auto;">规则4：最近4条15m中≥3条收涨（{{ rule_score_weights[4] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-5" style="width:auto;">规则5：最近4条15m收盘至少3条递增（{{ rule_score_weights[5] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-6" style="width:auto;">规则6：1m收盘&gt;5m MA20（{{ rule_score_weights[6] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-7" style="width:auto;">规则7：最近4条15m有≥2条收盘位置≥0.65（{{ rule_score_weights[7] }}分）</button>
+        <button class="tab-btn score-rule-tab" data-score-tab="score-rule-8" style="width:auto;">规则8：最近1条15m收盘价&gt;此前96条15m最高价（{{ rule_score_weights[8] }}分）</button>
+        </div>
+        <div class="score-tab-group oi">
+          <span class="score-tab-group-label">OI/资金费率评分</span>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-9" style="width:auto;">规则9：3根15m close递减 + OI(1m)&gt;45m前（{{ rule_score_weights[9] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-10" style="width:auto;">规则10：1m close&gt;60m前open 且 OI(1m)&gt;60m前（{{ rule_score_weights[10] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-11" style="width:auto;">规则11：OI(1m)≥240m前（{{ rule_score_weights[11] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-12" style="width:auto;">规则12：最近4条15m资金费率均在(0.01, 0.1)（{{ rule_score_weights[12] }}分）</button>
+        </div>
+        <div class="score-tab-group volume">
+          <span class="score-tab-group-label">成交量评分</span>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-13" style="width:auto;">规则13：15m阳线放量突破（{{ rule_score_weights[13] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-14" style="width:auto;">规则14：最近3条15m有≥2条量能达标（{{ rule_score_weights[14] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-15" style="width:auto;">规则15：1h最新量&gt;前12条均量1.5倍（{{ rule_score_weights[15] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-16" style="width:auto;">规则16：15m缩量回落/实体缩小（{{ rule_score_weights[16] }}分）</button>
+        </div>
+        <div class="score-tab-group rhythm">
+          <span class="score-tab-group-label">开仓位置与节奏评分</span>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-17" style="width:auto;">规则17：15m低点反弹≥4%（{{ rule_score_weights[17] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-18" style="width:auto;">规则18：结构止损位距离+15m节奏（{{ rule_score_weights[18] }}分）</button>
+        </div>
+        <button class="tab-btn score-rule-tab score-total-tab active" data-score-tab="score-total" style="width:auto;">总分</button>
+      </div>
+
+      <div id="score-rule-1" class="score-rule-panel">
+        {% if score_round_ts %}
+        <div class="tip">规则1轮次：{{ score_round_ts|fmt_ms_datetime }}</div>
+        {% endif %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>symbol</th><th>score</th><th>ma20_latest</th><th>ma20_prev1</th><th>ma20_prev2</th><th>reason</th><th>updated_at</th></tr></thead>
+            <tbody>
+              {% for r in round_scores %}
+              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.ma20_latest) }}</td><td>{{ '%.6f'|format(r.ma20_prev1) }}</td><td>{{ '%.6f'|format(r.ma20_prev2) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+              {% else %}
+              <tr><td class="empty" colspan="7">暂无规则1评分数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="score-rule-2" class="score-rule-panel">
+        {% if score_rule2_round_ts %}
+        <div class="tip">规则2轮次：{{ score_rule2_round_ts|fmt_ms_datetime }}。等待同一轮15m MA20与EMA20收敛后执行；1m close须高于15m MA20，且(close - EMA20) / EMA20 &lt; 6%，全部满足才得分。</div>
+        {% endif %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>symbol</th><th>score</th><th>latest_1m_close</th><th>latest_15m_ma20</th><th>latest_15m_ema20</th><th>EMA20距离</th><th>reason</th><th>updated_at</th></tr></thead>
+            <tbody>
+              {% for r in round_scores_rule2 %}
+              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_1m_close) }}</td><td>{{ '%.6f'|format(r.latest_15m_ma20) }}</td><td>{{ '%.6f'|format(r.latest_15m_ema20) }}</td><td>{{ '%.2f%%'|format(r.ema20_distance_ratio * 100) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+              {% else %}
+              <tr><td class="empty" colspan="8">暂无规则2评分数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="score-rule-3" class="score-rule-panel">
+        {% if score_rule3_round_ts %}
+        <div class="tip">规则3轮次：{{ score_rule3_round_ts|fmt_ms_datetime }}</div>
+        {% endif %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>symbol</th><th>score</th><th>latest_1h_close</th><th>prev_1h_close</th><th>reason</th><th>updated_at</th></tr></thead>
+            <tbody>
+              {% for r in round_scores_rule3 %}
+              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_1h_close) }}</td><td>{{ '%.6f'|format(r.prev_1h_close) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+              {% else %}
+              <tr><td class="empty" colspan="6">暂无规则3评分数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+
+      <div id="score-rule-4" class="score-rule-panel">
+        {% if score_rule4_round_ts %}
+        <div class="tip">规则4轮次：{{ score_rule4_round_ts|fmt_ms_datetime }}</div>
+        {% endif %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>symbol</th><th>score</th><th>bullish_count</th><th>reason</th><th>updated_at</th></tr></thead>
+            <tbody>
+              {% for r in round_scores_rule4 %}
+              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ r.bullish_count }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+              {% else %}
+              <tr><td class="empty" colspan="5">暂无规则4评分数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="score-rule-5" class="score-rule-panel">
+        {% if score_rule5_round_ts %}
+        <div class="tip">规则5轮次：{{ score_rule5_round_ts|fmt_ms_datetime }}</div>
+        {% endif %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>symbol</th><th>score</th><th>reason</th><th>updated_at</th></tr></thead>
+            <tbody>
+              {% for r in round_scores_rule5 %}
+              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+              {% else %}
+              <tr><td class="empty" colspan="4">暂无规则5评分数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+
+      <div id="score-rule-6" class="score-rule-panel">
+        {% if score_rule6_round_ts %}
+        <div class="tip">规则6轮次：{{ score_rule6_round_ts|fmt_ms_datetime }}</div>
+        {% endif %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>symbol</th><th>score</th><th>latest_1m_close</th><th>latest_5m_ma20</th><th>reason</th><th>updated_at</th></tr></thead>
+            <tbody>
+              {% for r in round_scores_rule6 %}
+              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_1m_close) }}</td><td>{{ '%.6f'|format(r.latest_5m_ma20) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+              {% else %}
+              <tr><td class="empty" colspan="6">暂无规则6评分数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="score-rule-7" class="score-rule-panel">
+        {% if score_rule7_round_ts %}
+        <div class="tip">规则7轮次：{{ score_rule7_round_ts|fmt_ms_datetime }}。最近4条15m中至少2条的收盘位置 (close-low)/(high-low) ≥ 0.65。</div>
+        {% endif %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>symbol</th><th>score</th><th>qualified_count</th><th>reason</th><th>updated_at</th></tr></thead>
+            <tbody>
+              {% for r in round_scores_rule7 %}
+              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ r.qualified_count }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+              {% else %}
+              <tr><td class="empty" colspan="5">暂无规则7评分数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="score-rule-8" class="score-rule-panel">
+        {% if score_rule8_round_ts %}
+        <div class="tip">规则8轮次：{{ score_rule8_round_ts|fmt_ms_datetime }}。每轮15分钟K线收敛后执行；最近1条15m收盘价须严格高于此前96条（不包括最新一条，即最近第97条至最近第2条）15分钟K线最高价的最大值。</div>
+        {% endif %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>symbol</th><th>score</th><th>latest_15m_close</th><th>prev_96_15m_max_high</th><th>reason</th><th>updated_at</th></tr></thead>
+            <tbody>
+              {% for r in round_scores_rule8 %}
+              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_close) }}</td><td>{{ '%.6f'|format(r.prev_96_max_high) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+              {% else %}
+              <tr><td class="empty" colspan="6">暂无规则8评分数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div id="score-rule-9" class="score-rule-panel">
+        {% if score_rule9_round_ts %}
+        <div class="tip">规则9轮次：{{ score_rule9_round_ts|fmt_ms_datetime }}</div>
+        {% endif %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>symbol</th><th>score</th><th>close_latest</th><th>close_prev1</th><th>close_prev2</th><th>latest_open_interest</th><th>open_interest_45m_ago</th><th>reason</th><th>updated_at</th></tr></thead>
+            <tbody>
+              {% for r in round_scores_rule9 %}
+              <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.close_latest) }}</td><td>{{ '%.6f'|format(r.close_prev1) }}</td><td>{{ '%.6f'|format(r.close_prev2) }}</td><td>{{ '%.6f'|format(r.latest_open_interest) }}</td><td>{{ '%.6f'|format(r.open_interest_45m_ago) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+              {% else %}
+              <tr><td class="empty" colspan="9">暂无规则9评分数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+
+      <div id="score-rule-10" class="score-rule-panel">
+        {% if score_rule10_round_ts %}
+        <div class="tip">规则10轮次：{{ score_rule10_round_ts|fmt_ms_datetime }}</div>
+        {% endif %}
+        <div class="table-wrap"><table>
+          <thead><tr><th>symbol</th><th>score</th><th>latest_1m_close</th><th>open_60m_ago</th><th>latest_open_interest</th><th>open_interest_60m_ago</th><th>reason</th><th>updated_at</th></tr></thead>
+          <tbody>{% for r in round_scores_rule10 %}
+            <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_1m_close) }}</td><td>{{ '%.6f'|format(r.open_60m_ago) }}</td><td>{{ '%.6f'|format(r.latest_open_interest) }}</td><td>{{ '%.6f'|format(r.open_interest_60m_ago) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+          {% else %}<tr><td class="empty" colspan="8">暂无规则10评分数据</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </div>
+
+      <div id="score-rule-11" class="score-rule-panel">
+        {% if score_rule11_round_ts %}
+        <div class="tip">规则11轮次：{{ score_rule11_round_ts|fmt_ms_datetime }}</div>
+        {% endif %}
+        <div class="table-wrap"><table>
+          <thead><tr><th>symbol</th><th>score</th><th>latest_open_interest</th><th>open_interest_240m_ago</th><th>oi_loss_rate</th><th>reason</th><th>updated_at</th></tr></thead>
+          <tbody>{% for r in round_scores_rule11 %}
+            <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_open_interest) }}</td><td>{{ '%.6f'|format(r.open_interest_240m_ago) }}</td><td>{{ '%.4f%%'|format(r.oi_loss_rate * 100) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+          {% else %}<tr><td class="empty" colspan="7">暂无规则11评分数据</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </div>
+
+
+      <div id="score-rule-12" class="score-rule-panel">
+        {% if score_rule12_round_ts %}
+        <div class="tip">规则12轮次：{{ score_rule12_round_ts|fmt_ms_datetime }}。要求最近4条15m资金费率均在(0.01, 0.1)，满足则得{{ rule_score_weights[12] }}分。</div>
+        {% endif %}
+        <div class="table-wrap"><table>
+          <thead><tr><th>symbol</th><th>score</th><th>funding_rate_latest</th><th>funding_rate_prev1</th><th>funding_rate_prev2</th><th>funding_rate_prev3</th><th>reason</th><th>updated_at</th></tr></thead>
+          <tbody>{% for r in round_scores_rule12 %}
+            <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ 'N/A' if r.funding_rate_latest is none else '%.6f'|format(r.funding_rate_latest) }}</td><td>{{ 'N/A' if r.funding_rate_prev1 is none else '%.6f'|format(r.funding_rate_prev1) }}</td><td>{{ 'N/A' if r.funding_rate_prev2 is none else '%.6f'|format(r.funding_rate_prev2) }}</td><td>{{ 'N/A' if r.funding_rate_prev3 is none else '%.6f'|format(r.funding_rate_prev3) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+          {% else %}<tr><td class="empty" colspan="8">暂无规则12评分数据</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </div>
+
+      <div id="score-rule-13" class="score-rule-panel">
+        {% if score_rule13_round_ts %}
+        <div class="tip">规则13轮次：{{ score_rule13_round_ts|fmt_ms_datetime }}。要求最近第1条15m K线 close&gt;open 且 close&gt;最近第2条close；满足后，若最近第1条volume &gt; 1.8 × 最近第17条到第2条volume平均值则得{{ rule_score_weights[13] }}分。</div>
+        {% endif %}
+        <div class="table-wrap"><table>
+          <thead><tr><th>symbol</th><th>score</th><th>latest_open</th><th>latest_close</th><th>prev_close</th><th>latest_volume</th><th>volume_avg</th><th>1.8×volume_avg</th><th>reason</th><th>updated_at</th></tr></thead>
+          <tbody>{% for r in round_scores_rule13 %}
+            <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_open) }}</td><td>{{ '%.6f'|format(r.latest_close) }}</td><td>{{ '%.6f'|format(r.prev_close) }}</td><td>{{ '%.6f'|format(r.latest_volume) }}</td><td>{{ '%.6f'|format(r.volume_avg) }}</td><td>{{ '%.6f'|format(r.volume_avg * 1.8) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+          {% else %}<tr><td class="empty" colspan="10">暂无规则13评分数据</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </div>
+
+      <div id="score-rule-14" class="score-rule-panel">
+        {% if score_rule14_round_ts %}
+        <div class="tip">规则14轮次：{{ score_rule14_round_ts|fmt_ms_datetime }}。查询最近3条15m K线；对每条K线，使用其前16条15m K线volume均值作为volume_avg，若volume_cur &gt; 1.5 × volume_avg 则量能达标；3条中至少2条达标得{{ rule_score_weights[14] }}分。</div>
+        {% endif %}
+        <div class="table-wrap"><table>
+          <thead><tr><th>symbol</th><th>score</th><th>qualified_count</th><th>volume_latest</th><th>avg_latest</th><th>1.5×avg_latest</th><th>volume_prev1</th><th>avg_prev1</th><th>1.5×avg_prev1</th><th>volume_prev2</th><th>avg_prev2</th><th>1.5×avg_prev2</th><th>reason</th><th>updated_at</th></tr></thead>
+          <tbody>{% for r in round_scores_rule14 %}
+            <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ r.qualified_count }}</td><td>{{ '%.6f'|format(r.volume_latest) }}</td><td>{{ '%.6f'|format(r.volume_avg_latest) }}</td><td>{{ '%.6f'|format(r.volume_avg_latest * 1.5) }}</td><td>{{ '%.6f'|format(r.volume_prev1) }}</td><td>{{ '%.6f'|format(r.volume_avg_prev1) }}</td><td>{{ '%.6f'|format(r.volume_avg_prev1 * 1.5) }}</td><td>{{ '%.6f'|format(r.volume_prev2) }}</td><td>{{ '%.6f'|format(r.volume_avg_prev2) }}</td><td>{{ '%.6f'|format(r.volume_avg_prev2 * 1.5) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+          {% else %}<tr><td class="empty" colspan="14">暂无规则14评分数据</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </div>
+
+      <div id="score-rule-15" class="score-rule-panel">
+        {% if score_rule15_round_ts %}
+        <div class="tip">规则15轮次：{{ score_rule15_round_ts|fmt_ms_datetime }}。查询最近13条1h K线volume；计算最近第13条到最近第2条共12条volume的平均值volume_avg，若最近第1条volume &gt; 1.5 × volume_avg 则得2分。</div>
+        {% endif %}
+        <div class="table-wrap"><table>
+          <thead><tr><th>symbol</th><th>score</th><th>latest_volume</th><th>volume_avg</th><th>1.5×volume_avg</th><th>reason</th><th>updated_at</th></tr></thead>
+          <tbody>{% for r in round_scores_rule15 %}
+            <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_volume) }}</td><td>{{ '%.6f'|format(r.volume_avg) }}</td><td>{{ '%.6f'|format(r.volume_avg * 1.5) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+          {% else %}<tr><td class="empty" colspan="7">暂无规则15评分数据</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </div>
+
+      <div id="score-rule-16" class="score-rule-panel">
+        {% if score_rule16_round_ts %}
+        <div class="tip">规则16轮次：{{ score_rule16_round_ts|fmt_ms_datetime }}。查询最近2条15m K线；若（最近第1条close &lt; 最近第2条close，或最近第1条实体abs(close-open) &lt; 最近第2条实体）且最近第1条volume &lt; 0.7 × 最近第2条volume，则得2分。</div>
+        {% endif %}
+        <div class="table-wrap"><table>
+          <thead><tr><th>symbol</th><th>score</th><th>latest_open</th><th>latest_close</th><th>latest_body</th><th>latest_volume</th><th>prev_open</th><th>prev_close</th><th>prev_body</th><th>prev_volume</th><th>0.7×prev_volume</th><th>reason</th><th>updated_at</th></tr></thead>
+          <tbody>{% for r in round_scores_rule16 %}
+            <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_open) }}</td><td>{{ '%.6f'|format(r.latest_close) }}</td><td>{{ '%.6f'|format(r.latest_body) }}</td><td>{{ '%.6f'|format(r.latest_volume) }}</td><td>{{ '%.6f'|format(r.prev_open) }}</td><td>{{ '%.6f'|format(r.prev_close) }}</td><td>{{ '%.6f'|format(r.prev_body) }}</td><td>{{ '%.6f'|format(r.prev_volume) }}</td><td>{{ '%.6f'|format(r.prev_volume * 0.7) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+          {% else %}<tr><td class="empty" colspan="13">暂无规则16评分数据</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </div>
+
+      <div id="score-rule-17" class="score-rule-panel">
+        {% if score_rule17_round_ts %}
+        <div class="tip">规则17轮次：{{ score_rule17_round_ts|fmt_ms_datetime }}。查询最近3条15m K线low，找出最低点lowest；在latest_rebound_ratio（最近第1条close相对lowest涨幅）≤6%的前提下，若最近第3条low为lowest，且最近第2条或最近第1条close相对lowest涨幅≥4%，则得5分；若最近第2条low为lowest，且最近第1条close相对lowest涨幅≥4%，则得5分；所有条件均满足才得分，其他情况得0分。</div>
+        {% endif %}
+        <div class="table-wrap"><table>
+          <thead><tr><th>symbol</th><th>score</th><th>latest_low</th><th>latest_close</th><th>prev1_low</th><th>prev1_close</th><th>prev2_low</th><th>prev2_close</th><th>lowest_low</th><th>prev1_rebound_ratio</th><th>latest_rebound_ratio</th><th>reason</th><th>updated_at</th></tr></thead>
+          <tbody>{% for r in round_scores_rule17 %}
+            <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_low) }}</td><td>{{ '%.6f'|format(r.latest_close) }}</td><td>{{ '%.6f'|format(r.prev1_low) }}</td><td>{{ '%.6f'|format(r.prev1_close) }}</td><td>{{ '%.6f'|format(r.prev2_low) }}</td><td>{{ '%.6f'|format(r.prev2_close) }}</td><td>{{ '%.6f'|format(r.lowest_low) }}</td><td>{{ '%.4f%%'|format(r.prev1_rebound_ratio * 100) }}</td><td>{{ '%.4f%%'|format(r.latest_rebound_ratio * 100) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+          {% else %}<tr><td class="empty" colspan="13">暂无规则17评分数据</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </div>
+
+      <div id="score-rule-18" class="score-rule-panel">
+        {% if score_rule18_round_ts %}
+        <div class="tip">规则18轮次：{{ score_rule18_round_ts|fmt_ms_datetime }}。要求本轮结构止损位 structural_stop_loss 已完成计算且 &gt; 0（已按配置系数 {{ structural_stop_loss_coefficient }} 折算）；若最近1条1m K线满足 (close - structural_stop_loss) / close ≤ 0.035，则结构止损位距离合格；在距离合格前提下，若最近第1条15m K线 close ≥ 最近第2条15m K线 close，则得5分。</div>
+        {% endif %}
+        <div class="table-wrap"><table>
+          <thead><tr><th>symbol</th><th>score</th><th>structural_stop_loss</th><th>latest_1m_close</th><th>distance_ratio</th><th>latest_15m_close</th><th>prev_15m_close</th><th>reason</th><th>updated_at</th></tr></thead>
+          <tbody>{% for r in round_scores_rule18 %}
+            <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.structural_stop_loss) }}</td><td>{{ '%.6f'|format(r.latest_1m_close) }}</td><td>{{ '%.4f%%'|format(r.stop_loss_distance_ratio * 100) }}</td><td>{{ '%.6f'|format(r.latest_15m_close) }}</td><td>{{ '%.6f'|format(r.prev_15m_close) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+          {% else %}<tr><td class="empty" colspan="9">暂无规则18评分数据</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </div>
+
+      <div id="score-total" class="score-rule-panel active">
+        {% if score_total_round_ts %}
+        <div class="tip">总分轮次：{{ score_total_round_ts|fmt_ms_datetime }}{% if score_total_updated_at %}；实际计算完成时间：{{ score_total_updated_at|fmt_ms_datetime }}{% endif %}</div>
+        {% endif %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>rank</th><th>symbol</th><th>评分档位</th><th>rule1_score</th><th>rule2_score</th><th>rule3_score</th><th>rule4_score</th><th>rule5_score</th><th>rule6_score</th><th>rule7_score</th><th>rule8_score</th><th>rule9_score</th><th>rule10_score</th><th>rule11_score</th><th>rule12_score</th><th>rule13_score</th><th>rule14_score</th><th>rule15_score</th><th>rule16_score</th><th>rule17_score</th><th>rule18_score</th><th>total_score</th></tr></thead>
+            <tbody>
+              {% set top_score = round_scores_total[0].total_score if round_scores_total else none %}
+              {% for r in round_scores_total %}
+                {% set total_score_value = r.total_score|int %}
+                {% set band = namespace(label='NA', css_class='score-band-na') %}
+                {% for config in score_band_configs %}
+                  {% if total_score_value >= config.lower and total_score_value <= config.upper %}
+                    {% set band.label = config.label %}
+                    {% set band.css_class = config.css_class %}
+                  {% endif %}
+                {% endfor %}
+                {% set band_label = band.label %}
+                {% set band_class = band.css_class %}
+              <tr class="{{ 'top-score-row' if top_score is not none and r.total_score == top_score else '' }}"><td>{{ loop.index }}</td><td>{{ r.symbol }}{% if top_score is not none and r.total_score == top_score %}<span class="top-score-badge">最高分</span>{% endif %}</td><td><span class="score-band-badge {{ band_class }}">{{ band_label }}</span></td><td>{{ r.rule1_score }}</td><td>{{ r.rule2_score }}</td><td>{{ r.rule3_score }}</td><td>{{ r.rule4_score }}</td><td>{{ r.rule5_score }}</td><td>{{ r.rule6_score }}</td><td>{{ r.rule7_score }}</td><td>{{ r.rule8_score }}</td><td>{{ r.rule9_score }}</td><td>{{ r.rule10_score }}</td><td>{{ r.rule11_score }}</td><td>{{ r.rule12_score }}</td><td>{{ r.rule13_score }}</td><td>{{ r.rule14_score }}</td><td>{{ r.rule15_score }}</td><td>{{ r.rule16_score }}</td><td>{{ r.rule17_score }}</td><td>{{ r.rule18_score }}</td><td>{{ r.total_score }}</td></tr>
+              {% else %}
+              <tr><td class="empty" colspan="22">暂无总分数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-score-trend" class="panel {{ 'active' if active_tab == 'tab-score-trend' else '' }}">
+    <div class="card score-trend-card">
+      <div class="header"><div class="section-title-row"><h2>评分变化趋势</h2></div></div>
+      <div class="tip">展示所选 symbol 最近3天内已入库的总分变化趋势。页面默认不加载趋势数据，整体刷新页面也不会自动刷新；请使用下方筛选栏中的“刷新”按钮。</div>
+      <div class="toolbar">
+        <form id="score-trend-form" method="get" action="{{ url_for('scoring') }}" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;">
+          <input type="hidden" name="active_tab" value="tab-score-trend" />
+          <label class="field">Symbol
+            <select id="score-trend-symbol" name="score_trend_symbol">
+              {% for s in score_trend_symbols %}
+                <option value="{{ s }}" {% if score_trend_symbol == s %}selected{% endif %}>{{ s }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <div class="actions">
+            <button class="btn btn-primary" type="submit">刷新</button>
+          </div>
+        </form>
+      </div>
+      <div id="score-trend-status" class="tip">
+        {% if score_trend_symbol %}
+          尚未加载趋势数据。当前默认 symbol：<span id="score-trend-current-symbol">{{ score_trend_symbol }}</span>；请点击“刷新”。
+        {% else %}
+          当前暂无可查询 symbol。
+        {% endif %}
+      </div>
+      <div class="chart-wrap score-trend-chart-wrap">
+        <div class="chart-meta">
+          <span>横轴：评分轮次（UTC）；纵轴：总分与单型区间。</span>
+          <span>时间范围：最近3天。</span>
+        </div>
+        <div id="score-trend-chart"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-strategy" class="panel {{ 'active' if active_tab == 'tab-strategy' else '' }}">
+    <div class="card">
+      <div class="header"><h2>本轮交易策略</h2></div>
+      <div class="bookmark-tabs" role="tablist" aria-label="本轮交易策略板块">
+        <button class="bookmark-tab active" type="button" role="tab" aria-selected="true" data-strategy-tab="strategy-openable">本轮可开仓symbol情况</button>
+        <button class="bookmark-tab" type="button" role="tab" aria-selected="false" data-strategy-tab="strategy-cooldown">本轮冷却期symbol</button>
+      </div>
+
+      <div id="strategy-openable" class="strategy-subpanel active" role="tabpanel">
+        <div class="symbol-strip">
+          <div><strong>本轮可开仓symbol情况</strong></div>
+          {% if openable_round_ts %}
+            <div class="muted">总分计算完成后评估轮次：{{ openable_round_ts|fmt_ms_datetime }}</div>
+          {% endif %}
+          {% set qualified_openable_symbols = openable_symbols|selectattr('qualified')|list %}
+          {% if qualified_openable_symbols %}
+            <div class="chips">
+              {% for row in qualified_openable_symbols %}
+                <span class="chip" title="总分 {{ row.total_score }}；止损距离 {{ '%.4f%%'|format(row.stop_loss_distance_ratio * 100) if row.stop_loss_distance_ratio is not none else '-' }}；止损距离档位 {{ row.stop_loss_distance_tier }}；杠杆 {{ row.opening_leverage }}">{{ row.symbol }} {{ row.opening_leverage }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="chips">
+              <span class="chip">无</span>
+            </div>
+          {% endif %}
+        </div>
+        {% if open_block_notice %}
+          <div class="open-block-notice">本轮开仓限制：<span>{{ open_block_notice }}</span></div>
+        {% endif %}
+        <div class="tip">可开仓基础条件：本轮总分 ≥ {{ openable_min_total_score }}，且不在冷却期；若有上一轮评分档位，且上一轮评分档位低于本轮评分档位，则本轮最终不可开仓。止损距离筛查使用规则18的 distance_ratio：{{ score_distance_threshold_text }}；止损距离档位：{{ openable_symbol_settings.tier_min_percent }}%&lt;distance_ratio≤{{ openable_symbol_settings.tier_max_percent['A档'] }}% 为A档，{{ openable_symbol_settings.tier_max_percent['A档'] }}%&lt;distance_ratio≤{{ openable_symbol_settings.tier_max_percent['B档'] }}% 为B档，{{ openable_symbol_settings.tier_max_percent['B档'] }}%&lt;distance_ratio≤{{ openable_symbol_settings.tier_max_percent['C档'] }}% 为C档，distance_ratio&gt;{{ openable_symbol_settings.tier_max_percent['C档'] }}% 为D档。杠杆评定：不高于 A 档下限的 distance_ratio 杠杆统一为NA，且最终不可开仓；其他情况按总分区间和止损距离档位映射（{{ score_leverage_mapping_text }}）。下表展示基础条件命中的symbol及其止损距离筛查结果与本轮开仓杠杆倍数。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>symbol</th>
+                <th>decision_round_ts</th>
+                <th>total_score</th>
+                <th>评分档位</th>
+                <th>上一轮总分</th>
+                <th>上一轮评分档位</th>
+                <th>distance_ratio</th>
+                <th>止损距离档位</th>
+                <th>杠杆大小</th>
+                <th>合格阈值</th>
+                <th>止损距离筛查</th>
+                <th>最终可开仓</th>
+                <th>reason</th>
+                <th>evaluated_at</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in openable_symbols %}
+              <tr>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                <td>{{ row.total_score }}</td>
+                <td><span class="score-band-badge {{ 'score-band-strong-trend' if row.score_band == '确定性强趋势单' else 'score-band-trend-standard' if row.score_band == '趋势标准单' else 'score-band-standard-trial' if row.score_band == '标准试错单' else 'score-band-low-trial' if row.score_band == '低档试错单' else 'score-band-na' }}">{{ row.score_band }}</span></td>
+                <td>{{ row.previous_total_score if row.previous_total_score is not none else '-' }}</td>
+                <td><span class="score-band-badge {{ 'score-band-strong-trend' if row.previous_score_band == '确定性强趋势单' else 'score-band-trend-standard' if row.previous_score_band == '趋势标准单' else 'score-band-standard-trial' if row.previous_score_band == '标准试错单' else 'score-band-low-trial' if row.previous_score_band == '低档试错单' else 'score-band-na' }}">{{ row.previous_score_band }}</span></td>
+                <td>{{ '%.4f%%'|format(row.stop_loss_distance_ratio * 100) if row.stop_loss_distance_ratio is not none else '-' }}</td>
+                <td><span class="tier-badge {{ 'tier-a' if row.stop_loss_distance_tier == 'A档' else 'tier-b' if row.stop_loss_distance_tier == 'B档' else 'tier-c' if row.stop_loss_distance_tier == 'C档' else 'tier-d' if row.stop_loss_distance_tier == 'D档' else 'tier-na' }}">{{ row.stop_loss_distance_tier }}</span></td>
+                <td><span class="leverage-badge {{ 'leverage-very-high' if row.opening_leverage in ['10x', '12x'] else 'leverage-high' if row.opening_leverage in ['7x', '8x'] else 'leverage-mid' if row.opening_leverage in ['4x', '5x', '6x'] else 'leverage-low' if row.opening_leverage in ['1x', '2x', '3x'] else 'leverage-na' }}">{{ row.opening_leverage }}</span></td>
+                <td>{{ '%.2f%%'|format(row.distance_threshold * 100) if row.distance_threshold is not none else '-' }}</td>
+                <td><span class="status-badge {{ 'status-pass' if row.distance_qualified else 'status-fail' }}">{{ '合格' if row.distance_qualified else '不合格' }}</span></td>
+                <td><span class="status-badge {{ 'status-pass' if row.qualified else 'status-fail' }}">{{ '是' if row.qualified else '否' }}</span></td>
+                <td>{{ row.reason }}</td>
+                <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="14">暂无本轮可开仓symbol候选</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+          <div class="symbol-strip collapsible-header">
+            <div>
+              <div><strong>可开仓symbol情况记录</strong></div>
+              <div class="muted">展示最近 {{ openable_round_history|length }} 轮所有候选symbol的详细可开仓评估结果。</div>
+            </div>
+            <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+          </div>
+          <div class="collapse-hint">默认折叠，仅展示最新 10 条；点击“展开全部”查看完整记录。</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>评估轮次</th>
+                  <th>候选symbol数</th>
+                  <th>所有候选symbol详情</th>
+                  <th>评估时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for round in openable_round_history %}
+                <tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">
+                  <td>{{ round.decision_round_ts|fmt_ms_datetime }}</td>
+                  <td>{{ round.candidate_count }}</td>
+                  <td>
+                    {% if round.candidate_symbols %}
+                    <div class="table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>symbol</th>
+                            <th>total_score</th>
+                            <th>评分档位</th>
+                            <th>distance_ratio</th>
+                            <th>止损距离档位</th>
+                            <th>杠杆大小</th>
+                            <th>最终可开仓</th>
+                            <th>reason</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {% for row in round.candidate_symbols %}
+                          <tr>
+                            <td>{{ row.symbol }}</td>
+                            <td>{{ row.total_score }}</td>
+                            <td>{{ row.score_band }}</td>
+                            <td>{{ '%.4f%%'|format(row.stop_loss_distance_ratio * 100) if row.stop_loss_distance_ratio is not none else '-' }}</td>
+                            <td>{{ row.stop_loss_distance_tier }}</td>
+                            <td>{{ row.opening_leverage }}</td>
+                            <td><span class="status-badge {{ 'status-pass' if row.qualified else 'status-fail' }}">{{ '是' if row.qualified else '否' }}</span></td>
+                            <td>{{ row.reason }}</td>
+                          </tr>
+                          {% endfor %}
+                        </tbody>
+                      </table>
+                    </div>
+                    {% else %}
+                    <span class="muted">无</span>
+                    {% endif %}
+                  </td>
+                  <td>{{ round.evaluated_at|fmt_ms_datetime }}</td>
+                </tr>
+                {% else %}
+                <tr><td class="empty" colspan="4">暂无可开仓symbol情况记录</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+
+      <div id="strategy-cooldown" class="strategy-subpanel" role="tabpanel">
+        <div class="symbol-strip">
+          <div><strong>本轮冷却期symbol（15分钟更新）</strong></div>
+          {% if cooldown_round_ts %}
+            <div class="muted">扫描轮次：{{ cooldown_round_ts|fmt_ms_datetime }}</div>
+          {% endif %}
+          {% if cooldown_symbols %}
+            <div class="chips">
+              {% for row in cooldown_symbols %}
+                <span class="chip" title="{{ row.reason }}">{{ row.symbol }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="chips">
+              <span class="chip">无</span>
+            </div>
+          {% endif %}
+        </div>
+        <div class="tip">冷却条件：30分钟内被标记为异常插针，或最近两根15分钟K线均满足 (high - close) / (high - low) ≥ 0.7 且 close > open。时间字段均为 UTC。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>symbol</th>
+                <th>decision_round_ts</th>
+                <th>30分钟内异常插针</th>
+                <th>连续两根15m上影占比≥0.7且close>open</th>
+                <th>latest_15m_open_time</th>
+                <th>latest_15m_ratio</th>
+                <th>prev_15m_open_time</th>
+                <th>prev_15m_ratio</th>
+                <th>reason</th>
+                <th>detected_at</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in cooldown_symbols %}
+              <tr>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+                <td>{{ '是' if row.abnormal_wick_hit else '否' }}</td>
+                <td>{{ '是' if row.upper_wick_2bar_hit else '否' }}</td>
+                <td>{{ row.latest_15m_open_time|fmt_ms_datetime if row.latest_15m_open_time else '-' }}</td>
+                <td>{{ '%.6f'|format(row.latest_15m_ratio) if row.latest_15m_ratio is not none else '-' }}</td>
+                <td>{{ row.prev_15m_open_time|fmt_ms_datetime if row.prev_15m_open_time else '-' }}</td>
+                <td>{{ '%.6f'|format(row.prev_15m_ratio) if row.prev_15m_ratio is not none else '-' }}</td>
+                <td>{{ row.reason }}</td>
+                <td>{{ row.detected_at|fmt_ms_datetime }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="10">暂无本轮冷却期symbol</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+{% endblock %}
+
+{% block scripts %}
+  <script id="score-band-data" type="application/json">{{ score_band_configs|tojson }}</script>
+  <script src="{{ url_for('static', filename='js/scoring.js') }}"></script>
+{% endblock %}
