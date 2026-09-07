@@ -54,8 +54,21 @@ sudo chmod -R u+rwX ./data ./logs
 
 ```bash
 cp .env.example .env
-# 按需编辑 .env 里的 API key、HOST_DATA_DIR、HOST_LOGS_DIR
+# 查看服务器的 Tailscale IPv4 地址（通常为 100.x.y.z）
+tailscale ip -4
+# 编辑 .env：填写 API key、HOST_DATA_DIR、HOST_LOGS_DIR，并将上一步结果写入 WEB_BIND_IP
 ```
+
+如果 Web 平台只允许 Tailnet 内设备访问（推荐），请在 `.env` 中填写服务器的
+Tailscale IPv4 地址：
+
+```bash
+WEB_BIND_IP=100.x.y.z
+```
+
+`docker-compose.yml` 默认使用 `127.0.0.1`，即未配置时只允许服务器本机访问，
+不会意外监听公网网卡。不要把它设成 `0.0.0.0` 或服务器公网 IP。容器内 Gunicorn
+继续监听 `0.0.0.0:5000` 是正常的；真正限制宿主机入口的是 Docker 的端口发布地址。
 
 默认数据库路径如下，通常保持不变即可：
 
@@ -166,6 +179,7 @@ docker compose up -d --build
 `docker-compose.yml` 已支持：
 - `user: "${PUID:-1000}:${PGID:-1000}"`：让 `worker/web` 进程直接使用宿主机当前用户 UID/GID，避免挂载数据目录时出现只读权限问题。
 - `HOST_DATA_DIR` / `HOST_LOGS_DIR`：可切换宿主机挂载目录；不设置时默认使用仓库当前目录的 `./data`、`./logs`。
+- `WEB_BIND_IP`：将宿主机 `5000` 端口只发布到该地址；推荐填写服务器的 Tailscale IPv4。未设置时仅绑定 `127.0.0.1`。
 - `worker` 和 `web` 都声明同一个 `build: .` / `image: trading-sys-demo:latest`，避免新增 Python 文件后只启动 web 时仍使用旧镜像。
 - `worker` 和 `web` 都注入 Binance 环境变量和数据库路径；第一组交易实验现在由 `worker` 在每轮可开仓 symbol 计算完成后自动触发。
 - 健康检查只配置在 `web` 服务上，避免 `worker` 因不提供 HTTP 服务而在云平台部署时被误判。
@@ -182,7 +196,7 @@ docker compose --profile diagnostics logs -f sqlite-web
 
 ### 访问地址
 
-- 交易数据平台：`http://YOUR_PUBLIC_IP:5000/`
+- 交易数据平台（已加入同一 Tailnet 的设备）：`http://YOUR_TAILSCALE_IP:5000/`
 - SQLite 可视化（仅排障、本机或 SSH 隧道）：`http://127.0.0.1:8080/`
 
 ---
@@ -247,7 +261,7 @@ docker run -d \
   -e MARKET_DB_PATH="${MARKET_DB_PATH:-data/market.db}" \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/logs:/app/logs" \
-  -p 5000:5000 \
+  -p "${WEB_BIND_IP:?请先将 WEB_BIND_IP 设为服务器的 Tailscale IPv4}:5000:5000" \
   --restart=always \
   trading-sys-demo:latest web
 ```
@@ -265,6 +279,21 @@ docker compose up -d --build
 
 ## 防火墙与安全组
 
-请在云平台安全组和服务器防火墙放行：
-- TCP `5000`（交易数据平台）
-- TCP `8080`（sqlite-web）
+使用 Tailscale 后，**不要**在阿里云安全组或面向公网的服务器防火墙中放行 TCP
+`5000`；`8080` 也不应对公网放行。Web 端口由 Docker 只绑定到服务器的 Tailscale
+地址，同一 Tailnet 中且通过 Tailscale ACL/grants 授权的设备才能访问。
+
+部署后可在服务器上确认绑定结果：
+
+```bash
+docker compose config
+docker compose up -d --build
+docker port trade-web 5000
+# 预期为 100.x.y.z:5000，而不是 0.0.0.0:5000 或 :::5000
+curl -fsS "http://${WEB_BIND_IP}:5000/" >/dev/null
+```
+
+同时建议在 Tailscale 管理后台用 ACL/grants 仅允许你和朋友的用户或设备访问该
+服务器的 TCP `5000`，并保留 Tailnet 设备审批、密钥过期等访问控制。删除公网安全组
+规则是正确操作，但仍应使用上述指定地址绑定，避免 Docker 端口发布规则绕开或先于
+部分主机防火墙规则处理流量。
