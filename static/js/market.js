@@ -3,6 +3,29 @@
 
   let btcChart = null;
 
+  const marketTabButtons = Array.from(document.querySelectorAll('[data-market-tab]'));
+  const marketPanels = Array.from(document.querySelectorAll('.content .panel'));
+
+  function selectMarketTab(tabId, updateUrl = true) {
+    const selectedButton = marketTabButtons.find(button => button.dataset.marketTab === tabId);
+    const selectedPanel = document.getElementById(tabId);
+    if (!selectedButton || !selectedPanel) return;
+
+    marketTabButtons.forEach(button => {
+      const selected = button === selectedButton;
+      button.classList.toggle('active', selected);
+      button.setAttribute('aria-selected', String(selected));
+    });
+    marketPanels.forEach(panel => {
+      const selected = panel === selectedPanel;
+      panel.classList.toggle('active', selected);
+      panel.hidden = !selected;
+    });
+
+    if (updateUrl) window.history.replaceState(null, '', `#${tabId}`);
+    if (tabId === 'tab-btc') requestAnimationFrame(refreshBtcChartLayout);
+  }
+
   function formatMsDatetime(tsMs) {
     const ts = Number(tsMs);
     if (!Number.isFinite(ts) || ts <= 0) return '-';
@@ -129,4 +152,9 @@
   if (refresh) refresh.addEventListener('click', () => refreshBtcData(1));
   if (previous) previous.addEventListener('click', () => refreshBtcData(Number(previous.dataset.page || 1)));
   if (next) next.addEventListener('click', () => refreshBtcData(Number(next.dataset.page || 1)));
+
+  marketTabButtons.forEach(button => {
+    button.addEventListener('click', () => selectMarketTab(button.dataset.marketTab));
+  });
+  selectMarketTab(window.location.hash.slice(1) || 'tab-btc', false);
 })();

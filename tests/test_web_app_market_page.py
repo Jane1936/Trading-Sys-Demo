@@ -22,6 +22,24 @@ def test_market_page_uses_independent_template_and_script():
     assert "renderBtcKlineChart" in script
 
 
+def test_market_page_has_separate_sidebar_tabs_and_only_btc_is_initially_visible():
+    template = Path("templates/market.html").read_text(encoding="utf-8")
+    script = Path("static/js/market.js").read_text(encoding="utf-8")
+
+    navigation_start = template.index("{% block navigation %}")
+    navigation = template[navigation_start:template.index("{% endblock %}", navigation_start)]
+    assert (
+        navigation.index("返回交易控制台")
+        < navigation.index("BTC数据")
+        < navigation.index("市场行情过滤")
+    )
+    assert 'data-market-tab="tab-btc"' in navigation
+    assert 'data-market-tab="tab-market-filter"' in navigation
+    assert '<section id="tab-btc" class="panel active" role="tabpanel">' in template
+    assert '<section id="tab-market-filter" class="panel" role="tabpanel" hidden>' in template
+    assert "selectMarketTab(window.location.hash.slice(1) || 'tab-btc', false)" in script
+
+
 def test_market_route_only_calls_its_context_loader():
     with (
         patch("web_app.initialize_config_database") as initialize_config,
