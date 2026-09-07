@@ -308,6 +308,70 @@ def load_settings_context() -> dict:
     }
 
 
+def load_market_safety_context() -> dict:
+    """Load only the data required by the standalone market-safety page."""
+    module_errors = []
+
+    def load_module(label: str, loader, default):
+        value, error = _safe_page_module(label, loader, default)
+        if error:
+            module_errors.append(error)
+        return value
+
+    return {
+        "module_errors": module_errors,
+        "active_tab": "tab-market",
+        # BTC history remains explicitly user-triggered through /api/btc/5m.
+        "btc_5m_rows": [],
+        "btc_page": 1,
+        "btc_page_size": 24,
+        "btc_total_rows": 0,
+        "btc_total_pages": 1,
+        "market_filter_results": load_module(
+            "市场行情过滤",
+            lambda: MarketFilterModule(db_path=_market_db_path()).recent_results(limit=100, days=7),
+            [],
+        ),
+        "weak_market_profit_adjustment_results": load_module(
+            "弱势市场止盈动态调整",
+            lambda: WeakMarketProfitAdjustmentModule(db_path=_market_db_path()).recent_results(limit=100, days=7),
+            [],
+        ),
+        "add_position_permission_results": load_module(
+            "加仓权限",
+            lambda: AddPositionPermissionModule(db_path=_market_db_path()).recent_results(limit=100, days=7),
+            [],
+        ),
+        "dynamic_add_position_threshold_results": load_module(
+            "动态加仓阈值",
+            lambda: DynamicAddPositionThresholdModule(db_path=_trading_db_path()).recent_results(limit=100, days=7),
+            [],
+        ),
+        "dynamic_open_threshold_results": load_module(
+            "动态开仓门槛",
+            lambda: DynamicOpenThresholdModule(db_path=_scoring_db_path()).recent_results(limit=100, days=7),
+            [],
+        ),
+        "dynamic_open_threshold_errors": load_module(
+            "动态开仓门槛错误",
+            lambda: DynamicOpenThresholdModule.recent_errors(
+                error_db_path=_market_db_path(), limit=20, days=7
+            ),
+            [],
+        ),
+        "market_filter_settings": load_module(
+            "独立市场过滤配置",
+            lambda: get_market_filter_settings(CONFIG_DB_PATH),
+            {"btc_siphon_threshold": 0, "market_crash_threshold": 0, "block_duration_minutes": 1},
+        ),
+        "weak_market_profit_settings": load_module(
+            "弱势市场止盈配置",
+            lambda: get_weak_market_profit_settings(CONFIG_DB_PATH),
+            {"trigger_r_multiple": 1.4, "take_profit_fraction": 0.5},
+        ),
+    }
+
+
 def load_simulation_context() -> dict:
     """Load only paper-trading data required by the simulation page."""
     module_errors = []
@@ -1148,6 +1212,12 @@ def index():
 def settings():
     initialize_config_database(CONFIG_DB_PATH, BASE_DB_PATH)
     return render_template("settings.html", **load_settings_context())
+
+
+@app.get("/safety/market")
+def market_safety():
+    initialize_config_database(CONFIG_DB_PATH, BASE_DB_PATH)
+    return render_template("market.html", **load_market_safety_context())
 
 
 @app.get("/trading/simulation")
@@ -1998,6 +2068,8 @@ def trading_experiment_run_api():
 def abnormal_wicks():
     legacy_tab_routes = {
         "tab-feature-flags": "settings",
+        "tab-btc": "market_safety",
+        "tab-market-filter": "market_safety",
         "tab-simulation": "simulation",
         "tab-live": "live",
     }
@@ -2010,10 +2082,7 @@ def abnormal_wicks():
     initialize_config_database(CONFIG_DB_PATH, BASE_DB_PATH)
     limit = request.args.get("limit", default=100, type=int)
     symbol = request.args.get("symbol", default="", type=str).strip()
-    btc_page = request.args.get("btc_page", default=1, type=int)
     limit = max(1, min(limit, 1000))
-    btc_page = max(1, btc_page)
-    btc_page_size = 24
     module_errors = []
 
     def load_module(label: str, loader, default):
@@ -2084,26 +2153,6 @@ def abnormal_wicks():
         "可开仓 Symbol 情况记录",
         lambda: openable.recent_round_summaries(limit=100),
         [],
-    )
-    market_filter = MarketFilterModule(db_path=_market_db_path())
-    market_filter_results = load_module("市场行情过滤", lambda: market_filter.recent_results(limit=100, days=7), [])
-    weak_market_profit_adjustment = WeakMarketProfitAdjustmentModule(db_path=_market_db_path())
-    weak_market_profit_adjustment_results = load_module("弱势市场止盈动态调整", lambda: weak_market_profit_adjustment.recent_results(limit=100, days=7), [])
-    add_position_permission = AddPositionPermissionModule(db_path=_market_db_path())
-    add_position_permission_results = load_module("加仓权限", lambda: add_position_permission.recent_results(limit=100, days=7), [])
-    dynamic_add_position_threshold = DynamicAddPositionThresholdModule(db_path=_trading_db_path())
-    dynamic_add_position_threshold_results = load_module("动态加仓阈值", lambda: dynamic_add_position_threshold.recent_results(limit=100, days=7), [])
-    dynamic_open_threshold = DynamicOpenThresholdModule(db_path=_scoring_db_path())
-    dynamic_open_threshold_results = load_module("动态开仓门槛", lambda: dynamic_open_threshold.recent_results(limit=100, days=7), [])
-    dynamic_open_threshold_errors = load_module(
-        "动态开仓门槛错误",
-        lambda: DynamicOpenThresholdModule.recent_errors(
-            error_db_path=_market_db_path(), limit=20, days=7
-        ),
-        [],
-    )
-    open_block_notice = _current_open_block_notice(
-        openable_round_ts, market_filter_results, dynamic_open_threshold_results
     )
     score_trend_symbols = load_module("评分趋势 Symbol 列表", scoring.get_total_score_symbols, [])
     requested_score_trend_symbol = request.args.get("score_trend_symbol", default="", type=str).strip()
@@ -2228,11 +2277,6 @@ def abnormal_wicks():
     if requested_score_trend_symbol:
         active_tab = "tab-score-trend"
 
-    btc_5m_rows = []
-    btc_chart_rows = []
-    btc_total_rows = 0
-    btc_total_pages = 1
-
     return render_template(
         "abnormal_wicks.html",
         events=events,
@@ -2292,13 +2336,6 @@ def abnormal_wicks():
         score_distance_threshold_text=score_distance_threshold_text,
         score_leverage_mapping_text=score_leverage_mapping_text,
         openable_min_total_score=openable_min_total_score,
-        market_filter_results=market_filter_results,
-        weak_market_profit_adjustment_results=weak_market_profit_adjustment_results,
-        add_position_permission_results=add_position_permission_results,
-        dynamic_add_position_threshold_results=dynamic_add_position_threshold_results,
-        dynamic_open_threshold_results=dynamic_open_threshold_results,
-        dynamic_open_threshold_errors=dynamic_open_threshold_errors,
-        open_block_notice=open_block_notice,
         trading_trade_records=trading_trade_records,
         trading_new_open_symbols=trading_new_open_symbols,
         trading_position_snapshots=trading_position_snapshots,
@@ -2370,13 +2407,7 @@ def abnormal_wicks():
         active_tab=active_tab,
         module_errors=module_errors,
         selected_symbol=symbol,
-        btc_5m_rows=btc_5m_rows,
-        btc_chart_rows=btc_chart_rows,
-        btc_page=btc_page,
-        btc_page_size=btc_page_size,
-        btc_total_rows=btc_total_rows,
         should_load_abnormal_events=should_load_abnormal_events,
-        btc_total_pages=btc_total_pages,
         feature_flags=feature_flags.list_feature_flags(CONFIG_DB_PATH),
         position_limit_settings=get_position_limit_settings(CONFIG_DB_PATH),
         dynamic_profit_protection_settings=get_dynamic_profit_protection_settings(CONFIG_DB_PATH),

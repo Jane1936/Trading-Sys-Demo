@@ -13,11 +13,10 @@
     <aside class="sidebar" aria-label="控制台导航">
       {% block navigation %}
       <button class="tab-btn {{ 'active' if not active_tab or active_tab == 'tab-abnormal' else '' }}" data-tab="tab-abnormal">异常插针记录</button>
-      <button class="tab-btn {{ 'active' if active_tab == 'tab-btc' else '' }}" data-tab="tab-btc">BTC数据</button>
       <button class="tab-btn {{ 'active' if active_tab == 'tab-score' else '' }}" data-tab="tab-score">评分系统</button>
       <button class="tab-btn {{ 'active' if active_tab == 'tab-score-trend' else '' }}" data-tab="tab-score-trend">评分变化趋势</button>
-      <button class="tab-btn {{ 'active' if active_tab == 'tab-market-filter' else '' }}" data-tab="tab-market-filter">市场行情过滤</button>
       <button class="tab-btn {{ 'active' if active_tab == 'tab-strategy' else '' }}" data-tab="tab-strategy">本轮交易策略</button>
+      <a class="tab-btn {{ 'active' if active_tab == 'tab-market' else '' }}" href="{{ url_for('market_safety') }}">市场安全页</a>
       <a class="tab-btn {{ 'active' if active_tab == 'tab-simulation' else '' }}" href="{{ url_for('simulation') }}">模拟盘数据</a>
       <a class="tab-btn {{ 'active' if active_tab == 'tab-live' else '' }}" href="{{ url_for('live') }}">实盘数据</a>
       <a class="tab-btn" href="{{ url_for('settings') }}">系统配置</a>

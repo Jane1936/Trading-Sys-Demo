@@ -1,0 +1,292 @@
+{% extends "base.html" %}
+
+{% block title %}市场安全页{% endblock %}
+{% block head_extra %}<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>{% endblock %}
+
+{% block navigation %}
+  <a class="tab-btn" href="{{ url_for('abnormal_wicks') }}">异常插针记录</a>
+  <a class="tab-btn active" href="{{ url_for('market_safety') }}">市场安全页</a>
+  <a class="tab-btn" href="{{ url_for('simulation') }}">模拟盘数据</a>
+  <a class="tab-btn" href="{{ url_for('live') }}">实盘数据</a>
+  <a class="tab-btn" href="{{ url_for('settings') }}">系统配置</a>
+{% endblock %}
+
+{% block content %}
+  <section id="tab-btc" class="panel active">
+  <div class="card" style="margin-top:16px;">
+    <div class="header"><h2>BTC 5分钟K线</h2></div>
+    <div class="tip">仅展示最近3天数据。红涨绿跌（close >= open 为红色，close &lt; open 为绿色），按开盘时间倒序展示，每页最多24条。刷新整个页面不会拉取 BTC 数据，请手动点击下方按钮刷新。</div>
+    <div class="toolbar">
+      <div class="actions">
+        <button class="btn btn-primary" type="button" id="refresh-btc-data">刷新BTC数据并渲染图表</button>
+      </div>
+      <div class="muted" id="btc-refresh-status">尚未加载 BTC 数据。</div>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-meta">
+        <span>图表在点击刷新按钮后展示最近3天完整5分钟K线（约864根）。</span>
+        <span>下方表格仍按每页24条分页显示。</span>
+      </div>
+      <div id="btc-kline-chart"></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>open_time</th>
+            <th>close_time</th>
+            <th>open</th>
+            <th>high</th>
+            <th>low</th>
+            <th>close</th>
+            <th>volume</th>
+          </tr>
+        </thead>
+        <tbody id="btc-5m-rows">
+          {% for k in btc_5m_rows %}
+          {% set up = k[4] >= k[1] %}
+          <tr>
+            <td>{{ k[0]|fmt_ms_datetime }}</td>
+            <td>{{ k[6]|fmt_ms_datetime }}</td>
+            <td class="{{ 'k-up' if up else 'k-down' }}">{{ '%.6f'|format(k[1]) }}</td>
+            <td class="{{ 'k-up' if up else 'k-down' }}">{{ '%.6f'|format(k[2]) }}</td>
+            <td class="{{ 'k-up' if up else 'k-down' }}">{{ '%.6f'|format(k[3]) }}</td>
+            <td class="{{ 'k-up' if up else 'k-down' }}">{{ '%.6f'|format(k[4]) }}</td>
+            <td>{{ '%.6f'|format(k[5]) }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td class="empty" colspan="7">暂无 BTC 5分钟K线数据</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <div class="actions">
+        <button class="btn btn-secondary" type="button" id="btc-prev-page" disabled>上一页</button>
+        <button class="btn btn-secondary" type="button" id="btc-next-page" disabled>下一页</button>
+      </div>
+      <div class="pager-info" id="btc-pager-info">第 {{ btc_page }} / {{ btc_total_pages }} 页，共 {{ btc_total_rows }} 条（最近3天）</div>
+    </div>
+  </div>
+  </section>
+
+  <section id="tab-market-filter" class="panel active">
+    <div class="card">
+      <div class="header"><h2>市场行情过滤</h2></div>
+      {% if dynamic_open_threshold_errors %}
+      <div class="tip danger" role="alert">
+        <strong>动态开仓门槛模块报错（最近7天）</strong>
+        {% for row in dynamic_open_threshold_errors %}
+        <div>轮次 {{ row.decision_round_ts|fmt_ms_datetime }} · 报错时间 {{ row.created_at|fmt_ms_datetime }}：{{ row.error }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+        <div class="symbol-strip collapsible-header">
+          <div>
+            <div><strong>弱势市场止盈动态调整（每15分钟执行）</strong></div>
+            <div class="muted">只显示最近7天内记录。等待 ALLUSDT 15分钟K线收敛；1小时整点还会等待 ALLUSDT 1小时MA20计算完成。默认折叠，仅展示最新 10 条。</div>
+          </div>
+          <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+        </div>
+        <div class="collapse-hint">规则：若最近第1条 ALLUSDT 15分钟K线 close &lt; 最近第1条 ALLUSDT 1小时MA20，则触发市场弱势。市场弱势时，分批止盈按功能开关页当前配置，在未变现盈亏 ≥ {{ weak_market_profit_settings.trigger_r_multiple }}R 时卖出当前仓位{{ '%.1f'|format(weak_market_profit_settings.take_profit_fraction * 100) }}%；否则维持 ≥ 2R 时卖出30%。系统默认值为1.4R/50%；15分钟整点的分批止盈扫描会等待本模块完成。</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>决策轮次</th><th>执行时间</th><th>15m K线时间</th><th>ALLUSDT close</th><th>1h MA20时间</th><th>1h MA20</th><th>市场弱势</th><th>止盈阈值</th><th>卖出比例</th><th>原因</th></tr></thead>
+            <tbody>
+              {% for row in weak_market_profit_adjustment_results %}
+              <tr class="{% if loop.first %}latest-decision-row{% endif %}{% if loop.index > 10 %} collapsed-extra{% endif %}">
+                <td>{{ row.decision_round_ts|fmt_ms_datetime }}{% if loop.first %}<span class="latest-decision-badge">最新</span>{% endif %}</td><td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
+                <td>{{ row.allusdt_15m_open_time|fmt_ms_datetime if row.allusdt_15m_open_time else '-' }}</td>
+                <td>{{ '%.8f'|format(row.allusdt_15m_close) if row.allusdt_15m_close is not none else '-' }}</td>
+                <td>{{ row.allusdt_1h_ma20_open_time|fmt_ms_datetime if row.allusdt_1h_ma20_open_time else '-' }}</td>
+                <td>{{ '%.8f'|format(row.allusdt_1h_ma20) if row.allusdt_1h_ma20 is not none else '-' }}</td>
+                <td><span class="chip">{{ '是' if row.weak_market else '否' }}</span></td>
+                <td>{{ '%.1fR'|format(row.trigger_r_multiple) }}</td><td>{{ '%.0f%%'|format(row.take_profit_fraction * 100) }}</td><td>{{ row.reason }}</td>
+              </tr>
+              {% else %}<tr><td colspan="10" class="muted">暂无弱势市场止盈动态调整执行结果。</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+        <div class="symbol-strip collapsible-header">
+          <div>
+            <div><strong>动态开仓门槛（每15分钟执行，评分完成后）</strong></div>
+            <div class="muted">只显示最近7天内记录。维护最近12小时内评分系统最高总分，并按最高分动态限制本轮新开仓门槛；默认折叠，仅展示最新 10 条。</div>
+          </div>
+          <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+        </div>
+        <div class="collapse-hint">规则：最近12小时最高总分≥85：本轮无额外最低开仓门槛；73-84：仅允许趋势标准单及以上（81分及以上）的 symbol 新开仓；低于73或无评分记录：本轮不允许任何新开仓。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>决策轮次</th><th>执行时间</th><th>统计窗口</th><th>12小时最高总分</th><th>最高分symbol</th>
+                <th>最高分轮次</th><th>是否允许新开仓</th><th>本轮最低开仓分</th><th>策略</th><th>原因</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in dynamic_open_threshold_results %}
+                <tr class="{% if loop.first %}latest-decision-row{% endif %}{% if loop.index > 10 %} collapsed-extra{% endif %}">
+                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}{% if loop.first %}<span class="latest-decision-badge">最新</span>{% endif %}</td>
+                  <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
+                  <td>{{ row.window_start_ts|fmt_ms_datetime }} ~ {{ row.window_end_ts|fmt_ms_datetime }}</td>
+                  <td>{{ row.highest_total_score if row.highest_total_score is not none else '-' }}</td>
+                  <td>{{ row.highest_symbol or '-' }}</td>
+                  <td>{{ row.highest_score_round_ts|fmt_ms_datetime if row.highest_score_round_ts else '-' }}</td>
+                  <td><span class="chip decision-status {{ 'success' if row.allow_new_positions else 'danger' }}">{{ '允许' if row.allow_new_positions else '禁止' }}</span></td>
+                  <td>{{ row.min_open_total_score if row.min_open_total_score is not none else '无额外门槛' if row.allow_new_positions else '-' }}</td>
+                  <td>{{ row.policy }}</td>
+                  <td>{{ row.reason }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="10" class="muted">暂无动态开仓门槛执行结果。</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+
+      <div class="collapsible-section purple-module is-collapsed" data-collapsible data-collapsed-limit="10">
+        <div class="symbol-strip collapsible-header">
+          <div>
+            <div><strong>加仓权限（每15分钟执行）</strong></div>
+            <div class="muted">只显示最近7天内记录。加仓条件模块执行前会先读取本轮加仓权限；默认折叠，仅展示最新 10 条。</div>
+          </div>
+          <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+        </div>
+        <div class="collapse-hint">规则：加仓需同时满足两个条件：① 分别读取 ALLUSDT 与 BTC 最近4条15分钟K线，使用最近第1条 close 和最近第4条 open 计算最近1小时涨幅 delta=(close-open)/open，山寨跑赢BTC：(BTC delta - ALLUSDT delta)&lt;-0.3%；② 读取 ALLUSDT 最近第1条15分钟K线 close 与最近第1条1小时MA20数据 ma20_1h，若 close &gt; ma20_1h，则山寨整体处于中期均线上方。两个条件同时满足才允许本轮加仓。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>决策轮次</th><th>执行时间</th><th>是否允许加仓</th><th>触发原因</th>
+                <th>ALLUSDT第4条open时间</th><th>ALLUSDT最近K线时间</th><th>ALLUSDT open/close</th><th>ALLUSDT delta</th>
+                <th>BTC第4条open时间</th><th>BTC最近K线时间</th><th>BTC open/close</th><th>BTC delta</th><th>BTC-ALLUSDT差值</th>
+                <th>山寨跑赢BTC</th><th>ALLUSDT 1h MA20时间</th><th>ALLUSDT close/ma20_1h</th><th>山寨整体处于中期均线上方</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in add_position_permission_results %}
+                <tr class="{% if loop.first %}latest-decision-row{% endif %}{% if loop.index > 10 %} collapsed-extra{% endif %}">
+                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}{% if loop.first %}<span class="latest-decision-badge">最新</span>{% endif %}</td>
+                  <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
+                  <td><span class="chip decision-status {{ 'success' if row.allow_add_positions else 'danger' }}">{{ '允许' if row.allow_add_positions else '禁止' }}</span></td>
+                  <td>{{ row.reason }}</td>
+                  <td>{{ row.allusdt_first_open_time|fmt_ms_datetime if row.allusdt_first_open_time else '-' }}</td>
+                  <td>{{ row.allusdt_latest_open_time|fmt_ms_datetime if row.allusdt_latest_open_time else '-' }}</td>
+                  <td>{{ '%.8f / %.8f'|format(row.allusdt_open, row.allusdt_close) if row.allusdt_open is not none and row.allusdt_close is not none else '-' }}</td>
+                  <td>{{ '%.4f%%'|format(row.allusdt_delta * 100) if row.allusdt_delta is not none else '-' }}</td>
+                  <td>{{ row.btc_first_open_time|fmt_ms_datetime if row.btc_first_open_time else '-' }}</td>
+                  <td>{{ row.btc_latest_open_time|fmt_ms_datetime if row.btc_latest_open_time else '-' }}</td>
+                  <td>{{ '%.8f / %.8f'|format(row.btc_open, row.btc_close) if row.btc_open is not none and row.btc_close is not none else '-' }}</td>
+                  <td>{{ '%.4f%%'|format(row.btc_delta * 100) if row.btc_delta is not none else '-' }}</td>
+                  <td>{{ '%.4f%%'|format((row.btc_delta - row.allusdt_delta) * 100) if row.btc_delta is not none and row.allusdt_delta is not none else '-' }}</td>
+                  <td>{{ '是' if row.alt_outperform_btc else '否' }}</td>
+                  <td>{{ row.allusdt_1h_ma20_open_time|fmt_ms_datetime if row.allusdt_1h_ma20_open_time else '-' }}</td>
+                  <td>{{ '%.8f / %.8f'|format(row.allusdt_close, row.allusdt_1h_ma20) if row.allusdt_close is not none and row.allusdt_1h_ma20 is not none else '-' }}</td>
+                  <td>{{ '是' if row.allusdt_above_1h_ma20 else '否' }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="17" class="muted">暂无加仓权限执行结果。</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="collapsible-section purple-module is-collapsed" data-collapsible data-collapsed-limit="10">
+        <div class="symbol-strip collapsible-header">
+          <div>
+            <div><strong>动态加仓阈值（每15分钟执行）</strong></div>
+            <div class="muted">只显示最近7天内记录。统计最近40笔新开仓单中触发过分批止盈规则的比例，并映射本轮加仓阈值；默认折叠，仅展示最新 10 条。</div>
+          </div>
+          <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+        </div>
+        <div class="collapse-hint">规则：读取交易实验交易记录中最近40笔 status=opened 的新开仓单；若分批止盈卖出记录存在同 symbol、同 entry_price、checked_at 不早于开仓时间且 status=submitted 的记录，则计为曾触发分批止盈规则。2R成功率 = 触发笔数 / 样本笔数。基础阈值默认 2.3R；若 2R成功率 > 40%，本轮加仓阈值为 1.3R；若 20% <= 2R成功率 <= 40%，阈值为 1.8R；若 2R成功率 < 20% 或暂无样本，阈值为 2.3R。执行第一次加仓且允许加仓时，加仓保证金 = min(当前持仓50%对应保证金，本轮加仓阈值)，杠杆沿用当前持仓。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>决策轮次</th><th>执行时间</th><th>2R成功率</th><th>本轮加仓阈值</th><th>触发笔数</th><th>样本笔数</th><th>样本最近开仓</th><th>样本最早开仓</th><th>原因</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in dynamic_add_position_threshold_results %}
+                <tr class="{% if loop.first %}latest-decision-row{% endif %}{% if loop.index > 10 %} collapsed-extra{% endif %}">
+                  <td>{{ row.decision_round_ts|fmt_ms_datetime }}{% if loop.first %}<span class="latest-decision-badge">最新</span>{% endif %}</td>
+                  <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
+                  <td>{{ '%.2f%%'|format(row.success_rate * 100) if row.success_rate is not none else '-' }}</td>
+                  <td>{{ '%.1fR'|format(row.threshold_r_multiple) }}</td>
+                  <td>{{ row.success_count }}</td>
+                  <td>{{ row.sample_size }}</td>
+                  <td>{{ row.latest_trade_created_at|fmt_ms_datetime if row.latest_trade_created_at else '-' }}</td>
+                  <td>{{ row.earliest_trade_created_at|fmt_ms_datetime if row.earliest_trade_created_at else '-' }}</td>
+                  <td>{{ row.reason }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="9" class="muted">暂无动态加仓阈值执行结果。</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10">
+        <div class="symbol-strip collapsible-header">
+          <div>
+            <div><strong>独立市场过滤模块（每15分钟执行）</strong></div>
+            <div class="muted">只显示最近7天内记录。规则触发后会记录禁止开仓截止时间；默认折叠，仅展示最新 10 条。</div>
+          </div>
+          <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
+        </div>
+        <div class="collapse-hint">规则：分别读取 ALLUSDT 与 BTC 最近4条15分钟K线，使用最近第1条 close 和最近第4条 open 计算最近1小时涨幅 delta=(close-open)/open。若 BTC吸血：(BTC delta - ALLUSDT delta)&gt;{{ '%.4g'|format(market_filter_settings.btc_siphon_threshold * 100) }}%，或大盘暴跌：ALLUSDT delta&lt;-{{ '%.4g'|format(market_filter_settings.market_crash_threshold * 100) }}%，则从触发时刻起接下来{{ market_filter_settings.block_duration_minutes }}分钟不允许新开仓。点击“展开全部”查看最近7天完整记录。</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>决策轮次</th><th>执行时间</th><th>是否允许新开仓</th><th>禁止开仓至</th><th>触发原因</th>
+              <th>ALLUSDT第4条open时间</th><th>ALLUSDT最近K线时间</th><th>ALLUSDT open/close</th><th>ALLUSDT delta</th>
+              <th>BTC第4条open时间</th><th>BTC最近K线时间</th><th>BTC open/close</th><th>BTC delta</th><th>BTC-ALLUSDT差值</th>
+              <th>BTC吸血</th><th>大盘暴跌</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in market_filter_results %}
+              <tr class="{% if loop.first %}latest-decision-row{% endif %}{% if loop.index > 10 %} collapsed-extra{% endif %}">
+                <td>{{ row.decision_round_ts|fmt_ms_datetime }}{% if loop.first %}<span class="latest-decision-badge">最新</span>{% endif %}</td>
+                <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
+                <td><span class="chip decision-status {{ 'success' if row.allow_new_positions else 'danger' }}">{{ '允许' if row.allow_new_positions else '禁止' }}</span></td>
+                <td>{{ row.block_until|fmt_ms_datetime if row.block_until else '-' }}</td>
+                <td>{{ row.reason }}</td>
+                <td>{{ row.allusdt_first_open_time|fmt_ms_datetime if row.allusdt_first_open_time else '-' }}</td>
+                <td>{{ row.allusdt_latest_open_time|fmt_ms_datetime if row.allusdt_latest_open_time else '-' }}</td>
+                <td>{{ '%.8f / %.8f'|format(row.allusdt_open, row.allusdt_close) if row.allusdt_open is not none and row.allusdt_close is not none else '-' }}</td>
+                <td>{{ '%.4f%%'|format(row.allusdt_delta * 100) if row.allusdt_delta is not none else '-' }}</td>
+                <td>{{ row.btc_first_open_time|fmt_ms_datetime if row.btc_first_open_time else '-' }}</td>
+                <td>{{ row.btc_latest_open_time|fmt_ms_datetime if row.btc_latest_open_time else '-' }}</td>
+                <td>{{ '%.8f / %.8f'|format(row.btc_open, row.btc_close) if row.btc_open is not none and row.btc_close is not none else '-' }}</td>
+                <td>{{ '%.4f%%'|format(row.btc_delta * 100) if row.btc_delta is not none else '-' }}</td>
+                <td>{{ '%.4f%%'|format((row.btc_delta - row.allusdt_delta) * 100) if row.btc_delta is not none and row.allusdt_delta is not none else '-' }}</td>
+                <td>{{ '是' if row.btc_siphon else '否' }}</td>
+                <td>{{ '是' if row.market_crash else '否' }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="16" class="muted">暂无市场行情过滤执行结果。</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      </div>
+    </div>
+  </section>
+
+{% endblock %}
+
+{% block scripts %}
+  <script src="{{ url_for('static', filename='js/market.js') }}"></script>
+{% endblock %}
