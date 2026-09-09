@@ -46,6 +46,11 @@ else:
     SECRET_KEY = REAL_API_SECRET
 
 BALANCE_ENDPOINT = "/fapi/v3/balance"
+UNIVERSAL_TRANSFER_ENDPOINT = "/sapi/v1/asset/transfer"
+TRANSFER_TYPES = {
+    "funding_to_futures": "FUNDING_UMFUTURE",
+    "futures_to_funding": "UMFUTURE_FUNDING",
+}
 DEFAULT_RECV_WINDOW = 5000
 PLACEHOLDER_VALUES = {
     "",
@@ -100,6 +105,7 @@ class BinanceAccountManager:
         recv_window: int = DEFAULT_RECV_WINDOW,
         timeout: int = 10,
         testnet: bool = BINANCE_TESTNET,
+        spot_base_url: str | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -107,6 +113,9 @@ class BinanceAccountManager:
         self.recv_window = recv_window
         self.timeout = timeout
         self.testnet = testnet
+        self.spot_base_url = (spot_base_url or (
+            "https://testnet.binance.vision" if testnet else "https://api.binance.com"
+        )).rstrip("/")
         self.session = requests.Session()
 
     @classmethod
@@ -121,6 +130,7 @@ class BinanceAccountManager:
             base_url=_env_or_default("BINANCE_REAL_BASE_URL", "https://fapi.binance.com"),
             api_key=_env_or_default("BINANCE_REAL_API_KEY", "YOUR_REAL_API_KEY"),
             secret_key=_env_or_default("BINANCE_REAL_API_SECRET", "YOUR_REAL_API_SECRET"),
+            spot_base_url=_env_or_default("BINANCE_REAL_SPOT_BASE_URL", "https://api.binance.com"),
             testnet=False,
             **kwargs,
         )
@@ -161,6 +171,36 @@ class BinanceAccountManager:
             "base_url": self.base_url,
             "queried_at": int(time.time() * 1000),
             "balances": [row.__dict__ for row in balances],
+        }
+
+    def transfer_usdt(self, direction: str, amount: Any) -> dict[str, Any]:
+        """Transfer USDT between the funding wallet and USD-M Futures wallet."""
+        transfer_type = TRANSFER_TYPES.get(str(direction))
+        if transfer_type is None:
+            raise ValueError("direction must be funding_to_futures or futures_to_funding")
+        try:
+            decimal_amount = Decimal(str(amount))
+        except Exception as exc:
+            raise ValueError("amount must be a valid positive number") from exc
+        if not decimal_amount.is_finite() or decimal_amount <= 0:
+            raise ValueError("amount must be a valid positive number")
+
+        self.validate_config()
+
+        raw = self._signed_post_to(
+            self.spot_base_url,
+            UNIVERSAL_TRANSFER_ENDPOINT,
+            {"type": transfer_type, "asset": "USDT", "amount": self._format_decimal(decimal_amount)},
+        )
+        if not isinstance(raw, dict) or "tranId" not in raw:
+            raise RuntimeError("Unexpected Binance transfer response format")
+        return {
+            "success": True,
+            "direction": direction,
+            "amount": self._format_decimal(decimal_amount),
+            "asset": "USDT",
+            "transaction_id": str(raw["tranId"]),
+            "transferred_at": int(time.time() * 1000),
         }
 
     def futures_recent_filled_sell_orders(self, days: int = 7, limit: int = 1000) -> dict[str, Any]:
@@ -251,9 +291,14 @@ class BinanceAccountManager:
         return response.json()
 
     def _signed_post(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
+        return self._signed_post_to(self.base_url, endpoint, params)
+
+    def _signed_post_to(
+        self, base_url: str, endpoint: str, params: dict[str, Any] | None = None
+    ) -> Any:
         db_config.assert_no_active_sqlite_transaction(f"Binance POST {endpoint}")
         response = self.session.post(
-            f"{self.base_url}{endpoint}",
+            f"{base_url}{endpoint}",
             params=self._signed_params(params),
             headers={"X-MBX-APIKEY": self.api_key},
             timeout=self.timeout,

@@ -17,6 +17,9 @@ def test_live_page_uses_independent_template_and_script():
     assert 'id="tab-live"' in template
     assert 'id="tab-live"' not in dashboard
     assert "/api/live/account/balance" in script
+    assert 'id="live-transfer-form"' in template
+    assert "资金账户 → U本位合约账户" in template
+    assert "/api/live/account/transfer" in script
     assert "live-module-refresh" in script
 
 
