@@ -307,6 +307,31 @@ def test_live_manager_always_uses_production_credentials(monkeypatch):
     assert manager.testnet is False
 
 
+def test_usdt_transfer_uses_universal_transfer_endpoint(monkeypatch):
+    manager = BinanceAccountManager(
+        base_url="https://fapi.binance.com", api_key="key", secret_key="secret",
+        testnet=False, spot_base_url="https://spot.example"
+    )
+    calls = []
+    monkeypatch.setattr(manager, "_signed_post_to", lambda *args: calls.append(args) or {"tranId": 42})
+
+    result = manager.transfer_usdt("futures_to_funding", "12.500")
+
+    assert calls == [("https://spot.example", "/sapi/v1/asset/transfer", {
+        "type": "UMFUTURE_FUNDING", "asset": "USDT", "amount": "12.5"
+    })]
+    assert result["transaction_id"] == "42"
+    assert result["amount"] == "12.5"
+
+
+@pytest.mark.parametrize("direction,amount", [("invalid", "1"), ("funding_to_futures", "0"), ("funding_to_futures", "nan")])
+def test_usdt_transfer_rejects_invalid_input(direction, amount):
+    manager = BinanceAccountManager(api_key="key", secret_key="secret", testnet=False)
+
+    with pytest.raises(ValueError):
+        manager.transfer_usdt(direction, amount)
+
+
 @pytest.mark.parametrize(
     "base_url",
     ["https://demo-fapi.binance.com", "https://testnet.binancefuture.com/fapi"],

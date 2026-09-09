@@ -529,6 +529,18 @@
         <div class="symbol-strip"><div><strong>账户情况（实盘）</strong></div><div class="muted">通过生产 REST API 实时查询 Binance USDⓈ-M Futures 账户余额：<code>https://fapi.binance.com</code>。</div></div>
         <div class="toolbar"><button id="live-query-balance" class="btn btn-primary" type="button">查询账户余额</button><span id="live-balance-status" class="muted">尚未查询</span></div><div id="live-balance-error" class="account-error"></div>
         <div class="account-summary"><div class="account-metric"><div class="account-metric-label">USDT 总余额</div><div id="live-usdt-balance" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">USDT 可用余额</div><div id="live-usdt-available" class="account-metric-value">-</div></div><div class="account-metric account-metric-highlight"><div class="account-metric-label">USDT 未实现盈亏</div><div id="live-usdt-pnl" class="account-metric-value">-</div></div></div>
+        <form id="live-transfer-form" class="account-transfer" aria-label="USDT账户划转">
+          <div class="account-transfer-heading"><strong>划转 USDT</strong><span class="muted">资金账户与 U 本位合约账户之间互转；提交后将直接操作 Binance 实盘账户。</span></div>
+          <div class="account-transfer-controls">
+            <label class="control-label" for="live-transfer-direction">划转方向</label>
+            <select id="live-transfer-direction" class="select-control" required><option value="funding_to_futures">资金账户 → U本位合约账户</option><option value="futures_to_funding">U本位合约账户 → 资金账户</option></select>
+            <label class="control-label" for="live-transfer-amount">数量（USDT）</label>
+            <input id="live-transfer-amount" class="select-control" type="number" min="0.00000001" step="0.00000001" inputmode="decimal" placeholder="请输入划转数量" required>
+            <button id="live-transfer-submit" class="btn btn-primary" type="submit">确认划转</button>
+          </div>
+          <div id="live-transfer-status" class="muted" aria-live="polite">尚未划转</div>
+          <div id="live-transfer-error" class="account-error"></div>
+        </form>
         <div class="table-wrap"><table><thead><tr><th>asset</th><th>balance</th><th>available_balance</th><th>cross_wallet_balance</th><th>cross_un_pnl</th><th>account_alias</th></tr></thead><tbody id="live-balance-rows"><tr><td class="empty" colspan="6">点击“查询账户余额”后显示实盘数据</td></tr></tbody></table></div>
         <div class="experiment-note">实盘自动交易与模拟盘使用同一轮“本轮可开仓symbol情况”，但订单通过 Binance 生产接口执行；初始资金预算为 100U。所有实盘交易、持仓快照、僵尸强平和错误仅写入 <code>real_trading_core.db</code>，不会读写模拟盘交易数据库。请在“功能开关”页面开启“实盘交易系统”后再自动下单。</div>
         <div class="account-summary" aria-label="实盘实验组USDT净值"><div class="account-metric account-metric-highlight"><div class="account-metric-label">实盘实验组USDT净值</div><div class="account-metric-value">{{ live_trading_equity }} U</div></div><div class="account-metric"><div class="account-metric-label">近7天收益率</div><div id="live-experiment-seven-day-return" class="account-metric-value {{ 'pnl-positive' if live_seven_day_return is not none and live_seven_day_return > 0 else 'pnl-negative' if live_seven_day_return is not none and live_seven_day_return < 0 else 'pnl-zero' }}">{{ '%+.2f%%'|format(live_seven_day_return) if live_seven_day_return is not none else '-' }}</div></div></div>

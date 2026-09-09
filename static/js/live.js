@@ -75,6 +75,41 @@
     finally { button.disabled = false; button.textContent = '查询账户余额'; }
   });
 
+  byId('live-transfer-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = byId('live-transfer-submit');
+    const direction = byId('live-transfer-direction').value;
+    const amount = byId('live-transfer-amount').value.trim();
+    if (!amount || Number(amount) <= 0) {
+      showError('live-transfer-error', 'live-transfer-status', '请输入有效的正数划转数量');
+      return;
+    }
+    const directionLabel = direction === 'funding_to_futures'
+      ? '资金账户 → U本位合约账户' : 'U本位合约账户 → 资金账户';
+    if (!window.confirm(`确认从${directionLabel}划转 ${amount} USDT？`)) return;
+    button.disabled = true;
+    button.textContent = '划转中...';
+    byId('live-transfer-status').textContent = '正在提交 Binance 实盘划转请求...';
+    clearError('live-transfer-error');
+    try {
+      const response = await fetch('/api/live/account/transfer', {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ direction, amount })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      byId('live-transfer-status').textContent = `划转成功：${payload.amount} USDT；交易 ID：${payload.transaction_id}`;
+      byId('live-transfer-amount').value = '';
+      byId('live-query-balance').click();
+    } catch (error) {
+      showError('live-transfer-error', 'live-transfer-status', `划转失败：${error.message}`);
+    } finally {
+      button.disabled = false;
+      button.textContent = '确认划转';
+    }
+  });
+
   let displayedOrders = [];
   let latestOrders = null;
   const scoreBands = JSON.parse(byId('live-score-band-data')?.textContent || '[]');

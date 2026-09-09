@@ -1284,6 +1284,27 @@ def live_account_balance_api():
         return jsonify({"error": str(exc)}), 502
 
 
+@app.post("/api/live/account/transfer")
+def live_account_transfer_api():
+    """Transfer production USDT between funding and USD-M Futures wallets."""
+    payload = request.get_json(silent=True) or {}
+    try:
+        return jsonify(
+            BinanceAccountManager.live().transfer_usdt(
+                direction=payload.get("direction", ""),
+                amount=payload.get("amount", ""),
+            )
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except BinanceAccountConfigError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except requests.exceptions.RequestException as exc:
+        return jsonify({"error": f"Binance live transfer request failed: {exc}"}), 502
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
 @app.get("/api/account/filled-sell-orders")
 def account_filled_sell_orders_api():
     days = request.args.get("days", default=7, type=int)

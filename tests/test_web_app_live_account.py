@@ -7,6 +7,9 @@ class FakeLiveManager:
     def futures_balance(self):
         return {"testnet": False, "base_url": "https://fapi.binance.com", "balances": []}
 
+    def transfer_usdt(self, direction, amount):
+        return {"success": True, "direction": direction, "amount": amount, "transaction_id": "123"}
+
     def futures_recent_filled_orders(self, days=7, limit=1000):
         return {"testnet": False, "days": days, "orders": []}
 
@@ -21,6 +24,18 @@ def test_live_balance_route_uses_live_manager(monkeypatch):
 
     assert response.status_code == 200
     assert response.get_json()["testnet"] is False
+
+
+def test_live_transfer_route_uses_live_manager(monkeypatch):
+    monkeypatch.setattr(web_app.BinanceAccountManager, "live", lambda: FakeLiveManager())
+
+    response = web_app.app.test_client().post(
+        "/api/live/account/transfer",
+        json={"direction": "funding_to_futures", "amount": "12.5"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["transaction_id"] == "123"
 
 
 def test_live_filled_orders_route_supports_days_and_explicit_range(monkeypatch):
