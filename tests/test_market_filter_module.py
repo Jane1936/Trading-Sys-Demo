@@ -56,10 +56,10 @@ def test_market_filter_blocks_btc_siphon_above_half_percent_delta_gap(tmp_path):
     assert result.btc_siphon is True
     assert result.market_crash is False
     assert result.reason == "btc_siphon"
-    assert result.block_until == 4_500_001
+    assert result.block_until == 2_700_001
 
 
-def test_market_filter_blocks_for_one_hour_after_trigger(tmp_path):
+def test_market_filter_blocks_for_thirty_minutes_after_trigger(tmp_path):
     db_path = tmp_path / "klines.db"
     module = MarketFilterModule(db_path=str(db_path))
     with sqlite3.connect(db_path) as conn:
@@ -76,12 +76,12 @@ def test_market_filter_blocks_for_one_hour_after_trigger(tmp_path):
         _insert_rows(conn, collector.BTC_15M_TABLE, [100, 100, 100, 100])
 
     cooldown = module.run_round(decision_round_ts=1_800_000, evaluated_at=1_800_001)
-    expired = module.run_round(decision_round_ts=4_500_000, evaluated_at=4_500_001)
+    expired = module.run_round(decision_round_ts=2_700_000, evaluated_at=2_700_001)
 
     assert triggered.allow_new_positions is False
     assert cooldown.allow_new_positions is False
-    assert cooldown.reason == "market_filter_cooldown_until_4500001"
-    assert cooldown.block_until == 4_500_001
+    assert cooldown.reason == "market_filter_cooldown_until_2700001"
+    assert cooldown.block_until == 2_700_001
     assert expired.allow_new_positions is True
     assert expired.reason == "market_filter_passed"
     assert expired.block_until is None
@@ -148,7 +148,7 @@ def test_market_filter_uses_configured_thresholds_and_block_duration(tmp_path):
 def test_market_filter_settings_defaults_and_validation(tmp_path):
     settings_path = str(tmp_path / "base.db")
 
-    assert get_settings(settings_path)["block_duration_minutes"] == 60
+    assert get_settings(settings_path)["block_duration_minutes"] == 30
 
     try:
         set_settings({
@@ -160,3 +160,40 @@ def test_market_filter_settings_defaults_and_validation(tmp_path):
         assert "整数分钟" in str(exc)
     else:
         raise AssertionError("fractional block duration should be rejected")
+
+
+def test_market_filter_blocks_when_allusdt_24h_change_is_below_minus_five_percent(tmp_path):
+    db_path = tmp_path / "klines.db"
+    settings_path = tmp_path / "base.db"
+    module = MarketFilterModule(str(db_path), settings_db_path=str(settings_path))
+    with sqlite3.connect(db_path) as conn:
+        _init_source_tables(conn)
+        _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100] + [94.9] * 95)
+        _insert_rows(conn, collector.BTC_15M_TABLE, [94.9, 94.9, 94.9, 94.9])
+
+    result = module.run_round(
+        decision_round_ts=900_000,
+        evaluated_at=900_001,
+        allusdt_24h_change_percent=-5.1,
+    )
+
+    assert round(result.allusdt_24h_delta, 6) == -0.051
+    assert result.allusdt_24h_drop is True
+    assert result.allow_new_positions is False
+    assert result.reason == "allusdt_24h_drop"
+    assert result.block_until == 2_700_001
+
+
+def test_market_filter_does_not_apply_24h_rule_without_ticker_result(tmp_path):
+    db_path = tmp_path / "klines.db"
+    settings_path = tmp_path / "base.db"
+    module = MarketFilterModule(str(db_path), settings_db_path=str(settings_path))
+    with sqlite3.connect(db_path) as conn:
+        _init_source_tables(conn)
+        _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100, 100, 100, 90])
+        _insert_rows(conn, collector.BTC_15M_TABLE, [100, 100, 100, 90])
+
+    result = module.run_round(decision_round_ts=900_000, evaluated_at=900_001)
+
+    assert result.allusdt_24h_delta is None
+    assert result.allusdt_24h_drop is False

@@ -156,6 +156,7 @@ def test_first_experiment_refreshes_holding_scoring_after_open(monkeypatch):
     monkeypatch.setattr(app, "TradingExperiment", FakeExperiment)
     monkeypatch.setattr(app, "HoldingPositionScoringSystem", FakeHoldingScoring)
     monkeypatch.setattr(app.feature_flags, "is_feature_enabled", lambda name: True)
+    monkeypatch.setattr(app, "_allusdt_24h_change_for_filter", lambda: None)
     openable = type("Openable", (), {"qualified": True})()
 
     app.run_first_experiment_after_openable_round([openable], 123_000)
