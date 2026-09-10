@@ -252,7 +252,7 @@
           </div>
           <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
         </div>
-        <div class="collapse-hint">规则：分别读取 ALLUSDT 与 BTC 最近4条15分钟K线，使用最近第1条 close 和最近第4条 open 计算最近1小时涨幅 delta=(close-open)/open。若 BTC吸血：(BTC delta - ALLUSDT delta)&gt;{{ '%.4g'|format(market_filter_settings.btc_siphon_threshold * 100) }}%，或大盘暴跌：ALLUSDT delta&lt;-{{ '%.4g'|format(market_filter_settings.market_crash_threshold * 100) }}%，则从触发时刻起接下来{{ market_filter_settings.block_duration_minutes }}分钟不允许新开仓。点击“展开全部”查看最近7天完整记录。</div>
+        <div class="collapse-hint">规则：先取得页面顶部同源的 ALLUSDT 最近24小时涨跌幅结果，再启动独立市场过滤；模块读取 ALLUSDT 与 BTC 最近4条15分钟K线计算最近1小时涨幅。若 BTC吸血：(BTC delta - ALLUSDT delta)&gt;{{ '%.4g'|format(market_filter_settings.btc_siphon_threshold * 100) }}%，或大盘暴跌：ALLUSDT delta&lt;-{{ '%.4g'|format(market_filter_settings.market_crash_threshold * 100) }}%，或 ALLUSDT 最近24小时涨跌幅&lt;-5%，则从触发时刻起接下来{{ market_filter_settings.block_duration_minutes }}分钟不允许新开仓。点击“展开全部”查看最近7天完整记录。</div>
       <div class="table-wrap">
         <table>
           <thead>
@@ -260,7 +260,7 @@
               <th>决策轮次</th><th>执行时间</th><th>是否允许新开仓</th><th>禁止开仓至</th><th>触发原因</th>
               <th>ALLUSDT第4条open时间</th><th>ALLUSDT最近K线时间</th><th>ALLUSDT open/close</th><th>ALLUSDT delta</th>
               <th>BTC第4条open时间</th><th>BTC最近K线时间</th><th>BTC open/close</th><th>BTC delta</th><th>BTC-ALLUSDT差值</th>
-              <th>BTC吸血</th><th>大盘暴跌</th>
+              <th>ALLUSDT 最近24h涨跌幅</th><th>BTC吸血</th><th>大盘暴跌</th><th>24h跌破-5%</th>
             </tr>
           </thead>
           <tbody>
@@ -280,11 +280,13 @@
                 <td>{{ '%.8f / %.8f'|format(row.btc_open, row.btc_close) if row.btc_open is not none and row.btc_close is not none else '-' }}</td>
                 <td>{{ '%.4f%%'|format(row.btc_delta * 100) if row.btc_delta is not none else '-' }}</td>
                 <td>{{ '%.4f%%'|format((row.btc_delta - row.allusdt_delta) * 100) if row.btc_delta is not none and row.allusdt_delta is not none else '-' }}</td>
+                <td>{{ '%.4f%%'|format(row.allusdt_24h_delta * 100) if row.allusdt_24h_delta is not none else '-' }}</td>
                 <td>{{ '是' if row.btc_siphon else '否' }}</td>
                 <td>{{ '是' if row.market_crash else '否' }}</td>
+                <td>{{ '是' if row.allusdt_24h_drop else '否' }}</td>
               </tr>
             {% else %}
-              <tr><td colspan="16" class="muted">暂无市场行情过滤执行结果。</td></tr>
+              <tr><td colspan="18" class="muted">暂无市场行情过滤执行结果。</td></tr>
             {% endfor %}
           </tbody>
         </table>

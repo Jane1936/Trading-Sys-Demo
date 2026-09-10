@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import requests
 import sqlite3
 import threading
 import time
@@ -46,6 +47,7 @@ from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
 from trading_experiment import TradingExperiment
 from market_filter_module import MarketFilterModule
+import allusdt_24h_ticker
 from weak_market_profit_adjustment import WeakMarketProfitAdjustmentModule
 from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import DynamicOpenThresholdModule
@@ -73,6 +75,15 @@ PROFIT_MARKET_CONVERGENCE_TIMEOUT_SEC = float(
 PROFIT_MARKET_CONVERGENCE_POLL_SEC = float(
     os.getenv("PROFIT_MARKET_CONVERGENCE_POLL_SEC", "2")
 )
+
+
+def _allusdt_24h_change_for_filter() -> float | None:
+    """Fetch the headline ticker first without preventing the filter on failure."""
+    try:
+        return allusdt_24h_ticker.fetch_change_percent()
+    except (requests.exceptions.RequestException, KeyError, TypeError, ValueError) as exc:
+        print(f"⚠️ ALLUSDT 24h ticker unavailable for market filter: {exc}")
+        return None
 
 
 def wait_for_profit_market_convergence(
@@ -480,7 +491,11 @@ def run_first_experiment_after_openable_round(
         market_result = None
         if feature_flags.is_feature_enabled(feature_flags.MARKET_FILTER):
             market_filter = MarketFilterModule(db_path=db_config.MARKET_DB_PATH)
-            market_result = market_filter.run_round(decision_round_ts=round_ts)
+            allusdt_24h_change = _allusdt_24h_change_for_filter()
+            round_kwargs = {"decision_round_ts": round_ts}
+            if allusdt_24h_change is not None:
+                round_kwargs["allusdt_24h_change_percent"] = allusdt_24h_change
+            market_result = market_filter.run_round(**round_kwargs)
             print(
                 f"🌐 market filter round={round_ts} allow={market_result.allow_new_positions} "
                 f"allusdt_delta={market_result.allusdt_delta} btc_delta={market_result.btc_delta} "
@@ -1242,7 +1257,14 @@ def start_pre_safety_task() -> None:
 
             if market_filter_enabled:
                 try:
-                    market_result = market_filter.run_round(decision_round_ts=round_ts, evaluated_at=now_ms)
+                    allusdt_24h_change = _allusdt_24h_change_for_filter()
+                    round_kwargs = {
+                        "decision_round_ts": round_ts,
+                        "evaluated_at": now_ms,
+                    }
+                    if allusdt_24h_change is not None:
+                        round_kwargs["allusdt_24h_change_percent"] = allusdt_24h_change
+                    market_result = market_filter.run_round(**round_kwargs)
                     print(
                         f"🌐 market filter round={round_ts} allow={market_result.allow_new_positions} "
                         f"allusdt_delta={market_result.allusdt_delta} btc_delta={market_result.btc_delta} "
