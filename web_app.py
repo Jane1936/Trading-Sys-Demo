@@ -89,6 +89,7 @@ CONFIG_DB_PATH = db_config.CONFIG_DB_PATH
 SCORING_DB_PATH = db_config.SCORING_DB_PATH
 TRADING_DB_PATH = db_config.TRADING_DB_PATH
 MARKET_DB_PATH = db_config.MARKET_DB_PATH
+BINANCE_FUTURES_24H_TICKER_URL = "https://fapi.binance.com/fapi/v1/ticker/24hr"
 DEFAULT_TRADING_EQUITY_USDT = Decimal("1000")
 WEB_SQLITE_QUICK_CHECK_ON_REQUEST = (
     os.getenv("WEB_SQLITE_QUICK_CHECK_ON_REQUEST", "").strip().lower()
@@ -1877,6 +1878,30 @@ def btc_5m_api():
                 }
             )
         return jsonify({"error": str(exc)}), 502
+
+
+@app.get("/api/market/allusdt-24h")
+def allusdt_24h_ticker_api():
+    """Proxy the public Binance ticker used by the market-filter headline."""
+    try:
+        response = requests.get(
+            BINANCE_FUTURES_24H_TICKER_URL,
+            params={"symbol": "ALLUSDT"},
+            timeout=(3, 10),
+        )
+        response.raise_for_status()
+        ticker = response.json()
+        change_percent = float(ticker["priceChangePercent"])
+    except (requests.exceptions.RequestException, KeyError, TypeError, ValueError) as exc:
+        return jsonify({"error": f"ALLUSDT 24h ticker request failed: {exc}"}), 502
+
+    return jsonify(
+        {
+            "symbol": "ALLUSDT",
+            "price_change_percent": change_percent,
+            "refreshed_at": int(datetime.now(timezone.utc).timestamp() * 1000),
+        }
+    )
 
 
 @app.get("/api/feature-flags")
