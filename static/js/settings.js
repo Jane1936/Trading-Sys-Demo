@@ -333,12 +333,17 @@ function renderFeatureFlagRow(flag) {
       message.textContent = '请至少启用一套配置。'; message.classList.add('error'); return;
     }
     const combination_mode = document.getElementById('score-election-combination-mode').value;
+    const automation = {
+      enabled: document.getElementById('score-election-auto-enabled').checked,
+      threshold_percent: Number(document.getElementById('score-election-auto-threshold').value),
+      config_key: document.getElementById('score-election-auto-config').value,
+    };
     saveButton.disabled = true;
     message.textContent = '正在保存评分规则选举…'; message.classList.remove('error');
     try {
       const response = await fetch('/api/scoring-rule-election', {
         method: 'PUT', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({configurations, combination_mode}),
+        body: JSON.stringify({configurations, combination_mode, automation}),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);

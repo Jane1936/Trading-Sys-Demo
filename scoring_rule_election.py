@@ -13,6 +13,8 @@ RULE_STATUSES = ("required", "optional", "ignored")
 CONFIG_KEYS = ("A", "B", "C", "D", "E")
 COMBINATION_MODES = ("any", "all")
 DEFAULT_STATUS = "ignored"
+DEFAULT_AUTO_THRESHOLD_PERCENT = -1.0
+DEFAULT_AUTO_CONFIG_KEY = "A"
 
 
 def init_settings(db_path: str | None = None) -> None:
@@ -48,6 +50,13 @@ def init_settings(db_path: str | None = None) -> None:
                     id INTEGER PRIMARY KEY CHECK (id = 1), mode TEXT NOT NULL, updated_at INTEGER NOT NULL
                 )"""
             )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS scoring_rule_election_automation (
+                    id INTEGER PRIMARY KEY CHECK (id = 1), enabled INTEGER NOT NULL,
+                    threshold_percent REAL NOT NULL, config_key TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )"""
+            )
             now_ms = int(time.time() * 1000)
             conn.executemany(
                 "INSERT INTO scoring_rule_election VALUES (?, ?, ?) ON CONFLICT(rule_id) DO NOTHING",
@@ -76,6 +85,11 @@ def init_settings(db_path: str | None = None) -> None:
                 "INSERT INTO scoring_rule_election_combination VALUES (1, 'any', ?) ON CONFLICT(id) DO NOTHING",
                 (now_ms,),
             )
+            conn.execute(
+                "INSERT INTO scoring_rule_election_automation VALUES (1, 1, ?, ?, ?) "
+                "ON CONFLICT(id) DO NOTHING",
+                (DEFAULT_AUTO_THRESHOLD_PERCENT, DEFAULT_AUTO_CONFIG_KEY, now_ms),
+            )
 
 
 def get_settings(db_path: str | None = None) -> dict:
@@ -93,6 +107,10 @@ def get_settings(db_path: str | None = None) -> dict:
         }
         combination = conn.execute(
             "SELECT mode, updated_at FROM scoring_rule_election_combination WHERE id = 1"
+        ).fetchone()
+        automation = conn.execute(
+            "SELECT enabled, threshold_percent, config_key, updated_at "
+            "FROM scoring_rule_election_automation WHERE id = 1"
         ).fetchone()
     configurations = []
     for key in CONFIG_KEYS:
@@ -114,6 +132,12 @@ def get_settings(db_path: str | None = None) -> dict:
         "configurations": configurations,
         "combination_mode": combination["mode"],
         "updated_at": int(combination["updated_at"]),
+        "automation": {
+            "enabled": bool(automation["enabled"]),
+            "threshold_percent": float(automation["threshold_percent"]),
+            "config_key": automation["config_key"],
+            "updated_at": int(automation["updated_at"]),
+        },
     }
 
 
@@ -144,6 +168,8 @@ def _validate_configuration(raw: dict, expected_key: str) -> tuple[bool, dict[in
 
 
 def set_settings(payload: dict, db_path: str | None = None) -> dict:
+    db_path = db_path or db_config.CONFIG_DB_PATH
+    init_settings(db_path)
     configurations = payload.get("configurations")
     if not isinstance(configurations, list) or len(configurations) != len(CONFIG_KEYS):
         raise ValueError("configurations must contain A, B, C, D and E")
@@ -156,9 +182,29 @@ def set_settings(payload: dict, db_path: str | None = None) -> dict:
     mode = payload.get("combination_mode")
     if mode not in COMBINATION_MODES:
         raise ValueError("combination_mode must be any or all")
+    automation = payload.get("automation")
+    if automation is None:
+        with db_config.connect_sqlite(db_path, row_factory=sqlite3.Row) as conn:
+            current = conn.execute(
+                "SELECT enabled, threshold_percent, config_key "
+                "FROM scoring_rule_election_automation WHERE id = 1"
+            ).fetchone()
+        automation = {
+            "enabled": bool(current["enabled"]),
+            "threshold_percent": float(current["threshold_percent"]),
+            "config_key": current["config_key"],
+        }
+    if not isinstance(automation, dict) or not isinstance(automation.get("enabled"), bool):
+        raise ValueError("automation enabled must be a boolean")
+    threshold_percent = automation.get("threshold_percent")
+    if isinstance(threshold_percent, bool) or not isinstance(threshold_percent, (int, float)):
+        raise ValueError("automation threshold_percent must be a number")
+    if not -100 <= float(threshold_percent) <= 100:
+        raise ValueError("automation threshold_percent must be between -100 and 100")
+    auto_config_key = automation.get("config_key")
+    if auto_config_key not in CONFIG_KEYS:
+        raise ValueError("automation config_key must be A, B, C, D or E")
 
-    db_path = db_path or db_config.CONFIG_DB_PATH
-    init_settings(db_path)
     now_ms = int(time.time() * 1000)
     with db_config.connect_sqlite(db_path) as conn:
         for key, (enabled, statuses, optional_min) in zip(CONFIG_KEYS, validated):
@@ -176,6 +222,11 @@ def set_settings(payload: dict, db_path: str | None = None) -> dict:
             "UPDATE scoring_rule_election_combination SET mode = ?, updated_at = ? WHERE id = 1",
             (mode, now_ms),
         )
+        conn.execute(
+            "UPDATE scoring_rule_election_automation SET enabled = ?, threshold_percent = ?, "
+            "config_key = ?, updated_at = ? WHERE id = 1",
+            (int(automation["enabled"]), float(threshold_percent), auto_config_key, now_ms),
+        )
         # Mirror A for old binaries during a rolling deployment.
         _, a_statuses, a_optional_min = validated[0]
         conn.executemany(
@@ -187,3 +238,24 @@ def set_settings(payload: dict, db_path: str | None = None) -> dict:
             (a_optional_min, now_ms),
         )
     return get_settings(db_path)
+
+
+def apply_automation(settings: dict, allusdt_24h_change_percent: float | None) -> dict:
+    """Return effective election settings for a round without overwriting user choices."""
+    automation = settings.get("automation", {})
+    triggered = (
+        automation.get("enabled") is True
+        and allusdt_24h_change_percent is not None
+        and float(allusdt_24h_change_percent) < float(automation["threshold_percent"])
+    )
+    if not triggered:
+        return settings
+    selected = automation["config_key"]
+    return {
+        **settings,
+        "configurations": [
+            {**config, "enabled": config["key"] == selected}
+            for config in settings["configurations"]
+        ],
+        "automation_triggered": True,
+    }
