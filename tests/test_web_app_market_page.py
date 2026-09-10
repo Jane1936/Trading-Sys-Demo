@@ -20,6 +20,36 @@ def test_market_page_uses_independent_template_and_script():
     assert 'id="tab-market-filter"' not in dashboard
     assert "/api/btc/5m" in script
     assert "renderBtcKlineChart" in script
+    assert 'id="allusdt-24h-highlight"' in template
+    assert "/api/market/allusdt-24h" in script
+    assert "15 * 60 * 1000" in script
+
+
+def test_allusdt_24h_ticker_api_returns_normalized_change_and_refresh_time():
+    with patch("web_app.requests.get") as get:
+        get.return_value.json.return_value = {"priceChangePercent": "-2.345"}
+
+        response = app.test_client().get("/api/market/allusdt-24h")
+
+    assert response.status_code == 200
+    assert response.get_json()["symbol"] == "ALLUSDT"
+    assert response.get_json()["price_change_percent"] == -2.345
+    assert response.get_json()["refreshed_at"] > 0
+    get.assert_called_once_with(
+        "https://fapi.binance.com/fapi/v1/ticker/24hr",
+        params={"symbol": "ALLUSDT"},
+        timeout=(3, 10),
+    )
+
+
+def test_allusdt_24h_ticker_api_reports_invalid_upstream_payload():
+    with patch("web_app.requests.get") as get:
+        get.return_value.json.return_value = {}
+
+        response = app.test_client().get("/api/market/allusdt-24h")
+
+    assert response.status_code == 502
+    assert "ALLUSDT 24h ticker request failed" in response.get_json()["error"]
 
 
 def test_market_page_has_separate_sidebar_tabs_and_only_btc_is_initially_visible():

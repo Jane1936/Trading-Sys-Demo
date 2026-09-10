@@ -68,6 +68,16 @@ body {
 .card { background: var(--white); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 24px rgba(14, 116, 144, 0.10); overflow: hidden; }
 .header { padding: 18px 20px; background: var(--sky-soft); border-bottom: 1px solid var(--line); }
 .header h2 { margin: 0; font-size: 22px; letter-spacing: .5px; }
+.allusdt-24h-highlight { display:flex; align-items:center; justify-content:space-between; gap:18px; margin:18px 20px; padding:18px 22px; border:2px solid #f59e0b; border-radius:14px; color:#78350f; background:linear-gradient(120deg,#fffbeb,#fef3c7); box-shadow:0 8px 22px rgba(245,158,11,.18); }
+.allusdt-24h-highlight > div:first-child { display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
+.allusdt-24h-label { font-size:15px; font-weight:800; letter-spacing:.2px; }
+.allusdt-24h-value { font-size:30px; line-height:1; font-variant-numeric:tabular-nums; }
+.allusdt-24h-value.is-up { color:#dc2626; }
+.allusdt-24h-value.is-down { color:#16a34a; }
+.allusdt-24h-value.is-flat { color:#475569; }
+.allusdt-24h-value.is-loading { color:#92400e; font-size:18px; }
+.allusdt-24h-value.is-error { color:#b91c1c; font-size:16px; }
+.allusdt-24h-meta { display:flex; flex-direction:column; align-items:flex-end; gap:5px; color:#92400e; font-size:12px; }
 .toolbar { padding: 14px 20px; display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .field input, .field select { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 160px; }
@@ -318,3 +328,7 @@ tbody tr:hover { background: #f8fdff; }
 .collapsible-section:not(.is-collapsed) .table-wrap { max-height: calc(100vh - 140px); overflow: auto; }
 .collapsible-section:not(.is-collapsed) th { z-index: 2; box-shadow: 0 2px 0 #dbeafe, 0 8px 14px rgba(14, 116, 144, 0.10); }
 .collapse-hint { padding: 8px 20px; color: #64748b; font-size: 12px; background: #f8fafc; border-bottom: 1px solid var(--line); }
+@media (max-width:800px) {
+  .allusdt-24h-highlight { align-items:flex-start; flex-direction:column; }
+  .allusdt-24h-meta { align-items:flex-start; }
+}

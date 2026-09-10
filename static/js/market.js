@@ -2,6 +2,7 @@
   'use strict';
 
   let btcChart = null;
+  const ALLUSDT_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 
   const marketTabButtons = Array.from(document.querySelectorAll('[data-market-tab]'));
   const marketPanels = Array.from(document.querySelectorAll('.content .panel'));
@@ -36,6 +37,30 @@
 
   function refreshBtcChartLayout() {
     if (btcChart) btcChart.resize();
+  }
+
+  async function refreshAllusdt24h() {
+    const value = document.getElementById('allusdt-24h-value');
+    const refreshTime = document.getElementById('allusdt-24h-refresh-time');
+    if (!value || !refreshTime) return;
+
+    try {
+      const response = await fetch('/api/market/allusdt-24h', { headers: { Accept: 'application/json' } });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      const changePercent = Number(payload.price_change_percent);
+      if (!Number.isFinite(changePercent)) throw new Error('返回了无效的涨跌幅');
+
+      value.textContent = `${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%`;
+      value.classList.remove('is-loading', 'is-error', 'is-up', 'is-down', 'is-flat');
+      value.classList.add(changePercent > 0 ? 'is-up' : changePercent < 0 ? 'is-down' : 'is-flat');
+      refreshTime.textContent = `最新刷新时间：${formatMsDatetime(payload.refreshed_at)}`;
+    } catch (error) {
+      value.textContent = '刷新失败';
+      value.classList.remove('is-loading', 'is-up', 'is-down', 'is-flat');
+      value.classList.add('is-error');
+      refreshTime.textContent = `最新刷新时间：刷新失败（${error.message}）`;
+    }
   }
 
   function renderBtcKlineChart(rawRowsDesc) {
@@ -157,4 +182,6 @@
     button.addEventListener('click', () => selectMarketTab(button.dataset.marketTab));
   });
   selectMarketTab(window.location.hash.slice(1) || 'tab-btc', false);
+  refreshAllusdt24h();
+  window.setInterval(refreshAllusdt24h, ALLUSDT_REFRESH_INTERVAL_MS);
 })();

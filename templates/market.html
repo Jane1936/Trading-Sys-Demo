@@ -73,6 +73,16 @@
   <section id="tab-market-filter" class="panel" role="tabpanel" hidden>
     <div class="card">
       <div class="header"><h2>市场行情过滤</h2></div>
+      <div class="allusdt-24h-highlight" id="allusdt-24h-highlight" aria-live="polite">
+        <div>
+          <span class="allusdt-24h-label">ALLUSDT 最近24h涨跌幅</span>
+          <strong class="allusdt-24h-value is-loading" id="allusdt-24h-value">加载中…</strong>
+        </div>
+        <div class="allusdt-24h-meta">
+          <span>每15分钟自动刷新</span>
+          <span id="allusdt-24h-refresh-time">最新刷新时间：--</span>
+        </div>
+      </div>
       {% if dynamic_open_threshold_errors %}
       <div class="tip danger" role="alert">
         <strong>动态开仓门槛模块报错（最近7天）</strong>
