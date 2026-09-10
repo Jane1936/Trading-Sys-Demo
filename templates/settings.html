@@ -196,6 +196,12 @@
       <div id="score-election-message" class="feature-flag-message" role="status" aria-live="polite"></div>
       <form id="score-election-form">
         <div class="score-weight-actions">
+          <label><input id="score-election-auto-enabled" type="checkbox" {{ 'checked' if scoring_rule_election_settings.automation.enabled else '' }}> 启用行情自动选择</label>
+          <label>当 ALLUSDT 最近24h涨跌幅 &lt; <input id="score-election-auto-threshold" type="number" min="-100" max="100" step="0.01" required value="{{ scoring_rule_election_settings.automation.threshold_percent }}">%</label>
+          <label>仅启用配置 <select id="score-election-auto-config">{% for key in ['A','B','C','D','E'] %}<option value="{{ key }}" {{ 'selected' if scoring_rule_election_settings.automation.config_key == key else '' }}>{{ key }}</option>{% endfor %}</select></label>
+        </div>
+        <div class="tip">自动条件按市场行情过滤顶部同源的本轮 ALLUSDT 24h 涨跌幅判断；行情缺失或未跌破阈值时，仍使用下方手动启用组合。</div>
+        <div class="score-weight-actions">
           <label>配置组合方式：<select id="score-election-combination-mode">
             <option value="any" {{ 'selected' if scoring_rule_election_settings.combination_mode == 'any' else '' }}>任一启用配置满足（或）</option>
             <option value="all" {{ 'selected' if scoring_rule_election_settings.combination_mode == 'all' else '' }}>全部启用配置满足（且）</option>

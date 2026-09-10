@@ -904,5 +904,7 @@ def test_feature_flags_page_contains_scoring_rule_election_below_weights():
     assert "必须" in section and "可选" in section and "无要求" in section
     assert 'class="score-election-optional-min"' in section
     assert 'id="score-election-combination-mode"' in section
+    assert 'id="score-election-auto-threshold"' in section
+    assert 'id="score-election-auto-config"' in section
     assert 'data-config-key="{{ config.key }}"' in section
     assert "fetch('/api/scoring-rule-election'" in script

@@ -918,13 +918,21 @@ def run_scoring_round_worker(
         allow_new_positions=allow_new_positions,
         min_open=min_open_total_score,
     )
-    openable_symbols = openable.run_round(
+    openable_kwargs = dict(
         decision_round_ts=decision_round_ts,
         evaluated_at=evaluated_at,
         min_total_score=min_open_total_score,
         allow_new_positions=allow_new_positions,
         threshold_reason=openable_reason,
     )
+    if (
+        market_filter_result is not None
+        and market_filter_result.allusdt_24h_delta is not None
+    ):
+        openable_kwargs["allusdt_24h_change_percent"] = (
+            market_filter_result.allusdt_24h_delta * 100
+        )
+    openable_symbols = openable.run_round(**openable_kwargs)
     qualified_openable_count = sum(1 for row in openable_symbols if row.qualified)
     print(
         f"🚪 openable round={decision_round_ts} candidates={len(openable_symbols)} "

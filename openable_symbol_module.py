@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from typing import List
 from openable_symbol_settings import get_settings
-from scoring_rule_election import get_settings as get_rule_election_settings
+from scoring_rule_election import apply_automation, get_settings as get_rule_election_settings
 
 
 @dataclass(frozen=True)
@@ -257,6 +257,7 @@ class OpenableSymbolModule:
         min_total_score: int | None = None,
         allow_new_positions: bool = True,
         threshold_reason: str | None = None,
+        allusdt_24h_change_percent: float | None = None,
     ) -> List[OpenableSymbol]:
         """Evaluate total-score candidates after scoring has completed."""
         evaluated_at = int(time.time() * 1000) if evaluated_at is None else int(evaluated_at)
@@ -266,7 +267,10 @@ class OpenableSymbolModule:
             else self.MIN_TOTAL_SCORE
         )
         with self._connect() as conn:
-            election = get_rule_election_settings(db_config.CONFIG_DB_PATH)
+            election = apply_automation(
+                get_rule_election_settings(db_config.CONFIG_DB_PATH),
+                allusdt_24h_change_percent,
+            )
             total_round = conn.execute(
                 "SELECT 1 FROM symbol_total_scores WHERE decision_round_ts = ? LIMIT 1",
                 (int(decision_round_ts),),

@@ -3,7 +3,7 @@ import sqlite3
 import pytest
 
 from openable_symbol_module import OpenableSymbolModule
-from scoring_rule_election import get_settings, set_settings
+from scoring_rule_election import apply_automation, get_settings, set_settings
 
 
 def _rules(statuses=None):
@@ -18,6 +18,7 @@ def _payload(configs=None, mode="any"):
     configs = configs or {}
     return {
         "combination_mode": mode,
+        "automation": {"enabled": True, "threshold_percent": -1, "config_key": "A"},
         "configurations": [
             {"key": key, "enabled": key in configs,
              "rules": _rules(configs.get(key, {}).get("statuses")),
@@ -34,6 +35,20 @@ def test_election_settings_default_to_backwards_compatible_no_requirements(tmp_p
     assert [config["key"] for config in settings["configurations"]] == list("ABCDE")
     assert settings["configurations"][0]["enabled"] is True
     assert all(len(config["rules"]) == 18 for config in settings["configurations"])
+    assert settings["automation"]["enabled"] is True
+    assert settings["automation"]["threshold_percent"] == -1
+    assert settings["automation"]["config_key"] == "A"
+
+
+def test_automation_only_enables_selected_configuration_below_threshold():
+    settings = _payload({"A": {}, "B": {}}, mode="all")
+    settings["automation"]["config_key"] = "B"
+
+    effective = apply_automation(settings, -1.01)
+
+    assert [c["key"] for c in effective["configurations"] if c["enabled"]] == ["B"]
+    assert effective["automation_triggered"] is True
+    assert [c["key"] for c in apply_automation(settings, -1)["configurations"] if c["enabled"]] == ["A", "B"]
 
 
 def test_election_settings_validate_optional_min_against_optional_count(tmp_path):
@@ -94,3 +109,25 @@ def test_openable_combines_enabled_configurations(tmp_path, monkeypatch, mode, e
         conn.execute("INSERT INTO symbol_scores_structural_stop_loss_distance VALUES ('TEST', 1, 0.01)")
 
     assert module.run_round(1, evaluated_at=123)[0].qualified is expected
+
+
+def test_openable_applies_automatic_selected_configuration_for_round(tmp_path, monkeypatch):
+    election = _payload({
+        "A": {"statuses": {1: "required"}},
+        "B": {"statuses": {2: "required"}},
+    }, mode="all")
+    election["automation"]["config_key"] = "B"
+    monkeypatch.setattr("openable_symbol_module.get_rule_election_settings", lambda _path: election)
+    module = OpenableSymbolModule(db_path=str(tmp_path / "scoring.db"))
+    module.init_table()
+    rule_columns = ", ".join(f"rule{i}_score INTEGER" for i in range(1, 19))
+    with module._connect() as conn:
+        conn.execute(f"CREATE TABLE symbol_total_scores (symbol TEXT, decision_round_ts INTEGER, total_score INTEGER, {rule_columns})")
+        conn.execute("CREATE TABLE current_round_cooldown_symbols (symbol TEXT, decision_round_ts INTEGER)")
+        conn.execute("CREATE TABLE symbol_scores_structural_stop_loss_distance (symbol TEXT, decision_round_ts INTEGER, stop_loss_distance_ratio REAL)")
+        conn.execute(f"INSERT INTO symbol_total_scores VALUES ({','.join('?' for _ in range(21))})", ("TEST", 1, 80, 0, 6, *([0] * 16)))
+        conn.execute("INSERT INTO symbol_scores_structural_stop_loss_distance VALUES ('TEST', 1, 0.01)")
+
+    result = module.run_round(1, evaluated_at=123, allusdt_24h_change_percent=-1.01)[0]
+
+    assert result.qualified is True
