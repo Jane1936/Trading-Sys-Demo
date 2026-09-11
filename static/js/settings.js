@@ -64,6 +64,14 @@ function renderFeatureFlagRow(flag) {
   });
 })();
 
+(function initMarginBudgetSettingsForm() {
+  const form = document.getElementById('margin-budget-settings-form'); const message = document.getElementById('margin-budget-settings-message');
+  if (!form || !message) return;
+  form.addEventListener('submit', async event => { event.preventDefault(); if (!form.reportValidity()) return;
+    try { const response = await fetch('/api/margin-budget-settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({simulation_max_margin_cost_usdt:document.getElementById('simulation-max-margin-cost').value, live_max_margin_cost_usdt:document.getElementById('live-max-margin-cost').value})}); const result=await response.json(); if(!response.ok) throw new Error(result.error); message.textContent='总仓位成本配置已保存。'; } catch(err) { message.textContent=`总仓位成本配置保存失败：${err.message||err}`; message.classList.add('error'); }
+  });
+})();
+
 (function initDynamicOpenThresholdForm() {
   const form = document.getElementById('dynamic-open-threshold-form');
   const message = document.getElementById('dynamic-open-threshold-message');

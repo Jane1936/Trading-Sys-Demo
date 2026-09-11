@@ -58,6 +58,16 @@
       </div>
     </div>
     <div class="card feature-config-yellow">
+      <div class="header"><h2>总仓位成本限制</h2></div>
+      <div class="tip">启用后，新开仓或加仓前检查所有持仓的保证金成本；当前已用保证金加本次预计保证金不得超过额度。超限不会自动平仓，平仓、减仓、止损及止盈不受影响。</div>
+      <div id="margin-budget-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
+      <form id="margin-budget-settings-form" class="score-weight-actions">
+        <label>模拟盘最大保证金成本（USDT）<input id="simulation-max-margin-cost" type="number" min="0.01" step="0.01" required value="{{ margin_budget_settings.simulation_max_margin_cost_usdt }}"></label>
+        <label>实盘最大保证金成本（USDT）<input id="live-max-margin-cost" type="number" min="0.01" step="0.01" required value="{{ margin_budget_settings.live_max_margin_cost_usdt }}"></label>
+        <button class="btn btn-success" type="submit">保存总仓位成本配置</button>
+      </form>
+    </div>
+    <div class="card feature-config-yellow">
       <div class="header"><h2>硬止盈配置</h2></div>
       <div class="tip">设置模拟盘与实盘持仓触发全部平仓的未变现盈利率；默认 20%，保存后从两个硬止盈模块下一轮扫描开始生效。</div>
       <div id="hard-take-profit-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
