@@ -80,7 +80,7 @@
     </div>
     <div class="card feature-config-yellow">
       <div class="header"><h2>最大同时持仓仓位个数</h2></div>
-      <div class="tip">每个 symbol 新开仓前都会重新查询当前已持仓仓位个数；仅当已持仓个数小于对应配置值时才允许开仓。模拟盘与实盘配置相互独立。</div>
+      <div class="tip">每个 symbol 新开仓前都会重新查询当前已持仓仓位个数；仅当已持仓个数小于对应配置值，且本轮新开仓数未达到限制时才允许开仓。模拟盘与实盘的最大持仓配置相互独立，每轮新开仓限制由二者共用。</div>
       <div id="position-limit-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
       <form id="position-limit-settings-form" class="score-weight-actions">
         <label>模拟盘最大允许同时持仓仓位个数
@@ -88,6 +88,9 @@
         </label>
         <label>实盘最大允许同时持仓仓位个数
           <input id="live-max-open-positions" type="number" min="1" max="1000" step="1" required value="{{ position_limit_settings.live_max_open_positions }}">
+        </label>
+        <label>每轮最多允许新开仓个数
+          <input id="max-new-positions-per-round" type="number" min="1" max="1000" step="1" required value="{{ position_limit_settings.max_new_positions_per_round }}">
         </label>
         <button class="btn btn-success" type="submit">保存最大持仓配置</button>
       </form>
