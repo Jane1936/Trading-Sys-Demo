@@ -22,14 +22,17 @@ from dynamic_profit_protection import DynamicProfitProtection
 from hard_take_profit import HardTakeProfit
 from trailing_stop_tracker import TrailingStopTracker
 from position_limit_settings import get_settings as get_position_limit_settings
+from margin_budget_settings import get_settings as get_margin_budget_settings
 
 
 def config() -> ExperimentConfig:
     initial = Decimal(os.getenv("REAL_TRADING_INITIAL_EQUITY_USDT", "100"))
+    budget = get_margin_budget_settings()["live_max_margin_cost_usdt"]
     return ExperimentConfig(
         initial_equity_usdt=initial,
         experiment_uninvested_usdt=Decimal("0"),
         total_margin_budget_usdt=initial,
+        max_margin_cost_usdt=budget,
         hard_take_profit_usdt=Decimal("10"),
     )
 

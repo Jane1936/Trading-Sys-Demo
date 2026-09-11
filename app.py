@@ -23,6 +23,7 @@ import db_config
 from config_database import initialize_config_database
 import feature_flags
 from position_limit_settings import get_settings as get_position_limit_settings
+from margin_budget_settings import get_settings as get_margin_budget_settings
 from data_processor import (
     MA20Processor,
     MA20Scheduler,
@@ -45,7 +46,7 @@ from trailing_stop_tracker import TrailingStopTracker
 from trailing_reduction_tracker import TrailingReductionTracker
 from holding_position_scoring import HoldingPositionScoringSystem
 from scoring_system import ScoringSystem
-from trading_experiment import TradingExperiment
+from trading_experiment import ExperimentConfig, TradingExperiment
 from market_filter_module import MarketFilterModule
 import allusdt_24h_ticker
 from weak_market_profit_adjustment import WeakMarketProfitAdjustmentModule
@@ -563,7 +564,8 @@ def run_first_experiment_after_openable_round(
             print(f"⏸️ trading system disabled round={round_ts}; skipping new positions")
             return
         position_limits = get_position_limit_settings()
-        simulation_experiment = TradingExperiment(db_path=db_config.TRADING_DB_PATH)
+        simulation_config = ExperimentConfig(max_margin_cost_usdt=get_margin_budget_settings()["simulation_max_margin_cost_usdt"] if feature_flags.is_feature_enabled(feature_flags.MARGIN_COST_LIMIT) else None)
+        simulation_experiment = TradingExperiment(db_path=db_config.TRADING_DB_PATH, config=simulation_config)
         simulation_experiment.max_open_positions = position_limits[
             "simulation_max_open_positions"
         ]
@@ -585,7 +587,8 @@ def run_first_experiment_after_openable_round(
         if int(experiment_result.get("opened", 0) or 0) > 0:
             try:
                 holding_result = HoldingPositionScoringSystem(
-                    db_path=db_config.TRADING_DB_PATH
+                    db_path=db_config.TRADING_DB_PATH,
+                    config=ExperimentConfig(max_margin_cost_usdt=get_margin_budget_settings()["simulation_max_margin_cost_usdt"] if feature_flags.is_feature_enabled(feature_flags.MARGIN_COST_LIMIT) else None),
                 ).run_round(
                     decision_round_ts=round_ts,
                     enable_stop_loss=feature_flags.is_feature_enabled(feature_flags.STOP_LOSS_RULE),
@@ -956,7 +959,8 @@ def run_scoring_round_worker(
         # deadline for optional downstream work, but never strand this
         # safety-critical result between two decision rounds.
         holding_scoring = HoldingPositionScoringSystem(
-            db_path=db_config.TRADING_DB_PATH
+            db_path=db_config.TRADING_DB_PATH,
+            config=ExperimentConfig(max_margin_cost_usdt=get_margin_budget_settings()["simulation_max_margin_cost_usdt"] if feature_flags.is_feature_enabled(feature_flags.MARGIN_COST_LIMIT) else None),
         )
         trailing_reduction = TrailingReductionTracker(
             db_path=db_config.TRADING_DB_PATH

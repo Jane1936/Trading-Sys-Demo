@@ -1732,7 +1732,10 @@ class HoldingPositionScoringSystem:
             reserved_margin_budget = helper._reserved_margin_from_positions(latest_positions)
             margin_budget_limit = helper._margin_budget_limit(account_equity, latest_positions)
             available_experiment_usdt = available_balance
-            if available_balance < helper.config.experiment_uninvested_usdt:
+            if helper.config.max_margin_cost_usdt is not None and reserved_margin_budget + required_margin > helper.config.max_margin_cost_usdt:
+                status = "skipped"
+                reason_parts.append("总仓位保证金成本预算不足")
+            elif available_balance < helper.config.experiment_uninvested_usdt:
                 status = "skipped"
                 reason_parts.append("可用金额低于4000")
             elif helper._equity_below_used_margin(margin_budget_limit, reserved_margin_budget):

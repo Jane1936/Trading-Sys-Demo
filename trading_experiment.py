@@ -35,6 +35,7 @@ class ExperimentConfig:
     percent_price_ioc_slippage: Decimal = Decimal("0.01")
     hard_stop_loss_limit_offset: Decimal = Decimal("0.02")
     hard_take_profit_usdt: Decimal = Decimal("55")
+    max_margin_cost_usdt: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -312,6 +313,10 @@ class TradingExperiment:
             required_margin = trade_plan.required_margin_usdt
             if reserved_margin_budget + required_margin > margin_budget_limit:
                 self._record_skip(candidate, account_equity, max_loss, "experiment_equity_budget_exhausted", required_margin)
+                skipped += 1
+                break
+            if self.config.max_margin_cost_usdt is not None and reserved_margin_budget + required_margin > self.config.max_margin_cost_usdt:
+                self._record_skip(candidate, account_equity, max_loss, "total_margin_cost_budget_exhausted", required_margin)
                 skipped += 1
                 break
             if available_balance < required_margin:
