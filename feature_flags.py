@@ -33,6 +33,7 @@ PARTIAL_TAKE_PROFIT = "partial_take_profit"
 TRAILING_REDUCTION = "trailing_reduction"
 DYNAMIC_PROFIT_PROTECTION = "dynamic_profit_protection"
 HARD_TAKE_PROFIT = "hard_take_profit"
+MARGIN_COST_LIMIT = "margin_cost_limit"
 
 PRIMARY_FEATURE_FLAGS = frozenset(
     {BASE_DATA_COLLECTION, SCORING_SYSTEM, TRADING_SYSTEM, REAL_TRADING_SYSTEM, MARKET_FILTER}
@@ -105,6 +106,7 @@ FEATURE_FLAG_DEFINITIONS: tuple[FeatureFlagDefinition, ...] = (
     FeatureFlagDefinition(TRAILING_REDUCTION, "模拟盘移动追踪减仓", "控制移动追踪减仓判断、刷新及减仓操作。"),
     FeatureFlagDefinition(DYNAMIC_PROFIT_PROTECTION, "模拟盘动态利润保护模块", "控制动态利润保护的每分钟扫描及平仓操作。"),
     FeatureFlagDefinition(HARD_TAKE_PROFIT, "模拟盘硬止盈模块", "控制硬止盈模块的每分钟扫描及全部平仓操作。"),
+    FeatureFlagDefinition(MARGIN_COST_LIMIT, "总仓位成本限制", "控制模拟盘与实盘新开仓、加仓前的最大保证金成本限制。"),
 )
 
 _DEFINITIONS_BY_KEY = {definition.key: definition for definition in FEATURE_FLAG_DEFINITIONS}

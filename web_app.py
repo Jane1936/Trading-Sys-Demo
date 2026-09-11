@@ -39,6 +39,7 @@ from dynamic_profit_protection_settings import (
     get_settings as get_dynamic_profit_protection_settings,
     set_settings as set_dynamic_profit_protection_settings,
 )
+from margin_budget_settings import get_settings as get_margin_budget_settings, set_settings as set_margin_budget_settings
 from trailing_stop_tracker import TrailingStopTracker
 from trailing_reduction_tracker import TrailingReductionTracker
 from holding_position_scoring import HoldingPositionScoringSystem
@@ -239,6 +240,7 @@ def load_settings_context() -> dict:
             lambda: get_position_limit_settings(CONFIG_DB_PATH),
             {"simulation_max_open_positions": 1, "live_max_open_positions": 1},
         ),
+        "margin_budget_settings": load_setting("总仓位成本配置", lambda: get_margin_budget_settings(CONFIG_DB_PATH), {"simulation_max_margin_cost_usdt": Decimal("1000"), "live_max_margin_cost_usdt": Decimal("100")}),
         "dynamic_profit_protection_settings": load_setting(
             "动态利润保护配置",
             lambda: get_dynamic_profit_protection_settings(CONFIG_DB_PATH),
@@ -1924,6 +1926,18 @@ def update_feature_flag_api(key: str):
 @app.get("/api/position-limit-settings")
 def position_limit_settings_api():
     return jsonify(get_position_limit_settings(CONFIG_DB_PATH))
+
+@app.get("/api/margin-budget-settings")
+def margin_budget_settings_api():
+    return jsonify({k: str(v) for k, v in get_margin_budget_settings(CONFIG_DB_PATH).items()})
+
+@app.put("/api/margin-budget-settings")
+def update_margin_budget_settings_api():
+    try:
+        values = set_margin_budget_settings(request.get_json(silent=True) or {}, CONFIG_DB_PATH)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({k: str(v) for k, v in values.items()})
 
 
 @app.put("/api/position-limit-settings")

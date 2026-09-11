@@ -37,6 +37,7 @@ def test_feature_flags_seed_enabled_by_default(tmp_path):
         feature_flags.REAL_TRAILING_STOP,
         feature_flags.REAL_DYNAMIC_PROFIT_PROTECTION,
         feature_flags.REAL_HARD_TAKE_PROFIT,
+        feature_flags.MARGIN_COST_LIMIT,
     ]
     assert all(
         flag.enabled == (flag.key not in {
