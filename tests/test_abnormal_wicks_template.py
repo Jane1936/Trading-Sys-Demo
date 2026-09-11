@@ -782,6 +782,8 @@ def test_feature_flags_include_independent_market_filter_settings_form():
     assert 'id="market-filter-settings-form"' in section
     assert "BTC吸血阈值（%）" in section
     assert "大盘暴跌阈值（%）" in section
+    assert "ALLUSDT 最近24h涨跌幅低于（%）" in section
+    assert 'id="market-filter-allusdt-24h-threshold"' in section
     assert "禁止新开仓时间（分钟）" in section
     assert "fetch('/api/market-filter-settings'" in script
 

@@ -111,7 +111,7 @@
     </div>
     <div class="card feature-config-purple">
       <div class="header"><h2>独立市场过滤配置</h2></div>
-      <div class="tip">配置 BTC 相对大盘涨幅差、大盘跌幅以及触发后的禁止新开仓时间。阈值按百分比填写，保存后从独立市场过滤模块下一轮执行开始生效。</div>
+      <div class="tip">配置 BTC 相对大盘涨幅差、大盘跌幅、ALLUSDT 最近24h涨跌幅以及触发后的禁止新开仓时间。阈值按百分比填写，保存后从独立市场过滤模块下一轮执行开始生效。</div>
       <div id="market-filter-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
       <form id="market-filter-settings-form" class="score-weight-actions">
         <label>BTC吸血阈值（%）
@@ -119,6 +119,9 @@
         </label>
         <label>大盘暴跌阈值（%）
           <input id="market-filter-crash-threshold" type="number" min="0.0001" max="100" step="0.0001" required value="{{ market_filter_settings.market_crash_threshold * 100 }}">
+        </label>
+        <label>ALLUSDT 最近24h涨跌幅低于（%）
+          <input id="market-filter-allusdt-24h-threshold" type="number" min="-100" max="-0.0001" step="0.0001" required value="{{ market_filter_settings.allusdt_24h_drop_threshold * 100 }}">
         </label>
         <label>禁止新开仓时间（分钟）
           <input id="market-filter-block-minutes" type="number" min="1" max="10080" step="1" required value="{{ market_filter_settings.block_duration_minutes }}">

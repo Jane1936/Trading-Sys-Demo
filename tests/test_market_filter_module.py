@@ -148,7 +148,9 @@ def test_market_filter_uses_configured_thresholds_and_block_duration(tmp_path):
 def test_market_filter_settings_defaults_and_validation(tmp_path):
     settings_path = str(tmp_path / "base.db")
 
-    assert get_settings(settings_path)["block_duration_minutes"] == 30
+    defaults = get_settings(settings_path)
+    assert defaults["block_duration_minutes"] == 30
+    assert defaults["allusdt_24h_drop_threshold"] == -0.05
 
     try:
         set_settings({
@@ -182,6 +184,31 @@ def test_market_filter_blocks_when_allusdt_24h_change_is_below_minus_five_percen
     assert result.allow_new_positions is False
     assert result.reason == "allusdt_24h_drop"
     assert result.block_until == 2_700_001
+
+
+def test_market_filter_uses_configured_allusdt_24h_threshold(tmp_path):
+    db_path = tmp_path / "klines.db"
+    settings_path = tmp_path / "base.db"
+    set_settings({
+        "btc_siphon_threshold": 0.005,
+        "market_crash_threshold": 0.03,
+        "allusdt_24h_drop_threshold": -0.08,
+        "block_duration_minutes": 30,
+    }, str(settings_path))
+    module = MarketFilterModule(str(db_path), settings_db_path=str(settings_path))
+    with sqlite3.connect(db_path) as conn:
+        _init_source_tables(conn)
+        _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100] * 4)
+        _insert_rows(conn, collector.BTC_15M_TABLE, [100] * 4)
+
+    result = module.run_round(
+        decision_round_ts=900_000,
+        evaluated_at=900_001,
+        allusdt_24h_change_percent=-6,
+    )
+
+    assert result.allusdt_24h_drop is False
+    assert result.allow_new_positions is True
 
 
 def test_market_filter_does_not_apply_24h_rule_without_ticker_result(tmp_path):
