@@ -263,6 +263,7 @@ def load_settings_context() -> dict:
             {
                 "btc_siphon_threshold": 0,
                 "market_crash_threshold": 0,
+                "allusdt_24h_drop_threshold": -0.05,
                 "block_duration_minutes": 1,
             },
         ),

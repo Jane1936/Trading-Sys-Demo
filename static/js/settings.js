@@ -212,6 +212,7 @@ function renderFeatureFlagRow(flag) {
     const payload = {
       btc_siphon_threshold: Number(document.getElementById('market-filter-btc-threshold').value) / 100,
       market_crash_threshold: Number(document.getElementById('market-filter-crash-threshold').value) / 100,
+      allusdt_24h_drop_threshold: Number(document.getElementById('market-filter-allusdt-24h-threshold').value) / 100,
       block_duration_minutes: Number(document.getElementById('market-filter-block-minutes').value),
     };
     button.disabled = true;
@@ -223,7 +224,7 @@ function renderFeatureFlagRow(flag) {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      message.textContent = `配置已保存：BTC吸血阈值 ${result.btc_siphon_threshold * 100}%，大盘暴跌阈值 ${result.market_crash_threshold * 100}%，触发后禁止新开仓 ${result.block_duration_minutes} 分钟。`;
+      message.textContent = `配置已保存：BTC吸血阈值 ${result.btc_siphon_threshold * 100}%，大盘暴跌阈值 ${result.market_crash_threshold * 100}%，ALLUSDT 最近24h涨跌幅低于 ${result.allusdt_24h_drop_threshold * 100}% 时触发，触发后禁止新开仓 ${result.block_duration_minutes} 分钟。`;
     } catch (err) {
       message.textContent = `独立市场过滤配置保存失败：${err.message || err}`;
       message.classList.add('error');

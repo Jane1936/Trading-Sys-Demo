@@ -45,8 +45,6 @@ class MarketFilterResult:
 class MarketFilterModule:
     TABLE_NAME = "market_filter_rounds"
     ROUND_MS = 15 * 60_000
-    ALLUSDT_24H_DROP_THRESHOLD = -0.05
-
     def __init__(self, db_path: str = "data/klines.db", settings_db_path: str | None = None) -> None:
         self.db_path = db_path
         self.settings_db_path = settings_db_path or db_config.CONFIG_DB_PATH
@@ -148,6 +146,7 @@ class MarketFilterModule:
         settings = get_settings(self.settings_db_path)
         btc_siphon_threshold = float(settings["btc_siphon_threshold"])
         market_crash_threshold = float(settings["market_crash_threshold"])
+        allusdt_24h_drop_threshold = float(settings["allusdt_24h_drop_threshold"])
         block_ms = int(settings["block_duration_minutes"]) * 60_000
         round_ts = self.decision_round_ts() if decision_round_ts is None else int(decision_round_ts)
         evaluated_ms = int(time.time() * 1000) if evaluated_at is None else int(evaluated_at)
@@ -163,7 +162,7 @@ class MarketFilterModule:
             )
             allusdt_24h_drop = (
                 allusdt_24h_delta is not None
-                and allusdt_24h_delta < self.ALLUSDT_24H_DROP_THRESHOLD
+                and allusdt_24h_delta < allusdt_24h_drop_threshold
             )
             if all_delta is None or btc_delta is None:
                 btc_siphon = False
