@@ -569,6 +569,9 @@ def run_first_experiment_after_openable_round(
         simulation_experiment.max_open_positions = position_limits[
             "simulation_max_open_positions"
         ]
+        simulation_experiment.max_new_positions_per_round = position_limits[
+            "max_new_positions_per_round"
+        ]
         experiment_result = simulation_experiment.run_round(openable_rows)
         print(
             f"🧪 first trading experiment after openable round={round_ts} "

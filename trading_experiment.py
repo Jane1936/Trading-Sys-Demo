@@ -131,6 +131,7 @@ class TradingExperiment:
         config: ExperimentConfig | None = None,
         openable_db_path: str | None = None,
         max_open_positions: int | None = None,
+        max_new_positions_per_round: int | None = None,
     ) -> None:
         self.db_path = db_path
         self.core_db_path = db_config.trading_core_path(db_path)
@@ -141,6 +142,7 @@ class TradingExperiment:
         # scoring database so it never creates/copies simulation tables in its DB.
         self.openable_db_path = openable_db_path or db_path
         self.max_open_positions = max_open_positions
+        self.max_new_positions_per_round = max_new_positions_per_round
 
     def _connect(self) -> sqlite3.Connection:
         conn = db_config.connect_sqlite(self.core_db_path, row_factory=sqlite3.Row)
@@ -279,6 +281,15 @@ class TradingExperiment:
             if self._candidate_allows_open(candidate)
         ]
         for candidate in sorted(eligible_candidates, key=lambda row: (-row.total_score, row.symbol)):
+            if (
+                self.max_new_positions_per_round is not None
+                and opened >= self.max_new_positions_per_round
+            ):
+                self._record_skip(
+                    candidate, account_equity, max_loss, "max_new_positions_per_round_reached"
+                )
+                skipped += 1
+                break
             # Refresh immediately before every candidate so concurrent/manual
             # entries and positions opened earlier in this round count toward
             # the configured cap.

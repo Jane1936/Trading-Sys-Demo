@@ -238,7 +238,11 @@ def load_settings_context() -> dict:
         "position_limit_settings": load_setting(
             "最大持仓配置",
             lambda: get_position_limit_settings(CONFIG_DB_PATH),
-            {"simulation_max_open_positions": 1, "live_max_open_positions": 1},
+            {
+                "simulation_max_open_positions": 1,
+                "live_max_open_positions": 1,
+                "max_new_positions_per_round": 5,
+            },
         ),
         "margin_budget_settings": load_setting("总仓位成本配置", lambda: get_margin_budget_settings(CONFIG_DB_PATH), {"simulation_max_margin_cost_usdt": Decimal("1000"), "live_max_margin_cost_usdt": Decimal("100")}),
         "dynamic_profit_protection_settings": load_setting(

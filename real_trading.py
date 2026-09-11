@@ -38,12 +38,14 @@ def config() -> ExperimentConfig:
 
 
 def experiment() -> TradingExperiment:
+    position_limits = get_position_limit_settings()
     return TradingExperiment(
         db_path=db_config.REAL_TRADING_CORE_DB_PATH,
         openable_db_path=db_config.SCORING_DB_PATH,
         account_manager=BinanceAccountManager.live(),
         config=config(),
-        max_open_positions=get_position_limit_settings()["live_max_open_positions"],
+        max_open_positions=position_limits["live_max_open_positions"],
+        max_new_positions_per_round=position_limits["max_new_positions_per_round"],
     )
 
 

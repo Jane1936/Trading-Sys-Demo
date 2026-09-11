@@ -114,6 +114,7 @@ function renderFeatureFlagRow(flag) {
     const payload = {
       simulation_max_open_positions: Number(document.getElementById('simulation-max-open-positions').value),
       live_max_open_positions: Number(document.getElementById('live-max-open-positions').value),
+      max_new_positions_per_round: Number(document.getElementById('max-new-positions-per-round').value),
     };
     button.disabled = true;
     message.textContent = '正在保存最大持仓配置...';
@@ -124,7 +125,7 @@ function renderFeatureFlagRow(flag) {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      message.textContent = `配置已保存：模拟盘最多 ${result.simulation_max_open_positions} 个仓位，实盘最多 ${result.live_max_open_positions} 个仓位。`;
+      message.textContent = `配置已保存：模拟盘最多 ${result.simulation_max_open_positions} 个仓位，实盘最多 ${result.live_max_open_positions} 个仓位，每轮最多新开 ${result.max_new_positions_per_round} 个仓位。`;
     } catch (err) {
       message.textContent = `最大持仓配置保存失败：${err.message || err}`;
       message.classList.add('error');
