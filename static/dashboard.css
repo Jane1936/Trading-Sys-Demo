@@ -45,6 +45,18 @@ body {
 .home-card-settings { --accent:#7c3aed; }
 .home-card-market { --accent:#059669; }
 .home-card-scoring { --accent:#d97706; grid-column:1 / -1; }
+.home-card-alpha { --accent:#0f766e; grid-column:1 / -1; }
+.alpha-header { display:flex; align-items:center; justify-content:space-between; gap:24px; }
+.alpha-summary { min-width:210px; padding:18px 22px; border:1px solid #99f6e4; border-radius:16px; background:#f0fdfa; display:grid; grid-template-columns:auto 1fr; align-items:baseline; gap:3px 10px; }
+.alpha-summary strong { color:#0f766e; font-size:30px; }
+.alpha-summary span { color:#334155; font-weight:700; }
+.alpha-summary small { grid-column:1/-1; color:#64748b; }
+.alpha-panel { margin-top:20px; }
+.alpha-table { min-width:760px; }
+.alpha-table .numeric { text-align:right; font-variant-numeric:tabular-nums; font-weight:650; }
+.alpha-symbol { display:flex; align-items:center; gap:9px; }
+.alpha-symbol img { width:28px; height:28px; border-radius:50%; object-fit:cover; background:#e2e8f0; }
+.empty-state { margin-top:20px; padding:54px 24px; text-align:center; border:1px dashed #94a3b8; border-radius:16px; background:#fff; }
 .home-footnote { margin:0; color:#64748b; text-align:center; font-size:12px; }
 @media (max-width:800px) {
   .layout { grid-template-columns:1fr; margin:8px auto; }

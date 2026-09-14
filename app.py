@@ -49,6 +49,7 @@ from scoring_system import ScoringSystem
 from trading_experiment import ExperimentConfig, TradingExperiment
 from market_filter_module import MarketFilterModule
 import allusdt_24h_ticker
+import alpha_observer
 from weak_market_profit_adjustment import WeakMarketProfitAdjustmentModule
 from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import DynamicOpenThresholdModule
@@ -158,6 +159,7 @@ def _database_initializers() -> dict[str, Callable[[], None]]:
             MarketFilterModule(db_path=db_config.MARKET_DB_PATH).init_table(),
             AddPositionPermissionModule(db_path=db_config.MARKET_DB_PATH).init_table(),
         ),
+        db_config.ALPHA_DB_PATH: alpha_observer.init_db,
         db_config.TRADING_DB_PATH: lambda: (
             TradingExperiment(db_path=db_config.TRADING_DB_PATH).init_error_tables(),
             HoldingPositionScoringSystem(db_path=db_config.TRADING_DB_PATH).init_tables(),
@@ -232,6 +234,9 @@ def _database_schema_requirements() -> dict[str, dict[str, set[str]]]:
         db_config.MARKET_DB_PATH: {
             MarketFilterModule.TABLE_NAME: {"decision_round_ts"},
             AddPositionPermissionModule.TABLE_NAME: {"decision_round_ts"},
+        },
+        db_config.ALPHA_DB_PATH: {
+            "alpha_market_snapshots": {"symbol", "volume_24h", "market_cap", "observed_at"},
         },
         db_config.TRADING_DB_PATH: {
             TradingExperiment.ERRORS_TABLE: {"created_at"},
@@ -1607,6 +1612,25 @@ def start_processor_task(symbols: List[str]) -> None:
     )
 
 
+def start_alpha_observer_task() -> None:
+    """Collect a complete Alpha market snapshot now and once every hour."""
+    alpha_observer.init_db()
+    scheduler = collector.BlockingScheduler()
+
+    def _job() -> None:
+        try:
+            count = alpha_observer.collect_snapshot()
+            print(f"🅰️ Alpha observer collected tokens={count}")
+        except Exception as exc:
+            recover_after_worker_error(exc)
+            print(f"⚠️ Alpha observer collection failed: {exc}")
+
+    _job()
+    scheduler.add_job(_job, "interval", hours=1, max_instances=1, coalesce=True)
+    print("🚀 Alpha observer task started (hourly)")
+    scheduler.start()
+
+
 if __name__ == "__main__":
     collector.database_error_handler = recover_after_worker_error
     verify_db_writable(db_config.BASE_DB_PATH)
@@ -1617,7 +1641,12 @@ if __name__ == "__main__":
     # 预先构建一次 universe，并按12小时周期刷新
     symbols = ensure_universe()
 
-    # 七个独立 task：collector / ATR 15m / pre_safety / break_even_take_profit / 加仓预触发刷新 / 移动追踪减仓刷新 / data_processor
+    # 独立 task，包括 Alpha 币每小时观测；各自失败不会阻塞主数据处理。
+    alpha_observer_thread = threading.Thread(
+        target=start_alpha_observer_task, daemon=True
+    )
+    alpha_observer_thread.start()
+
     collector_thread = threading.Thread(
         target=start_collector_task, args=(symbols,), daemon=True
     )

@@ -29,6 +29,7 @@ REAL_TRADING_INFO_DB_PATH = os.getenv(
 )
 TRADING_INFO_DB_PATH = os.getenv("TRADING_INFO_DB_PATH", f"{DATA_DIR}/trading_info.db")
 MARKET_DB_PATH = os.getenv("MARKET_DB_PATH", f"{DATA_DIR}/market.db")
+ALPHA_DB_PATH = os.getenv("ALPHA_DB_PATH", f"{DATA_DIR}/alpha.db")
 SCHEMA_LOCK_TIMEOUT_SECONDS = float(os.getenv("SCHEMA_LOCK_TIMEOUT_SECONDS", "30"))
 
 DB_LABELS = {
@@ -42,6 +43,7 @@ DB_LABELS = {
     "实盘交易记录数据库": REAL_TRADING_INFO_DB_PATH,
     "交易记录数据库": TRADING_INFO_DB_PATH,
     "市场行情数据库": MARKET_DB_PATH,
+    "Alpha 币观测数据库": ALPHA_DB_PATH,
 }
 
 
