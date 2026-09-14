@@ -11,6 +11,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -37,6 +38,16 @@ class AlphaObservation:
     volume_24h: str | None
     market_cap: str | None
     observed_at: int
+
+
+@dataclass(frozen=True)
+class AlphaDatabaseStatus:
+    """Operator-facing facts used to distinguish an empty DB from a wrong DB."""
+
+    path: str
+    size_bytes: int
+    total_rows: int
+    snapshot_count: int
 
 
 def init_db(db_path: str = db_config.ALPHA_DB_PATH) -> None:
@@ -199,3 +210,20 @@ def latest_snapshot(db_path: str = db_config.ALPHA_DB_PATH) -> tuple[int | None,
             (latest,),
         ).fetchall()
     return int(latest), rows
+
+
+def database_status(db_path: str = db_config.ALPHA_DB_PATH) -> AlphaDatabaseStatus:
+    """Return non-sensitive diagnostics for the database actually being read."""
+    init_db(db_path)
+    path = Path(db_path).resolve()
+    with db_config.connect_sqlite(db_path) as conn:
+        total_rows, snapshot_count = conn.execute(
+            """SELECT COUNT(*), COUNT(DISTINCT observed_at)
+               FROM alpha_market_snapshots"""
+        ).fetchone()
+    return AlphaDatabaseStatus(
+        path=str(path),
+        size_bytes=path.stat().st_size,
+        total_rows=int(total_rows),
+        snapshot_count=int(snapshot_count),
+    )

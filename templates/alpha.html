@@ -27,7 +27,18 @@
 
   {% if alpha_error %}<div class="module-error-banner">加载 Alpha 数据失败：{{ alpha_error }}</div>{% endif %}
   {% if not tokens %}
-    <section class="empty-state"><h2>暂无观测数据</h2><p>独立采集任务成功完成首次请求后，数据会显示在这里。</p></section>
+    <section class="empty-state">
+      <h2>暂无观测数据</h2>
+      {% if database_status %}
+        <p>页面当前读取的数据库为 <code>{{ database_status.path }}</code>（{{ database_status.size_bytes }} bytes），表内共有
+          <strong>{{ database_status.total_rows }}</strong> 行、
+          <strong>{{ database_status.snapshot_count }}</strong> 个快照。
+        </p>
+        <p>如果你检查的 alpha.db 确实有数据，请核对它是否就是上述路径，并确认 worker 与 web 容器使用相同的 <code>ALPHA_DB_PATH</code>。</p>
+      {% else %}
+        <p>数据库检查失败，请根据上方错误信息检查文件路径、权限和表结构。</p>
+      {% endif %}
+    </section>
   {% else %}
     <section class="panel alpha-panel">
       <div class="panel-title alpha-panel-title">

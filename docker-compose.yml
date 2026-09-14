@@ -10,6 +10,9 @@ x-app-env: &app-env
   REAL_TRADING_DB_PATH: "${REAL_TRADING_DB_PATH:-data/real_trading.db}"
   REAL_TRADING_INFO_DB_PATH: "${REAL_TRADING_INFO_DB_PATH:-data/real_trading_info.db}"
   MARKET_DB_PATH: "${MARKET_DB_PATH:-data/market.db}"
+  # Pass custom Alpha DB locations to both processes. Otherwise a value in
+  # .env is not inherited and the web process silently opens data/alpha.db.
+  ALPHA_DB_PATH: "${ALPHA_DB_PATH:-data/alpha.db}"
   SQLITE_RECOVERY_LOG_DIR: "${SQLITE_RECOVERY_LOG_DIR:-logs/sqlite-recovery}"
   # Never let delayed market aggregation block minute-level position protection indefinitely.
   PROFIT_MARKET_CONVERGENCE_TIMEOUT_SEC: "${PROFIT_MARKET_CONVERGENCE_TIMEOUT_SEC:-10}"

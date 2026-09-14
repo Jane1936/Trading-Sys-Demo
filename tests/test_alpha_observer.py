@@ -60,3 +60,9 @@ def test_backfill_recent_hours_fetches_once_and_creates_24_buckets(tmp_path):
     assert alpha_observer.backfill_recent_hours(
         db_path, session=session, now_ms=100 * hour_ms + 999, hours=24
     ) == 0
+
+    status = alpha_observer.database_status(db_path)
+    assert status.path == str((tmp_path / "alpha.db").resolve())
+    assert status.size_bytes > 0
+    assert status.total_rows == 24
+    assert status.snapshot_count == 24
