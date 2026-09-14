@@ -1613,14 +1613,15 @@ def start_processor_task(symbols: List[str]) -> None:
 
 
 def start_alpha_observer_task() -> None:
-    """Collect a complete Alpha market snapshot now and once every hour."""
+    """Collect Alpha snapshots hourly and automatically repair 24h gaps."""
     alpha_observer.init_db()
     scheduler = collector.BlockingScheduler()
 
     def _job() -> None:
         try:
+            repaired = alpha_observer.backfill_recent_hours()
             count = alpha_observer.collect_snapshot()
-            print(f"🅰️ Alpha observer collected tokens={count}")
+            print(f"🅰️ Alpha observer collected tokens={count}, backfilled={repaired}")
         except Exception as exc:
             recover_after_worker_error(exc)
             print(f"⚠️ Alpha observer collection failed: {exc}")
