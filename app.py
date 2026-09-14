@@ -1638,14 +1638,16 @@ if __name__ == "__main__":
     # partially initialized schema. Recovery uses the same verification before
     # removing its access fence.
     initialize_worker_databases()
-    # 预先构建一次 universe，并按12小时周期刷新
-    symbols = ensure_universe()
-
-    # 独立 task，包括 Alpha 币每小时观测；各自失败不会阻塞主数据处理。
+    # Alpha is deliberately started before the universe refresh.  Universe
+    # construction performs a remote Binance request and can fail at startup;
+    # that must not prevent the independent Alpha observer from being created.
     alpha_observer_thread = threading.Thread(
         target=start_alpha_observer_task, daemon=True
     )
     alpha_observer_thread.start()
+
+    # 预先构建一次 universe，并按12小时周期刷新
+    symbols = ensure_universe()
 
     collector_thread = threading.Thread(
         target=start_collector_task, args=(symbols,), daemon=True
