@@ -19,9 +19,12 @@ import db_config
 
 ALPHA_TOKEN_LIST_URL = os.getenv(
     "ALPHA_TOKEN_LIST_URL",
-    "https://www.binance.com/bapi/defi/v1/public/alpha-trade/token/list",
+    # Keep this source aligned with collector.get_alpha_symbols(), which is
+    # already used to construct the trading/scoring universe.
+    "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list",
 )
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("ALPHA_REQUEST_TIMEOUT_SECONDS", "20"))
+BACKFILL_HOURS = 24
 
 
 @dataclass(frozen=True)
@@ -81,7 +84,11 @@ def _payload_tokens(payload: Any) -> list[dict[str, Any]]:
 
 def fetch_tokens(session=requests) -> list[dict[str, Any]]:
     db_config.assert_no_active_sqlite_transaction("Binance Alpha token request")
-    response = session.get(ALPHA_TOKEN_LIST_URL, timeout=REQUEST_TIMEOUT_SECONDS)
+    response = session.get(
+        ALPHA_TOKEN_LIST_URL,
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
     response.raise_for_status()
     return _payload_tokens(response.json())
 
@@ -124,6 +131,56 @@ def collect_snapshot(
             rows,
         )
     return len(rows)
+
+
+def backfill_recent_hours(
+    db_path: str = db_config.ALPHA_DB_PATH,
+    *,
+    session=requests,
+    hours: int = BACKFILL_HOURS,
+    now_ms: int | None = None,
+) -> int:
+    """Fill missing hourly buckets in the trailing window.
+
+    The Alpha endpoint exposes the current token list (not historical candles),
+    so one successful response is reused for missing buckets.  This keeps the
+    observation timeline queryable after downtime without issuing 24 requests.
+    Existing buckets are never overwritten.
+    """
+    if hours <= 0:
+        return 0
+    tokens = fetch_tokens(session)
+    now = int(time.time() * 1000) if now_ms is None else int(now_ms)
+    hour_ms = 60 * 60 * 1000
+    current_bucket = now // hour_ms * hour_ms
+    init_db(db_path)
+    with db_config.connect_sqlite(db_path) as conn:
+        existing = {
+            int(row[0])
+            for row in conn.execute(
+                "SELECT DISTINCT observed_at FROM alpha_market_snapshots WHERE observed_at >= ?",
+                (current_bucket - (hours - 1) * hour_ms,),
+            )
+        }
+    inserted = 0
+    for offset in range(hours):
+        bucket = current_bucket - offset * hour_ms
+        if bucket in existing:
+            continue
+        inserted += collect_snapshot(db_path, session=_StaticTokenSession(tokens), observed_at=bucket)
+    return inserted
+
+
+class _StaticTokenSession:
+    """ requests-like adapter used by backfill to avoid repeated network calls. """
+    def __init__(self, tokens):
+        self.tokens = tokens
+    def get(self, *args, **kwargs):
+        tokens = self.tokens
+        class Response:
+            def raise_for_status(self): pass
+            def json(inner): return {"data": tokens}
+        return Response()
 
 
 def latest_snapshot(db_path: str = db_config.ALPHA_DB_PATH) -> tuple[int | None, list[sqlite3.Row]]:
