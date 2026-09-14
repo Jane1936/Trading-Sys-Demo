@@ -30,13 +30,16 @@
     <section class="empty-state"><h2>暂无观测数据</h2><p>独立采集任务成功完成首次请求后，数据会显示在这里。</p></section>
   {% else %}
     <section class="panel alpha-panel">
-      <div class="panel-title"><h2>最新市场快照</h2><span>按市值从高到低排列</span></div>
+      <div class="panel-title alpha-panel-title">
+        <div><h2>最新市场快照</h2><span>按市值从高到低排列</span></div>
+        {% if tokens|length > 10 %}<button type="button" class="btn btn-secondary alpha-toggle" aria-expanded="false">展开全部（{{ tokens|length }}）</button>{% endif %}
+      </div>
       <div class="table-wrap">
         <table class="alpha-table">
           <thead><tr><th>#</th><th>币种</th><th>名称</th><th>网络</th><th>24小时成交量</th><th>市值</th></tr></thead>
           <tbody>
           {% for token in tokens %}
-            <tr>
+            <tr{% if loop.index > 10 %} class="alpha-extra-row" hidden{% endif %}>
               <td>{{ loop.index }}</td>
               <td><span class="alpha-symbol">{% if token.icon_url %}<img src="{{ token.icon_url }}" alt="" loading="lazy" />{% endif %}<strong>{{ token.symbol }}</strong></span></td>
               <td>{{ token.name or '—' }}</td><td>{{ token.chain_id or '—' }}</td>
@@ -57,5 +60,14 @@
     const value = Number(cell.dataset.value);
     if (Number.isFinite(value)) cell.textContent = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(value);
   });
+  const toggle = document.querySelector('.alpha-toggle');
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      const expanded = toggle.getAttribute('aria-expanded') === 'true';
+      document.querySelectorAll('.alpha-extra-row').forEach((row) => { row.hidden = expanded; });
+      toggle.setAttribute('aria-expanded', String(!expanded));
+      toggle.textContent = expanded ? `展开全部（{{ tokens|length }}）` : '收起列表';
+    });
+  }
 </script>
 {% endblock %}

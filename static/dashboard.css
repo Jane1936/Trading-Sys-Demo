@@ -52,6 +52,10 @@ body {
 .alpha-summary span { color:#334155; font-weight:700; }
 .alpha-summary small { grid-column:1/-1; color:#64748b; }
 .alpha-panel { margin-top:20px; }
+.content .alpha-panel { display:block; }
+.alpha-panel-title { align-items:center; }
+.alpha-panel-title > div { display:flex; align-items:baseline; gap:12px; }
+.alpha-toggle { white-space:nowrap; }
 .alpha-table { min-width:760px; }
 .alpha-table .numeric { text-align:right; font-variant-numeric:tabular-nums; font-weight:650; }
 .alpha-symbol { display:flex; align-items:center; gap:9px; }
