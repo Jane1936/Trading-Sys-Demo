@@ -53,6 +53,7 @@ from trading_experiment import TradingExperiment
 import real_trading
 from market_filter_module import MarketFilterModule
 import allusdt_24h_ticker
+import alpha_observer
 from market_filter_settings import (
     get_settings as get_market_filter_settings,
     set_settings as set_market_filter_settings,
@@ -91,6 +92,7 @@ CONFIG_DB_PATH = db_config.CONFIG_DB_PATH
 SCORING_DB_PATH = db_config.SCORING_DB_PATH
 TRADING_DB_PATH = db_config.TRADING_DB_PATH
 MARKET_DB_PATH = db_config.MARKET_DB_PATH
+ALPHA_DB_PATH = db_config.ALPHA_DB_PATH
 DEFAULT_TRADING_EQUITY_USDT = Decimal("1000")
 WEB_SQLITE_QUICK_CHECK_ON_REQUEST = (
     os.getenv("WEB_SQLITE_QUICK_CHECK_ON_REQUEST", "").strip().lower()
@@ -1227,6 +1229,30 @@ def settings():
 def market_safety():
     initialize_config_database(CONFIG_DB_PATH, BASE_DB_PATH)
     return render_template("market.html", **load_market_safety_context())
+
+
+@app.get("/market/alpha")
+def alpha_market():
+    """Show the most recently completed hourly Alpha-token snapshot."""
+    try:
+        observed_at, rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
+        tokens = [dict(row) for row in rows]
+        error = None
+    except Exception as exc:
+        app.logger.exception("Alpha observer page failed")
+        observed_at, tokens, error = None, [], str(exc)
+    observed_time = (
+        datetime.fromtimestamp(observed_at / 1000, timezone.utc)
+        .strftime("%Y-%m-%d %H:%M:%S UTC")
+        if observed_at is not None
+        else None
+    )
+    return render_template(
+        "alpha.html",
+        tokens=tokens,
+        observed_time=observed_time,
+        alpha_error=error,
+    )
 
 
 @app.get("/trading/simulation")

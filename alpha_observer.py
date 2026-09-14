@@ -1,0 +1,144 @@
+"""Hourly Binance Alpha market snapshot collector.
+
+Alpha observations intentionally live in their own SQLite database.  This
+module does not import or write any trading database tables.
+"""
+
+from __future__ import annotations
+
+import os
+import sqlite3
+import time
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+from typing import Any
+
+import requests
+
+import db_config
+
+ALPHA_TOKEN_LIST_URL = os.getenv(
+    "ALPHA_TOKEN_LIST_URL",
+    "https://www.binance.com/bapi/defi/v1/public/alpha-trade/token/list",
+)
+REQUEST_TIMEOUT_SECONDS = float(os.getenv("ALPHA_REQUEST_TIMEOUT_SECONDS", "20"))
+
+
+@dataclass(frozen=True)
+class AlphaObservation:
+    symbol: str
+    name: str
+    chain_id: str
+    contract_address: str
+    icon_url: str
+    volume_24h: str | None
+    market_cap: str | None
+    observed_at: int
+
+
+def init_db(db_path: str = db_config.ALPHA_DB_PATH) -> None:
+    with db_config.connect_sqlite(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS alpha_market_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                chain_id TEXT NOT NULL DEFAULT '',
+                contract_address TEXT NOT NULL DEFAULT '',
+                icon_url TEXT NOT NULL DEFAULT '',
+                volume_24h TEXT,
+                market_cap TEXT,
+                observed_at INTEGER NOT NULL,
+                UNIQUE(observed_at, chain_id, contract_address, symbol)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_alpha_snapshot_latest "
+            "ON alpha_market_snapshots(observed_at DESC, symbol)"
+        )
+
+
+def _decimal_text(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    return format(number, "f") if number.is_finite() else None
+
+
+def _payload_tokens(payload: Any) -> list[dict[str, Any]]:
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if isinstance(data, dict):
+        data = data.get("tokens") or data.get("list")
+    if not isinstance(data, list):
+        raise ValueError("Binance Alpha response does not contain a token list")
+    return [item for item in data if isinstance(item, dict)]
+
+
+def fetch_tokens(session=requests) -> list[dict[str, Any]]:
+    db_config.assert_no_active_sqlite_transaction("Binance Alpha token request")
+    response = session.get(ALPHA_TOKEN_LIST_URL, timeout=REQUEST_TIMEOUT_SECONDS)
+    response.raise_for_status()
+    return _payload_tokens(response.json())
+
+
+def collect_snapshot(
+    db_path: str = db_config.ALPHA_DB_PATH,
+    *,
+    session=requests,
+    observed_at: int | None = None,
+) -> int:
+    """Fetch and atomically persist one complete Alpha-token snapshot."""
+    tokens = fetch_tokens(session)
+    timestamp = int(time.time() * 1000) if observed_at is None else int(observed_at)
+    rows = []
+    for token in tokens:
+        symbol = str(token.get("symbol") or token.get("ticker") or "").strip()
+        if not symbol:
+            continue
+        rows.append(
+            (
+                symbol,
+                str(token.get("name") or "").strip(),
+                str(token.get("chainId") or token.get("chain_id") or ""),
+                str(token.get("contractAddress") or token.get("contract_address") or ""),
+                str(token.get("iconUrl") or token.get("icon_url") or ""),
+                _decimal_text(token.get("volume24h") or token.get("volume_24h")),
+                _decimal_text(token.get("marketCap") or token.get("market_cap")),
+                timestamp,
+            )
+        )
+    if not rows:
+        raise ValueError("Binance Alpha response contains no valid tokens")
+    init_db(db_path)
+    with db_config.connect_sqlite(db_path) as conn:
+        conn.executemany(
+            """INSERT OR REPLACE INTO alpha_market_snapshots
+               (symbol, name, chain_id, contract_address, icon_url,
+                volume_24h, market_cap, observed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
+    return len(rows)
+
+
+def latest_snapshot(db_path: str = db_config.ALPHA_DB_PATH) -> tuple[int | None, list[sqlite3.Row]]:
+    init_db(db_path)
+    with db_config.connect_sqlite(db_path, row_factory=sqlite3.Row) as conn:
+        latest = conn.execute(
+            "SELECT MAX(observed_at) FROM alpha_market_snapshots"
+        ).fetchone()[0]
+        if latest is None:
+            return None, []
+        rows = conn.execute(
+            """SELECT symbol, name, chain_id, contract_address, icon_url,
+                      volume_24h, market_cap, observed_at
+               FROM alpha_market_snapshots WHERE observed_at = ?
+               ORDER BY CAST(market_cap AS REAL) DESC, symbol""",
+            (latest,),
+        ).fetchall()
+    return int(latest), rows
