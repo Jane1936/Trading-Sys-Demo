@@ -42,20 +42,22 @@
   {% else %}
     <section class="panel alpha-panel active">
       <div class="panel-title alpha-panel-title">
-        <div><h2>最新市场快照</h2><span>按市值从高到低排列</span></div>
+        <div><h2>最新市场快照</h2><span>按活跃度从高到低排列（24小时成交量/市值）</span></div>
         {% if tokens|length > 10 %}<button type="button" class="btn btn-secondary alpha-toggle" aria-expanded="false">展开全部（{{ tokens|length }}）</button>{% endif %}
       </div>
       <div class="table-wrap">
         <table class="alpha-table">
-          <thead><tr><th>#</th><th>币种</th><th>名称</th><th>网络</th><th>24小时成交量</th><th>市值</th></tr></thead>
+          <thead><tr><th>#</th><th>币种</th><th>名称</th><th>网络</th><th>24小时成交量</th><th>市值</th><th>活跃度</th></tr></thead>
           <tbody>
           {% for token in tokens %}
             <tr{% if loop.index > 10 %} class="alpha-extra-row" hidden{% endif %}>
+              {% set activity = token.activity|default(none) %}
               <td>{{ loop.index }}</td>
-              <td><span class="alpha-symbol">{% if token.icon_url %}<img src="{{ token.icon_url }}" alt="" loading="lazy" />{% endif %}<strong>{{ token.symbol }}</strong></span></td>
+              <td><strong>{{ token.symbol }}</strong></td>
               <td>{{ token.name or '—' }}</td><td>{{ token.chain_id or '—' }}</td>
               <td class="numeric" data-value="{{ token.volume_24h or '' }}">{{ token.volume_24h or '—' }}</td>
               <td class="numeric" data-value="{{ token.market_cap or '' }}">{{ token.market_cap or '—' }}</td>
+              <td class="numeric{% if activity is not none and activity >= 1 %} alpha-active{% endif %}" data-value="{{ activity or '' }}">{{ activity or '—' }}</td>
             </tr>
           {% endfor %}
           </tbody>

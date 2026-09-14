@@ -204,9 +204,11 @@ def latest_snapshot(db_path: str = db_config.ALPHA_DB_PATH) -> tuple[int | None,
             return None, []
         rows = conn.execute(
             """SELECT symbol, name, chain_id, contract_address, icon_url,
-                      volume_24h, market_cap, observed_at
+                      volume_24h, market_cap, observed_at,
+                      CAST(volume_24h AS REAL) / NULLIF(CAST(market_cap AS REAL), 0)
+                        AS activity
                FROM alpha_market_snapshots WHERE observed_at = ?
-               ORDER BY CAST(market_cap AS REAL) DESC, symbol""",
+               ORDER BY activity IS NULL, activity DESC, symbol""",
             (latest,),
         ).fetchall()
     return int(latest), rows
