@@ -16,11 +16,12 @@ def _scoring(tmp_path):
     return scoring, path
 
 
-def test_rule2_requires_ma20_breakout_and_ema20_distance_below_six_percent(tmp_path):
+def test_rule2_requires_ema20_breakout_and_ema20_distance_below_six_percent(tmp_path):
     scoring, path = _scoring(tmp_path)
     with sqlite3.connect(path) as conn:
         conn.execute("INSERT INTO klines_1m VALUES ('BTC', 1, 105.99)")
-        conn.execute("INSERT INTO ma20_indicators VALUES ('BTC', '15m', 1, 99)")
+        # MA20 is deliberately above price: rule 2 must now depend on EMA20 only.
+        conn.execute("INSERT INTO ma20_indicators VALUES ('BTC', '15m', 1, 110)")
         conn.execute("INSERT INTO ema_indicators VALUES ('BTC', '15m', 1, 100)")
     scoring._save_close_gt_ma20_score("BTC", 1, 2)
     _, rows = scoring.get_latest_round_scores_close_gt_ma20()
@@ -31,6 +32,12 @@ def test_rule2_requires_ma20_breakout_and_ema20_distance_below_six_percent(tmp_p
     with sqlite3.connect(path) as conn:
         conn.execute("UPDATE klines_1m SET close = 106")
     scoring._save_close_gt_ma20_score("BTC", 2, 3)
+    _, rows = scoring.get_latest_round_scores_close_gt_ma20()
+    assert rows[0]["score"] == 0
+
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE klines_1m SET close = 99")
+    scoring._save_close_gt_ma20_score("BTC", 3, 4)
     _, rows = scoring.get_latest_round_scores_close_gt_ma20()
     assert rows[0]["score"] == 0
 

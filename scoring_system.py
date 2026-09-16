@@ -37,8 +37,8 @@ DEFAULT_RULE_SCORE_WEIGHTS: dict[int, int] = {
 
 RULE_SCORE_WEIGHT_MAX = 100
 RULE_SCORE_NAMES: dict[int, str] = {
-    1: "15m MA20 连续上升",
-    2: "1m 收盘高于15m MA20且低于15m EMA20上方6%",
+    1: "15m EMA20 连续上升",
+    2: "1m 收盘高于15m EMA20且低于15m EMA20上方6%",
     3: "1h 收盘价高于前值",
     4: "15m 最近4根至少3根阳线",
     5: "15m 收盘价连续走高",
@@ -345,9 +345,9 @@ class SymbolScore:
     decision_round_ts: int
     score: int
     reason: str
-    ma20_latest: float
-    ma20_prev1: float
-    ma20_prev2: float
+    ema20_latest: float
+    ema20_prev1: float
+    ema20_prev2: float
     updated_at: int
 
 
@@ -407,7 +407,7 @@ class ScoringSymbolError:
 
 
 class ScoringSystem:
-    """Score symbols after pre-safety using latest 3 rows of 15m MA20."""
+    """Score symbols after pre-safety using the configured market indicators."""
 
     def __init__(
         self,
@@ -500,7 +500,7 @@ class ScoringSystem:
                 ema_rows.extend(
                     conn.execute(
                         "SELECT * FROM ema_indicators WHERE symbol = ? AND interval = '15m' "
-                        "ORDER BY open_time DESC LIMIT 1",
+                        "ORDER BY open_time DESC LIMIT 3",
                         (symbol,),
                     ).fetchall()
                 )
@@ -992,12 +992,12 @@ class ScoringSystem:
                         f"ALTER TABLE symbol_structural_stop_losses ADD COLUMN {column_name} {column_def}"
                     )
 
-    def _latest_three_ma20_15m(self, symbol: str) -> tuple[float, float, float] | None:
+    def _latest_three_ema20_15m(self, symbol: str) -> tuple[float, float, float] | None:
         with self._round_connection() as conn:
             rows = conn.execute(
                 """
-                SELECT ma20
-                FROM ma20_indicators
+                SELECT ema20
+                FROM ema_indicators
                 WHERE symbol = ? AND interval = '15m'
                 ORDER BY open_time DESC
                 LIMIT 3
@@ -1006,7 +1006,7 @@ class ScoringSystem:
             ).fetchall()
         if len(rows) < 3:
             return None
-        return float(rows[0]["ma20"]), float(rows[1]["ma20"]), float(rows[2]["ma20"])
+        return float(rows[0]["ema20"]), float(rows[1]["ema20"]), float(rows[2]["ema20"])
 
     def score_round(
         self,
@@ -1095,9 +1095,9 @@ class ScoringSystem:
         self._save_15m_low_rebound_3bars_score(**kwargs)
         self._save_structural_stop_loss(**kwargs)
         self._save_structural_stop_loss_distance_score(**kwargs)
-        ma20s = self._latest_three_ma20_15m(symbol)
-        if ma20s is None:
-            error = "missing_latest_three_15m_ma20_records"
+        ema20s = self._latest_three_ema20_15m(symbol)
+        if ema20s is None:
+            error = "missing_latest_three_15m_ema20_records"
             self.record_symbol_error_for_round(
                 decision_round_ts=decision_round_ts,
                 symbol=symbol,
@@ -1109,11 +1109,11 @@ class ScoringSystem:
                 f"symbol={symbol}: {error}"
             )
             return
-        m1, m2, m3 = ma20s
-        hit = m1 > m2 > m3
+        e1, e2, e3 = ema20s
+        hit = e1 > e2 > e3
         score = self._score_weight(1) if hit else 0
-        reason = "ma20_15m_desc_3bars" if hit else "ma20_15m_rule_not_met"
-        rec = SymbolScore(symbol, decision_round_ts, score, reason, m1, m2, m3, now_ms)
+        reason = "ema20_15m_rising_3bars" if hit else "ema20_15m_rule_not_met"
+        rec = SymbolScore(symbol, decision_round_ts, score, reason, e1, e2, e3, now_ms)
         self._save_score(rec)
         results.append(rec)
 
@@ -1153,14 +1153,11 @@ class ScoringSystem:
         with self._round_connection() as conn:
             rows = conn.execute(
                 f"""
-                SELECT DISTINCT ma.symbol
-                FROM ma20_indicators AS ma
-                JOIN ema_indicators AS ema
-                  ON ema.symbol = ma.symbol AND ema.interval = ma.interval
-                 AND ema.open_time = ma.open_time
-                WHERE ma.interval = '15m' AND ma.open_time = ?
-                  AND ma.symbol IN ({placeholders})
-                  AND ma.ma20 IS NOT NULL AND ema.ema20 IS NOT NULL
+                SELECT DISTINCT ema.symbol
+                FROM ema_indicators AS ema
+                WHERE ema.interval = '15m' AND ema.open_time = ?
+                  AND ema.symbol IN ({placeholders})
+                  AND ema.ema20 IS NOT NULL
                 """,
                 [target_open_time, *symbol_list],
             ).fetchall()
@@ -1313,7 +1310,7 @@ class ScoringSystem:
         round_ts = int(row["ts"])
         return round_ts, self.get_symbol_errors_for_round(round_ts)
 
-    def _latest_1m_close_and_15m_indicators(self, symbol: str) -> tuple[float, float, float] | None:
+    def _latest_1m_close_and_15m_ema20(self, symbol: str) -> tuple[float, float] | None:
         with self._round_connection() as conn:
             close_row = conn.execute(
                 """
@@ -1325,37 +1322,27 @@ class ScoringSystem:
                 """,
                 (symbol,),
             ).fetchone()
-            ma20_row = conn.execute(
-                """
-                SELECT ma20
-                FROM ma20_indicators
-                WHERE symbol = ? AND interval = '15m'
-                ORDER BY open_time DESC
-                LIMIT 1
-                """,
-                (symbol,),
-            ).fetchone()
             ema20_row = conn.execute(
                 "SELECT ema20 FROM ema_indicators WHERE symbol = ? AND interval = '15m' "
                 "ORDER BY open_time DESC LIMIT 1",
                 (symbol,),
             ).fetchone()
-        if not close_row or not ma20_row or not ema20_row:
+        if not close_row or not ema20_row:
             return None
-        return float(close_row["close"]), float(ma20_row["ma20"]), float(ema20_row["ema20"])
+        return float(close_row["close"]), float(ema20_row["ema20"])
 
     def _save_close_gt_ma20_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
-        values = self._latest_1m_close_and_15m_indicators(symbol)
+        values = self._latest_1m_close_and_15m_ema20(symbol)
         if values is None:
             return
-        close_1m, ma20_15m, ema20_15m = values
+        close_1m, ema20_15m = values
         ema20_distance_ratio = (close_1m - ema20_15m) / ema20_15m if ema20_15m else float("inf")
-        hit = close_1m > ma20_15m and ema20_15m > 0 and ema20_distance_ratio < 0.06
+        hit = close_1m > ema20_15m and ema20_15m > 0 and ema20_distance_ratio < 0.06
         score = self._score_weight(2) if hit else 0
         reason = (
-            "close_1m_gt_15m_ma20_and_ema20_distance_lt_0.06"
+            "close_1m_gt_15m_ema20_and_ema20_distance_lt_0.06"
             if hit
-            else "close_1m_ma20_ema20_rule_not_met"
+            else "close_1m_ema20_rule_not_met"
         )
         with self._round_connection() as conn:
             conn.execute(
@@ -1372,7 +1359,7 @@ class ScoringSystem:
                     ema20_distance_ratio=excluded.ema20_distance_ratio,
                     updated_at=excluded.updated_at
                 """,
-                (symbol, decision_round_ts, score, reason, close_1m, ma20_15m, ema20_15m, ema20_distance_ratio, updated_at),
+                (symbol, decision_round_ts, score, reason, close_1m, 0, ema20_15m, ema20_distance_ratio, updated_at),
             )
 
 
@@ -2929,7 +2916,7 @@ class ScoringSystem:
                     ma20_prev2=excluded.ma20_prev2,
                     updated_at=excluded.updated_at
                 """,
-                (rec.symbol, rec.decision_round_ts, rec.score, rec.reason, rec.ma20_latest, rec.ma20_prev1, rec.ma20_prev2, rec.updated_at),
+                (rec.symbol, rec.decision_round_ts, rec.score, rec.reason, rec.ema20_latest, rec.ema20_prev1, rec.ema20_prev2, rec.updated_at),
             )
 
     def get_latest_round_scores(self) -> tuple[int | None, List[SymbolScore]]:
@@ -2940,7 +2927,9 @@ class ScoringSystem:
             round_ts = int(row["ts"])
             rows = conn.execute(
                 """
-                SELECT symbol, decision_round_ts, score, reason, ma20_latest, ma20_prev1, ma20_prev2, updated_at
+                SELECT symbol, decision_round_ts, score, reason,
+                       ma20_latest AS ema20_latest, ma20_prev1 AS ema20_prev1,
+                       ma20_prev2 AS ema20_prev2, updated_at
                 FROM symbol_scores
                 WHERE decision_round_ts = ?
                 ORDER BY score DESC, symbol ASC
@@ -2953,9 +2942,9 @@ class ScoringSystem:
                 decision_round_ts=int(r["decision_round_ts"]),
                 score=int(r["score"]),
                 reason=str(r["reason"]),
-                ma20_latest=float(r["ma20_latest"]),
-                ma20_prev1=float(r["ma20_prev1"]),
-                ma20_prev2=float(r["ma20_prev2"]),
+                ema20_latest=float(r["ema20_latest"]),
+                ema20_prev1=float(r["ema20_prev1"]),
+                ema20_prev2=float(r["ema20_prev2"]),
                 updated_at=int(r["updated_at"]),
             )
             for r in rows
@@ -2965,7 +2954,9 @@ class ScoringSystem:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT symbol, decision_round_ts, score, reason, ma20_latest, ma20_prev1, ma20_prev2, updated_at
+                SELECT symbol, decision_round_ts, score, reason,
+                       ma20_latest AS ema20_latest, ma20_prev1 AS ema20_prev1,
+                       ma20_prev2 AS ema20_prev2, updated_at
                 FROM symbol_scores
                 WHERE decision_round_ts = ?
                 ORDER BY symbol ASC
@@ -2978,9 +2969,9 @@ class ScoringSystem:
                 decision_round_ts=int(r["decision_round_ts"]),
                 score=int(r["score"]),
                 reason=str(r["reason"]),
-                ma20_latest=float(r["ma20_latest"]),
-                ma20_prev1=float(r["ma20_prev1"]),
-                ma20_prev2=float(r["ma20_prev2"]),
+                ema20_latest=float(r["ema20_latest"]),
+                ema20_prev1=float(r["ema20_prev1"]),
+                ema20_prev2=float(r["ema20_prev2"]),
                 updated_at=int(r["updated_at"]),
             )
             for r in rows
