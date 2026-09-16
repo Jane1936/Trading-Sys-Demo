@@ -41,9 +41,9 @@
     </section>
   {% else %}
     <section class="panel alpha-panel">
-      <div class="panel-title alpha-panel-title"><div><h2>连续上涨与持续趋势</h2><span>基于 alpha.db 中保存的 24 小时 K 线</span></div></div>
+      <div class="panel-title alpha-panel-title"><div><h2>连续上涨与持续趋势</h2><span>基于 alpha.db 中保存的 24 小时 K 线</span></div>{% if trends|length > 10 %}<button type="button" class="btn btn-secondary alpha-trend-toggle" aria-expanded="false">展开全部（{{ trends|length }}）</button>{% endif %}</div>
       {% if trends %}<div class="table-wrap"><table class="alpha-table"><thead><tr><th>币种</th><th>连续上涨天数</th><th>趋势收益</th><th>日线数量</th></tr></thead><tbody>
-      {% for trend in trends %}<tr><td><strong>{{ trend.symbol }}</strong></td><td class="numeric">{{ trend.consecutive_up_days }}</td><td class="numeric">{% if trend.trend_return is not none %}{{ '%.2f'|format(trend.trend_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric">{{ trend.kline_count }}</td></tr>{% endfor %}
+      {% for trend in trends %}<tr{% if loop.index > 10 %} class="alpha-trend-extra-row" hidden{% endif %}><td><strong>{{ trend.symbol }}</strong></td><td class="numeric">{{ trend.consecutive_up_days }}</td><td class="numeric">{% if trend.trend_return is not none %}{{ '%.2f'|format(trend.trend_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric">{{ trend.kline_count }}</td></tr>{% endfor %}
       </tbody></table></div>{% else %}<p class="empty-state">暂无日线数据，后台将自动采集。</p>{% endif %}
     </section>
     <section class="panel alpha-panel active">
@@ -90,6 +90,15 @@
       document.querySelectorAll('.alpha-extra-row').forEach((row) => { row.hidden = expanded; });
       toggle.setAttribute('aria-expanded', String(!expanded));
       toggle.textContent = expanded ? `展开全部（{{ tokens|length }}）` : '收起列表';
+    });
+  }
+  const trendToggle = document.querySelector('.alpha-trend-toggle');
+  if (trendToggle) {
+    trendToggle.addEventListener('click', () => {
+      const expanded = trendToggle.getAttribute('aria-expanded') === 'true';
+      document.querySelectorAll('.alpha-trend-extra-row').forEach((row) => { row.hidden = expanded; });
+      trendToggle.setAttribute('aria-expanded', String(!expanded));
+      trendToggle.textContent = expanded ? `展开全部（{{ trends|length }}）` : '收起列表';
     });
   }
 </script>
