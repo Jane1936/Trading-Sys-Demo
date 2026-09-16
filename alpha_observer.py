@@ -26,6 +26,11 @@ ALPHA_TOKEN_LIST_URL = os.getenv(
 )
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("ALPHA_REQUEST_TIMEOUT_SECONDS", "20"))
 BACKFILL_HOURS = 24
+DAY_MS = 24 * 60 * 60 * 1000
+# A daily sample normally arrives within a few seconds of the target time.  A
+# wider window also accommodates restarts while preventing an old snapshot
+# from being presented as current multi-day activity.
+DAILY_SAMPLE_TOLERANCE_MS = 2 * 60 * 60 * 1000
 
 
 @dataclass(frozen=True)
@@ -194,7 +199,15 @@ class _StaticTokenSession:
         return Response()
 
 
-def latest_snapshot(db_path: str = db_config.ALPHA_DB_PATH) -> tuple[int | None, list[sqlite3.Row]]:
+def latest_snapshot(db_path: str = db_config.ALPHA_DB_PATH) -> tuple[int | None, list[dict[str, Any]]]:
+    """Return the latest tokens with rolling one-to-five-day activity.
+
+    Binance supplies a rolling 24-hour volume rather than historical daily
+    candles.  For an N-day value we therefore add the latest 24-hour volume to
+    the nearest snapshot at each preceding 24-hour boundary, then divide by
+    the latest market cap.  A value is left unavailable if any required daily
+    sample is missing.
+    """
     init_db(db_path)
     with db_config.connect_sqlite(db_path, row_factory=sqlite3.Row) as conn:
         latest = conn.execute(
@@ -202,16 +215,71 @@ def latest_snapshot(db_path: str = db_config.ALPHA_DB_PATH) -> tuple[int | None,
         ).fetchone()[0]
         if latest is None:
             return None, []
-        rows = conn.execute(
+        latest_rows = conn.execute(
             """SELECT symbol, name, chain_id, contract_address, icon_url,
-                      volume_24h, market_cap, observed_at,
-                      CAST(volume_24h AS REAL) / NULLIF(CAST(market_cap AS REAL), 0)
-                        AS activity
+                      volume_24h, market_cap, observed_at
                FROM alpha_market_snapshots WHERE observed_at = ?
-               ORDER BY activity IS NULL, activity DESC, symbol""",
+               ORDER BY symbol""",
             (latest,),
         ).fetchall()
-    return int(latest), rows
+        history = conn.execute(
+            """SELECT symbol, chain_id, contract_address, volume_24h, observed_at
+               FROM alpha_market_snapshots
+               WHERE observed_at >= ? AND observed_at < ?""",
+            (latest - 4 * DAY_MS - DAILY_SAMPLE_TOLERANCE_MS, latest),
+        ).fetchall()
+
+    history_by_token: dict[tuple[str, str, str], list[sqlite3.Row]] = {}
+    for row in history:
+        key = (row["symbol"], row["chain_id"], row["contract_address"])
+        history_by_token.setdefault(key, []).append(row)
+
+    tokens = []
+    for latest_row in latest_rows:
+        token = dict(latest_row)
+        try:
+            market_cap = float(token["market_cap"])
+            volumes: list[float] = [float(token["volume_24h"])]
+            if market_cap == 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            market_cap, volumes = 0.0, []
+        token["activity_1d"] = volumes[0] / market_cap if volumes else None
+
+        key = (token["symbol"], token["chain_id"], token["contract_address"])
+        candidates = history_by_token.get(key, [])
+        for day in range(1, 5):
+            target = latest - day * DAY_MS
+            sample = min(
+                candidates,
+                key=lambda row: abs(row["observed_at"] - target),
+                default=None,
+            )
+            if (
+                sample is None
+                or abs(sample["observed_at"] - target) > DAILY_SAMPLE_TOLERANCE_MS
+            ):
+                volumes = []
+            if volumes:
+                try:
+                    volumes.append(float(sample["volume_24h"]))
+                except (TypeError, ValueError):
+                    volumes = []
+            token[f"activity_{day + 1}d"] = (
+                sum(volumes) / market_cap if len(volumes) == day + 1 else None
+            )
+        # Retain the old key for callers that still consume it.
+        token["activity"] = token["activity_1d"]
+        tokens.append(token)
+
+    tokens.sort(
+        key=lambda token: (
+            token["activity_1d"] is None,
+            -(token["activity_1d"] or 0),
+            token["symbol"],
+        )
+    )
+    return int(latest), tokens
 
 
 def database_status(db_path: str = db_config.ALPHA_DB_PATH) -> AlphaDatabaseStatus:
