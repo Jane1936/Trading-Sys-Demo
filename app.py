@@ -1621,6 +1621,12 @@ def start_alpha_observer_task() -> None:
         try:
             repaired = alpha_observer.backfill_recent_hours()
             count = alpha_observer.collect_snapshot()
+            try:
+                # Fetch the newest daily candles on every hourly run.  This
+                # backfills downtime immediately instead of waiting 24 hours.
+                alpha_observer.backfill_recent_daily_klines()
+            except Exception as exc:
+                print(f"⚠️ Alpha daily kline collection failed: {exc}")
             print(f"🅰️ Alpha observer collected tokens={count}, backfilled={repaired}")
         except Exception as exc:
             recover_after_worker_error(exc)
@@ -1628,6 +1634,10 @@ def start_alpha_observer_task() -> None:
 
     _job()
     scheduler.add_job(_job, "interval", hours=1, max_instances=1, coalesce=True)
+    # Keep an explicit UTC midnight run as well.  The hourly job remains the
+    # recovery path if the process was down at midnight.
+    scheduler.add_job(_job, "cron", hour=0, minute=0, timezone="UTC",
+                      max_instances=1, coalesce=True)
     print("🚀 Alpha observer task started (hourly)")
     scheduler.start()
 

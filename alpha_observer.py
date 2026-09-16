@@ -24,6 +24,7 @@ ALPHA_TOKEN_LIST_URL = os.getenv(
     # already used to construct the trading/scoring universe.
     "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list",
 )
+ALPHA_KLINE_URL = os.getenv("ALPHA_KLINE_URL", "https://api.binance.com/api/v3/klines")
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("ALPHA_REQUEST_TIMEOUT_SECONDS", "20"))
 BACKFILL_HOURS = 24
 DAY_MS = 24 * 60 * 60 * 1000
@@ -73,10 +74,64 @@ def init_db(db_path: str = db_config.ALPHA_DB_PATH) -> None:
             )
             """
         )
+        conn.execute("""CREATE TABLE IF NOT EXISTS alpha_daily_klines (
+            symbol TEXT NOT NULL, open_time INTEGER NOT NULL, open REAL, high REAL,
+            low REAL, close REAL, volume REAL, close_time INTEGER,
+            PRIMARY KEY(symbol, open_time))""")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_alpha_snapshot_latest "
             "ON alpha_market_snapshots(observed_at DESC, symbol)"
         )
+
+def collect_daily_klines(db_path: str = db_config.ALPHA_DB_PATH, *, session=requests,
+                         symbols: list[str] | None = None, limit: int = 30) -> int:
+    """Fetch and persist daily candles for Alpha symbols in the isolated DB."""
+    if symbols is None:
+        _, rows = latest_snapshot(db_path)
+        symbols = [str(r["symbol"]).upper() for r in rows]
+    init_db(db_path); inserted = 0
+    with db_config.connect_sqlite(db_path) as conn:
+        for symbol in symbols:
+            market = symbol if symbol.endswith("USDT") else symbol + "USDT"
+            response = session.get(ALPHA_KLINE_URL, params={"symbol": market, "interval": "1d", "limit": limit}, timeout=REQUEST_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            payload = response.json()
+            candles = payload.get("data", payload) if isinstance(payload, dict) else payload
+            if not isinstance(candles, list): continue
+            for c in candles:
+                if not isinstance(c, (list, tuple)) or len(c) < 7: continue
+                conn.execute("INSERT OR REPLACE INTO alpha_daily_klines VALUES (?,?,?,?,?,?,?,?)",
+                             (symbol, int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5]), int(c[6])))
+                inserted += 1
+    return inserted
+
+def backfill_recent_daily_klines(db_path: str = db_config.ALPHA_DB_PATH, *, session=requests,
+                                 days: int = 30) -> int:
+    """Backfill the recent daily-candle window immediately.
+
+    Binance returns the newest candles on every request, so this is safe to
+    run at startup and hourly; ``INSERT OR REPLACE`` also repairs missed
+    midnight runs without waiting for another day boundary.
+    """
+    return collect_daily_klines(db_path, session=session, limit=max(1, int(days)))
+
+def daily_trends(db_path: str = db_config.ALPHA_DB_PATH, limit: int = 30) -> list[dict[str, Any]]:
+    """Return consecutive rising-day count and period return for each token."""
+    init_db(db_path)
+    with db_config.connect_sqlite(db_path, row_factory=sqlite3.Row) as conn:
+        symbols = [r[0] for r in conn.execute("SELECT DISTINCT symbol FROM alpha_market_snapshots")]
+        result = []
+        for symbol in symbols:
+            rows = conn.execute("SELECT open_time, open, close FROM alpha_daily_klines WHERE symbol=? ORDER BY open_time DESC LIMIT ?", (symbol, limit)).fetchall()
+            ups = 0
+            for row in rows:
+                if row["close"] > row["open"]: ups += 1
+                else: break
+            ret = None
+            if len(rows) >= 2 and rows[-1]["open"]:
+                ret = (rows[0]["close"] / rows[-1]["open"]) - 1
+            result.append({"symbol": symbol, "consecutive_up_days": ups, "trend_return": ret, "kline_count": len(rows)})
+    return sorted(result, key=lambda x: (-x["consecutive_up_days"], -(x["trend_return"] or -999), x["symbol"]))
 
 
 def _decimal_text(value: Any) -> str | None:
