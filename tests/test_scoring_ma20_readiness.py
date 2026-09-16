@@ -341,7 +341,7 @@ def test_score_round_continues_when_one_symbol_rule_fails(tmp_path, monkeypatch)
     monkeypatch.setattr(scoring, rule_methods[0], maybe_fail_rule)
     for method_name in rule_methods[1:]:
         monkeypatch.setattr(scoring, method_name, lambda **_kwargs: None)
-    monkeypatch.setattr(scoring, "_latest_three_ma20_15m", lambda symbol: (3.0, 2.0, 1.0))
+    monkeypatch.setattr(scoring, "_latest_three_ema20_15m", lambda symbol: (3.0, 2.0, 1.0))
     monkeypatch.setattr(scoring, "persist_total_scores_for_round", lambda **_kwargs: None)
     monkeypatch.setattr(scoring, "_load_round_snapshot", lambda _symbols: {})
 
@@ -360,7 +360,7 @@ def test_score_round_continues_when_one_symbol_rule_fails(tmp_path, monkeypatch)
     assert symbol_errors[0].error == "bad source row"
 
 
-def test_score_round_records_symbol_error_when_three_15m_ma20_values_missing(tmp_path, monkeypatch):
+def test_score_round_records_symbol_error_when_three_15m_ema20_values_missing(tmp_path, monkeypatch):
     db_path = tmp_path / "klines.db"
     scoring = ScoringSystem(db_path=str(db_path))
     scoring.init_table()
@@ -387,7 +387,7 @@ def test_score_round_records_symbol_error_when_three_15m_ma20_values_missing(tmp
     ]
     for method_name in rule_methods:
         monkeypatch.setattr(scoring, method_name, lambda **_kwargs: None)
-    monkeypatch.setattr(scoring, "_latest_three_ma20_15m", lambda symbol: None)
+    monkeypatch.setattr(scoring, "_latest_three_ema20_15m", lambda symbol: None)
     monkeypatch.setattr(scoring, "persist_total_scores_for_round", lambda **_kwargs: None)
     monkeypatch.setattr(scoring, "_load_round_snapshot", lambda _symbols: {})
 
@@ -401,7 +401,7 @@ def test_score_round_records_symbol_error_when_three_15m_ma20_values_missing(tmp
     symbol_errors = scoring.get_symbol_errors_for_round(1_800_000)
     assert len(symbol_errors) == 1
     assert symbol_errors[0].symbol == "BTCUSDT"
-    assert symbol_errors[0].error == "missing_latest_three_15m_ma20_records"
+    assert symbol_errors[0].error == "missing_latest_three_15m_ema20_records"
 
 
 def test_score_round_does_not_treat_malformed_database_as_symbol_error(
@@ -521,7 +521,7 @@ def test_round_snapshot_bulk_loads_and_caps_each_symbol_window(tmp_path, monkeyp
     assert len(snapshot["klines_1h"]) == 48
     assert len(snapshot["open_interest_1m"]) == 480
     assert len(snapshot["ma20_indicators"]) == 12
-    assert len(snapshot["ema_indicators"]) == 2
+    assert len(snapshot["ema_indicators"]) == 6
     assert {row["symbol"] for rows in snapshot.values() for row in rows} == {"AAA", "BBB"}
     assert snapshot["klines_1m"][0]["open_time"] == 64
 
