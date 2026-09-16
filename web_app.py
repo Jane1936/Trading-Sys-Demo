@@ -1236,12 +1236,13 @@ def alpha_market():
     """Show the most recently completed hourly Alpha-token snapshot."""
     try:
         observed_at, rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
+        trends = alpha_observer.daily_trends(ALPHA_DB_PATH)
         database_status = alpha_observer.database_status(ALPHA_DB_PATH)
         tokens = [dict(row) for row in rows]
         error = None
     except Exception as exc:
         app.logger.exception("Alpha observer page failed")
-        observed_at, tokens, database_status, error = None, [], None, str(exc)
+        observed_at, tokens, trends, database_status, error = None, [], [], None, str(exc)
     observed_time = (
         datetime.fromtimestamp(observed_at / 1000, timezone.utc)
         .strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -1254,6 +1255,7 @@ def alpha_market():
         observed_time=observed_time,
         database_status=database_status,
         alpha_error=error,
+        trends=trends,
     )
 
 
