@@ -93,9 +93,16 @@ def collect_daily_klines(db_path: str = db_config.ALPHA_DB_PATH, *, session=requ
     with db_config.connect_sqlite(db_path) as conn:
         for symbol in symbols:
             market = symbol if symbol.endswith("USDT") else symbol + "USDT"
-            response = session.get(ALPHA_KLINE_URL, params={"symbol": market, "interval": "1d", "limit": limit}, timeout=REQUEST_TIMEOUT_SECONDS)
-            response.raise_for_status()
-            payload = response.json()
+            # Alpha token lists contain tokens that are not necessarily Binance
+            # spot symbols.  One invalid/temporarily unavailable token must not
+            # abort the whole batch (the old behaviour left the table empty).
+            try:
+                response = session.get(ALPHA_KLINE_URL, params={"symbol": market, "interval": "1d", "limit": limit}, timeout=REQUEST_TIMEOUT_SECONDS)
+                response.raise_for_status()
+                payload = response.json()
+            except Exception as exc:
+                print(f"⚠️ Alpha daily kline skipped {symbol} ({market}): {exc}")
+                continue
             candles = payload.get("data", payload) if isinstance(payload, dict) else payload
             if not isinstance(candles, list): continue
             for c in candles:

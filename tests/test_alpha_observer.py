@@ -100,3 +100,22 @@ def test_latest_snapshot_leaves_incomplete_multi_day_activity_empty(tmp_path):
 
     assert tokens[0]["activity_1d"] == 123.4 / 567.8
     assert all(tokens[0][f"activity_{day}d"] is None for day in range(2, 6))
+
+
+def test_collect_daily_klines_skips_invalid_alpha_symbols(tmp_path):
+    class KlineSession:
+        def get(self, url, **kwargs):
+            if kwargs["params"]["symbol"] == "BADUSDT":
+                raise RuntimeError("symbol not found")
+            return type("KlineResponse", (), {
+                "raise_for_status": lambda self: None,
+                "json": lambda self: [[1, "1", "2", "0.5", "1.5", "10", 2]],
+            })()
+
+    db_path = str(tmp_path / "alpha.db")
+    inserted = alpha_observer.collect_daily_klines(
+        db_path, session=KlineSession(), symbols=["BAD", "GOOD"]
+    )
+    assert inserted == 1
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM alpha_daily_klines").fetchone()[0] == 1
