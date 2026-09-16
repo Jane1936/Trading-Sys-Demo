@@ -66,3 +66,37 @@ def test_backfill_recent_hours_fetches_once_and_creates_24_buckets(tmp_path):
     assert status.size_bytes > 0
     assert status.total_rows == 24
     assert status.snapshot_count == 24
+
+
+def test_latest_snapshot_calculates_one_to_five_day_activity(tmp_path):
+    db_path = str(tmp_path / "alpha.db")
+    alpha_observer.init_db(db_path)
+    latest = 10 * alpha_observer.DAY_MS
+    with sqlite3.connect(db_path) as conn:
+        for day, volume in enumerate((100, 80, 60, 40, 20)):
+            conn.execute(
+                """INSERT INTO alpha_market_snapshots
+                   (symbol, name, chain_id, contract_address, volume_24h,
+                    market_cap, observed_at)
+                   VALUES ('ALPHA', 'Alpha', '56', '0x1', ?, '200', ?)""",
+                (str(volume), latest - day * alpha_observer.DAY_MS),
+            )
+
+    observed_at, tokens = alpha_observer.latest_snapshot(db_path)
+
+    assert observed_at == latest
+    assert tokens[0]["activity_1d"] == 0.5
+    assert tokens[0]["activity_2d"] == 0.9
+    assert tokens[0]["activity_3d"] == 1.2
+    assert tokens[0]["activity_4d"] == 1.4
+    assert tokens[0]["activity_5d"] == 1.5
+
+
+def test_latest_snapshot_leaves_incomplete_multi_day_activity_empty(tmp_path):
+    db_path = str(tmp_path / "alpha.db")
+    alpha_observer.collect_snapshot(db_path, session=Session(), observed_at=1000)
+
+    _, tokens = alpha_observer.latest_snapshot(db_path)
+
+    assert tokens[0]["activity_1d"] == 123.4 / 567.8
+    assert all(tokens[0][f"activity_{day}d"] is None for day in range(2, 6))

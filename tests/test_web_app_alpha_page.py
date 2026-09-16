@@ -58,3 +58,5 @@ def test_populated_alpha_page_marks_standalone_panel_visible():
     assert response.status_code == 200
     assert '<section class="panel alpha-panel active">' in body
     assert "ALPHA" in body
+    assert "2天活跃度" in body
+    assert "5天活跃度" in body
