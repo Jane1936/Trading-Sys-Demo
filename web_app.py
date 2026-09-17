@@ -372,7 +372,12 @@ def load_market_safety_context() -> dict:
         "market_filter_settings": load_module(
             "独立市场过滤配置",
             lambda: get_market_filter_settings(CONFIG_DB_PATH),
-            {"btc_siphon_threshold": 0, "market_crash_threshold": 0, "block_duration_minutes": 1},
+            {
+                "btc_siphon_threshold": 0,
+                "market_crash_threshold": 0,
+                "allusdt_24h_drop_threshold": -0.05,
+                "block_duration_minutes": 1,
+            },
         ),
         "weak_market_profit_settings": load_module(
             "弱势市场止盈配置",

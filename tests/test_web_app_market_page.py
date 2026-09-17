@@ -109,6 +109,45 @@ def test_market_page_degrades_when_one_module_fails():
     assert "BTC数据" in body
 
 
+def test_market_page_uses_configured_allusdt_24h_threshold_in_filter_copy():
+    context = {
+        "module_errors": [],
+        "active_tab": "tab-market",
+        "btc_5m_rows": [],
+        "btc_page": 1,
+        "btc_page_size": 24,
+        "btc_total_rows": 0,
+        "btc_total_pages": 1,
+        "market_filter_results": [],
+        "weak_market_profit_adjustment_results": [],
+        "add_position_permission_results": [],
+        "dynamic_add_position_threshold_results": [],
+        "dynamic_open_threshold_results": [],
+        "dynamic_open_threshold_errors": [],
+        "market_filter_settings": {
+            "btc_siphon_threshold": 0.005,
+            "market_crash_threshold": 0.03,
+            "allusdt_24h_drop_threshold": -0.0825,
+            "block_duration_minutes": 30,
+        },
+        "weak_market_profit_settings": {
+            "trigger_r_multiple": 1.4,
+            "take_profit_fraction": 0.5,
+        },
+    }
+    with (
+        patch("web_app.initialize_config_database"),
+        patch("web_app.load_market_safety_context", return_value=context),
+    ):
+        response = app.test_client().get("/safety/market")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "ALLUSDT 最近24小时涨跌幅&lt;-8.25%" in body
+    assert "24h跌破-8.25%" in body
+    assert "24h跌破-5%" not in body
+
+
 def test_legacy_market_tabs_redirect_and_preserve_query_parameters():
     client = app.test_client()
     for legacy_tab in ("tab-btc", "tab-market-filter"):
