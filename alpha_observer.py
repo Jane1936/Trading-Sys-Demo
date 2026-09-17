@@ -123,7 +123,13 @@ def backfill_recent_daily_klines(db_path: str = db_config.ALPHA_DB_PATH, *, sess
     return collect_daily_klines(db_path, session=session, limit=max(1, int(days)))
 
 def daily_trends(db_path: str = db_config.ALPHA_DB_PATH, limit: int = 30) -> list[dict[str, Any]]:
-    """Return consecutive rising-day count and period return for each token."""
+    """Return recent price-trend metrics for each token.
+
+    The three-day return covers the newest three available daily candles, from
+    the oldest candle's open to the newest candle's close.  Tokens without
+    three complete data points retain a ``None`` value and sort after tokens
+    that have enough history.
+    """
     init_db(db_path)
     with db_config.connect_sqlite(db_path, row_factory=sqlite3.Row) as conn:
         symbols = [r[0] for r in conn.execute("SELECT DISTINCT symbol FROM alpha_market_snapshots")]
@@ -137,8 +143,24 @@ def daily_trends(db_path: str = db_config.ALPHA_DB_PATH, limit: int = 30) -> lis
             ret = None
             if len(rows) >= 2 and rows[-1]["open"]:
                 ret = (rows[0]["close"] / rows[-1]["open"]) - 1
-            result.append({"symbol": symbol, "consecutive_up_days": ups, "trend_return": ret, "kline_count": len(rows)})
-    return sorted(result, key=lambda x: (-x["consecutive_up_days"], -(x["trend_return"] or -999), x["symbol"]))
+            three_day_return = None
+            if len(rows) >= 3 and rows[2]["open"]:
+                three_day_return = (rows[0]["close"] / rows[2]["open"]) - 1
+            result.append({
+                "symbol": symbol,
+                "consecutive_up_days": ups,
+                "trend_return": ret,
+                "three_day_return": three_day_return,
+                "kline_count": len(rows),
+            })
+    return sorted(
+        result,
+        key=lambda item: (
+            item["three_day_return"] is None,
+            -(item["three_day_return"] or 0),
+            item["symbol"],
+        ),
+    )
 
 
 def _decimal_text(value: Any) -> str | None:
