@@ -59,6 +59,9 @@ body {
 .alpha-table { min-width:760px; }
 .alpha-table .numeric { text-align:right; font-variant-numeric:tabular-nums; font-weight:650; }
 .alpha-table .alpha-active { color:#047857; background:#d1fae5; font-weight:800; }
+.alpha-table .alpha-change { font-weight:800; }
+.alpha-table .alpha-change-positive { color:#047857; }
+.alpha-table .alpha-change-negative { color:#dc2626; }
 .alpha-symbol { display:flex; align-items:center; gap:9px; }
 .alpha-symbol img { width:28px; height:28px; border-radius:50%; object-fit:cover; background:#e2e8f0; }
 .empty-state { margin-top:20px; padding:54px 24px; text-align:center; border:1px dashed #94a3b8; border-radius:16px; background:#fff; }

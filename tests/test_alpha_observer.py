@@ -1,5 +1,7 @@
 import sqlite3
 
+import pytest
+
 import alpha_observer
 
 
@@ -119,3 +121,34 @@ def test_collect_daily_klines_skips_invalid_alpha_symbols(tmp_path):
     assert inserted == 1
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM alpha_daily_klines").fetchone()[0] == 1
+
+
+def test_daily_trends_calculates_three_day_return_and_sorts_descending(tmp_path):
+    db_path = str(tmp_path / "alpha.db")
+    alpha_observer.init_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        for symbol in ("GAIN", "LOSS", "SHORT"):
+            conn.execute(
+                """INSERT INTO alpha_market_snapshots
+                   (symbol, observed_at) VALUES (?, 1)""",
+                (symbol,),
+            )
+        candles = {
+            "GAIN": [(1, 100, 105), (2, 105, 110), (3, 110, 130)],
+            "LOSS": [(1, 100, 95), (2, 95, 90), (3, 90, 80)],
+            "SHORT": [(1, 10, 12), (2, 12, 14)],
+        }
+        for symbol, rows in candles.items():
+            for open_time, opening, close in rows:
+                conn.execute(
+                    """INSERT INTO alpha_daily_klines
+                       (symbol, open_time, open, close) VALUES (?, ?, ?, ?)""",
+                    (symbol, open_time, opening, close),
+                )
+
+    trends = alpha_observer.daily_trends(db_path)
+
+    assert [trend["symbol"] for trend in trends] == ["GAIN", "LOSS", "SHORT"]
+    assert trends[0]["three_day_return"] == pytest.approx(0.3)
+    assert trends[1]["three_day_return"] == pytest.approx(-0.2)
+    assert trends[2]["three_day_return"] is None
