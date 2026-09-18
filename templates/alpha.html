@@ -41,9 +41,9 @@
     </section>
   {% else %}
     <section class="panel alpha-panel">
-      <div class="panel-title alpha-panel-title"><div><h2>OI异动</h2><span>有 U 本位合约的 Alpha 代币 · 每小时变化（数据源：base_data.db）</span></div></div>
+      <div class="panel-title alpha-panel-title"><div><h2>OI异动</h2><span>有 U 本位合约的 Alpha 代币 · 每小时变化（数据源：base_data.db）</span></div>{% if oi_changes|length > 10 %}<button type="button" class="btn btn-secondary alpha-oi-toggle" aria-expanded="false">展开全部（{{ oi_changes|length }}）</button>{% endif %}</div>
       {% if oi_changes %}<div class="table-wrap"><table class="alpha-table"><thead><tr><th>币种</th><th>1小时 OI 涨跌幅</th><th>1小时价格涨跌幅</th></tr></thead><tbody>
-      {% for item in oi_changes %}<tr><td><strong>{{ item.symbol }}</strong></td><td class="numeric alpha-change{% if item.oi_change is not none %} {{ 'alpha-change-positive' if item.oi_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.oi_change is not none %}{{ '%+.2f'|format(item.oi_change * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if item.price_change is not none %} {{ 'alpha-change-positive' if item.price_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.price_change is not none %}{{ '%+.2f'|format(item.price_change * 100) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
+      {% for item in oi_changes %}<tr{% if loop.index > 10 %} class="alpha-oi-extra-row" hidden{% endif %}><td><strong>{{ item.symbol }}</strong></td><td class="numeric alpha-change{% if item.oi_change is not none %} {{ 'alpha-change-positive' if item.oi_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.oi_change is not none %}{{ '%+.2f'|format(item.oi_change * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if item.price_change is not none %} {{ 'alpha-change-positive' if item.price_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.price_change is not none %}{{ '%+.2f'|format(item.price_change * 100) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
       </tbody></table></div>{% else %}<p class="empty-state">暂无足够的 OI/K 线数据。</p>{% endif %}
     </section>
     <section class="panel alpha-panel">
@@ -89,6 +89,15 @@
     const value = Number(cell.dataset.value);
     if (Number.isFinite(value)) cell.textContent = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(value);
   });
+  const oiToggle = document.querySelector('.alpha-oi-toggle');
+  if (oiToggle) {
+    oiToggle.addEventListener('click', () => {
+      const expanded = oiToggle.getAttribute('aria-expanded') === 'true';
+      document.querySelectorAll('.alpha-oi-extra-row').forEach((row) => { row.hidden = expanded; });
+      oiToggle.setAttribute('aria-expanded', String(!expanded));
+      oiToggle.textContent = expanded ? `展开全部（{{ oi_changes|length }}）` : '收起列表';
+    });
+  }
   const toggle = document.querySelector('.alpha-toggle');
   if (toggle) {
     toggle.addEventListener('click', () => {
