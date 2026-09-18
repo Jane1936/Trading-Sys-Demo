@@ -1247,11 +1247,12 @@ def alpha_market():
         observed_at, rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
         trends = alpha_observer.daily_trends(ALPHA_DB_PATH)
         database_status = alpha_observer.database_status(ALPHA_DB_PATH)
+        oi_changes = _alpha_oi_changes()
         tokens = [dict(row) for row in rows]
         error = None
     except Exception as exc:
         app.logger.exception("Alpha observer page failed")
-        observed_at, tokens, trends, database_status, error = None, [], [], None, str(exc)
+        observed_at, tokens, trends, database_status, oi_changes, error = None, [], [], None, [], str(exc)
     observed_time = (
         datetime.fromtimestamp(observed_at / 1000, timezone.utc)
         .strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -1265,7 +1266,40 @@ def alpha_market():
         database_status=database_status,
         alpha_error=error,
         trends=trends,
+        oi_changes=oi_changes,
     )
+
+
+def _alpha_oi_changes():
+    """Calculate one-hour OI and price changes for the Alpha/futures intersection."""
+    observed_at, alpha_rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
+    symbols = {str(row["symbol"]).upper().removesuffix("USDT") for row in alpha_rows}
+    if not symbols:
+        return []
+    with db_config.connect_sqlite(BASE_DB_PATH, row_factory=sqlite3.Row) as conn:
+        # Treat a symbol as currently supported only when the collector has
+        # written OI for it during the last 24 hours.  The table is a long-
+        # lived history, so looking at every historical row would retain
+        # delisted/disabled contracts indefinitely.
+        cutoff_ms = int((datetime.now(timezone.utc) - timedelta(hours=24)).timestamp() * 1000)
+        available = {
+            row[0]
+            for row in conn.execute(
+                "SELECT DISTINCT symbol FROM open_interest_1m WHERE snapshot_time >= ?",
+                (cutoff_ms,),
+            )
+        }
+        symbols &= available
+        result = []
+        for symbol in symbols:
+            oi = conn.execute("SELECT snapshot_time, open_interest FROM open_interest_1m WHERE symbol=? ORDER BY snapshot_time DESC LIMIT 1", (symbol,)).fetchone()
+            if not oi:
+                continue
+            old_oi = conn.execute("SELECT open_interest FROM open_interest_1m WHERE symbol=? AND snapshot_time<=? ORDER BY snapshot_time DESC LIMIT 1", (symbol, oi["snapshot_time"] - 3600000)).fetchone()
+            prices = conn.execute("SELECT close FROM klines_1h WHERE symbol=? ORDER BY open_time DESC LIMIT 1", (symbol,)).fetchone()
+            old_price = conn.execute("SELECT close FROM klines_1h WHERE symbol=? AND open_time<=? ORDER BY open_time DESC LIMIT 1", (symbol, oi["snapshot_time"] - 3600000)).fetchone()
+            result.append({"symbol": symbol, "oi_change": (oi["open_interest"] / old_oi[0] - 1) if old_oi and old_oi[0] else None, "price_change": (prices[0] / old_price[0] - 1) if prices and old_price and old_price[0] else None})
+    return sorted(result, key=lambda row: (row["oi_change"] is None, -(row["oi_change"] or 0)))
 
 
 @app.get("/trading/simulation")
