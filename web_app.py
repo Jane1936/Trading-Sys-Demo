@@ -1296,9 +1296,11 @@ def _alpha_oi_changes():
             if not oi:
                 continue
             old_oi = conn.execute("SELECT open_interest FROM open_interest_1m WHERE symbol=? AND snapshot_time<=? ORDER BY snapshot_time DESC LIMIT 1", (symbol, oi["snapshot_time"] - 3600000)).fetchone()
-            prices = conn.execute("SELECT close FROM klines_1h WHERE symbol=? ORDER BY open_time DESC LIMIT 1", (symbol,)).fetchone()
-            old_price = conn.execute("SELECT close FROM klines_1h WHERE symbol=? AND open_time<=? ORDER BY open_time DESC LIMIT 1", (symbol, oi["snapshot_time"] - 3600000)).fetchone()
-            result.append({"symbol": symbol, "oi_change": (oi["open_interest"] / old_oi[0] - 1) if old_oi and old_oi[0] else None, "price_change": (prices[0] / old_price[0] - 1) if prices and old_price and old_price[0] else None})
+            prices = conn.execute("SELECT open_time, close FROM klines_1h WHERE symbol=? ORDER BY open_time DESC LIMIT 2", (symbol,)).fetchall()
+            price_change = None
+            if len(prices) == 2 and prices[1][1]:
+                price_change = prices[0][1] / prices[1][1] - 1
+            result.append({"symbol": symbol, "oi_change": (oi["open_interest"] / old_oi[0] - 1) if old_oi and old_oi[0] else None, "price_change": price_change})
     return sorted(result, key=lambda row: (row["oi_change"] is None, -(row["oi_change"] or 0)))
 
 
