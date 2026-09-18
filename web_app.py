@@ -1252,8 +1252,17 @@ def alpha_market():
     oi_min = _percent_arg("oi_min")
     price_max = _percent_arg("price_max")
     try:
+        consecutive_up_days_min = int(request.args.get("consecutive_up_days_min", "2"))
+        consecutive_up_days_min = max(0, consecutive_up_days_min)
+    except (TypeError, ValueError):
+        consecutive_up_days_min = 2
+    try:
         observed_at, rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
         trends = alpha_observer.daily_trends(ALPHA_DB_PATH)
+        trends = [
+            trend for trend in trends
+            if trend["consecutive_up_days"] >= consecutive_up_days_min
+        ]
         database_status = alpha_observer.database_status(ALPHA_DB_PATH)
         oi_changes = _alpha_oi_changes()
         if oi_min is not None:
@@ -1283,6 +1292,7 @@ def alpha_market():
         funding_changes=funding_changes,
         oi_min=oi_min,
         price_max=price_max,
+        consecutive_up_days_min=consecutive_up_days_min,
     )
 
 
