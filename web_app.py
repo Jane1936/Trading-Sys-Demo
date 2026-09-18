@@ -1282,6 +1282,8 @@ def alpha_market():
             return None
     oi_min = _percent_arg("oi_min")
     price_max = _percent_arg("price_max")
+    funding_min = _percent_arg("funding_min")
+    funding_price_max = _percent_arg("funding_price_max")
     # The default browser request is intentionally lightweight.  Filtered and
     # AJAX requests retain the complete server-rendered path for deep links and
     # no-JavaScript clients.
@@ -1313,6 +1315,10 @@ def alpha_market():
             funding_changes = _alpha_funding_changes() if not defer_modules and (not is_partial_filter or not request.args) else []
         except sqlite3.DatabaseError:
             funding_changes = []
+        if funding_min is not None:
+            funding_changes = [r for r in funding_changes if r["funding_change"] is not None and r["funding_change"] >= funding_min / 100]
+        if funding_price_max is not None:
+            funding_changes = [r for r in funding_changes if r["price_change"] is not None and abs(r["price_change"]) <= funding_price_max / 100]
         # Render the complete snapshot immediately.  The previous first-load
         # optimisation truncated this list to ten rows, but there is no
         # follow-up request for the snapshot panel, so the remaining tokens
@@ -1346,6 +1352,8 @@ def alpha_market():
         funding_changes=funding_changes,
         oi_min=oi_min,
         price_max=price_max,
+        funding_min=funding_min,
+        funding_price_max=funding_price_max,
         consecutive_up_days_min=consecutive_up_days_min,
     )
 
