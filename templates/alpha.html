@@ -119,6 +119,12 @@
   document.querySelectorAll('.alpha-panel').forEach((panel, index) => { panel.dataset.alphaPanel = ['oi', 'funding', 'trend', 'snapshot'][index]; });
   const esc = (value) => String(value ?? '—').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const pct = (value, digits = 2) => value == null ? '—' : `${value >= 0 ? '+' : ''}${(value * 100).toFixed(digits)}%`;
+  // Deferred Alpha modules are rendered client-side, so apply the same
+  // green-for-positive/red-for-negative styling used by server-rendered rows.
+  const changeClass = (value) => value == null || !Number.isFinite(Number(value))
+    ? ''
+    : Number(value) >= 0 ? ' alpha-change-positive' : ' alpha-change-negative';
+  const changeCell = (value) => `<td class="numeric alpha-change${changeClass(value)}">${pct(value)}</td>`;
   const loadAlphaModule = async (module) => {
     const target = document.querySelector(`[data-alpha-deferred="${module}"]`);
     const panel = target && target.closest('[data-alpha-panel]');
@@ -132,9 +138,9 @@
       if (!body) return;
       body.innerHTML = rows.map((item, index) => {
         const extra = index >= 10 ? ' class="alpha-deferred-extra-row" hidden' : '';
-        if (module === 'oi') return `<tr${extra} data-oi-change="${item.oi_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric alpha-change">${pct(item.oi_change)}</td><td class="numeric alpha-change">${pct(item.price_change)}</td></tr>`;
-        if (module === 'funding') return `<tr${extra}><td><strong>${esc(item.symbol)}</strong></td><td class="numeric alpha-change">${pct(item.funding_change)}</td><td class="numeric alpha-change">${pct(item.price_change)}</td></tr>`;
-        return `<tr${extra} data-consecutive-up-days="${item.consecutive_up_days}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${item.consecutive_up_days}</td><td class="numeric">${item.recent_five_up_days}</td><td class="numeric alpha-change">${pct(item.three_day_return)}</td><td class="numeric alpha-change">${pct(item.five_day_return)}</td><td class="numeric">${pct(item.trend_return)}</td><td class="numeric">${item.kline_count}</td></tr>`;
+        if (module === 'oi') return `<tr${extra} data-oi-change="${item.oi_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td>${changeCell(item.oi_change)}${changeCell(item.price_change)}</tr>`;
+        if (module === 'funding') return `<tr${extra}><td><strong>${esc(item.symbol)}</strong></td>${changeCell(item.funding_change)}${changeCell(item.price_change)}</tr>`;
+        return `<tr${extra} data-consecutive-up-days="${item.consecutive_up_days}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${item.consecutive_up_days}</td><td class="numeric">${item.recent_five_up_days}</td>${changeCell(item.three_day_return)}${changeCell(item.five_day_return)}${changeCell(item.trend_return)}<td class="numeric">${item.kline_count}</td></tr>`;
       }).join('');
       const empty = panel.querySelector('.empty-state');
       if (empty) empty.remove();
