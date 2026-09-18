@@ -362,3 +362,4 @@ tbody tr:hover { background: #f8fdff; }
 .alpha-module-tab span { font-weight:800; font-size:16px; }.alpha-module-tab small { color:#64748b; }.alpha-module-tab:hover { transform:translateY(-2px); border-color:#5eead4; }.alpha-module-tab.active { color:#fff; background:linear-gradient(135deg,#0f766e,#0d9488); border-color:#0f766e; box-shadow:0 8px 22px rgba(13,148,136,.22); }.alpha-module-tab.active small { color:#ccfbf1; }
 .alpha-panel[hidden] { display:none !important; }
 @media (max-width:700px) { .alpha-module-tabs { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+.alpha-module-updated { display:block; margin-top:4px; color:#64748b; font-size:12px; font-weight:600; }

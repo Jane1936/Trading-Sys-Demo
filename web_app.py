@@ -1355,6 +1355,12 @@ def alpha_market():
         funding_min=funding_min,
         funding_price_max=funding_price_max,
         consecutive_up_days_min=consecutive_up_days_min,
+        module_updated_at={
+            "oi": _alpha_module_updated_text("oi"),
+            "funding": _alpha_module_updated_text("funding"),
+            "trend": _alpha_module_updated_text("trend"),
+            "snapshot": observed_time,
+        },
     )
 
 
@@ -1371,10 +1377,41 @@ def alpha_market_data():
             data = alpha_observer.daily_trends(ALPHA_DB_PATH)
         else:
             return jsonify({"error": "unknown module"}), 400
-        return jsonify({"module": module, "data": data})
+        updated_at = _alpha_module_updated_at(module)
+        return jsonify({"module": module, "data": data, "updated_at": updated_at})
     except Exception as exc:
         app.logger.exception("Alpha deferred module failed: %s", module)
         return jsonify({"module": module, "error": str(exc), "data": []}), 503
+
+
+def _alpha_module_updated_at(module):
+    """Return the source timestamp used by an Alpha analytics module."""
+    if module == "snapshot":
+        observed_at, _ = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
+        return observed_at
+    with db_config.connect_sqlite(BASE_DB_PATH, row_factory=sqlite3.Row) as conn:
+        if module == "oi":
+            row = conn.execute("SELECT MAX(snapshot_time) AS ts FROM open_interest_1m").fetchone()
+        elif module == "funding":
+            row = conn.execute("SELECT MAX(open_time) AS ts FROM klines_1h WHERE funding_rate IS NOT NULL").fetchone()
+        elif module == "trend":
+            # Trend candles live in the Alpha database, not base_data.db.
+            with db_config.connect_sqlite(ALPHA_DB_PATH, row_factory=sqlite3.Row) as alpha_conn:
+                row = alpha_conn.execute("SELECT MAX(open_time) AS ts FROM alpha_daily_klines").fetchone()
+            return row["ts"] if row else None
+        else:
+            return None
+    return row["ts"] if row else None
+
+
+def _alpha_module_updated_text(module):
+    try:
+        ts = _alpha_module_updated_at(module)
+    except Exception:
+        return None
+    if ts is None:
+        return None
+    return datetime.fromtimestamp(int(ts) / 1000, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def _alpha_oi_changes():
@@ -1470,15 +1507,24 @@ def _alpha_funding_changes():
                                LIMIT 1
                            ) AS previous_rate
                     FROM latest_rates AS latest
-                ), prices AS (
-                    SELECT symbol,
-                           MAX(CASE WHEN rn = 1 THEN close END) AS latest_close,
-                           MAX(CASE WHEN rn = 2 THEN close END) AS previous_close
+                ), latest_prices AS (
+                    SELECT symbol, open_time, close AS latest_close
                     FROM (
-                        SELECT symbol, close,
+                        SELECT symbol, open_time, close,
                                ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS rn
-                        FROM klines_4h WHERE symbol IN ({placeholders})
-                    ) WHERE rn <= 2 GROUP BY symbol
+                        FROM klines_1h WHERE symbol IN ({placeholders})
+                    ) WHERE rn = 1
+                ), prices AS (
+                    SELECT latest.symbol, latest.latest_close,
+                           (
+                               SELECT history.close
+                               FROM klines_1h AS history
+                               WHERE history.symbol = latest.symbol
+                                 AND history.open_time <= latest.open_time - 14400000
+                               ORDER BY history.open_time DESC
+                               LIMIT 1
+                           ) AS previous_close
+                    FROM latest_prices AS latest
                 ), requested(symbol) AS (VALUES {','.join('(?)' for _ in symbols)})
                 SELECT requested.symbol,
                        CASE WHEN rates.previous_rate != 0

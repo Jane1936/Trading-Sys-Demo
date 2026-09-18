@@ -153,7 +153,7 @@ def test_alpha_funding_changes_batches_symbols(tmp_path, monkeypatch):
     rows = web_app._alpha_funding_changes()
 
     assert [(row["symbol"], row["funding_change"], row["price_change"]) for row in rows] == [
-        ("AAA", 1.0, pytest.approx(0.2)),
+        ("AAA", 1.0, pytest.approx(0.1)),
         ("BBB", -0.5, pytest.approx(-0.1)),
     ]
 
