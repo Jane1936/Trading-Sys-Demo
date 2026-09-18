@@ -1243,11 +1243,23 @@ def market_safety():
 @app.get("/market/alpha")
 def alpha_market():
     """Show the most recently completed hourly Alpha-token snapshot."""
+    def _percent_arg(name):
+        try:
+            value = float(request.args.get(name, ""))
+            return value if value >= 0 else None
+        except (TypeError, ValueError):
+            return None
+    oi_min = _percent_arg("oi_min")
+    price_max = _percent_arg("price_max")
     try:
         observed_at, rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
         trends = alpha_observer.daily_trends(ALPHA_DB_PATH)
         database_status = alpha_observer.database_status(ALPHA_DB_PATH)
         oi_changes = _alpha_oi_changes()
+        if oi_min is not None:
+            oi_changes = [r for r in oi_changes if r["oi_change"] is not None and r["oi_change"] >= oi_min / 100]
+        if price_max is not None:
+            oi_changes = [r for r in oi_changes if r["price_change"] is not None and abs(r["price_change"]) <= price_max / 100]
         funding_changes = _alpha_funding_changes()
         tokens = [dict(row) for row in rows]
         error = None
@@ -1269,6 +1281,8 @@ def alpha_market():
         trends=trends,
         oi_changes=oi_changes,
         funding_changes=funding_changes,
+        oi_min=oi_min,
+        price_max=price_max,
     )
 
 

@@ -55,6 +55,9 @@ body {
 .content .alpha-panel { display:block; }
 .alpha-panel-title { align-items:center; }
 .alpha-panel-title > div { display:flex; align-items:baseline; gap:12px; }
+.alpha-filter { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin:14px 0; padding:12px 14px; border:1px solid #dbeafe; border-radius:10px; background:#f8fafc; }
+.alpha-filter label { color:#334155; font-size:14px; font-weight:600; }
+.alpha-filter input { width:90px; margin:0 4px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; }
 .alpha-toggle { white-space:nowrap; }
 .alpha-table { min-width:760px; }
 .alpha-table .numeric { text-align:right; font-variant-numeric:tabular-nums; font-weight:650; }
