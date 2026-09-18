@@ -1243,6 +1243,9 @@ def market_safety():
 @app.get("/market/alpha")
 def alpha_market():
     """Show the most recently completed hourly Alpha-token snapshot."""
+    # Filter submissions replace only one panel in the browser.  Avoid doing
+    # the other expensive cross-database calculations for those requests.
+    is_partial_filter = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     def _percent_arg(name):
         try:
             value = float(request.args.get(name, ""))
@@ -1258,23 +1261,39 @@ def alpha_market():
         consecutive_up_days_min = 2
     try:
         observed_at, rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
-        trends = alpha_observer.daily_trends(ALPHA_DB_PATH)
+        try:
+            trends = alpha_observer.daily_trends(ALPHA_DB_PATH) if not is_partial_filter or "consecutive_up_days_min" in request.args else []
+        except sqlite3.DatabaseError:
+            trends = []
         trends = [
             trend for trend in trends
             if trend["consecutive_up_days"] >= consecutive_up_days_min
         ]
         database_status = alpha_observer.database_status(ALPHA_DB_PATH)
-        oi_changes = _alpha_oi_changes()
+        try:
+            oi_changes = _alpha_oi_changes() if not is_partial_filter or "oi_min" in request.args or "price_max" in request.args else []
+        except sqlite3.DatabaseError:
+            oi_changes = []
         if oi_min is not None:
             oi_changes = [r for r in oi_changes if r["oi_change"] is not None and r["oi_change"] >= oi_min / 100]
         if price_max is not None:
             oi_changes = [r for r in oi_changes if r["price_change"] is not None and abs(r["price_change"]) <= price_max / 100]
-        funding_changes = _alpha_funding_changes()
+        try:
+            funding_changes = _alpha_funding_changes() if not is_partial_filter or not request.args else []
+        except sqlite3.DatabaseError:
+            funding_changes = []
         tokens = [dict(row) for row in rows]
         error = None
     except Exception as exc:
         app.logger.exception("Alpha observer page failed")
-        observed_at, tokens, trends, database_status, oi_changes, funding_changes, error = None, [], [], None, [], [], str(exc)
+        # Keep the snapshot visible even when an optional analytics table is
+        # unavailable (for example during first startup).
+        try:
+            observed_at, rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
+            tokens = [dict(row) for row in rows]
+        except Exception:
+            observed_at, tokens = None, []
+        trends, database_status, oi_changes, funding_changes, error = [], None, [], [], str(exc)
     observed_time = (
         datetime.fromtimestamp(observed_at / 1000, timezone.utc)
         .strftime("%Y-%m-%d %H:%M:%S UTC")

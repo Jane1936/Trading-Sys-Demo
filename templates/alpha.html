@@ -46,7 +46,7 @@
       <button type="button" class="alpha-module-tab" data-alpha-tab="trend"><span>持续趋势</span><small>连续上涨</small></button>
       <button type="button" class="alpha-module-tab" data-alpha-tab="snapshot"><span>市场快照</span><small>活跃度排行</small></button>
     </nav>
-    <section class="panel alpha-panel" data-alpha-panel="oi">
+    <section class="panel alpha-panel active" data-alpha-panel="oi">
       <div class="panel-title alpha-panel-title"><div><h2>OI异动</h2><span>有 U 本位合约的 Alpha 代币 · 每小时变化（数据源：base_data.db）</span></div>{% if oi_changes|length > 10 %}<button type="button" class="btn btn-secondary alpha-oi-toggle" aria-expanded="false">展开全部（{{ oi_changes|length }}）</button>{% endif %}</div>
       <form class="alpha-filter" data-alpha-filter="oi" method="get" action="{{ url_for('alpha_market') }}">
         <label>1小时 OI 涨跌幅 ≥ <input type="number" name="oi_min" min="0" step="0.1" value="{{ oi_min if oi_min is not none else '' }}" placeholder="x">%</label>
@@ -58,13 +58,13 @@
       {% for item in oi_changes %}<tr{% if loop.index > 10 %} class="alpha-oi-extra-row" hidden{% endif %}><td><strong>{{ item.symbol }}</strong></td><td class="numeric alpha-change{% if item.oi_change is not none %} {{ 'alpha-change-positive' if item.oi_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.oi_change is not none %}{{ '%+.2f'|format(item.oi_change * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if item.price_change is not none %} {{ 'alpha-change-positive' if item.price_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.price_change is not none %}{{ '%+.2f'|format(item.price_change * 100) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
       </tbody></table></div>{% else %}<p class="empty-state">暂无足够的 OI/K 线数据。</p>{% endif %}
     </section>
-    <section class="panel alpha-panel" data-alpha-panel="funding">
+    <section class="panel alpha-panel" data-alpha-panel="funding" hidden>
       <div class="panel-title alpha-panel-title"><div><h2>资金费率异动</h2><span>有 U 本位合约的 Alpha 代币 · 每4小时变化（数据源：base_data.db）</span></div>{% if funding_changes|length > 10 %}<button type="button" class="btn btn-secondary alpha-funding-toggle" aria-expanded="false">展开全部（{{ funding_changes|length }}）</button>{% endif %}</div>
       {% if funding_changes %}<div class="table-wrap"><table class="alpha-table"><thead><tr><th>币种</th><th>4小时资金费率涨跌幅</th><th>4小时价格涨跌幅</th></tr></thead><tbody>
       {% for item in funding_changes %}<tr{% if loop.index > 10 %} class="alpha-funding-extra-row" hidden{% endif %}><td><strong>{{ item.symbol }}</strong></td><td class="numeric alpha-change{% if item.funding_change is not none %} {{ 'alpha-change-positive' if item.funding_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.funding_change is not none %}{{ '%+.2f'|format(item.funding_change * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if item.price_change is not none %} {{ 'alpha-change-positive' if item.price_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.price_change is not none %}{{ '%+.2f'|format(item.price_change * 100) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
       </tbody></table></div>{% else %}<p class="empty-state">暂无足够的资金费率/K线数据。</p>{% endif %}
     </section>
-    <section class="panel alpha-panel" data-alpha-panel="trend">
+    <section class="panel alpha-panel" data-alpha-panel="trend" hidden>
       <div class="panel-title alpha-panel-title"><div><h2>连续上涨与持续趋势</h2><span>基于 alpha.db 中保存的 24 小时 K 线 · 默认按近3日累计涨幅排序</span></div>{% if trends|length > 10 %}<button type="button" class="btn btn-secondary alpha-trend-toggle" aria-expanded="false">展开全部（{{ trends|length }}）</button>{% endif %}</div>
       <form class="alpha-filter" data-alpha-filter="trend" method="get" action="{{ url_for('alpha_market') }}">
         <label>连续上涨天数 ≥ <input type="number" name="consecutive_up_days_min" min="0" step="1" value="{{ consecutive_up_days_min }}"> 天</label>
@@ -75,7 +75,7 @@
       {% for trend in trends %}<tr{% if loop.index > 10 %} class="alpha-trend-extra-row" hidden{% endif %}><td><strong>{{ trend.symbol }}</strong></td><td class="numeric">{{ trend.consecutive_up_days }}</td><td class="numeric">{{ trend.recent_five_up_days }}</td><td class="numeric alpha-change{% if trend.three_day_return is not none %} {{ 'alpha-change-positive' if trend.three_day_return >= 0 else 'alpha-change-negative' }}{% endif %}">{% if trend.three_day_return is not none %}{{ '%+.2f'|format(trend.three_day_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if trend.five_day_return is not none %} {{ 'alpha-change-positive' if trend.five_day_return >= 0 else 'alpha-change-negative' }}{% endif %}">{% if trend.five_day_return is not none %}{{ '%+.2f'|format(trend.five_day_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric">{% if trend.trend_return is not none %}{{ '%.2f'|format(trend.trend_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric">{{ trend.kline_count }}</td></tr>{% endfor %}
       </tbody></table></div>{% else %}<p class="empty-state">暂无日线数据，后台将自动采集。</p>{% endif %}
     </section>
-    <section class="panel alpha-panel" data-alpha-panel="snapshot">
+    <section class="panel alpha-panel" data-alpha-panel="snapshot" hidden>
       <div class="panel-title alpha-panel-title">
         <div><h2>最新市场快照</h2><span>按1天活跃度从高到低排列（周期成交量/当前市值）</span></div>
         {% if tokens|length > 10 %}<button type="button" class="btn btn-secondary alpha-toggle" aria-expanded="false">展开全部（{{ tokens|length }}）</button>{% endif %}
