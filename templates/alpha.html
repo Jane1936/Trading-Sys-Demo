@@ -85,7 +85,7 @@
           <thead><tr><th>#</th><th>币种</th><th>名称</th><th>网络</th><th>24小时成交量</th><th>市值</th><th>1天活跃度</th><th>2天活跃度</th><th>3天活跃度</th><th>4天活跃度</th><th>5天活跃度</th></tr></thead>
           <tbody>
           {% for token in tokens %}
-            <tr>
+            <tr class="{% if loop.index > 10 %}alpha-extra-row{% endif %}"{% if loop.index > 10 %} hidden{% endif %}>
               {% set activity = token.activity_1d|default(token.activity|default(none)) %}
               <td>{{ loop.index }}</td>
               <td><strong>{{ token.symbol }}</strong></td>
@@ -131,13 +131,14 @@
       const body = panel.querySelector('tbody');
       if (!body) return;
       body.innerHTML = rows.map((item, index) => {
-        if (module === 'oi') return `<tr data-oi-change="${item.oi_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric alpha-change">${pct(item.oi_change)}</td><td class="numeric alpha-change">${pct(item.price_change)}</td></tr>`;
-        if (module === 'funding') return `<tr><td><strong>${esc(item.symbol)}</strong></td><td class="numeric alpha-change">${pct(item.funding_change)}</td><td class="numeric alpha-change">${pct(item.price_change)}</td></tr>`;
-        return `<tr data-consecutive-up-days="${item.consecutive_up_days}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${item.consecutive_up_days}</td><td class="numeric">${item.recent_five_up_days}</td><td class="numeric alpha-change">${pct(item.three_day_return)}</td><td class="numeric alpha-change">${pct(item.five_day_return)}</td><td class="numeric">${pct(item.trend_return)}</td><td class="numeric">${item.kline_count}</td></tr>`;
+        const extra = index >= 10 ? ' class="alpha-deferred-extra-row" hidden' : '';
+        if (module === 'oi') return `<tr${extra} data-oi-change="${item.oi_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric alpha-change">${pct(item.oi_change)}</td><td class="numeric alpha-change">${pct(item.price_change)}</td></tr>`;
+        if (module === 'funding') return `<tr${extra}><td><strong>${esc(item.symbol)}</strong></td><td class="numeric alpha-change">${pct(item.funding_change)}</td><td class="numeric alpha-change">${pct(item.price_change)}</td></tr>`;
+        return `<tr${extra} data-consecutive-up-days="${item.consecutive_up_days}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${item.consecutive_up_days}</td><td class="numeric">${item.recent_five_up_days}</td><td class="numeric alpha-change">${pct(item.three_day_return)}</td><td class="numeric alpha-change">${pct(item.five_day_return)}</td><td class="numeric">${pct(item.trend_return)}</td><td class="numeric">${item.kline_count}</td></tr>`;
       }).join('');
       const empty = panel.querySelector('.empty-state');
       if (empty) empty.remove();
-      bindAlphaToggles(panel);
+      ensureAlphaToggle(panel, module, rows.length);
     } catch (error) {
       const empty = panel.querySelector('.empty-state');
       if (empty) empty.textContent = '该模块加载失败，请稍后重试。';
@@ -168,14 +169,20 @@
     }
     activateAlphaModule(panel.dataset.alphaPanel);
   });
-  const bindAlphaToggles = (scope = document) => {
-    const oiToggle = scope.querySelector('.alpha-oi-toggle');
-    if (oiToggle && !oiToggle.dataset.bound) { oiToggle.dataset.bound = '1'; oiToggle.addEventListener('click', () => { const expanded = oiToggle.getAttribute('aria-expanded') === 'true'; scope.querySelectorAll('.alpha-oi-extra-row').forEach((row) => { row.hidden = expanded; }); oiToggle.setAttribute('aria-expanded', String(!expanded)); oiToggle.textContent = expanded ? `展开全部（{{ oi_changes|length }}）` : '收起列表'; }); }
+  const ensureAlphaToggle = (panel, module, count) => {
+    if (count <= 10) return;
+    const cls = `alpha-${module}-toggle`;
+    let button = panel.querySelector(`.${cls}`);
+    if (!button) { button = document.createElement('button'); button.type = 'button'; button.className = 'btn btn-secondary ' + cls; button.setAttribute('aria-expanded', 'false'); panel.querySelector('.alpha-panel-title').appendChild(button); }
+    button.textContent = `展开全部（${count}）`;
+    if (button.dataset.bound) return;
+    button.dataset.bound = '1';
+    button.addEventListener('click', () => { const expanded = button.getAttribute('aria-expanded') === 'true'; panel.querySelectorAll(`.${module === 'snapshot' ? 'alpha-extra-row' : `alpha-${module}-extra-row`}, .alpha-deferred-extra-row`).forEach((row) => { row.hidden = expanded; }); button.setAttribute('aria-expanded', String(!expanded)); button.textContent = expanded ? `展开全部（${count}）` : '收起列表'; });
   };
   document.querySelectorAll('.alpha-filter').forEach(bindAlphaFilter);
-  bindAlphaToggles();
+  ensureAlphaToggle(document.querySelector('[data-alpha-panel="oi"]'), 'oi', {{ oi_changes|length }});
   const oiToggle = document.querySelector('.alpha-oi-toggle');
-  if (oiToggle) {
+  if (oiToggle && !oiToggle.dataset.bound) {
     oiToggle.addEventListener('click', () => {
       const expanded = oiToggle.getAttribute('aria-expanded') === 'true';
       document.querySelectorAll('.alpha-oi-extra-row').forEach((row) => { row.hidden = expanded; });
@@ -184,14 +191,14 @@
     });
   }
   const fundingToggle = document.querySelector('.alpha-funding-toggle');
-  if (fundingToggle) fundingToggle.addEventListener('click', () => {
+  if (fundingToggle && !fundingToggle.dataset.bound) fundingToggle.addEventListener('click', () => {
     const expanded = fundingToggle.getAttribute('aria-expanded') === 'true';
     document.querySelectorAll('.alpha-funding-extra-row').forEach((row) => { row.hidden = expanded; });
     fundingToggle.setAttribute('aria-expanded', String(!expanded));
     fundingToggle.textContent = expanded ? `展开全部（{{ funding_changes|length }}）` : '收起列表';
   });
   const toggle = document.querySelector('.alpha-toggle');
-  if (toggle) {
+  if (toggle && !toggle.dataset.bound) {
     toggle.addEventListener('click', () => {
       const expanded = toggle.getAttribute('aria-expanded') === 'true';
       document.querySelectorAll('.alpha-extra-row').forEach((row) => { row.hidden = expanded; });
@@ -200,7 +207,7 @@
     });
   }
   const trendToggle = document.querySelector('.alpha-trend-toggle');
-  if (trendToggle) {
+  if (trendToggle && !trendToggle.dataset.bound) {
     trendToggle.addEventListener('click', () => {
       const expanded = trendToggle.getAttribute('aria-expanded') === 'true';
       document.querySelectorAll('.alpha-trend-extra-row').forEach((row) => { row.hidden = expanded; });
