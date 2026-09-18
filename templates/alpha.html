@@ -47,6 +47,12 @@
       </tbody></table></div>{% else %}<p class="empty-state">暂无足够的 OI/K 线数据。</p>{% endif %}
     </section>
     <section class="panel alpha-panel">
+      <div class="panel-title alpha-panel-title"><div><h2>资金费率异动</h2><span>有 U 本位合约的 Alpha 代币 · 每4小时变化（数据源：base_data.db）</span></div>{% if funding_changes|length > 10 %}<button type="button" class="btn btn-secondary alpha-funding-toggle" aria-expanded="false">展开全部（{{ funding_changes|length }}）</button>{% endif %}</div>
+      {% if funding_changes %}<div class="table-wrap"><table class="alpha-table"><thead><tr><th>币种</th><th>4小时资金费率涨跌幅</th><th>4小时价格涨跌幅</th></tr></thead><tbody>
+      {% for item in funding_changes %}<tr{% if loop.index > 10 %} class="alpha-funding-extra-row" hidden{% endif %}><td><strong>{{ item.symbol }}</strong></td><td class="numeric alpha-change{% if item.funding_change is not none %} {{ 'alpha-change-positive' if item.funding_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.funding_change is not none %}{{ '%+.2f'|format(item.funding_change * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if item.price_change is not none %} {{ 'alpha-change-positive' if item.price_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.price_change is not none %}{{ '%+.2f'|format(item.price_change * 100) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
+      </tbody></table></div>{% else %}<p class="empty-state">暂无足够的资金费率/K线数据。</p>{% endif %}
+    </section>
+    <section class="panel alpha-panel">
       <div class="panel-title alpha-panel-title"><div><h2>连续上涨与持续趋势</h2><span>基于 alpha.db 中保存的 24 小时 K 线 · 默认按近3日累计涨幅排序</span></div>{% if trends|length > 10 %}<button type="button" class="btn btn-secondary alpha-trend-toggle" aria-expanded="false">展开全部（{{ trends|length }}）</button>{% endif %}</div>
       {% if trends %}<div class="table-wrap"><table class="alpha-table"><thead><tr><th>币种</th><th>连续上涨天数</th><th>近5日内上涨天数</th><th>近3日累计涨幅</th><th>近5日累计涨幅</th><th>趋势收益</th><th>日线数量</th></tr></thead><tbody>
       {% for trend in trends %}<tr{% if loop.index > 10 %} class="alpha-trend-extra-row" hidden{% endif %}><td><strong>{{ trend.symbol }}</strong></td><td class="numeric">{{ trend.consecutive_up_days }}</td><td class="numeric">{{ trend.recent_five_up_days }}</td><td class="numeric alpha-change{% if trend.three_day_return is not none %} {{ 'alpha-change-positive' if trend.three_day_return >= 0 else 'alpha-change-negative' }}{% endif %}">{% if trend.three_day_return is not none %}{{ '%+.2f'|format(trend.three_day_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if trend.five_day_return is not none %} {{ 'alpha-change-positive' if trend.five_day_return >= 0 else 'alpha-change-negative' }}{% endif %}">{% if trend.five_day_return is not none %}{{ '%+.2f'|format(trend.five_day_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric">{% if trend.trend_return is not none %}{{ '%.2f'|format(trend.trend_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric">{{ trend.kline_count }}</td></tr>{% endfor %}
@@ -98,6 +104,13 @@
       oiToggle.textContent = expanded ? `展开全部（{{ oi_changes|length }}）` : '收起列表';
     });
   }
+  const fundingToggle = document.querySelector('.alpha-funding-toggle');
+  if (fundingToggle) fundingToggle.addEventListener('click', () => {
+    const expanded = fundingToggle.getAttribute('aria-expanded') === 'true';
+    document.querySelectorAll('.alpha-funding-extra-row').forEach((row) => { row.hidden = expanded; });
+    fundingToggle.setAttribute('aria-expanded', String(!expanded));
+    fundingToggle.textContent = expanded ? `展开全部（{{ funding_changes|length }}）` : '收起列表';
+  });
   const toggle = document.querySelector('.alpha-toggle');
   if (toggle) {
     toggle.addEventListener('click', () => {
