@@ -10,6 +10,8 @@ import ast
 from io import BytesIO
 import os
 import sqlite3
+import threading
+import time
 from zipfile import ZIP_DEFLATED, ZipFile
 from dataclasses import asdict
 from decimal import Decimal
@@ -100,6 +102,32 @@ WEB_SQLITE_QUICK_CHECK_ON_REQUEST = (
     in {"1", "true", "yes", "on"}
 )
 _db_recovery_checked_path: str | None = None
+
+# Analytics are derived from historical tables that change much more often
+# than the Alpha universe.  Keying the short-lived cache by the latest Alpha
+# snapshot prevents one snapshot's results from leaking into the next one.
+ALPHA_ANALYTICS_CACHE_TTL_SECONDS = 45
+_alpha_analytics_cache: dict[tuple[str, int], tuple[float, list[dict]]] = {}
+_alpha_analytics_cache_lock = threading.Lock()
+
+
+def _cached_alpha_analytics(module: str, observed_at: int, loader):
+    """Return a copy of a cached Alpha analytics result, suppressing stampedes."""
+    key = (module, observed_at)
+    now = time.monotonic()
+    with _alpha_analytics_cache_lock:
+        cached = _alpha_analytics_cache.get(key)
+        if cached is not None and now - cached[0] < ALPHA_ANALYTICS_CACHE_TTL_SECONDS:
+            return [dict(row) for row in cached[1]]
+
+        result = loader()
+        _alpha_analytics_cache[key] = (now, [dict(row) for row in result])
+        # There can only be one useful snapshot per module.  Keeping stale
+        # keys would make a long-running web worker grow without bound.
+        for stale_key in list(_alpha_analytics_cache):
+            if stale_key[0] == module and stale_key != key:
+                del _alpha_analytics_cache[stale_key]
+        return [dict(row) for row in result]
 
 
 def create_app() -> Flask:
@@ -1345,59 +1373,109 @@ def _alpha_oi_changes():
     """Calculate one-hour OI and price changes for the Alpha/futures intersection."""
     observed_at, alpha_rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
     symbols = {str(row["symbol"]).upper().removesuffix("USDT") for row in alpha_rows}
-    if not symbols:
+    if observed_at is None or not symbols:
         return []
-    with db_config.connect_sqlite(BASE_DB_PATH, row_factory=sqlite3.Row) as conn:
+
+    def load():
+      with db_config.connect_sqlite(BASE_DB_PATH, row_factory=sqlite3.Row) as conn:
         # Treat a symbol as currently supported only when the collector has
         # written OI for it during the last 24 hours.  The table is a long-
         # lived history, so looking at every historical row would retain
         # delisted/disabled contracts indefinitely.
         cutoff_ms = int((datetime.now(timezone.utc) - timedelta(hours=24)).timestamp() * 1000)
-        available = {
-            row[0]
-            for row in conn.execute(
-                "SELECT DISTINCT symbol FROM open_interest_1m WHERE snapshot_time >= ?",
-                (cutoff_ms,),
-            )
-        }
-        symbols &= available
-        result = []
-        for symbol in symbols:
-            oi = conn.execute("SELECT snapshot_time, open_interest FROM open_interest_1m WHERE symbol=? ORDER BY snapshot_time DESC LIMIT 1", (symbol,)).fetchone()
-            if not oi:
-                continue
-            old_oi = conn.execute("SELECT open_interest FROM open_interest_1m WHERE symbol=? AND snapshot_time<=? ORDER BY snapshot_time DESC LIMIT 1", (symbol, oi["snapshot_time"] - 3600000)).fetchone()
-            prices = conn.execute("SELECT open_time, close FROM klines_1h WHERE symbol=? ORDER BY open_time DESC LIMIT 2", (symbol,)).fetchall()
-            price_change = None
-            if len(prices) == 2 and prices[1][1]:
-                price_change = prices[0][1] / prices[1][1] - 1
-            result.append({"symbol": symbol, "oi_change": (oi["open_interest"] / old_oi[0] - 1) if old_oi and old_oi[0] else None, "price_change": price_change})
-    return sorted(result, key=lambda row: (row["oi_change"] is None, -(row["oi_change"] or 0)))
+        placeholders = ",".join("?" for _ in symbols)
+        params = [*sorted(symbols), cutoff_ms, *sorted(symbols)]
+        rows = conn.execute(
+            f"""WITH latest_oi AS (
+                    SELECT symbol, snapshot_time, open_interest
+                    FROM (
+                        SELECT symbol, snapshot_time, open_interest,
+                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY snapshot_time DESC) AS rn
+                        FROM open_interest_1m
+                        WHERE symbol IN ({placeholders}) AND snapshot_time >= ?
+                    ) WHERE rn = 1
+                ), old_oi AS (
+                    SELECT symbol, open_interest
+                    FROM (
+                        SELECT history.symbol, history.open_interest,
+                               ROW_NUMBER() OVER (PARTITION BY history.symbol ORDER BY history.snapshot_time DESC) AS rn
+                        FROM open_interest_1m AS history
+                        JOIN latest_oi AS latest ON latest.symbol = history.symbol
+                        WHERE history.snapshot_time <= latest.snapshot_time - 3600000
+                    ) WHERE rn = 1
+                ), prices AS (
+                    SELECT symbol,
+                           MAX(CASE WHEN rn = 1 THEN close END) AS latest_close,
+                           MAX(CASE WHEN rn = 2 THEN close END) AS previous_close
+                    FROM (
+                        SELECT symbol, close,
+                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS rn
+                        FROM klines_1h WHERE symbol IN ({placeholders})
+                    ) WHERE rn <= 2 GROUP BY symbol
+                )
+                SELECT latest.symbol,
+                       CASE WHEN old.open_interest != 0
+                            THEN latest.open_interest / old.open_interest - 1 END AS oi_change,
+                       CASE WHEN prices.previous_close != 0
+                            THEN prices.latest_close / prices.previous_close - 1 END AS price_change
+                FROM latest_oi AS latest
+                LEFT JOIN old_oi AS old USING (symbol)
+                LEFT JOIN prices USING (symbol)""",
+            params,
+        ).fetchall()
+        result = [dict(row) for row in rows]
+        return sorted(result, key=lambda row: (row["oi_change"] is None, -(row["oi_change"] or 0)))
+
+    return _cached_alpha_analytics("oi", int(observed_at), load)
 
 
 def _alpha_funding_changes():
     """Return four-hour funding-rate and price changes for Alpha futures."""
-    _, alpha_rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
+    observed_at, alpha_rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
     symbols = {str(row["symbol"]).upper().removesuffix("USDT") for row in alpha_rows}
-    if not symbols:
+    if observed_at is None or not symbols:
         return []
-    with db_config.connect_sqlite(BASE_DB_PATH, row_factory=sqlite3.Row) as conn:
-        result = []
-        for symbol in symbols:
-            rates = conn.execute(
-                "SELECT open_time, funding_rate FROM klines_1h WHERE symbol=? AND funding_rate IS NOT NULL ORDER BY open_time DESC LIMIT 2",
-                (symbol,),
-            ).fetchall()
-            prices = conn.execute(
-                "SELECT close FROM klines_4h WHERE symbol=? ORDER BY open_time DESC LIMIT 2", (symbol,)
-            ).fetchall()
-            funding_change = None
-            if len(rates) == 2 and rates[1][1] not in (None, 0):
-                funding_change = rates[0][1] / rates[1][1] - 1
-            price_change = prices[0][0] / prices[1][0] - 1 if len(prices) == 2 and prices[1][0] else None
-            if rates or prices:
-                result.append({"symbol": symbol, "funding_change": funding_change, "price_change": price_change})
-    return sorted(result, key=lambda row: (row["funding_change"] is None, -(row["funding_change"] or 0)))
+
+    def load():
+      with db_config.connect_sqlite(BASE_DB_PATH, row_factory=sqlite3.Row) as conn:
+        placeholders = ",".join("?" for _ in symbols)
+        symbol_params = sorted(symbols)
+        rows = conn.execute(
+            f"""WITH rates AS (
+                    SELECT symbol,
+                           MAX(CASE WHEN rn = 1 THEN funding_rate END) AS latest_rate,
+                           MAX(CASE WHEN rn = 2 THEN funding_rate END) AS previous_rate
+                    FROM (
+                        SELECT symbol, funding_rate,
+                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS rn
+                        FROM klines_1h
+                        WHERE symbol IN ({placeholders}) AND funding_rate IS NOT NULL
+                    ) WHERE rn <= 2 GROUP BY symbol
+                ), prices AS (
+                    SELECT symbol,
+                           MAX(CASE WHEN rn = 1 THEN close END) AS latest_close,
+                           MAX(CASE WHEN rn = 2 THEN close END) AS previous_close
+                    FROM (
+                        SELECT symbol, close,
+                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS rn
+                        FROM klines_4h WHERE symbol IN ({placeholders})
+                    ) WHERE rn <= 2 GROUP BY symbol
+                ), requested(symbol) AS (VALUES {','.join('(?)' for _ in symbols)})
+                SELECT requested.symbol,
+                       CASE WHEN rates.previous_rate != 0
+                            THEN rates.latest_rate / rates.previous_rate - 1 END AS funding_change,
+                       CASE WHEN prices.previous_close != 0
+                            THEN prices.latest_close / prices.previous_close - 1 END AS price_change
+                FROM requested
+                LEFT JOIN rates USING (symbol)
+                LEFT JOIN prices USING (symbol)
+                WHERE rates.symbol IS NOT NULL OR prices.symbol IS NOT NULL""",
+            [*symbol_params, *symbol_params, *symbol_params],
+        ).fetchall()
+        result = [dict(row) for row in rows]
+        return sorted(result, key=lambda row: (row["funding_change"] is None, -(row["funding_change"] or 0)))
+
+    return _cached_alpha_analytics("funding", int(observed_at), load)
 
 
 @app.get("/trading/simulation")
