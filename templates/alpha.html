@@ -46,7 +46,7 @@
       <button type="button" class="alpha-module-tab" data-alpha-tab="trend"><span>持续趋势</span><small>连续上涨</small></button>
       <button type="button" class="alpha-module-tab" data-alpha-tab="snapshot"><span>市场快照</span><small>活跃度排行</small></button>
     </nav>
-    <section class="panel alpha-panel active" data-alpha-panel="oi">
+    <section class="panel alpha-panel active">
       <div class="panel-title alpha-panel-title"><div><h2>OI异动</h2><span>有 U 本位合约的 Alpha 代币 · 每小时变化（数据源：base_data.db）</span></div>{% if oi_changes|length > 10 %}<button type="button" class="btn btn-secondary alpha-oi-toggle" aria-expanded="false">展开全部（{{ oi_changes|length }}）</button>{% endif %}</div>
       <form class="alpha-filter" data-alpha-filter="oi" method="get" action="{{ url_for('alpha_market') }}">
         <label>1小时 OI 涨跌幅 ≥ <input type="number" name="oi_min" min="0" step="0.1" value="{{ oi_min if oi_min is not none else '' }}" placeholder="x">%</label>
@@ -54,28 +54,28 @@
         <button class="btn btn-secondary" type="submit">筛选</button>
         {% if oi_min is not none or price_max is not none %}<a class="btn btn-secondary" href="{{ url_for('alpha_market') }}">清除</a>{% endif %}
       </form>
-      {% if oi_changes %}<div class="table-wrap"><table class="alpha-table"><thead><tr><th>币种</th><th>1小时 OI 涨跌幅</th><th>1小时价格涨跌幅</th></tr></thead><tbody>
+      <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="oi"><thead><tr><th>币种</th><th>1小时 OI 涨跌幅</th><th>1小时价格涨跌幅</th></tr></thead><tbody>
       {% for item in oi_changes %}<tr data-oi-change="{{ item.oi_change if item.oi_change is not none else '' }}" data-price-change="{{ item.price_change if item.price_change is not none else '' }}"{% if loop.index > 10 %} class="alpha-oi-extra-row" hidden{% endif %}><td><strong>{{ item.symbol }}</strong></td><td class="numeric alpha-change{% if item.oi_change is not none %} {{ 'alpha-change-positive' if item.oi_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.oi_change is not none %}{{ '%+.2f'|format(item.oi_change * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if item.price_change is not none %} {{ 'alpha-change-positive' if item.price_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.price_change is not none %}{{ '%+.2f'|format(item.price_change * 100) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
-      </tbody></table></div>{% else %}<p class="empty-state">暂无足够的 OI/K 线数据。</p>{% endif %}
+      </tbody></table></div>{% if not oi_changes %}<p class="empty-state">加载中…</p>{% endif %}
     </section>
-    <section class="panel alpha-panel" data-alpha-panel="funding" hidden>
+    <section class="panel alpha-panel" hidden>
       <div class="panel-title alpha-panel-title"><div><h2>资金费率异动</h2><span>有 U 本位合约的 Alpha 代币 · 每4小时变化（数据源：base_data.db）</span></div>{% if funding_changes|length > 10 %}<button type="button" class="btn btn-secondary alpha-funding-toggle" aria-expanded="false">展开全部（{{ funding_changes|length }}）</button>{% endif %}</div>
-      {% if funding_changes %}<div class="table-wrap"><table class="alpha-table"><thead><tr><th>币种</th><th>4小时资金费率涨跌幅</th><th>4小时价格涨跌幅</th></tr></thead><tbody>
+      <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="funding"><thead><tr><th>币种</th><th>4小时资金费率涨跌幅</th><th>4小时价格涨跌幅</th></tr></thead><tbody>
       {% for item in funding_changes %}<tr{% if loop.index > 10 %} class="alpha-funding-extra-row" hidden{% endif %}><td><strong>{{ item.symbol }}</strong></td><td class="numeric alpha-change{% if item.funding_change is not none %} {{ 'alpha-change-positive' if item.funding_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.funding_change is not none %}{{ '%+.2f'|format(item.funding_change * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if item.price_change is not none %} {{ 'alpha-change-positive' if item.price_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.price_change is not none %}{{ '%+.2f'|format(item.price_change * 100) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
-      </tbody></table></div>{% else %}<p class="empty-state">暂无足够的资金费率/K线数据。</p>{% endif %}
+      </tbody></table></div>{% if not funding_changes %}<p class="empty-state">加载中…</p>{% endif %}
     </section>
-    <section class="panel alpha-panel" data-alpha-panel="trend" hidden>
+    <section class="panel alpha-panel" hidden>
       <div class="panel-title alpha-panel-title"><div><h2>连续上涨与持续趋势</h2><span>基于 alpha.db 中保存的 24 小时 K 线 · 默认按近3日累计涨幅排序</span></div>{% if trends|length > 10 %}<button type="button" class="btn btn-secondary alpha-trend-toggle" aria-expanded="false">展开全部（{{ trends|length }}）</button>{% endif %}</div>
       <form class="alpha-filter" data-alpha-filter="trend" method="get" action="{{ url_for('alpha_market') }}">
         <label>连续上涨天数 ≥ <input type="number" name="consecutive_up_days_min" min="0" step="1" value="{{ consecutive_up_days_min }}"> 天</label>
         <button class="btn btn-secondary" type="submit">筛选</button>
         {% if consecutive_up_days_min != 2 %}<a class="btn btn-secondary" href="{{ url_for('alpha_market') }}">清除</a>{% endif %}
       </form>
-      {% if trends %}<div class="table-wrap"><table class="alpha-table"><thead><tr><th>币种</th><th>连续上涨天数</th><th>近5日内上涨天数</th><th>近3日累计涨幅</th><th>近5日累计涨幅</th><th>趋势收益</th><th>日线数量</th></tr></thead><tbody>
+      <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="trend"><thead><tr><th>币种</th><th>连续上涨天数</th><th>近5日内上涨天数</th><th>近3日累计涨幅</th><th>近5日累计涨幅</th><th>趋势收益</th><th>日线数量</th></tr></thead><tbody>
       {% for trend in trends %}<tr data-consecutive-up-days="{{ trend.consecutive_up_days }}"{% if loop.index > 10 or trend.consecutive_up_days < consecutive_up_days_min %} class="alpha-trend-extra-row" hidden{% endif %}><td><strong>{{ trend.symbol }}</strong></td><td class="numeric">{{ trend.consecutive_up_days }}</td><td class="numeric">{{ trend.recent_five_up_days }}</td><td class="numeric alpha-change{% if trend.three_day_return is not none %} {{ 'alpha-change-positive' if trend.three_day_return >= 0 else 'alpha-change-negative' }}{% endif %}">{% if trend.three_day_return is not none %}{{ '%+.2f'|format(trend.three_day_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if trend.five_day_return is not none %} {{ 'alpha-change-positive' if trend.five_day_return >= 0 else 'alpha-change-negative' }}{% endif %}">{% if trend.five_day_return is not none %}{{ '%+.2f'|format(trend.five_day_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric">{% if trend.trend_return is not none %}{{ '%.2f'|format(trend.trend_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric">{{ trend.kline_count }}</td></tr>{% endfor %}
-      </tbody></table></div>{% else %}<p class="empty-state">暂无日线数据，后台将自动采集。</p>{% endif %}
+      </tbody></table></div>{% if not trends %}<p class="empty-state">加载中…</p>{% endif %}
     </section>
-    <section class="panel alpha-panel" data-alpha-panel="snapshot" hidden>
+    <section class="panel alpha-panel" hidden>
       <div class="panel-title alpha-panel-title">
         <div><h2>最新市场快照</h2><span>按1天活跃度从高到低排列（周期成交量/当前市值）</span></div>
         {% if tokens|length > 10 %}<button type="button" class="btn btn-secondary alpha-toggle" aria-expanded="false">展开全部（{{ tokens|length }}）</button>{% endif %}
@@ -116,7 +116,33 @@
     document.querySelectorAll('[data-alpha-panel]').forEach((panel) => { panel.hidden = panel.dataset.alphaPanel !== name; });
     document.querySelectorAll('[data-alpha-tab]').forEach((tab) => { tab.classList.toggle('active', tab.dataset.alphaTab === name); tab.setAttribute('aria-selected', String(tab.dataset.alphaTab === name)); });
   };
+  document.querySelectorAll('.alpha-panel').forEach((panel, index) => { panel.dataset.alphaPanel = ['oi', 'funding', 'trend', 'snapshot'][index]; });
+  const esc = (value) => String(value ?? '—').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const pct = (value, digits = 2) => value == null ? '—' : `${value >= 0 ? '+' : ''}${(value * 100).toFixed(digits)}%`;
+  const loadAlphaModule = async (module) => {
+    const target = document.querySelector(`[data-alpha-deferred="${module}"]`);
+    const panel = target && target.closest('[data-alpha-panel]');
+    if (!panel) return;
+    try {
+      const response = await fetch(`/market/alpha/data?module=${module}`, {headers: {'X-Requested-With': 'XMLHttpRequest'}});
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      const rows = payload.data || [];
+      const body = panel.querySelector('tbody');
+      if (!body) return;
+      body.innerHTML = rows.map((item, index) => {
+        if (module === 'oi') return `<tr class="${index >= 10 ? 'alpha-oi-extra-row' : ''}" ${index >= 10 ? 'hidden' : ''} data-oi-change="${item.oi_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric alpha-change">${pct(item.oi_change)}</td><td class="numeric alpha-change">${pct(item.price_change)}</td></tr>`;
+        if (module === 'funding') return `<tr class="${index >= 10 ? 'alpha-funding-extra-row' : ''}" ${index >= 10 ? 'hidden' : ''}><td><strong>${esc(item.symbol)}</strong></td><td class="numeric alpha-change">${pct(item.funding_change)}</td><td class="numeric alpha-change">${pct(item.price_change)}</td></tr>`;
+        return `<tr class="${index >= 10 ? 'alpha-trend-extra-row' : ''}" ${index >= 10 ? 'hidden' : ''} data-consecutive-up-days="${item.consecutive_up_days}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${item.consecutive_up_days}</td><td class="numeric">${item.recent_five_up_days}</td><td class="numeric alpha-change">${pct(item.three_day_return)}</td><td class="numeric alpha-change">${pct(item.five_day_return)}</td><td class="numeric">${pct(item.trend_return)}</td><td class="numeric">${item.kline_count}</td></tr>`;
+      }).join('');
+      bindAlphaToggles(panel);
+    } catch (error) {
+      const empty = panel.querySelector('.empty-state');
+      if (empty) empty.textContent = '该模块加载失败，请稍后重试。';
+    }
+  };
   document.querySelectorAll('[data-alpha-tab]').forEach((tab) => tab.addEventListener('click', () => activateAlphaModule(tab.dataset.alphaTab)));
+  if (document.querySelector('[data-alpha-deferred]')) ['oi', 'funding', 'trend'].forEach(loadAlphaModule);
   activateAlphaModule('oi');
   const bindAlphaFilter = (form) => form.addEventListener('submit', (event) => {
     event.preventDefault();
