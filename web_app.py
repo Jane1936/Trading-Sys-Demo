@@ -1265,10 +1265,9 @@ def alpha_market():
             trends = alpha_observer.daily_trends(ALPHA_DB_PATH) if not is_partial_filter or "consecutive_up_days_min" in request.args else []
         except sqlite3.DatabaseError:
             trends = []
-        trends = [
-            trend for trend in trends
-            if trend["consecutive_up_days"] >= consecutive_up_days_min
-        ]
+        # Always load the complete trend dataset.  The filter is applied in
+        # the browser so changing the threshold can reveal symbols that were
+        # omitted by the default (2-day) filter on the initial page load.
         database_status = alpha_observer.database_status(ALPHA_DB_PATH)
         try:
             oi_changes = _alpha_oi_changes() if not is_partial_filter or "oi_min" in request.args or "price_max" in request.args else []
