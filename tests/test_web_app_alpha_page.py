@@ -122,11 +122,21 @@ def test_alpha_oi_changes_batches_symbols_and_caches_by_snapshot(tmp_path, monke
 def test_alpha_funding_changes_batches_symbols(tmp_path, monkeypatch):
     db_path = tmp_path / "market.db"
     _create_market_tables(db_path)
+    hour = 3_600_000
     with sqlite3.connect(db_path) as conn:
         conn.executemany(
             "INSERT INTO klines_1h VALUES (?, ?, ?, ?)",
-            [("AAA", 1, 10, 0.01), ("AAA", 2, 11, 0.02),
-             ("BBB", 1, 20, 0.02), ("BBB", 2, 18, 0.01)],
+            [
+                # Adjacent hourly rows intentionally have equal rates.  Funding
+                # rates commonly remain unchanged for several hours, so the
+                # comparison must use the four-hour anchor rather than rn=2.
+                ("AAA", 0, 10, 0.01),
+                ("AAA", 3 * hour, 10.5, 0.02),
+                ("AAA", 4 * hour, 11, 0.02),
+                ("BBB", 0, 20, 0.02),
+                ("BBB", 3 * hour, 19, 0.01),
+                ("BBB", 4 * hour, 18, 0.01),
+            ],
         )
         conn.executemany(
             "INSERT INTO klines_4h VALUES (?, ?, ?, NULL)",
@@ -145,4 +155,26 @@ def test_alpha_funding_changes_batches_symbols(tmp_path, monkeypatch):
     assert [(row["symbol"], row["funding_change"], row["price_change"]) for row in rows] == [
         ("AAA", 1.0, pytest.approx(0.2)),
         ("BBB", -0.5, pytest.approx(-0.1)),
+    ]
+
+
+def test_alpha_funding_change_requires_four_hours_of_history(tmp_path, monkeypatch):
+    db_path = tmp_path / "market.db"
+    _create_market_tables(db_path)
+    hour = 3_600_000
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            "INSERT INTO klines_1h VALUES (?, ?, ?, ?)",
+            [("AAA", 2 * hour, 10, 0.01), ("AAA", 4 * hour, 11, 0.02)],
+        )
+    monkeypatch.setattr(web_app, "BASE_DB_PATH", str(db_path))
+    monkeypatch.setattr(
+        web_app.alpha_observer,
+        "latest_snapshot",
+        lambda _path: (21, [{"symbol": "AAA"}]),
+    )
+    web_app._alpha_analytics_cache.clear()
+
+    assert web_app._alpha_funding_changes() == [
+        {"symbol": "AAA", "funding_change": None, "price_change": None}
     ]

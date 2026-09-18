@@ -1441,16 +1441,27 @@ def _alpha_funding_changes():
         placeholders = ",".join("?" for _ in symbols)
         symbol_params = sorted(symbols)
         rows = conn.execute(
-            f"""WITH rates AS (
-                    SELECT symbol,
-                           MAX(CASE WHEN rn = 1 THEN funding_rate END) AS latest_rate,
-                           MAX(CASE WHEN rn = 2 THEN funding_rate END) AS previous_rate
+            f"""WITH latest_rates AS (
+                    SELECT symbol, open_time, funding_rate
                     FROM (
-                        SELECT symbol, funding_rate,
+                        SELECT symbol, open_time, funding_rate,
                                ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS rn
                         FROM klines_1h
                         WHERE symbol IN ({placeholders}) AND funding_rate IS NOT NULL
-                    ) WHERE rn <= 2 GROUP BY symbol
+                    ) WHERE rn = 1
+                ), rates AS (
+                    SELECT latest.symbol,
+                           latest.funding_rate AS latest_rate,
+                           (
+                               SELECT history.funding_rate
+                               FROM klines_1h AS history
+                               WHERE history.symbol = latest.symbol
+                                 AND history.funding_rate IS NOT NULL
+                                 AND history.open_time <= latest.open_time - 14400000
+                               ORDER BY history.open_time DESC
+                               LIMIT 1
+                           ) AS previous_rate
+                    FROM latest_rates AS latest
                 ), prices AS (
                     SELECT symbol,
                            MAX(CASE WHEN rn = 1 THEN close END) AS latest_close,
