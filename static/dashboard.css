@@ -355,3 +355,10 @@ tbody tr:hover { background: #f8fdff; }
   .allusdt-24h-highlight { align-items:flex-start; flex-direction:column; }
   .allusdt-24h-meta { align-items:flex-start; }
 }
+
+/* Alpha观测以模块卡片+标签切换呈现，避免四张长表同时占满页面。 */
+.alpha-module-tabs { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-top:20px; }
+.alpha-module-tab { display:flex; flex-direction:column; align-items:flex-start; gap:4px; padding:16px 18px; border:1px solid #dbeafe; border-radius:14px; background:#fff; color:#334155; cursor:pointer; font:inherit; text-align:left; box-shadow:0 5px 16px rgba(15,23,42,.05); transition:.18s ease; }
+.alpha-module-tab span { font-weight:800; font-size:16px; }.alpha-module-tab small { color:#64748b; }.alpha-module-tab:hover { transform:translateY(-2px); border-color:#5eead4; }.alpha-module-tab.active { color:#fff; background:linear-gradient(135deg,#0f766e,#0d9488); border-color:#0f766e; box-shadow:0 8px 22px rgba(13,148,136,.22); }.alpha-module-tab.active small { color:#ccfbf1; }
+.alpha-panel[hidden] { display:none !important; }
+@media (max-width:700px) { .alpha-module-tabs { grid-template-columns:repeat(2,minmax(0,1fr)); } }
