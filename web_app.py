@@ -1285,9 +1285,11 @@ def alpha_market():
             funding_changes = _alpha_funding_changes() if not defer_modules and (not is_partial_filter or not request.args) else []
         except sqlite3.DatabaseError:
             funding_changes = []
+        # Render the complete snapshot immediately.  The previous first-load
+        # optimisation truncated this list to ten rows, but there is no
+        # follow-up request for the snapshot panel, so the remaining tokens
+        # could never be displayed automatically.
         tokens = [dict(row) for row in rows]
-        if defer_modules:
-            tokens = tokens[:10]
         error = None
     except Exception as exc:
         app.logger.exception("Alpha observer page failed")

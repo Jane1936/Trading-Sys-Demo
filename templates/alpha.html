@@ -85,7 +85,7 @@
           <thead><tr><th>#</th><th>币种</th><th>名称</th><th>网络</th><th>24小时成交量</th><th>市值</th><th>1天活跃度</th><th>2天活跃度</th><th>3天活跃度</th><th>4天活跃度</th><th>5天活跃度</th></tr></thead>
           <tbody>
           {% for token in tokens %}
-            <tr{% if loop.index > 10 %} class="alpha-extra-row" hidden{% endif %}>
+            <tr>
               {% set activity = token.activity_1d|default(token.activity|default(none)) %}
               <td>{{ loop.index }}</td>
               <td><strong>{{ token.symbol }}</strong></td>
@@ -131,10 +131,12 @@
       const body = panel.querySelector('tbody');
       if (!body) return;
       body.innerHTML = rows.map((item, index) => {
-        if (module === 'oi') return `<tr class="${index >= 10 ? 'alpha-oi-extra-row' : ''}" ${index >= 10 ? 'hidden' : ''} data-oi-change="${item.oi_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric alpha-change">${pct(item.oi_change)}</td><td class="numeric alpha-change">${pct(item.price_change)}</td></tr>`;
-        if (module === 'funding') return `<tr class="${index >= 10 ? 'alpha-funding-extra-row' : ''}" ${index >= 10 ? 'hidden' : ''}><td><strong>${esc(item.symbol)}</strong></td><td class="numeric alpha-change">${pct(item.funding_change)}</td><td class="numeric alpha-change">${pct(item.price_change)}</td></tr>`;
-        return `<tr class="${index >= 10 ? 'alpha-trend-extra-row' : ''}" ${index >= 10 ? 'hidden' : ''} data-consecutive-up-days="${item.consecutive_up_days}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${item.consecutive_up_days}</td><td class="numeric">${item.recent_five_up_days}</td><td class="numeric alpha-change">${pct(item.three_day_return)}</td><td class="numeric alpha-change">${pct(item.five_day_return)}</td><td class="numeric">${pct(item.trend_return)}</td><td class="numeric">${item.kline_count}</td></tr>`;
+        if (module === 'oi') return `<tr data-oi-change="${item.oi_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric alpha-change">${pct(item.oi_change)}</td><td class="numeric alpha-change">${pct(item.price_change)}</td></tr>`;
+        if (module === 'funding') return `<tr><td><strong>${esc(item.symbol)}</strong></td><td class="numeric alpha-change">${pct(item.funding_change)}</td><td class="numeric alpha-change">${pct(item.price_change)}</td></tr>`;
+        return `<tr data-consecutive-up-days="${item.consecutive_up_days}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${item.consecutive_up_days}</td><td class="numeric">${item.recent_five_up_days}</td><td class="numeric alpha-change">${pct(item.three_day_return)}</td><td class="numeric alpha-change">${pct(item.five_day_return)}</td><td class="numeric">${pct(item.trend_return)}</td><td class="numeric">${item.kline_count}</td></tr>`;
       }).join('');
+      const empty = panel.querySelector('.empty-state');
+      if (empty) empty.remove();
       bindAlphaToggles(panel);
     } catch (error) {
       const empty = panel.querySelector('.empty-state');
