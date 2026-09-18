@@ -125,10 +125,10 @@ def backfill_recent_daily_klines(db_path: str = db_config.ALPHA_DB_PATH, *, sess
 def daily_trends(db_path: str = db_config.ALPHA_DB_PATH, limit: int = 30) -> list[dict[str, Any]]:
     """Return recent price-trend metrics for each token.
 
-    The three-day return covers the newest three available daily candles, from
-    the oldest candle's open to the newest candle's close.  Tokens without
-    three complete data points retain a ``None`` value and sort after tokens
-    that have enough history.
+    The three- and five-day returns cover the newest three or five available
+    daily candles, respectively, from the oldest candle's open to the newest
+    candle's close. Tokens without enough complete data points retain a
+    ``None`` value for that metric.
     """
     init_db(db_path)
     with db_config.connect_sqlite(db_path, row_factory=sqlite3.Row) as conn:
@@ -146,11 +146,15 @@ def daily_trends(db_path: str = db_config.ALPHA_DB_PATH, limit: int = 30) -> lis
             three_day_return = None
             if len(rows) >= 3 and rows[2]["open"]:
                 three_day_return = (rows[0]["close"] / rows[2]["open"]) - 1
+            five_day_return = None
+            if len(rows) >= 5 and rows[4]["open"]:
+                five_day_return = (rows[0]["close"] / rows[4]["open"]) - 1
             result.append({
                 "symbol": symbol,
                 "consecutive_up_days": ups,
                 "trend_return": ret,
                 "three_day_return": three_day_return,
+                "five_day_return": five_day_return,
                 "kline_count": len(rows),
             })
     return sorted(

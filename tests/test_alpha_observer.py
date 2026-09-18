@@ -134,8 +134,8 @@ def test_daily_trends_calculates_three_day_return_and_sorts_descending(tmp_path)
                 (symbol,),
             )
         candles = {
-            "GAIN": [(1, 100, 105), (2, 105, 110), (3, 110, 130)],
-            "LOSS": [(1, 100, 95), (2, 95, 90), (3, 90, 80)],
+            "GAIN": [(1, 100, 105), (2, 105, 110), (3, 110, 115), (4, 115, 125), (5, 125, 130)],
+            "LOSS": [(1, 100, 95), (2, 95, 90), (3, 90, 88), (4, 88, 85), (5, 85, 80)],
             "SHORT": [(1, 10, 12), (2, 12, 14)],
         }
         for symbol, rows in candles.items():
@@ -151,4 +151,7 @@ def test_daily_trends_calculates_three_day_return_and_sorts_descending(tmp_path)
     assert [trend["symbol"] for trend in trends] == ["GAIN", "LOSS", "SHORT"]
     assert trends[0]["three_day_return"] == pytest.approx(0.3)
     assert trends[1]["three_day_return"] == pytest.approx(-0.2)
+    assert trends[0]["five_day_return"] == pytest.approx(0.3)
+    assert trends[1]["five_day_return"] == pytest.approx(-0.2)
     assert trends[2]["three_day_return"] is None
+    assert trends[2]["five_day_return"] is None
