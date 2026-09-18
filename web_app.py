@@ -1507,15 +1507,24 @@ def _alpha_funding_changes():
                                LIMIT 1
                            ) AS previous_rate
                     FROM latest_rates AS latest
-                ), prices AS (
-                    SELECT symbol,
-                           MAX(CASE WHEN rn = 1 THEN close END) AS latest_close,
-                           MAX(CASE WHEN rn = 2 THEN close END) AS previous_close
+                ), latest_prices AS (
+                    SELECT symbol, open_time, close AS latest_close
                     FROM (
-                        SELECT symbol, close,
+                        SELECT symbol, open_time, close,
                                ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS rn
-                        FROM klines_4h WHERE symbol IN ({placeholders})
-                    ) WHERE rn <= 2 GROUP BY symbol
+                        FROM klines_1h WHERE symbol IN ({placeholders})
+                    ) WHERE rn = 1
+                ), prices AS (
+                    SELECT latest.symbol, latest.latest_close,
+                           (
+                               SELECT history.close
+                               FROM klines_1h AS history
+                               WHERE history.symbol = latest.symbol
+                                 AND history.open_time <= latest.open_time - 14400000
+                               ORDER BY history.open_time DESC
+                               LIMIT 1
+                           ) AS previous_close
+                    FROM latest_prices AS latest
                 ), requested(symbol) AS (VALUES {','.join('(?)' for _ in symbols)})
                 SELECT requested.symbol,
                        CASE WHEN rates.previous_rate != 0
