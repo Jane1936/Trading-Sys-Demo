@@ -1254,6 +1254,10 @@ def alpha_market():
             return None
     oi_min = _percent_arg("oi_min")
     price_max = _percent_arg("price_max")
+    # The default browser request is intentionally lightweight.  Filtered and
+    # AJAX requests retain the complete server-rendered path for deep links and
+    # no-JavaScript clients.
+    defer_modules = not is_partial_filter and not request.args
     try:
         consecutive_up_days_min = int(request.args.get("consecutive_up_days_min", "2"))
         consecutive_up_days_min = max(0, consecutive_up_days_min)
@@ -1262,7 +1266,7 @@ def alpha_market():
     try:
         observed_at, rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
         try:
-            trends = alpha_observer.daily_trends(ALPHA_DB_PATH) if not is_partial_filter or "consecutive_up_days_min" in request.args else []
+            trends = alpha_observer.daily_trends(ALPHA_DB_PATH) if not defer_modules and (not is_partial_filter or "consecutive_up_days_min" in request.args) else []
         except sqlite3.DatabaseError:
             trends = []
         # Always load the complete trend dataset.  The filter is applied in
@@ -1270,7 +1274,7 @@ def alpha_market():
         # omitted by the default (2-day) filter on the initial page load.
         database_status = alpha_observer.database_status(ALPHA_DB_PATH)
         try:
-            oi_changes = _alpha_oi_changes() if not is_partial_filter or "oi_min" in request.args or "price_max" in request.args else []
+            oi_changes = _alpha_oi_changes() if not defer_modules and (not is_partial_filter or "oi_min" in request.args or "price_max" in request.args) else []
         except sqlite3.DatabaseError:
             oi_changes = []
         if oi_min is not None:
@@ -1278,10 +1282,12 @@ def alpha_market():
         if price_max is not None:
             oi_changes = [r for r in oi_changes if r["price_change"] is not None and abs(r["price_change"]) <= price_max / 100]
         try:
-            funding_changes = _alpha_funding_changes() if not is_partial_filter or not request.args else []
+            funding_changes = _alpha_funding_changes() if not defer_modules and (not is_partial_filter or not request.args) else []
         except sqlite3.DatabaseError:
             funding_changes = []
         tokens = [dict(row) for row in rows]
+        if defer_modules:
+            tokens = tokens[:10]
         error = None
     except Exception as exc:
         app.logger.exception("Alpha observer page failed")
@@ -1312,6 +1318,25 @@ def alpha_market():
         price_max=price_max,
         consecutive_up_days_min=consecutive_up_days_min,
     )
+
+
+@app.get("/market/alpha/data")
+def alpha_market_data():
+    """Return one deferred Alpha module as JSON for the interactive page."""
+    module = request.args.get("module", "")
+    try:
+        if module == "oi":
+            data = _alpha_oi_changes()
+        elif module == "funding":
+            data = _alpha_funding_changes()
+        elif module == "trend":
+            data = alpha_observer.daily_trends(ALPHA_DB_PATH)
+        else:
+            return jsonify({"error": "unknown module"}), 400
+        return jsonify({"module": module, "data": data})
+    except Exception as exc:
+        app.logger.exception("Alpha deferred module failed: %s", module)
+        return jsonify({"module": module, "error": str(exc), "data": []}), 503
 
 
 def _alpha_oi_changes():
