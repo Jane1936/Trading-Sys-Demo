@@ -20,6 +20,8 @@ from typing import Any
 
 from binance_account_manager import BinanceAccountManager
 from trade_action_lock import TradeActionLockManager, acquire_trade_action_lock
+from zombie_force_liquidation_settings import get_settings as get_zombie_settings
+import allusdt_24h_ticker
 from trading_experiment import ExperimentConfig, TradingExperiment
 
 
@@ -70,6 +72,7 @@ class ZombieForceLiquidationModule:
         self.core_db_path = db_config.trading_core_path(db_path)
         self.account_manager = account_manager or BinanceAccountManager()
         self.config = config or ExperimentConfig()
+        self.zombie_settings = get_zombie_settings(db_config.CONFIG_DB_PATH)
 
     def _connect(self) -> sqlite3.Connection:
         conn = db_config.connect_sqlite(self.core_db_path, row_factory=sqlite3.Row)
@@ -133,6 +136,10 @@ class ZombieForceLiquidationModule:
         positions = helper._fetch_and_store_positions()
         now = int(time.time() * 1000) if checked_at is None else int(checked_at)
         checked = triggered = records = 0
+        try: rise = allusdt_24h_ticker.fetch_change_percent()
+        except Exception: rise = None
+        hours = self.zombie_settings["high_rise_holding_hours"] if rise is not None and rise > self.zombie_settings["allusdt_rise_threshold_percent"] else self.zombie_settings["holding_hours"]
+        self.holding_threshold_ms = int(hours * 60 * 60 * 1000)
         for position in positions:
             amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
             if amount == 0:
@@ -154,11 +161,11 @@ class ZombieForceLiquidationModule:
         if opened_at is None:
             self._insert_check(symbol, now, None, holding_hours, amount, entry_price, False, False, "opened_at_missing")
             return False
-        if holding_ms < self.HOLDING_THRESHOLD_MS:
-            self._insert_check(symbol, now, opened_at, holding_hours, amount, entry_price, False, False, "holding_time_lt_24h")
+        if holding_ms < self.holding_threshold_ms:
+            self._insert_check(symbol, now, opened_at, holding_hours, amount, entry_price, False, False, "holding_time_below_threshold")
             return False
 
-        self._insert_check(symbol, now, opened_at, holding_hours, amount, entry_price, False, True, "holding_time_gte_24h")
+        self._insert_check(symbol, now, opened_at, holding_hours, amount, entry_price, False, True, "holding_time_reached_threshold")
         self._force_close(helper, exchange_symbol, symbol, amount, entry_price, opened_at, now)
         return True
 

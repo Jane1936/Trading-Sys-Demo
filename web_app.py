@@ -79,6 +79,7 @@ from dynamic_open_threshold import (
 )
 from dynamic_add_position_threshold import DynamicAddPositionThresholdModule
 from zombie_force_liquidation import ZombieForceLiquidationModule
+from zombie_force_liquidation_settings import get_settings as get_zombie_force_settings, set_settings as set_zombie_force_settings
 from sqlite_recovery import (
     is_malformed_database_error,
     quick_check_sqlite_database,
@@ -248,6 +249,7 @@ def load_settings_context() -> dict:
                 "allusdt_24h_rise_max_open_positions": 15,
             },
         ),
+        "zombie_force_liquidation_settings": load_setting("僵尸强平时间配置", lambda: get_zombie_force_settings(CONFIG_DB_PATH), {"holding_hours": 24, "allusdt_rise_threshold_percent": 4, "high_rise_holding_hours": 12}),
         "margin_budget_settings": load_setting("总仓位成本配置", lambda: get_margin_budget_settings(CONFIG_DB_PATH), {"simulation_max_margin_cost_usdt": Decimal("1000"), "live_max_margin_cost_usdt": Decimal("100")}),
         "dynamic_profit_protection_settings": load_setting(
             "动态利润保护配置",
@@ -1967,6 +1969,17 @@ def update_feature_flag_api(key: str):
 @app.get("/api/position-limit-settings")
 def position_limit_settings_api():
     return jsonify(get_position_limit_settings(CONFIG_DB_PATH))
+
+@app.get("/api/zombie-force-liquidation-settings")
+def zombie_force_liquidation_settings_api():
+    return jsonify(get_zombie_force_settings(CONFIG_DB_PATH))
+
+@app.put("/api/zombie-force-liquidation-settings")
+def update_zombie_force_liquidation_settings_api():
+    try:
+        return jsonify(set_zombie_force_settings(request.get_json(silent=True) or {}, CONFIG_DB_PATH))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
 @app.get("/api/margin-budget-settings")
 def margin_budget_settings_api():
