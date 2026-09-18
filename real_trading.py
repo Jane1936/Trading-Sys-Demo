@@ -21,7 +21,7 @@ from trailing_reduction_tracker import TrailingReductionTracker
 from dynamic_profit_protection import DynamicProfitProtection
 from hard_take_profit import HardTakeProfit
 from trailing_stop_tracker import TrailingStopTracker
-from position_limit_settings import get_settings as get_position_limit_settings
+from position_limit_settings import get_settings as get_position_limit_settings, effective_max_open_positions
 from margin_budget_settings import get_settings as get_margin_budget_settings
 
 
@@ -44,7 +44,7 @@ def experiment() -> TradingExperiment:
         openable_db_path=db_config.SCORING_DB_PATH,
         account_manager=BinanceAccountManager.live(),
         config=config(),
-        max_open_positions=position_limits["live_max_open_positions"],
+        max_open_positions=effective_max_open_positions(position_limits["live_max_open_positions"], position_limits),
         max_new_positions_per_round=position_limits["max_new_positions_per_round"],
     )
 

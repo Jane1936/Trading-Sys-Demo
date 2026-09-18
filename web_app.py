@@ -244,6 +244,8 @@ def load_settings_context() -> dict:
                 "simulation_max_open_positions": 1,
                 "live_max_open_positions": 1,
                 "max_new_positions_per_round": 5,
+                "allusdt_24h_rise_threshold_percent": 4.0,
+                "allusdt_24h_rise_max_open_positions": 15,
             },
         ),
         "margin_budget_settings": load_setting("总仓位成本配置", lambda: get_margin_budget_settings(CONFIG_DB_PATH), {"simulation_max_margin_cost_usdt": Decimal("1000"), "live_max_margin_cost_usdt": Decimal("100")}),

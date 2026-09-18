@@ -22,7 +22,7 @@ import collector
 import db_config
 from config_database import initialize_config_database
 import feature_flags
-from position_limit_settings import get_settings as get_position_limit_settings
+from position_limit_settings import get_settings as get_position_limit_settings, effective_max_open_positions
 from margin_budget_settings import get_settings as get_margin_budget_settings
 from data_processor import (
     MA20Processor,
@@ -571,9 +571,7 @@ def run_first_experiment_after_openable_round(
         position_limits = get_position_limit_settings()
         simulation_config = ExperimentConfig(max_margin_cost_usdt=get_margin_budget_settings()["simulation_max_margin_cost_usdt"] if feature_flags.is_feature_enabled(feature_flags.MARGIN_COST_LIMIT) else None)
         simulation_experiment = TradingExperiment(db_path=db_config.TRADING_DB_PATH, config=simulation_config)
-        simulation_experiment.max_open_positions = position_limits[
-            "simulation_max_open_positions"
-        ]
+        simulation_experiment.max_open_positions = effective_max_open_positions(position_limits["simulation_max_open_positions"], position_limits)
         simulation_experiment.max_new_positions_per_round = position_limits[
             "max_new_positions_per_round"
         ]
