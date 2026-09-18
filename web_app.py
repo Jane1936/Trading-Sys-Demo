@@ -1248,11 +1248,12 @@ def alpha_market():
         trends = alpha_observer.daily_trends(ALPHA_DB_PATH)
         database_status = alpha_observer.database_status(ALPHA_DB_PATH)
         oi_changes = _alpha_oi_changes()
+        funding_changes = _alpha_funding_changes()
         tokens = [dict(row) for row in rows]
         error = None
     except Exception as exc:
         app.logger.exception("Alpha observer page failed")
-        observed_at, tokens, trends, database_status, oi_changes, error = None, [], [], None, [], str(exc)
+        observed_at, tokens, trends, database_status, oi_changes, funding_changes, error = None, [], [], None, [], [], str(exc)
     observed_time = (
         datetime.fromtimestamp(observed_at / 1000, timezone.utc)
         .strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -1267,6 +1268,7 @@ def alpha_market():
         alpha_error=error,
         trends=trends,
         oi_changes=oi_changes,
+        funding_changes=funding_changes,
     )
 
 
@@ -1302,6 +1304,31 @@ def _alpha_oi_changes():
                 price_change = prices[0][1] / prices[1][1] - 1
             result.append({"symbol": symbol, "oi_change": (oi["open_interest"] / old_oi[0] - 1) if old_oi and old_oi[0] else None, "price_change": price_change})
     return sorted(result, key=lambda row: (row["oi_change"] is None, -(row["oi_change"] or 0)))
+
+
+def _alpha_funding_changes():
+    """Return four-hour funding-rate and price changes for Alpha futures."""
+    _, alpha_rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
+    symbols = {str(row["symbol"]).upper().removesuffix("USDT") for row in alpha_rows}
+    if not symbols:
+        return []
+    with db_config.connect_sqlite(BASE_DB_PATH, row_factory=sqlite3.Row) as conn:
+        result = []
+        for symbol in symbols:
+            rates = conn.execute(
+                "SELECT open_time, funding_rate FROM klines_1h WHERE symbol=? AND funding_rate IS NOT NULL ORDER BY open_time DESC LIMIT 2",
+                (symbol,),
+            ).fetchall()
+            prices = conn.execute(
+                "SELECT close FROM klines_4h WHERE symbol=? ORDER BY open_time DESC LIMIT 2", (symbol,)
+            ).fetchall()
+            funding_change = None
+            if len(rates) == 2 and rates[1][1] not in (None, 0):
+                funding_change = rates[0][1] / rates[1][1] - 1
+            price_change = prices[0][0] / prices[1][0] - 1 if len(prices) == 2 and prices[1][0] else None
+            if rates or prices:
+                result.append({"symbol": symbol, "funding_change": funding_change, "price_change": price_change})
+    return sorted(result, key=lambda row: (row["funding_change"] is None, -(row["funding_change"] or 0)))
 
 
 @app.get("/trading/simulation")
