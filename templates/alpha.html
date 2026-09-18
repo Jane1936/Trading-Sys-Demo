@@ -42,6 +42,12 @@
   {% else %}
     <section class="panel alpha-panel">
       <div class="panel-title alpha-panel-title"><div><h2>OI异动</h2><span>有 U 本位合约的 Alpha 代币 · 每小时变化（数据源：base_data.db）</span></div>{% if oi_changes|length > 10 %}<button type="button" class="btn btn-secondary alpha-oi-toggle" aria-expanded="false">展开全部（{{ oi_changes|length }}）</button>{% endif %}</div>
+      <form class="alpha-filter" method="get" action="{{ url_for('alpha_market') }}">
+        <label>1小时 OI 涨跌幅 ≥ <input type="number" name="oi_min" min="0" step="0.1" value="{{ oi_min if oi_min is not none else '' }}" placeholder="x">%</label>
+        <label>1小时价格涨跌幅绝对值 ≤ <input type="number" name="price_max" min="0" step="0.1" value="{{ price_max if price_max is not none else '' }}" placeholder="y">%</label>
+        <button class="btn btn-secondary" type="submit">筛选</button>
+        {% if oi_min is not none or price_max is not none %}<a class="btn btn-secondary" href="{{ url_for('alpha_market') }}">清除</a>{% endif %}
+      </form>
       {% if oi_changes %}<div class="table-wrap"><table class="alpha-table"><thead><tr><th>币种</th><th>1小时 OI 涨跌幅</th><th>1小时价格涨跌幅</th></tr></thead><tbody>
       {% for item in oi_changes %}<tr{% if loop.index > 10 %} class="alpha-oi-extra-row" hidden{% endif %}><td><strong>{{ item.symbol }}</strong></td><td class="numeric alpha-change{% if item.oi_change is not none %} {{ 'alpha-change-positive' if item.oi_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.oi_change is not none %}{{ '%+.2f'|format(item.oi_change * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if item.price_change is not none %} {{ 'alpha-change-positive' if item.price_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.price_change is not none %}{{ '%+.2f'|format(item.price_change * 100) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
       </tbody></table></div>{% else %}<p class="empty-state">暂无足够的 OI/K 线数据。</p>{% endif %}
