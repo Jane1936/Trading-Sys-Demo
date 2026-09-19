@@ -1387,6 +1387,19 @@ def alpha_market_data():
         return jsonify({"module": module, "error": str(exc), "data": []}), 503
 
 
+@app.get("/market/alpha/status")
+def alpha_market_status():
+    """Return source timestamps so open Alpha pages can detect a completed hour."""
+    try:
+        return jsonify({
+            "oi": _alpha_module_updated_at("oi"),
+            "funding": _alpha_module_updated_at("funding"),
+        })
+    except Exception as exc:
+        app.logger.exception("Alpha status check failed")
+        return jsonify({"error": str(exc)}), 503
+
+
 def _alpha_module_updated_at(module):
     """Return the source timestamp used by an Alpha analytics module."""
     if module == "snapshot":

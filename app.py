@@ -1633,8 +1633,6 @@ def start_alpha_observer_task() -> None:
 
     _job()
     scheduler.add_job(_job, "interval", hours=1, max_instances=1, coalesce=True)
-    # Keep an explicit UTC midnight run as well.  The hourly job remains the
-    # recovery path if the process was down at midnight.
     scheduler.add_job(_job, "cron", hour=0, minute=0, timezone="UTC",
                       max_instances=1, coalesce=True)
     print("🚀 Alpha observer task started (hourly)")
