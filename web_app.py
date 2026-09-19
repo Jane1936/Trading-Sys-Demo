@@ -1323,7 +1323,7 @@ def alpha_market():
         # optimisation truncated this list to ten rows, but there is no
         # follow-up request for the snapshot panel, so the remaining tokens
         # could never be displayed automatically.
-        tokens = [dict(row) for row in rows]
+        tokens = [dict(row) for row in rows[:10]]
         error = None
     except Exception as exc:
         app.logger.exception("Alpha observer page failed")
@@ -1331,7 +1331,7 @@ def alpha_market():
         # unavailable (for example during first startup).
         try:
             observed_at, rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
-            tokens = [dict(row) for row in rows]
+            tokens = [dict(row) for row in rows[:10]]
         except Exception:
             observed_at, tokens = None, []
         trends, database_status, oi_changes, funding_changes, error = [], None, [], [], str(exc)
@@ -1375,6 +1375,9 @@ def alpha_market_data():
             data = _alpha_funding_changes()
         elif module == "trend":
             data = alpha_observer.daily_trends(ALPHA_DB_PATH)
+        elif module == "snapshot":
+            _, rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
+            data = [dict(row) for row in rows]
         else:
             return jsonify({"error": "unknown module"}), 400
         updated_at = _alpha_module_updated_at(module)
