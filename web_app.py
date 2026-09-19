@@ -1422,7 +1422,7 @@ def _alpha_oi_changes():
         return []
 
     def load():
-      with db_config.connect_sqlite(BASE_DB_PATH, row_factory=sqlite3.Row) as conn:
+      with db_config.connect_sqlite(ALPHA_DB_PATH, row_factory=sqlite3.Row) as conn:
         # Treat a symbol as currently supported only when the collector has
         # written OI for it during the last 24 hours.  The table is a long-
         # lived history, so looking at every historical row would retain
@@ -1436,7 +1436,7 @@ def _alpha_oi_changes():
                     FROM (
                         SELECT symbol, snapshot_time, open_interest,
                                ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY snapshot_time DESC) AS rn
-                        FROM open_interest_1m
+                        FROM alpha_hourly_market
                         WHERE symbol IN ({placeholders}) AND snapshot_time >= ?
                     ) WHERE rn = 1
                 ), old_oi AS (
@@ -1444,7 +1444,7 @@ def _alpha_oi_changes():
                     FROM (
                         SELECT history.symbol, history.open_interest,
                                ROW_NUMBER() OVER (PARTITION BY history.symbol ORDER BY history.snapshot_time DESC) AS rn
-                        FROM open_interest_1m AS history
+                        FROM alpha_hourly_market AS history
                         JOIN latest_oi AS latest ON latest.symbol = history.symbol
                         WHERE history.snapshot_time <= latest.snapshot_time - 3600000
                     ) WHERE rn = 1
@@ -1455,7 +1455,7 @@ def _alpha_oi_changes():
                     FROM (
                         SELECT symbol, close,
                                ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS rn
-                        FROM klines_1h WHERE symbol IN ({placeholders})
+                        FROM alpha_hourly_market WHERE symbol IN ({placeholders})
                     ) WHERE rn <= 2 GROUP BY symbol
                 )
                 SELECT latest.symbol,
@@ -1482,7 +1482,7 @@ def _alpha_funding_changes():
         return []
 
     def load():
-      with db_config.connect_sqlite(BASE_DB_PATH, row_factory=sqlite3.Row) as conn:
+      with db_config.connect_sqlite(ALPHA_DB_PATH, row_factory=sqlite3.Row) as conn:
         placeholders = ",".join("?" for _ in symbols)
         symbol_params = sorted(symbols)
         rows = conn.execute(
@@ -1491,7 +1491,7 @@ def _alpha_funding_changes():
                     FROM (
                         SELECT symbol, open_time, funding_rate,
                                ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS rn
-                        FROM klines_1h
+                        FROM alpha_hourly_market
                         WHERE symbol IN ({placeholders}) AND funding_rate IS NOT NULL
                     ) WHERE rn = 1
                 ), rates AS (
@@ -1499,7 +1499,7 @@ def _alpha_funding_changes():
                            latest.funding_rate AS latest_rate,
                            (
                                SELECT history.funding_rate
-                               FROM klines_1h AS history
+                               FROM alpha_hourly_market AS history
                                WHERE history.symbol = latest.symbol
                                  AND history.funding_rate IS NOT NULL
                                  AND history.open_time <= latest.open_time - 14400000
@@ -1512,13 +1512,13 @@ def _alpha_funding_changes():
                     FROM (
                         SELECT symbol, open_time, close,
                                ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS rn
-                        FROM klines_1h WHERE symbol IN ({placeholders})
+                        FROM alpha_hourly_market WHERE symbol IN ({placeholders})
                     ) WHERE rn = 1
                 ), prices AS (
                     SELECT latest.symbol, latest.latest_close,
                            (
                                SELECT history.close
-                               FROM klines_1h AS history
+                               FROM alpha_hourly_market AS history
                                WHERE history.symbol = latest.symbol
                                  AND history.open_time <= latest.open_time - 14400000
                                ORDER BY history.open_time DESC
