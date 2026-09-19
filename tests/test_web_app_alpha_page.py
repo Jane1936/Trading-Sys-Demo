@@ -82,6 +82,21 @@ def test_populated_alpha_page_marks_standalone_panel_visible():
     assert "5天活跃度" in body
 
 
+def test_alpha_trend_table_omits_trend_return_metric():
+    template = (Path(__file__).resolve().parents[1] / "templates" / "alpha.html").read_text()
+
+    assert "趋势收益" not in template
+    assert "trend_return" not in template
+
+
+def test_alpha_page_refreshes_snapshot_at_hourly_minute_one_without_meta_refresh():
+    template = (Path(__file__).resolve().parents[1] / "templates" / "alpha.html").read_text()
+
+    assert 'http-equiv="refresh"' not in template
+    assert "nextRefresh.setUTCMinutes(1, 0, 0)" in template
+    assert "loadAlphaModule('snapshot')" in template
+
+
 def test_alpha_oi_changes_batches_symbols_and_caches_by_snapshot(tmp_path, monkeypatch):
     db_path = tmp_path / "market.db"
     _create_market_tables(db_path)
