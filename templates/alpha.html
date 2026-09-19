@@ -148,7 +148,7 @@
         const extra = index >= 10 ? ' class="alpha-deferred-extra-row" hidden' : '';
         if (module === 'oi') return `<tr${extra} data-oi-change="${item.oi_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td>${changeCell(item.oi_change)}${changeCell(item.price_change)}</tr>`;
         if (module === 'funding') return `<tr${extra} data-funding-change="${item.funding_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td>${changeCell(item.funding_change)}${changeCell(item.price_change)}</tr>`;
-        if (module === 'snapshot') return `<tr${extra}><td>${index + 1}</td><td><strong>${esc(item.symbol)}</strong></td><td>${esc(item.name)}</td><td>${esc(item.chain_id)}</td><td class="numeric">${esc(item.volume_24h)}</td><td class="numeric">${esc(item.market_cap)}</td><td colspan="5">—</td></tr>`;
+        if (module === 'snapshot') return `<tr${extra}><td>${index + 1}</td><td><strong>${esc(item.symbol)}</strong></td><td>${esc(item.name)}</td><td>${esc(item.chain_id)}</td><td class="numeric">${esc(item.volume_24h)}</td><td class="numeric">${esc(item.market_cap)}</td>${[1,2,3,4,5].map((d) => `<td class="numeric">${esc(item[`activity_${d}d`])}</td>`).join('')}</tr>`;
         return `<tr${extra} data-consecutive-up-days="${item.consecutive_up_days}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${item.consecutive_up_days}</td><td class="numeric">${item.recent_five_up_days}</td>${changeCell(item.three_day_return)}${changeCell(item.five_day_return)}${changeCell(item.trend_return)}<td class="numeric">${item.kline_count}</td></tr>`;
       }).join('');
       const empty = panel.querySelector('.empty-state');

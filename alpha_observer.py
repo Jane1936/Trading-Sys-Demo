@@ -28,6 +28,7 @@ ALPHA_KLINE_URL = os.getenv("ALPHA_KLINE_URL", "https://api.binance.com/api/v3/k
 FUTURES_KLINE_URL = os.getenv("ALPHA_FUTURES_KLINE_URL", "https://fapi.binance.com/fapi/v1/klines")
 FUTURES_OI_URL = os.getenv("ALPHA_FUTURES_OI_URL", "https://fapi.binance.com/fapi/v1/openInterest")
 FUTURES_PREMIUM_URL = os.getenv("ALPHA_FUTURES_PREMIUM_URL", "https://fapi.binance.com/fapi/v1/premiumIndex")
+FUTURES_EXCHANGE_INFO_URL = os.getenv("ALPHA_FUTURES_EXCHANGE_INFO_URL", "https://fapi.binance.com/fapi/v1/exchangeInfo")
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("ALPHA_REQUEST_TIMEOUT_SECONDS", "20"))
 BACKFILL_HOURS = 24
 DAY_MS = 24 * 60 * 60 * 1000
@@ -123,7 +124,21 @@ def collect_hourly_market_data(db_path: str = db_config.ALPHA_DB_PATH, *, sessio
     """Collect one-hour futures OI, funding and close data in alpha.db."""
     init_db(db_path)
     _, rows = latest_snapshot(db_path)
-    symbols = [str(r["symbol"]).upper().removesuffix("USDT") for r in rows]
+    alpha_symbols = {str(r["symbol"]).upper().removesuffix("USDT") for r in rows}
+    # Restrict collection to the true Alpha/U-margined intersection.  The
+    # Alpha endpoint contains spot-only tokens, so attempting every symbol
+    # would pollute alpha_hourly_market with unrelated records.
+    try:
+        payload = session.get(FUTURES_EXCHANGE_INFO_URL, timeout=REQUEST_TIMEOUT_SECONDS).json()
+        contracts = payload.get("symbols", []) if isinstance(payload, dict) else []
+        um_symbols = {str(item.get("symbol", "")).upper().removesuffix("USDT")
+                      for item in contracts
+                      if item.get("status") == "TRADING" and str(item.get("symbol", "")).upper().endswith("USDT")
+                      and item.get("contractType", "PERPETUAL") in ("PERPETUAL", "CURRENT_QUARTER", "NEXT_QUARTER")}
+        symbols = sorted(alpha_symbols & um_symbols) if um_symbols else sorted(alpha_symbols)
+    except Exception as exc:
+        print(f"⚠️ Futures exchange info unavailable; using Alpha symbols: {exc}")
+        symbols = sorted(alpha_symbols)
     hour = (int(time.time() * 1000) // 3_600_000) * 3_600_000
     saved = 0
     with db_config.connect_sqlite(db_path) as conn:
