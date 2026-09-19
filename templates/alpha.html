@@ -49,7 +49,7 @@
       </div>
       <div class="table-wrap">
         <table class="alpha-table" data-alpha-deferred="snapshot">
-          <thead><tr><th>#</th><th>币种</th><th>名称</th><th>网络</th><th>24小时成交量</th><th>市值</th><th>1天活跃度</th><th>2天活跃度</th><th>3天活跃度</th><th>4天活跃度</th><th>5天活跃度</th></tr></thead>
+          <thead><tr><th>#</th><th>币种</th><th>名称</th><th>网络</th><th>24小时成交量</th><th>市值</th><th>1天活跃度</th><th>最近第2天活跃度</th><th>最近第3天活跃度</th><th>最近第4天活跃度</th><th>最近第5天活跃度</th></tr></thead>
           <tbody>
           {% for token in tokens %}
             <tr class="{% if loop.index > 10 %}alpha-extra-row{% endif %}"{% if loop.index > 10 %} hidden{% endif %}>

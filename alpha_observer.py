@@ -341,13 +341,12 @@ class _StaticTokenSession:
 
 
 def latest_snapshot(db_path: str = db_config.ALPHA_DB_PATH) -> tuple[int | None, list[dict[str, Any]]]:
-    """Return the latest tokens with rolling one-to-five-day activity.
+    """Return the latest tokens with one-to-five-day activity.
 
-    Binance supplies a rolling 24-hour volume rather than historical daily
-    candles.  For an N-day value we therefore add the latest 24-hour volume to
-    the nearest snapshot at each preceding 24-hour boundary, then divide by
-    the latest market cap.  A value is left unavailable if any required daily
-    sample is missing.
+    Multi-day columns represent individual natural days, rather than a
+    cumulative rolling window.  A snapshot at a day's midnight contains the
+    preceding 24-hour volume and that midnight's market cap, which are used
+    directly for the corresponding activity ratio.
     """
     init_db(db_path)
     with db_config.connect_sqlite(db_path, row_factory=sqlite3.Row) as conn:
@@ -364,10 +363,10 @@ def latest_snapshot(db_path: str = db_config.ALPHA_DB_PATH) -> tuple[int | None,
             (latest,),
         ).fetchall()
         history = conn.execute(
-            """SELECT symbol, chain_id, contract_address, volume_24h, observed_at
+            """SELECT symbol, chain_id, contract_address, volume_24h, market_cap, observed_at
                FROM alpha_market_snapshots
-               WHERE observed_at >= ? AND observed_at < ?""",
-            (latest - 4 * DAY_MS - DAILY_SAMPLE_TOLERANCE_MS, latest),
+               WHERE observed_at >= ? AND observed_at <= ?""",
+            (latest - 4 * DAY_MS - DAILY_SAMPLE_TOLERANCE_MS, latest + DAILY_SAMPLE_TOLERANCE_MS),
         ).fetchall()
 
     history_by_token: dict[tuple[str, str, str], list[sqlite3.Row]] = {}
@@ -389,26 +388,30 @@ def latest_snapshot(db_path: str = db_config.ALPHA_DB_PATH) -> tuple[int | None,
 
         key = (token["symbol"], token["chain_id"], token["contract_address"])
         candidates = history_by_token.get(key, [])
+        # The latest snapshot may be taken at any time during today.  Natural
+        # day boundaries are UTC midnights (the timestamp convention used by
+        # the collector); day 2 is the day ending at today's midnight.
+        today_midnight = (latest // DAY_MS) * DAY_MS
         for day in range(1, 5):
-            target = latest - day * DAY_MS
+            target = today_midnight - (day - 1) * DAY_MS
             sample = min(
                 candidates,
                 key=lambda row: abs(row["observed_at"] - target),
                 default=None,
             )
-            if (
-                sample is None
-                or abs(sample["observed_at"] - target) > DAILY_SAMPLE_TOLERANCE_MS
-            ):
-                volumes = []
-            if volumes:
-                try:
-                    volumes.append(float(sample["volume_24h"]))
-                except (TypeError, ValueError):
-                    volumes = []
-            token[f"activity_{day + 1}d"] = (
-                sum(volumes) / market_cap if len(volumes) == day + 1 else None
-            )
+            if sample is None or abs(sample["observed_at"] - target) > DAILY_SAMPLE_TOLERANCE_MS:
+                token[f"activity_{day + 1}d"] = None
+                continue
+            try:
+                daily_volume = float(sample["volume_24h"])
+                boundary_market_cap = float(sample["market_cap"])
+                token[f"activity_{day + 1}d"] = (
+                    daily_volume / boundary_market_cap
+                    if boundary_market_cap != 0
+                    else None
+                )
+            except (TypeError, ValueError):
+                token[f"activity_{day + 1}d"] = None
         # Retain the old key for callers that still consume it.
         token["activity"] = token["activity_1d"]
         tokens.append(token)
