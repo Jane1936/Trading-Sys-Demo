@@ -19,10 +19,6 @@
       <h1>Alpha币观测</h1>
       <p>每小时保存一次独立行情快照，数据与交易系统数据库完全隔离。</p>
     </div>
-    <div class="alpha-summary">
-      <strong>{{ tokens|length }}</strong><span>当前 Alpha 币</span>
-      <small>{{ observed_time or '等待首次采集' }}</small>
-    </div>
   </section>
 
   {% if alpha_error %}<div class="module-error-banner">加载 Alpha 数据失败：{{ alpha_error }}</div>{% endif %}
@@ -168,6 +164,16 @@
       }
     }
   };
+  // Refresh at :01 UTC and then hourly, after the worker's on-the-hour run.
+  const refreshHourlyModules = () => Promise.all([loadAlphaModule('oi'), loadAlphaModule('funding')]);
+  const now = new Date();
+  const nextRefresh = new Date(now);
+  nextRefresh.setUTCMinutes(1, 0, 0);
+  if (nextRefresh <= now) nextRefresh.setUTCHours(nextRefresh.getUTCHours() + 1);
+  window.setTimeout(() => {
+    refreshHourlyModules();
+    window.setInterval(refreshHourlyModules, 60 * 60 * 1000);
+  }, nextRefresh - now);
   document.querySelectorAll('[data-alpha-tab]').forEach((tab) => tab.addEventListener('click', () => activateAlphaModule(tab.dataset.alphaTab)));
 
   activateAlphaModule('snapshot');
