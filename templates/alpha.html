@@ -137,8 +137,10 @@
     if (!panel) return;
     try {
       const response = await fetch(`/market/alpha/data?module=${module}`, {headers: {'X-Requested-With': 'XMLHttpRequest'}});
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
+      if (!response.ok || payload.error) {
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      }
       const updated = panel.querySelector('[data-alpha-updated]');
       if (updated && payload.updated_at) updated.textContent = `本模块本轮数据更新时间：${new Date(payload.updated_at).toISOString().replace('T', ' ').replace('.000Z', ' UTC')}`;
       const rows = payload.data || [];
@@ -148,7 +150,7 @@
         const extra = index >= 10 ? ' class="alpha-deferred-extra-row" hidden' : '';
         if (module === 'oi') return `<tr${extra} data-oi-change="${item.oi_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td>${changeCell(item.oi_change)}${changeCell(item.price_change)}</tr>`;
         if (module === 'funding') return `<tr${extra} data-funding-change="${item.funding_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td>${changeCell(item.funding_change)}${changeCell(item.price_change)}</tr>`;
-        if (module === 'snapshot') return `<tr${extra}><td>${index + 1}</td><td><strong>${esc(item.symbol)}</strong></td><td>${esc(item.name)}</td><td>${esc(item.chain_id)}</td><td class="numeric">${esc(item.volume_24h)}</td><td class="numeric">${esc(item.market_cap)}</td>${[1,2,3,4,5].map((d) => `<td class="numeric">${esc(item[`activity_${d}d`])}</td>`).join('')}</tr>`;
+        if (module === 'snapshot') return `<tr${extra}><td>${index + 1}</td><td><strong>${esc(item.symbol)}</strong></td><td>${esc(item.name)}</td><td>${esc(item.chain_id)}</td><td class="numeric">${esc(item.volume_24h)}</td><td class="numeric">${esc(item.market_cap)}</td>${[1,2,3,4,5].map((d) => { const value = item[`activity_${d}d`]; const active = value != null && Number(value) >= 1; return `<td class="numeric${active ? ' alpha-active' : ''}" data-value="${esc(value)}">${esc(value)}</td>`; }).join('')}</tr>`;
         return `<tr${extra} data-consecutive-up-days="${item.consecutive_up_days}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${item.consecutive_up_days}</td><td class="numeric">${item.recent_five_up_days}</td>${changeCell(item.three_day_return)}${changeCell(item.five_day_return)}${changeCell(item.trend_return)}<td class="numeric">${item.kline_count}</td></tr>`;
       }).join('');
       const empty = panel.querySelector('.empty-state');
@@ -156,7 +158,14 @@
       ensureAlphaToggle(panel, module, rows.length);
     } catch (error) {
       const empty = panel.querySelector('.empty-state');
-      if (empty) empty.textContent = '该模块加载失败，请稍后重试。';
+      const message = `该模块加载失败：${error && error.message ? error.message : '未知错误'}`;
+      if (empty) empty.textContent = message;
+      else {
+        const notice = document.createElement('p');
+        notice.className = 'empty-state';
+        notice.textContent = message;
+        panel.querySelector('.table-wrap')?.after(notice);
+      }
     }
   };
   document.querySelectorAll('[data-alpha-tab]').forEach((tab) => tab.addEventListener('click', () => activateAlphaModule(tab.dataset.alphaTab)));
