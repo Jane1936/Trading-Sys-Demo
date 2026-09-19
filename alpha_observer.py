@@ -192,9 +192,6 @@ def daily_trends(db_path: str = db_config.ALPHA_DB_PATH, limit: int = 30) -> lis
             recent_five_up_days = sum(
                 1 for row in recent_five_rows if row["close"] > row["open"]
             )
-            ret = None
-            if len(rows) >= 2 and rows[-1]["open"]:
-                ret = (rows[0]["close"] / rows[-1]["open"]) - 1
             three_day_return = None
             if len(rows) >= 3 and rows[2]["open"]:
                 three_day_return = (rows[0]["close"] / rows[2]["open"]) - 1
@@ -205,7 +202,6 @@ def daily_trends(db_path: str = db_config.ALPHA_DB_PATH, limit: int = 30) -> lis
                 "symbol": symbol,
                 "consecutive_up_days": ups,
                 "recent_five_up_days": recent_five_up_days,
-                "trend_return": ret,
                 "three_day_return": three_day_return,
                 "five_day_return": five_day_return,
                 "kline_count": len(rows),

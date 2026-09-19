@@ -1,8 +1,6 @@
 {% extends "base.html" %}
 
 {% block title %}Alpha币观测{% endblock %}
-{% block meta_refresh %}<meta http-equiv="refresh" content="300" />{% endblock %}
-
 {% block navigation %}
   <div class="sidebar-brand">
     <span class="sidebar-brand-mark">TS</span>
@@ -77,8 +75,8 @@
         <button class="btn btn-secondary" type="submit">筛选</button>
         {% if consecutive_up_days_min != 2 %}<a class="btn btn-secondary" href="{{ url_for('alpha_market') }}">清除</a>{% endif %}
       </form>
-      <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="trend"><thead><tr><th>币种</th><th>连续上涨天数</th><th>近5日内上涨天数</th><th>近3日累计涨幅</th><th>近5日累计涨幅</th><th>趋势收益</th><th>日线数量</th></tr></thead><tbody>
-      {% for trend in trends %}<tr data-consecutive-up-days="{{ trend.consecutive_up_days }}"{% if loop.index > 10 or trend.consecutive_up_days < consecutive_up_days_min %} class="alpha-trend-extra-row" hidden{% endif %}><td><strong>{{ trend.symbol }}</strong></td><td class="numeric">{{ trend.consecutive_up_days }}</td><td class="numeric">{{ trend.recent_five_up_days }}</td><td class="numeric alpha-change{% if trend.three_day_return is not none %} {{ 'alpha-change-positive' if trend.three_day_return >= 0 else 'alpha-change-negative' }}{% endif %}">{% if trend.three_day_return is not none %}{{ '%+.2f'|format(trend.three_day_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if trend.five_day_return is not none %} {{ 'alpha-change-positive' if trend.five_day_return >= 0 else 'alpha-change-negative' }}{% endif %}">{% if trend.five_day_return is not none %}{{ '%+.2f'|format(trend.five_day_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric">{% if trend.trend_return is not none %}{{ '%.2f'|format(trend.trend_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric">{{ trend.kline_count }}</td></tr>{% endfor %}
+      <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="trend"><thead><tr><th>币种</th><th>连续上涨天数</th><th>近5日内上涨天数</th><th>近3日累计涨幅</th><th>近5日累计涨幅</th><th>日线数量</th></tr></thead><tbody>
+      {% for trend in trends %}<tr data-consecutive-up-days="{{ trend.consecutive_up_days }}"{% if loop.index > 10 or trend.consecutive_up_days < consecutive_up_days_min %} class="alpha-trend-extra-row" hidden{% endif %}><td><strong>{{ trend.symbol }}</strong></td><td class="numeric">{{ trend.consecutive_up_days }}</td><td class="numeric">{{ trend.recent_five_up_days }}</td><td class="numeric alpha-change{% if trend.three_day_return is not none %} {{ 'alpha-change-positive' if trend.three_day_return >= 0 else 'alpha-change-negative' }}{% endif %}">{% if trend.three_day_return is not none %}{{ '%+.2f'|format(trend.three_day_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if trend.five_day_return is not none %} {{ 'alpha-change-positive' if trend.five_day_return >= 0 else 'alpha-change-negative' }}{% endif %}">{% if trend.five_day_return is not none %}{{ '%+.2f'|format(trend.five_day_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric">{{ trend.kline_count }}</td></tr>{% endfor %}
       </tbody></table></div>{% if not trends %}<p class="empty-state">加载中…</p>{% endif %}
     </section>
     <section class="panel alpha-panel active" data-alpha-panel="oi">
@@ -147,7 +145,7 @@
         if (module === 'oi') return `<tr${extra} data-oi-change="${item.oi_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td>${changeCell(item.oi_change)}${changeCell(item.price_change)}</tr>`;
         if (module === 'funding') return `<tr${extra} data-funding-change="${item.funding_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td>${changeCell(item.funding_change)}${changeCell(item.price_change)}</tr>`;
         if (module === 'snapshot') return `<tr${extra}><td>${index + 1}</td><td><strong>${esc(item.symbol)}</strong></td><td>${esc(item.name)}</td><td>${esc(item.chain_id)}</td><td class="numeric">${esc(item.volume_24h)}</td><td class="numeric">${esc(item.market_cap)}</td>${[1,2,3,4,5].map((d) => { const value = item[`activity_${d}d`]; const active = value != null && Number(value) >= 1; return `<td class="numeric${active ? ' alpha-active' : ''}" data-value="${esc(value)}">${esc(value)}</td>`; }).join('')}</tr>`;
-        return `<tr${extra} data-consecutive-up-days="${item.consecutive_up_days}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${item.consecutive_up_days}</td><td class="numeric">${item.recent_five_up_days}</td>${changeCell(item.three_day_return)}${changeCell(item.five_day_return)}${changeCell(item.trend_return)}<td class="numeric">${item.kline_count}</td></tr>`;
+        return `<tr${extra} data-consecutive-up-days="${item.consecutive_up_days}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${item.consecutive_up_days}</td><td class="numeric">${item.recent_five_up_days}</td>${changeCell(item.three_day_return)}${changeCell(item.five_day_return)}<td class="numeric">${item.kline_count}</td></tr>`;
       }).join('');
       const empty = panel.querySelector('.empty-state');
       if (empty) empty.remove();
@@ -165,7 +163,11 @@
     }
   };
   // Refresh at :01 UTC and then hourly, after the worker's on-the-hour run.
-  const refreshHourlyModules = () => Promise.all([loadAlphaModule('oi'), loadAlphaModule('funding')]);
+  const refreshHourlyModules = () => Promise.all([
+    loadAlphaModule('snapshot'),
+    loadAlphaModule('oi'),
+    loadAlphaModule('funding'),
+  ]);
   const now = new Date();
   const nextRefresh = new Date(now);
   nextRefresh.setUTCMinutes(1, 0, 0);

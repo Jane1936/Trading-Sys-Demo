@@ -155,3 +155,18 @@ def test_daily_trends_calculates_three_day_return_and_sorts_descending(tmp_path)
     assert trends[1]["five_day_return"] == pytest.approx(-0.2)
     assert trends[2]["three_day_return"] is None
     assert trends[2]["five_day_return"] is None
+
+
+def test_daily_trends_omits_removed_trend_return_metric(tmp_path):
+    db_path = str(tmp_path / "alpha.db")
+    alpha_observer.init_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO alpha_market_snapshots (symbol, observed_at) VALUES ('ALPHA', 1)"
+        )
+        conn.executemany(
+            "INSERT INTO alpha_daily_klines (symbol, open_time, open, close) VALUES (?, ?, ?, ?)",
+            [("ALPHA", 1, 10, 11), ("ALPHA", 2, 11, 12)],
+        )
+
+    assert "trend_return" not in alpha_observer.daily_trends(db_path)[0]
