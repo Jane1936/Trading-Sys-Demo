@@ -25,6 +25,9 @@ ALPHA_TOKEN_LIST_URL = os.getenv(
     "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list",
 )
 ALPHA_KLINE_URL = os.getenv("ALPHA_KLINE_URL", "https://api.binance.com/api/v3/klines")
+FUTURES_KLINE_URL = os.getenv("ALPHA_FUTURES_KLINE_URL", "https://fapi.binance.com/fapi/v1/klines")
+FUTURES_OI_URL = os.getenv("ALPHA_FUTURES_OI_URL", "https://fapi.binance.com/fapi/v1/openInterest")
+FUTURES_PREMIUM_URL = os.getenv("ALPHA_FUTURES_PREMIUM_URL", "https://fapi.binance.com/fapi/v1/premiumIndex")
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("ALPHA_REQUEST_TIMEOUT_SECONDS", "20"))
 BACKFILL_HOURS = 24
 DAY_MS = 24 * 60 * 60 * 1000
@@ -78,6 +81,10 @@ def init_db(db_path: str = db_config.ALPHA_DB_PATH) -> None:
             symbol TEXT NOT NULL, open_time INTEGER NOT NULL, open REAL, high REAL,
             low REAL, close REAL, volume REAL, close_time INTEGER,
             PRIMARY KEY(symbol, open_time))""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS alpha_hourly_market (
+            symbol TEXT NOT NULL, open_time INTEGER NOT NULL, close REAL,
+            open_interest REAL, funding_rate REAL, PRIMARY KEY(symbol, open_time))""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_alpha_hourly_market_time ON alpha_hourly_market(open_time)")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_alpha_snapshot_latest "
             "ON alpha_market_snapshots(observed_at DESC, symbol)"
@@ -111,6 +118,30 @@ def collect_daily_klines(db_path: str = db_config.ALPHA_DB_PATH, *, session=requ
                              (symbol, int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5]), int(c[6])))
                 inserted += 1
     return inserted
+
+def collect_hourly_market_data(db_path: str = db_config.ALPHA_DB_PATH, *, session=requests) -> int:
+    """Collect one-hour futures OI, funding and close data in alpha.db."""
+    init_db(db_path)
+    _, rows = latest_snapshot(db_path)
+    symbols = [str(r["symbol"]).upper().removesuffix("USDT") for r in rows]
+    hour = (int(time.time() * 1000) // 3_600_000) * 3_600_000
+    saved = 0
+    with db_config.connect_sqlite(db_path) as conn:
+        for symbol in symbols:
+            market = symbol + "USDT"
+            try:
+                oi = session.get(FUTURES_OI_URL, params={"symbol": market}, timeout=REQUEST_TIMEOUT_SECONDS).json().get("openInterest")
+                premium = session.get(FUTURES_PREMIUM_URL, params={"symbol": market}, timeout=REQUEST_TIMEOUT_SECONDS).json()
+                funding = premium.get("lastFundingRate") if isinstance(premium, dict) else None
+                candles = session.get(FUTURES_KLINE_URL, params={"symbol": market, "interval": "1h", "limit": 2}, timeout=REQUEST_TIMEOUT_SECONDS).json()
+                candle = candles[-1] if isinstance(candles, list) and candles else None
+                close = float(candle[4]) if candle and len(candle) > 4 else None
+                open_time = int(candle[0]) if candle and len(candle) > 0 else hour
+                conn.execute("INSERT OR REPLACE INTO alpha_hourly_market VALUES (?,?,?,?,?)", (symbol, open_time, close, float(oi) if oi is not None else None, float(funding) if funding is not None else None))
+                saved += 1
+            except Exception as exc:
+                print(f"⚠️ Alpha hourly market skipped {market}: {exc}")
+    return saved
 
 def backfill_recent_daily_klines(db_path: str = db_config.ALPHA_DB_PATH, *, session=requests,
                                  days: int = 30) -> int:

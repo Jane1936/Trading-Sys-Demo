@@ -1619,13 +1619,14 @@ def start_alpha_observer_task() -> None:
         try:
             repaired = alpha_observer.backfill_recent_hours()
             count = alpha_observer.collect_snapshot()
+            market_count = alpha_observer.collect_hourly_market_data()
             try:
                 # Fetch the newest daily candles on every hourly run.  This
                 # backfills downtime immediately instead of waiting 24 hours.
                 alpha_observer.backfill_recent_daily_klines()
             except Exception as exc:
                 print(f"⚠️ Alpha daily kline collection failed: {exc}")
-            print(f"🅰️ Alpha observer collected tokens={count}, backfilled={repaired}")
+            print(f"🅰️ Alpha observer collected tokens={count}, hourly_market={market_count}, backfilled={repaired}")
         except Exception as exc:
             recover_after_worker_error(exc)
             print(f"⚠️ Alpha observer collection failed: {exc}")
