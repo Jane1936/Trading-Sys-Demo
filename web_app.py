@@ -1547,6 +1547,8 @@ def _alpha_funding_changes():
 
 
 @app.get("/trading/simulation")
+
+@app.get("/trading/simulation")
 def simulation():
     initialize_config_database(CONFIG_DB_PATH, BASE_DB_PATH)
     return render_template("simulation.html", **load_simulation_context())
