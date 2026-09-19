@@ -1392,11 +1392,12 @@ def _alpha_module_updated_at(module):
     if module == "snapshot":
         observed_at, _ = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
         return observed_at
-    with db_config.connect_sqlite(BASE_DB_PATH, row_factory=sqlite3.Row) as conn:
+    # Alpha analytics are stored in the standalone Alpha database.
+    with db_config.connect_sqlite(ALPHA_DB_PATH, row_factory=sqlite3.Row) as conn:
         if module == "oi":
-            row = conn.execute("SELECT MAX(snapshot_time) AS ts FROM open_interest_1m").fetchone()
+            row = conn.execute("SELECT MAX(open_time) AS ts FROM alpha_hourly_market WHERE open_interest IS NOT NULL").fetchone()
         elif module == "funding":
-            row = conn.execute("SELECT MAX(open_time) AS ts FROM klines_1h WHERE funding_rate IS NOT NULL").fetchone()
+            row = conn.execute("SELECT MAX(open_time) AS ts FROM alpha_hourly_market WHERE funding_rate IS NOT NULL").fetchone()
         elif module == "trend":
             # Trend candles live in the Alpha database, not base_data.db.
             with db_config.connect_sqlite(ALPHA_DB_PATH, row_factory=sqlite3.Row) as alpha_conn:
@@ -1435,21 +1436,21 @@ def _alpha_oi_changes():
         params = [*sorted(symbols), cutoff_ms, *sorted(symbols)]
         rows = conn.execute(
             f"""WITH latest_oi AS (
-                    SELECT symbol, snapshot_time, open_interest
+                    SELECT symbol, open_time, open_interest
                     FROM (
-                        SELECT symbol, snapshot_time, open_interest,
-                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY snapshot_time DESC) AS rn
+                        SELECT symbol, open_time, open_interest,
+                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS rn
                         FROM alpha_hourly_market
-                        WHERE symbol IN ({placeholders}) AND snapshot_time >= ?
+                        WHERE symbol IN ({placeholders}) AND open_time >= ?
                     ) WHERE rn = 1
                 ), old_oi AS (
                     SELECT symbol, open_interest
                     FROM (
                         SELECT history.symbol, history.open_interest,
-                               ROW_NUMBER() OVER (PARTITION BY history.symbol ORDER BY history.snapshot_time DESC) AS rn
+                               ROW_NUMBER() OVER (PARTITION BY history.symbol ORDER BY history.open_time DESC) AS rn
                         FROM alpha_hourly_market AS history
                         JOIN latest_oi AS latest ON latest.symbol = history.symbol
-                        WHERE history.snapshot_time <= latest.snapshot_time - 3600000
+                        WHERE history.open_time <= latest.open_time - 3600000
                     ) WHERE rn = 1
                 ), prices AS (
                     SELECT symbol,
