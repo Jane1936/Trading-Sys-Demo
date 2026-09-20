@@ -189,20 +189,27 @@ class DynamicProfitProtection:
         r_value = equity * self.config.risk_fraction
         positions = helper._fetch_and_store_positions()
         protection_settings = get_settings()
-        # The market threshold acts as a mode switch: above it, each account
-        # uses its own simulation/live enable flag; below it the shared flag
-        # remains authoritative.  This keeps the two environments isolated.
+        # Each environment has its own base enable flag.  A high-rise market
+        # may additionally replace the base bands, but opting out of the high
+        # rise mode must fall back to that environment's base configuration.
         try:
             rise = float(allusdt_24h_ticker.fetch_change_percent())
         except Exception:
             rise = None
         is_live = os.path.abspath(self.db_path) == os.path.abspath(db_config.REAL_TRADING_DB_PATH)
+        base_enabled_key = "live_enabled" if is_live else "simulation_enabled"
+        protection_settings = dict(protection_settings)
+        globally_enabled = bool(protection_settings["enabled"])
+        base_enabled = globally_enabled and bool(protection_settings[base_enabled_key])
+        protection_settings["enabled"] = base_enabled
         if rise is not None and rise > float(protection_settings["allusdt_24h_rise_threshold_percent"]):
-            protection_settings = dict(protection_settings)
-            protection_settings["enabled"] = protection_settings["high_live_enabled" if is_live else "high_simulation_enabled"]
+            high_enabled_key = "high_live_enabled" if is_live else "high_simulation_enabled"
+            high_enabled = bool(protection_settings[high_enabled_key])
+            protection_settings["enabled"] = globally_enabled and (high_enabled or base_enabled)
             # Replace the base R bands with the separately configured
-            # high-market bands only for the opted-in account.
-            if protection_settings["enabled"]:
+            # high-market bands only for the opted-in account.  If high-rise
+            # mode is disabled, retain the base bands and base enable state.
+            if high_enabled:
                 for n in (2, 3, 4):
                     protection_settings[f"tier_{n}_min_r"] = protection_settings[f"high_tier_{n}_min_r"]
                     protection_settings[f"tier_{n}_drawdown_ratio"] = protection_settings[f"high_tier_{n}_drawdown_ratio"]
