@@ -1506,14 +1506,25 @@ def _alpha_funding_changes():
         placeholders = ",".join("?" for _ in symbols)
         symbol_params = sorted(symbols)
         rows = conn.execute(
-            f"""WITH latest_rates AS (
+            f"""WITH current_oi AS (
+                    SELECT symbol
+                    FROM (
+                        SELECT symbol, open_interest,
+                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS rn
+                        FROM alpha_hourly_market
+                        WHERE symbol IN ({placeholders})
+                    )
+                    WHERE rn = 1 AND open_interest IS NOT NULL
+                ), latest_rates AS (
                     SELECT symbol, open_time, funding_rate
                     FROM (
                         SELECT symbol, open_time, funding_rate,
                                ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS rn
                         FROM alpha_hourly_market
                         WHERE symbol IN ({placeholders}) AND funding_rate IS NOT NULL
-                    ) WHERE rn = 1
+                    ) AS market
+                    JOIN current_oi USING (symbol)
+                    WHERE market.rn = 1
                 ), rates AS (
                     SELECT latest.symbol,
                            latest.funding_rate AS latest_rate,
@@ -1555,7 +1566,7 @@ def _alpha_funding_changes():
                 LEFT JOIN rates USING (symbol)
                 LEFT JOIN prices USING (symbol)
                 WHERE rates.symbol IS NOT NULL OR prices.symbol IS NOT NULL""",
-            [*symbol_params, *symbol_params, *symbol_params],
+            [*symbol_params, *symbol_params, *symbol_params, *symbol_params],
         ).fetchall()
         result = [dict(row) for row in rows]
         return sorted(result, key=lambda row: (row["funding_change"] is None, -(row["funding_change"] or 0)))
