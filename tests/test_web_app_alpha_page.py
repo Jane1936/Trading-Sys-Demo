@@ -193,3 +193,35 @@ def test_alpha_funding_change_requires_four_hours_of_history(tmp_path, monkeypat
     assert web_app._alpha_funding_changes() == [
         {"symbol": "AAA", "funding_change": None, "price_change": None}
     ]
+
+
+def test_alpha_funding_changes_excludes_stale_symbols(tmp_path, monkeypatch):
+    db_path = tmp_path / "alpha.db"
+    now = int(time.time() * 1000)
+    hour = 3_600_000
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE alpha_hourly_market "
+            "(symbol TEXT, open_time INTEGER, close REAL, open_interest REAL, "
+            "funding_rate REAL, PRIMARY KEY(symbol, open_time))"
+        )
+        conn.executemany(
+            "INSERT INTO alpha_hourly_market VALUES (?, ?, ?, ?, ?)",
+            [
+                ("CURRENT", now - 5 * hour, 10, 100, 0.01),
+                ("CURRENT", now - hour, 11, 110, 0.02),
+                ("STALE", now - 30 * hour, 20, 200, 0.01),
+                ("STALE", now - 25 * hour, 22, 220, 0.02),
+            ],
+        )
+    monkeypatch.setattr(web_app, "ALPHA_DB_PATH", str(db_path))
+    monkeypatch.setattr(
+        web_app.alpha_observer,
+        "latest_snapshot",
+        lambda _path: (now, [{"symbol": "CURRENT"}, {"symbol": "STALE"}]),
+    )
+    web_app._alpha_analytics_cache.clear()
+
+    assert web_app._alpha_funding_changes() == [
+        {"symbol": "CURRENT", "funding_change": 1.0, "price_change": pytest.approx(0.1)}
+    ]
