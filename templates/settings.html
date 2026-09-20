@@ -104,7 +104,7 @@
           <input id="max-new-positions-per-round" type="number" min="1" max="1000" step="1" required value="{{ position_limit_settings.max_new_positions_per_round }}">
         </label>
         <label>ALLUSDT最近24h涨幅超过（%）时切换
-          <input id="allusdt-24h-rise-threshold" type="number" min="0" max="100" step="0.1" required value="{{ position_limit_settings.allusdt_24h_rise_threshold_percent }}">
+          <input id="allusdt-24h-rise-threshold" type="number" min="0" max="100" step="0.01" required value="{{ position_limit_settings.allusdt_24h_rise_threshold_percent }}">
         </label>
         <label>涨幅触发后的最大同时持仓个数 n
           <input id="allusdt-24h-rise-max-open" type="number" min="1" max="1000" step="1" required value="{{ position_limit_settings.allusdt_24h_rise_max_open_positions }}">
