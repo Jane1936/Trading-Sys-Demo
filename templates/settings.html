@@ -114,16 +114,28 @@
     </div>
     <div class="card feature-config-yellow">
       <div class="header"><h2>动态利润保护配置</h2></div>
-      <div class="tip">按周期累积盈亏历史最高到达档位动态保护；周期累积盈亏为开仓后已实现盈亏与当前浮盈之和。默认规则为：周期累积盈亏到达过(2R, 3R] 回撤≥40%、周期累积盈亏到达过(3R, 4R] 回撤≥30%、周期累积盈亏到达过4R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓。下方可启停整条规则，并调整三个档位起点及对应回撤阈值；该配置由模拟盘与实盘动态利润保护模块共同使用，并从各自下一轮扫描开始生效。</div>
+      <div class="tip">按周期累积盈亏历史最高到达档位动态保护；周期累积盈亏为开仓后已实现盈亏与当前浮盈之和。默认规则为：周期累积盈亏到达过(2R, 3R] 回撤≥40%、周期累积盈亏到达过(3R, 4R] 回撤≥30%、周期累积盈亏到达过4R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓。模拟盘和实盘可分别启停；当 ALLUSDT 最近24h涨幅超过阈值时，对应账户的动态利润保护将切换为启用状态（按各自下一轮扫描生效）。</div>
       <div id="dynamic-profit-protection-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
       <form id="dynamic-profit-protection-settings-form" class="score-weight-actions">
         <label><input id="dynamic-profit-protection-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.enabled else '' }}> 启用“周期累积盈亏历史最高到达档位动态保护”</label>
+        <label><input id="dynamic-profit-simulation-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.simulation_enabled else '' }}> 启用模拟盘动态利润保护</label>
+        <label><input id="dynamic-profit-live-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.live_enabled else '' }}> 启用实盘动态利润保护</label>
+        <label>ALLUSDT最近24h涨幅超过（%）时切换
+          <input id="dynamic-profit-allusdt-rise-threshold" type="number" min="0" max="100" step="0.01" required value="{{ dynamic_profit_protection_settings.allusdt_24h_rise_threshold_percent }}">
+        </label>
         <label>第1档起点（R，严格大于）<input id="dynamic-profit-tier-2-r" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_2_min_r }}"></label>
         <label>第2档起点（R，严格大于）<input id="dynamic-profit-tier-3-r" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_3_min_r }}"></label>
         <label>最高档起点（R，严格大于）<input id="dynamic-profit-tier-4-r" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_4_min_r }}"></label>
         <label>第1档回撤阈值（%）<input id="dynamic-profit-tier-2-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_2_drawdown_ratio * 100 }}"></label>
         <label>第2档回撤阈值（%）<input id="dynamic-profit-tier-3-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_3_drawdown_ratio * 100 }}"></label>
         <label>最高档回撤阈值（%）<input id="dynamic-profit-tier-4-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_4_drawdown_ratio * 100 }}"></label>
+        <div class="tip">高涨幅模式（阈值以上）档位：</div>
+        <label>高涨幅第1档 R<input id="dynamic-profit-high-tier-2-r" type="number" min="0.1" step="0.1" required value="{{ dynamic_profit_protection_settings.high_tier_2_min_r }}"></label>
+        <label>高涨幅第1档回撤（%）<input id="dynamic-profit-high-tier-2-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.high_tier_2_drawdown_ratio * 100 }}"></label>
+        <label>高涨幅第2档 R<input id="dynamic-profit-high-tier-3-r" type="number" min="0.1" step="0.1" required value="{{ dynamic_profit_protection_settings.high_tier_3_min_r }}"></label>
+        <label>高涨幅第2档回撤（%）<input id="dynamic-profit-high-tier-3-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.high_tier_3_drawdown_ratio * 100 }}"></label>
+        <label>高涨幅最高档 R<input id="dynamic-profit-high-tier-4-r" type="number" min="0.1" step="0.1" required value="{{ dynamic_profit_protection_settings.high_tier_4_min_r }}"></label>
+        <label>高涨幅最高档回撤（%）<input id="dynamic-profit-high-tier-4-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.high_tier_4_drawdown_ratio * 100 }}"></label>
         <button class="btn btn-success" type="submit">保存动态利润保护配置</button>
       </form>
     </div>
