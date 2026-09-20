@@ -199,7 +199,7 @@ class DynamicProfitProtection:
         is_live = os.path.abspath(self.db_path) == os.path.abspath(db_config.REAL_TRADING_DB_PATH)
         if rise is not None and rise > float(protection_settings["allusdt_24h_rise_threshold_percent"]):
             protection_settings = dict(protection_settings)
-            protection_settings["enabled"] = protection_settings["live_enabled" if is_live else "simulation_enabled"]
+            protection_settings["enabled"] = protection_settings["high_live_enabled" if is_live else "high_simulation_enabled"]
             # Replace the base R bands with the separately configured
             # high-market bands only for the opted-in account.
             if protection_settings["enabled"]:
