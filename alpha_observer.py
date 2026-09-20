@@ -100,6 +100,13 @@ def collect_daily_klines(db_path: str = db_config.ALPHA_DB_PATH, *, session=requ
     init_db(db_path); inserted = 0
     with db_config.connect_sqlite(db_path) as conn:
         for symbol in symbols:
+            # Alpha's token endpoint has occasionally returned mixed-case
+            # tickers.  Binance's market endpoint is case-insensitive in
+            # theory, but in practice rejects lower-case symbols; keep the
+            # database key consistent with the snapshot table as well.
+            symbol = str(symbol).strip().upper()
+            if not symbol:
+                continue
             market = symbol if symbol.endswith("USDT") else symbol + "USDT"
             # Alpha token lists contain tokens that are not necessarily Binance
             # spot symbols.  One invalid/temporarily unavailable token must not
@@ -115,8 +122,14 @@ def collect_daily_klines(db_path: str = db_config.ALPHA_DB_PATH, *, session=requ
             if not isinstance(candles, list): continue
             for c in candles:
                 if not isinstance(c, (list, tuple)) or len(c) < 7: continue
-                conn.execute("INSERT OR REPLACE INTO alpha_daily_klines VALUES (?,?,?,?,?,?,?,?)",
-                             (symbol, int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5]), int(c[6])))
+                try:
+                    values = (symbol, int(c[0]), float(c[1]), float(c[2]),
+                              float(c[3]), float(c[4]), float(c[5]), int(c[6]))
+                except (TypeError, ValueError, OverflowError):
+                    # A malformed candle must not prevent other candles (or
+                    # other Alpha tokens) from being persisted.
+                    continue
+                conn.execute("INSERT OR REPLACE INTO alpha_daily_klines VALUES (?,?,?,?,?,?,?,?)", values)
                 inserted += 1
     return inserted
 
