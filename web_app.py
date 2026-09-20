@@ -1508,7 +1508,7 @@ def _alpha_funding_changes():
         # The table is append-only, while the collector's current universe is
         # already correct.  Therefore recent funding rows themselves define
         # the active universe; old rows must never make a symbol current.
-        cutoff_ms = int((datetime.now(timezone.utc) - timedelta(hours=24)).timestamp() * 1000)
+        cutoff_ms = int(observed_at) - int(timedelta(hours=24).total_seconds() * 1000)
         rows = conn.execute(
             f"""WITH current_oi AS (
                     SELECT symbol
