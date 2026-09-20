@@ -90,13 +90,21 @@ def get_settings(db_path: str | None = None) -> dict[str, bool | float]:
         for name in DEFAULT_SETTINGS:
             if name not in columns and name not in ("enabled", "simulation_enabled", "live_enabled", "allusdt_24h_rise_threshold_percent"):
                 conn.execute(f"ALTER TABLE {SETTINGS_TABLE_NAME} ADD COLUMN {name} REAL NOT NULL DEFAULT {DEFAULT_SETTINGS[name]}")
+        # Keep the seed columns and values in lockstep as settings evolve.  The
+        # high-rise tier fields are added by the migration above and must also
+        # be included here; hard-coding the legacy column list causes SQLite to
+        # reject the 17-value seed tuple against the old 11 placeholders.
+        seed_columns = ["id", *DEFAULT_SETTINGS, "updated_at"]
+        seed_values = [
+            1,
+            *(int(DEFAULT_SETTINGS[key]) if key in ("enabled", "simulation_enabled", "live_enabled")
+              else DEFAULT_SETTINGS[key] for key in DEFAULT_SETTINGS),
+            int(time.time() * 1000),
+        ]
+        placeholders = ", ".join("?" for _ in seed_columns)
         conn.execute(
-            f"INSERT OR IGNORE INTO {SETTINGS_TABLE_NAME} (id, enabled, simulation_enabled, live_enabled, allusdt_24h_rise_threshold_percent, tier_2_min_r, tier_3_min_r, tier_4_min_r, tier_2_drawdown_ratio, tier_3_drawdown_ratio, tier_4_drawdown_ratio, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                int(DEFAULT_SETTINGS["enabled"]), int(DEFAULT_SETTINGS["simulation_enabled"]), int(DEFAULT_SETTINGS["live_enabled"]), DEFAULT_SETTINGS["allusdt_24h_rise_threshold_percent"],
-                *(DEFAULT_SETTINGS[key] for key in DEFAULT_SETTINGS if key not in ("enabled", "simulation_enabled", "live_enabled", "allusdt_24h_rise_threshold_percent")),
-                int(time.time() * 1000),
-            ),
+            f"INSERT OR IGNORE INTO {SETTINGS_TABLE_NAME} ({', '.join(seed_columns)}) VALUES ({placeholders})",
+            seed_values,
         )
         row = conn.execute(
             f"SELECT {', '.join(DEFAULT_SETTINGS)} FROM {SETTINGS_TABLE_NAME} WHERE id = 1"
