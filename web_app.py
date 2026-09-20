@@ -1513,17 +1513,15 @@ def _alpha_funding_changes():
         # the hourly market collector (for example after a delayed snapshot),
         # which otherwise filters out every valid funding row.
         cutoff_ms = int((datetime.now(timezone.utc) - timedelta(hours=24)).timestamp() * 1000)
+        # Placeholder order: latest_rates symbols + cutoff, latest_prices
+        # symbols + cutoff, then the requested-symbol VALUES list.
+        query_params = [
+            *symbol_params, cutoff_ms,
+            *symbol_params, cutoff_ms,
+            *symbol_params,
+        ]
         rows = conn.execute(
-            f"""WITH current_oi AS (
-                    SELECT symbol
-                    FROM (
-                        SELECT symbol, open_interest,
-                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS rn
-                        FROM alpha_hourly_market
-                        WHERE symbol IN ({placeholders})
-                    )
-                    WHERE rn = 1 AND open_interest IS NOT NULL
-                ), latest_rates AS (
+            f"""WITH latest_rates AS (
                     SELECT symbol, open_time, funding_rate
                     FROM (
                         SELECT symbol, open_time, funding_rate,
@@ -1576,12 +1574,7 @@ def _alpha_funding_changes():
                 LEFT JOIN rates USING (symbol)
                 LEFT JOIN prices USING (symbol)
                 WHERE rates.symbol IS NOT NULL""",
-            [
-                *symbol_params, cutoff_ms,
-                *symbol_params, cutoff_ms,
-                *symbol_params,
-                *symbol_params,
-            ],
+            query_params,
         ).fetchall()
         result = [dict(row) for row in rows]
         return sorted(result, key=lambda row: (row["funding_change"] is None, -(row["funding_change"] or 0)))
