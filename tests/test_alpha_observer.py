@@ -170,3 +170,25 @@ def test_daily_trends_omits_removed_trend_return_metric(tmp_path):
         )
 
     assert "trend_return" not in alpha_observer.daily_trends(db_path)[0]
+
+
+def test_daily_trends_keeps_snapshot_tokens_without_klines(tmp_path):
+    db_path = str(tmp_path / "alpha.db")
+    alpha_observer.init_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """INSERT INTO alpha_market_snapshots
+               (symbol, name, chain_id, contract_address, observed_at)
+               VALUES (?, '', '', '', 1000)""",
+            [("HAS_DATA",), ("SPOT_ONLY",)],
+        )
+        conn.executemany(
+            "INSERT INTO alpha_daily_klines(symbol, open_time, open, close) VALUES (?, ?, ?, ?)",
+            [("HAS_DATA", day, 1, 2) for day in range(3)],
+        )
+
+    trends = {row["symbol"]: row for row in alpha_observer.daily_trends(db_path)}
+
+    assert trends["HAS_DATA"]["kline_count"] == 3
+    assert trends["SPOT_ONLY"]["kline_count"] == 0
+    assert trends["SPOT_ONLY"]["three_day_return"] is None
