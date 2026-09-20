@@ -188,12 +188,17 @@ function renderFeatureFlagRow(flag) {
     const button = form.querySelector('button[type="submit"]');
     const payload = {
       enabled: document.getElementById('dynamic-profit-protection-enabled').checked,
+      simulation_enabled: document.getElementById('dynamic-profit-simulation-enabled').checked,
+      live_enabled: document.getElementById('dynamic-profit-live-enabled').checked,
+      allusdt_24h_rise_threshold_percent: Number(document.getElementById('dynamic-profit-allusdt-rise-threshold').value),
       tier_2_min_r: Number(document.getElementById('dynamic-profit-tier-2-r').value),
       tier_3_min_r: Number(document.getElementById('dynamic-profit-tier-3-r').value),
       tier_4_min_r: Number(document.getElementById('dynamic-profit-tier-4-r').value),
       tier_2_drawdown_ratio: Number(document.getElementById('dynamic-profit-tier-2-drawdown').value) / 100,
       tier_3_drawdown_ratio: Number(document.getElementById('dynamic-profit-tier-3-drawdown').value) / 100,
       tier_4_drawdown_ratio: Number(document.getElementById('dynamic-profit-tier-4-drawdown').value) / 100,
+      high_tier_2_min_r: Number(document.getElementById('dynamic-profit-high-tier-2-r').value), high_tier_3_min_r: Number(document.getElementById('dynamic-profit-high-tier-3-r').value), high_tier_4_min_r: Number(document.getElementById('dynamic-profit-high-tier-4-r').value),
+      high_tier_2_drawdown_ratio: Number(document.getElementById('dynamic-profit-high-tier-2-drawdown').value) / 100, high_tier_3_drawdown_ratio: Number(document.getElementById('dynamic-profit-high-tier-3-drawdown').value) / 100, high_tier_4_drawdown_ratio: Number(document.getElementById('dynamic-profit-high-tier-4-drawdown').value) / 100,
     };
     button.disabled = true;
     message.textContent = '正在保存动态利润保护配置…';
@@ -204,7 +209,7 @@ function renderFeatureFlagRow(flag) {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      message.textContent = `配置已保存并同时应用于模拟盘和实盘：保护${result.enabled ? '开启' : '关闭'}；(${result.tier_2_min_r}R, ${result.tier_3_min_r}R] 回撤≥${result.tier_2_drawdown_ratio * 100}%，(${result.tier_3_min_r}R, ${result.tier_4_min_r}R] 回撤≥${result.tier_3_drawdown_ratio * 100}%，${result.tier_4_min_r}R以上回撤≥${result.tier_4_drawdown_ratio * 100}%。`;
+      message.textContent = `配置已保存：模拟盘${result.simulation_enabled ? '开启' : '关闭'}、实盘${result.live_enabled ? '开启' : '关闭'}；ALLUSDT涨幅超过${result.allusdt_24h_rise_threshold_percent}%时切换。(${result.tier_2_min_r}R, ${result.tier_3_min_r}R] 回撤≥${result.tier_2_drawdown_ratio * 100}%，(${result.tier_3_min_r}R, ${result.tier_4_min_r}R] 回撤≥${result.tier_3_drawdown_ratio * 100}%，${result.tier_4_min_r}R以上回撤≥${result.tier_4_drawdown_ratio * 100}%。`;
     } catch (err) {
       message.textContent = `动态利润保护配置保存失败：${err.message || err}`;
       message.classList.add('error');
