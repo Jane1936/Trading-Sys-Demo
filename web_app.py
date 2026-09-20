@@ -1508,7 +1508,11 @@ def _alpha_funding_changes():
         # The table is append-only, while the collector's current universe is
         # already correct.  Therefore recent funding rows themselves define
         # the active universe; old rows must never make a symbol current.
-        cutoff_ms = int(observed_at) - int(timedelta(hours=24).total_seconds() * 1000)
+        # Use wall-clock time for the freshness window, as the OI query does.
+        # ``observed_at`` is the Alpha token snapshot timestamp and can lag
+        # the hourly market collector (for example after a delayed snapshot),
+        # which otherwise filters out every valid funding row.
+        cutoff_ms = int((datetime.now(timezone.utc) - timedelta(hours=24)).timestamp() * 1000)
         rows = conn.execute(
             f"""WITH current_oi AS (
                     SELECT symbol
