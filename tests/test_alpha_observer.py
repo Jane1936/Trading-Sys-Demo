@@ -123,6 +123,28 @@ def test_collect_daily_klines_skips_invalid_alpha_symbols(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM alpha_daily_klines").fetchone()[0] == 1
 
 
+def test_collect_daily_klines_normalizes_symbols_and_skips_bad_candles(tmp_path):
+    class KlineSession:
+        def get(self, url, **kwargs):
+            assert kwargs["params"]["symbol"] == "AIOTUSDT"
+            return type("KlineResponse", (), {
+                "raise_for_status": lambda self: None,
+                "json": lambda self: [
+                    [1, "bad", "2", "0.5", "1.5", "10", 2],
+                    [2, "1", "2", "0.5", "1.5", "10", 3],
+                ],
+            })()
+
+    db_path = str(tmp_path / "alpha.db")
+    assert alpha_observer.collect_daily_klines(
+        db_path, session=KlineSession(), symbols=["aiot"]
+    ) == 1
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT symbol FROM alpha_daily_klines"
+        ).fetchone() == ("AIOT",)
+
+
 def test_daily_trends_calculates_three_day_return_and_sorts_descending(tmp_path):
     db_path = str(tmp_path / "alpha.db")
     alpha_observer.init_db(db_path)
