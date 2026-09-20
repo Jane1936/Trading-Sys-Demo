@@ -10,18 +10,24 @@ def test_position_limit_settings_persist_and_validate(tmp_path):
         "simulation_max_open_positions": 10,
         "live_max_open_positions": 10,
         "max_new_positions_per_round": 5,
+        "allusdt_24h_rise_threshold_percent": 4.0,
+        "allusdt_24h_rise_max_open_positions": 15,
     }
     assert position_limit_settings.set_settings(
         {
             "simulation_max_open_positions": 3,
             "live_max_open_positions": 7,
             "max_new_positions_per_round": 4,
+            "allusdt_24h_rise_threshold_percent": 4.25,
+            "allusdt_24h_rise_max_open_positions": 12,
         },
         db_path,
     ) == {
         "simulation_max_open_positions": 3,
         "live_max_open_positions": 7,
         "max_new_positions_per_round": 4,
+        "allusdt_24h_rise_threshold_percent": 4.25,
+        "allusdt_24h_rise_max_open_positions": 12,
     }
     assert position_limit_settings.get_settings(db_path)["simulation_max_open_positions"] == 3
 
@@ -58,6 +64,8 @@ def test_position_limit_settings_adds_round_limit_to_existing_table(tmp_path):
         "simulation_max_open_positions": 3,
         "live_max_open_positions": 7,
         "max_new_positions_per_round": 5,
+        "allusdt_24h_rise_threshold_percent": 4.0,
+        "allusdt_24h_rise_max_open_positions": 15,
     }
 
 
@@ -71,6 +79,8 @@ def test_position_limit_settings_api_updates_both_accounts(tmp_path, monkeypatch
             "simulation_max_open_positions": 4,
             "live_max_open_positions": 6,
             "max_new_positions_per_round": 2,
+            "allusdt_24h_rise_threshold_percent": 3.75,
+            "allusdt_24h_rise_max_open_positions": 20,
         },
     )
 
@@ -79,5 +89,7 @@ def test_position_limit_settings_api_updates_both_accounts(tmp_path, monkeypatch
         "simulation_max_open_positions": 4,
         "live_max_open_positions": 6,
         "max_new_positions_per_round": 2,
+        "allusdt_24h_rise_threshold_percent": 3.75,
+        "allusdt_24h_rise_max_open_positions": 20,
     }
     assert client.get("/api/position-limit-settings").get_json() == response.get_json()

@@ -19,15 +19,27 @@ DEFAULT_SETTINGS = {
 SETTINGS_TABLE_NAME = "position_limit_settings"
 
 
-def _validate_settings(payload: dict) -> dict[str, int]:
+def _validate_settings(payload: dict) -> dict[str, int | float]:
     try:
         values = {key: float(payload.get(key, DEFAULT_SETTINGS[key])) for key in DEFAULT_SETTINGS}
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("最大持仓仓位个数和每轮最多新开仓个数均为必填数字") from exc
-    if any(not math.isfinite(value) or not value.is_integer() for value in values.values()):
+    count_keys = {
+        "simulation_max_open_positions",
+        "live_max_open_positions",
+        "max_new_positions_per_round",
+        "allusdt_24h_rise_max_open_positions",
+    }
+    if any(
+        not math.isfinite(values[key]) or not values[key].is_integer()
+        for key in count_keys
+    ):
         raise ValueError("仓位个数配置必须是整数")
-    settings = {key: int(value) for key, value in values.items()}
-    if any(value < 1 or value > 1000 for key, value in settings.items() if key not in {"allusdt_24h_rise_threshold_percent"}):
+    settings: dict[str, int | float] = {
+        key: (int(value) if key in count_keys else value)
+        for key, value in values.items()
+    }
+    if any(settings[key] < 1 or settings[key] > 1000 for key in count_keys):
         raise ValueError("仓位个数配置必须在 1–1000 之间")
     threshold = values["allusdt_24h_rise_threshold_percent"]
     if not math.isfinite(threshold) or threshold < 0 or threshold > 100:
@@ -35,7 +47,7 @@ def _validate_settings(payload: dict) -> dict[str, int]:
     return settings
 
 
-def get_settings(db_path: str | None = None) -> dict[str, int]:
+def get_settings(db_path: str | None = None) -> dict[str, int | float]:
     path = db_path or db_config.CONFIG_DB_PATH
     with db_config.connect_sqlite(path, row_factory=sqlite3.Row) as conn:
         conn.execute(
@@ -77,7 +89,7 @@ def get_settings(db_path: str | None = None) -> dict[str, int]:
     return {key: (float(row[key]) if "threshold" in key else int(row[key])) for key in DEFAULT_SETTINGS}
 
 
-def set_settings(payload: dict, db_path: str | None = None) -> dict[str, int]:
+def set_settings(payload: dict, db_path: str | None = None) -> dict[str, int | float]:
     settings = _validate_settings(payload)
     path = db_path or db_config.CONFIG_DB_PATH
     get_settings(path)
