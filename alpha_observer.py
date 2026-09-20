@@ -178,7 +178,25 @@ def daily_trends(db_path: str = db_config.ALPHA_DB_PATH, limit: int = 30) -> lis
     """
     init_db(db_path)
     with db_config.connect_sqlite(db_path, row_factory=sqlite3.Row) as conn:
-        symbols = [r[0] for r in conn.execute("SELECT DISTINCT symbol FROM alpha_market_snapshots")]
+        # Use the latest market snapshot as the source of truth for the
+        # returned universe.  Previously this query was driven by
+        # ``alpha_daily_klines`` implicitly (symbols with no valid Binance
+        # spot pair simply disappeared), which made the trend module look as
+        # if those tokens had been lost even though they were present in the
+        # market snapshot.  Keep them with a zero-length data set so the UI
+        # can distinguish "no kline data" from "not in the Alpha universe".
+        latest_snapshot_at = conn.execute(
+            "SELECT MAX(observed_at) FROM alpha_market_snapshots"
+        ).fetchone()[0]
+        if latest_snapshot_at is None:
+            return []
+        symbols = [
+            r[0]
+            for r in conn.execute(
+                "SELECT DISTINCT symbol FROM alpha_market_snapshots WHERE observed_at = ?",
+                (latest_snapshot_at,),
+            )
+        ]
         result = []
         for symbol in symbols:
             rows = conn.execute("SELECT open_time, open, close FROM alpha_daily_klines WHERE symbol=? ORDER BY open_time DESC LIMIT ?", (symbol, limit)).fetchall()
