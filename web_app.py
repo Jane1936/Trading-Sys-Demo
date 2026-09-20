@@ -1510,7 +1510,16 @@ def _alpha_funding_changes():
         # the active universe; old rows must never make a symbol current.
         cutoff_ms = int((datetime.now(timezone.utc) - timedelta(hours=24)).timestamp() * 1000)
         rows = conn.execute(
-            f"""WITH latest_rates AS (
+            f"""WITH current_oi AS (
+                    SELECT symbol
+                    FROM (
+                        SELECT symbol, open_interest,
+                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS rn
+                        FROM alpha_hourly_market
+                        WHERE symbol IN ({placeholders})
+                    )
+                    WHERE rn = 1 AND open_interest IS NOT NULL
+                ), latest_rates AS (
                     SELECT symbol, open_time, funding_rate
                     FROM (
                         SELECT symbol, open_time, funding_rate,
