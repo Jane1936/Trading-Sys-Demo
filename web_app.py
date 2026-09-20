@@ -1505,6 +1505,10 @@ def _alpha_funding_changes():
       with db_config.connect_sqlite(ALPHA_DB_PATH, row_factory=sqlite3.Row) as conn:
         placeholders = ",".join("?" for _ in symbols)
         symbol_params = sorted(symbols)
+        # The table is append-only, while the collector's current universe is
+        # already correct.  Therefore recent funding rows themselves define
+        # the active universe; old rows must never make a symbol current.
+        cutoff_ms = int((datetime.now(timezone.utc) - timedelta(hours=24)).timestamp() * 1000)
         rows = conn.execute(
             f"""WITH current_oi AS (
                     SELECT symbol
@@ -1521,10 +1525,11 @@ def _alpha_funding_changes():
                         SELECT symbol, open_time, funding_rate,
                                ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS rn
                         FROM alpha_hourly_market
-                        WHERE symbol IN ({placeholders}) AND funding_rate IS NOT NULL
-                    ) AS market
-                    JOIN current_oi USING (symbol)
-                    WHERE market.rn = 1
+                        WHERE symbol IN ({placeholders})
+                          AND open_time >= ?
+                          AND funding_rate IS NOT NULL
+                    )
+                    WHERE rn = 1
                 ), rates AS (
                     SELECT latest.symbol,
                            latest.funding_rate AS latest_rate,
@@ -1543,7 +1548,8 @@ def _alpha_funding_changes():
                     FROM (
                         SELECT symbol, open_time, close,
                                ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) AS rn
-                        FROM alpha_hourly_market WHERE symbol IN ({placeholders})
+                        FROM alpha_hourly_market
+                        WHERE symbol IN ({placeholders}) AND open_time >= ?
                     ) WHERE rn = 1
                 ), prices AS (
                     SELECT latest.symbol, latest.latest_close,
@@ -1565,8 +1571,12 @@ def _alpha_funding_changes():
                 FROM requested
                 LEFT JOIN rates USING (symbol)
                 LEFT JOIN prices USING (symbol)
-                WHERE rates.symbol IS NOT NULL OR prices.symbol IS NOT NULL""",
-            [*symbol_params, *symbol_params, *symbol_params, *symbol_params],
+                WHERE rates.symbol IS NOT NULL""",
+            [
+                *symbol_params, cutoff_ms,
+                *symbol_params, cutoff_ms,
+                *symbol_params,
+            ],
         ).fetchall()
         result = [dict(row) for row in rows]
         return sorted(result, key=lambda row: (row["funding_change"] is None, -(row["funding_change"] or 0)))
