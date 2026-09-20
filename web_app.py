@@ -1576,6 +1576,7 @@ def _alpha_funding_changes():
                 *symbol_params, cutoff_ms,
                 *symbol_params, cutoff_ms,
                 *symbol_params,
+                *symbol_params,
             ],
         ).fetchall()
         result = [dict(row) for row in rows]
