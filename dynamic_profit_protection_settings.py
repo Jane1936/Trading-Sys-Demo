@@ -14,6 +14,8 @@ DEFAULT_SETTINGS = {
     "enabled": True,
     "simulation_enabled": True,
     "live_enabled": True,
+    "high_simulation_enabled": True,
+    "high_live_enabled": True,
     "allusdt_24h_rise_threshold_percent": 4.0,
     "tier_2_min_r": 2.0,
     "tier_3_min_r": 3.0,
@@ -30,7 +32,7 @@ def _validate_settings(payload: dict) -> dict[str, bool | float]:
     if not isinstance(payload, dict) or not set(payload).issubset(DEFAULT_SETTINGS):
         raise ValueError("动态利润保护配置包含未知字段")
     payload = {**DEFAULT_SETTINGS, **payload}
-    for flag in ("enabled", "simulation_enabled", "live_enabled"):
+    for flag in ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled"):
         if not isinstance(payload.get(flag, DEFAULT_SETTINGS[flag]), bool):
             raise ValueError("动态利润保护启用状态必须是布尔值")
     if not isinstance(payload.get("enabled"), bool):
@@ -61,7 +63,7 @@ def _validate_settings(payload: dict) -> dict[str, bool | float]:
         raise ValueError("高涨幅模式三个R档位必须严格递增")
     if any(not 0 < values[f"high_tier_{n}_drawdown_ratio"] <= 1 for n in (2,3,4)):
         raise ValueError("高涨幅模式回撤阈值必须在0–100%之间")
-    return {"enabled": payload["enabled"], "simulation_enabled": payload.get("simulation_enabled", True), "live_enabled": payload.get("live_enabled", True), **values}
+    return {"enabled": payload["enabled"], "simulation_enabled": payload.get("simulation_enabled", True), "live_enabled": payload.get("live_enabled", True), "high_simulation_enabled": payload.get("high_simulation_enabled", True), "high_live_enabled": payload.get("high_live_enabled", True), **values}
 
 
 def get_settings(db_path: str | None = None) -> dict[str, bool | float]:
@@ -73,6 +75,8 @@ def get_settings(db_path: str | None = None) -> dict[str, bool | float]:
                 enabled INTEGER NOT NULL,
                 simulation_enabled INTEGER NOT NULL DEFAULT 1,
                 live_enabled INTEGER NOT NULL DEFAULT 1,
+                high_simulation_enabled INTEGER NOT NULL DEFAULT 1,
+                high_live_enabled INTEGER NOT NULL DEFAULT 1,
                 allusdt_24h_rise_threshold_percent REAL NOT NULL DEFAULT 4.0,
                 tier_2_min_r REAL NOT NULL,
                 tier_3_min_r REAL NOT NULL,
@@ -84,11 +88,11 @@ def get_settings(db_path: str | None = None) -> dict[str, bool | float]:
             )
         """)
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({SETTINGS_TABLE_NAME})")}
-        for name, definition in (("simulation_enabled", "INTEGER NOT NULL DEFAULT 1"), ("live_enabled", "INTEGER NOT NULL DEFAULT 1"), ("allusdt_24h_rise_threshold_percent", "REAL NOT NULL DEFAULT 4.0")):
+        for name, definition in (("simulation_enabled", "INTEGER NOT NULL DEFAULT 1"), ("live_enabled", "INTEGER NOT NULL DEFAULT 1"), ("high_simulation_enabled", "INTEGER NOT NULL DEFAULT 1"), ("high_live_enabled", "INTEGER NOT NULL DEFAULT 1"), ("allusdt_24h_rise_threshold_percent", "REAL NOT NULL DEFAULT 4.0")):
             if name not in columns:
                 conn.execute(f"ALTER TABLE {SETTINGS_TABLE_NAME} ADD COLUMN {name} {definition}")
         for name in DEFAULT_SETTINGS:
-            if name not in columns and name not in ("enabled", "simulation_enabled", "live_enabled", "allusdt_24h_rise_threshold_percent"):
+            if name not in columns and name not in ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled", "allusdt_24h_rise_threshold_percent"):
                 conn.execute(f"ALTER TABLE {SETTINGS_TABLE_NAME} ADD COLUMN {name} REAL NOT NULL DEFAULT {DEFAULT_SETTINGS[name]}")
         # Keep the seed columns and values in lockstep as settings evolve.  The
         # high-rise tier fields are added by the migration above and must also
@@ -97,7 +101,7 @@ def get_settings(db_path: str | None = None) -> dict[str, bool | float]:
         seed_columns = ["id", *DEFAULT_SETTINGS, "updated_at"]
         seed_values = [
             1,
-            *(int(DEFAULT_SETTINGS[key]) if key in ("enabled", "simulation_enabled", "live_enabled")
+            *(int(DEFAULT_SETTINGS[key]) if key in ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled")
               else DEFAULT_SETTINGS[key] for key in DEFAULT_SETTINGS),
             int(time.time() * 1000),
         ]
@@ -111,7 +115,7 @@ def get_settings(db_path: str | None = None) -> dict[str, bool | float]:
         ).fetchone()
         conn.commit()
     return {
-        key: bool(row[key]) if key in ("enabled", "simulation_enabled", "live_enabled") else float(row[key])
+        key: bool(row[key]) if key in ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled") else float(row[key])
         for key in DEFAULT_SETTINGS
     }
 
@@ -127,7 +131,7 @@ def set_settings(payload: dict, db_path: str | None = None) -> dict[str, bool | 
             + ", ".join(f"{key} = ?" for key in keys)
             + ", updated_at = ? WHERE id = 1",
             (
-                *(int(settings[key]) if key == "enabled" else settings[key] for key in keys),
+                *(int(settings[key]) if key in ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled") else settings[key] for key in keys),
                 int(time.time() * 1000),
             ),
         )
