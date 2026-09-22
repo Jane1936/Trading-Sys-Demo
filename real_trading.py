@@ -6,6 +6,7 @@ audit row, lock and error produced here is stored in real_trading_core.db.
 from __future__ import annotations
 
 import os
+import time
 from decimal import Decimal
 from typing import Any, Iterable
 
@@ -95,7 +96,7 @@ def initialize() -> None:
 
 def run_round(candidates: Iterable[OpenableSymbol], round_ts: int) -> dict[str, Any]:
     """Run mandatory stale-position cleanup before considering new entries."""
-    zombie_result = zombie_module().run_round(checked_at=round_ts)
+    zombie_result = zombie_module().run_round(checked_at=int(time.time() * 1000))
     rows = list(candidates)
     if not any(row.qualified for row in rows):
         return {"opened": 0, "skipped": 0, "reason": "no_qualified_symbols", "zombie_force_liquidation": zombie_result}

@@ -87,7 +87,49 @@ class ZombieForceLiquidationTests(unittest.TestCase):
                 check = conn.execute(
                     f"SELECT triggered, reason FROM {ZombieForceLiquidationModule.CHECKS_TABLE}"
                 ).fetchone()
-            self.assertEqual(check, (1, "holding_time_gte_24h"))
+            self.assertEqual(check, (1, "holding_time_reached_threshold"))
+
+    def test_stale_round_time_does_not_fall_back_to_an_old_trade_after_restart(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "klines.db")
+            account = ZombieAccountManager()
+            TradingExperiment(db_path=db_path, account_manager=account).init_tables()
+            ZombieForceLiquidationModule(db_path=db_path, account_manager=account).init_tables()
+            round_start = 1_000_000_000
+            old_opened_at = round_start - 48 * 60 * 60 * 1000
+            current_opened_at = round_start + 40_000
+            with sqlite3.connect(db_path) as conn:
+                for opened_at in (old_opened_at, current_opened_at):
+                    conn.execute(
+                        f"""
+                        INSERT INTO {TradingExperiment.TRADES_TABLE}
+                        (symbol, decision_round_ts, side, status, total_score, leverage,
+                         allocated_usdt, required_margin_usdt, account_equity_usdt,
+                         max_loss_usdt, entry_price, quantity, notional_usdt,
+                         take_profit_price, stop_loss_price, stop_loss_calculation,
+                         take_profit_order_id, stop_loss_order_id, reason, raw_response,
+                         created_at, updated_at)
+                        VALUES ('BANK', 1, 'LONG', 'opened', 80, 5, '100', '20',
+                                '1000', '10', '10', '2', '20', '37.5', '7', '',
+                                'tp-1', 'sl-1', '', '', ?, ?)
+                        """,
+                        (opened_at, opened_at),
+                    )
+
+            result = ZombieForceLiquidationModule(
+                db_path=db_path, account_manager=account
+            ).run_round(checked_at=round_start)
+
+            self.assertEqual(result["triggered"], 0)
+            self.assertEqual(account.posts, [])
+            with sqlite3.connect(db_path) as conn:
+                check = conn.execute(
+                    f"SELECT opened_at, triggered, reason FROM "
+                    f"{ZombieForceLiquidationModule.CHECKS_TABLE}"
+                ).fetchone()
+            self.assertEqual(
+                check, (current_opened_at, 0, "opened_after_check_time")
+            )
 
     def test_break_even_record_does_not_exempt_position_at_24h(self):
         with tempfile.TemporaryDirectory() as tmpdir:

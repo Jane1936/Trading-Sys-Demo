@@ -518,9 +518,13 @@ def run_first_experiment_after_openable_round(
         else:
             print(f"⏸️ market filter disabled before trading round={round_ts}; skipping market block check")
 
+        # Holding age is wall-clock age, not scoring-window age.  In
+        # particular, a redeploy can replay the current scoring window after a
+        # position was opened inside it.
+        zombie_checked_at = int(time.time() * 1000)
         zombie_result = ZombieForceLiquidationModule(
             db_path=db_config.TRADING_DB_PATH
-        ).run_round(checked_at=round_ts)
+        ).run_round(checked_at=zombie_checked_at)
         print(
             f"🧟 zombie force liquidation before open round={round_ts} "
             f"checked={zombie_result.get('checked', 0)} "
@@ -532,7 +536,7 @@ def run_first_experiment_after_openable_round(
         )
         try:
             live_zombie_result = real_trading.zombie_module().run_round(
-                checked_at=round_ts
+                checked_at=zombie_checked_at
             )
             print(
                 f"🧟 live zombie force liquidation round={round_ts} "
