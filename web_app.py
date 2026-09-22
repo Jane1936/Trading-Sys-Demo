@@ -1385,6 +1385,7 @@ def alpha_market_data():
     try:
         if module == "summary":
             observed_at, rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
+            trends = alpha_observer.daily_trends(ALPHA_DB_PATH)
             data = {
                 "total_tokens": len(rows),
                 "active_tokens": sum(
@@ -1392,6 +1393,9 @@ def alpha_market_data():
                     for row in rows
                     if row.get("activity_1d", row.get("activity")) is not None
                     and float(row.get("activity_1d", row.get("activity"))) >= 1
+                ),
+                "two_day_up_tokens": sum(
+                    1 for trend in trends if trend["consecutive_up_days"] >= 2
                 ),
             }
         elif module == "oi":
