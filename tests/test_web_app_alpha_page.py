@@ -99,15 +99,24 @@ def test_alpha_page_refreshes_snapshot_at_hourly_minute_one_without_meta_refresh
 
 def test_alpha_summary_is_hidden_until_manual_refresh():
     row = {"symbol": "ACTIVE", "activity_1d": 1.25}
-    with patch("web_app.alpha_observer.latest_snapshot", return_value=(1_789_399_183_493, [row])):
+    trends = [{"symbol": "ACTIVE", "consecutive_up_days": 2}]
+    with (
+        patch("web_app.alpha_observer.latest_snapshot", return_value=(1_789_399_183_493, [row])),
+        patch("web_app.alpha_observer.daily_trends", return_value=trends),
+    ):
         response = app.test_client().get("/market/alpha/data?module=summary")
 
     assert response.status_code == 200
-    assert response.get_json()["data"] == {"total_tokens": 1, "active_tokens": 1}
+    assert response.get_json()["data"] == {
+        "total_tokens": 1,
+        "active_tokens": 1,
+        "two_day_up_tokens": 1,
+    }
 
     template = (Path(__file__).resolve().parents[1] / "templates" / "alpha.html").read_text()
     assert 'data-alpha-summary-value="total_tokens">—<' in template
     assert 'data-alpha-summary-value="active_tokens">—<' in template
+    assert 'data-alpha-summary-value="two_day_up_tokens">—<' in template
     assert "data-alpha-summary-refresh" in template
     assert "module=summary" in template
 
@@ -118,11 +127,29 @@ def test_alpha_summary_counts_only_activity_at_least_one():
         {"symbol": "LOW", "activity_1d": 0.999},
         {"symbol": "MISSING", "activity_1d": None},
     ]
-    with patch("web_app.alpha_observer.latest_snapshot", return_value=(1_789_399_183_493, rows)):
+    trends = [
+        {"symbol": "THREE_DAYS", "consecutive_up_days": 3},
+        {"symbol": "TWO_DAYS", "consecutive_up_days": 2},
+        {"symbol": "ONE_DAY", "consecutive_up_days": 1},
+    ]
+    with (
+        patch("web_app.alpha_observer.latest_snapshot", return_value=(1_789_399_183_493, rows)),
+        patch("web_app.alpha_observer.daily_trends", return_value=trends),
+    ):
         response = app.test_client().get("/market/alpha/data?module=summary")
 
     assert response.status_code == 200
-    assert response.get_json()["data"] == {"total_tokens": 3, "active_tokens": 1}
+    assert response.get_json()["data"] == {
+        "total_tokens": 3,
+        "active_tokens": 1,
+        "two_day_up_tokens": 2,
+    }
+
+
+def test_alpha_deferred_modules_prompt_user_to_load_all_data():
+    template = (Path(__file__).resolve().parents[1] / "templates" / "alpha.html").read_text()
+
+    assert template.count("请点击加载全部数据按钮") == 3
 
 
 def test_alpha_oi_changes_batches_symbols_and_caches_by_snapshot(tmp_path, monkeypatch):

@@ -39,6 +39,11 @@
         <strong data-alpha-summary-value="active_tokens">—</strong>
         <small>以最新快照的“1天活跃度”指标为准</small>
       </article>
+      <article class="alpha-summary-card">
+        <span>连续2天上涨的 Alpha 币个数</span>
+        <strong data-alpha-summary-value="two_day_up_tokens">—</strong>
+        <small>以持续趋势模块的“连续上涨天数 ≥ 2”指标为准</small>
+      </article>
     </div>
     <p class="alpha-summary-status" data-alpha-summary-status>点击“刷新数据”加载行情汇总</p>
   </section>
@@ -101,7 +106,7 @@
       </form>
       <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="trend"><thead><tr><th>币种</th><th>连续上涨天数</th><th>近5日内上涨天数</th><th>近3日累计涨幅</th><th>近5日累计涨幅</th><th>日线数量</th></tr></thead><tbody>
       {% for trend in trends %}<tr data-consecutive-up-days="{{ trend.consecutive_up_days }}"{% if loop.index > 10 or trend.consecutive_up_days < consecutive_up_days_min %} class="alpha-trend-extra-row" hidden{% endif %}><td><strong>{{ trend.symbol }}</strong></td><td class="numeric">{{ trend.consecutive_up_days }}</td><td class="numeric">{{ trend.recent_five_up_days }}</td><td class="numeric alpha-change{% if trend.three_day_return is not none %} {{ 'alpha-change-positive' if trend.three_day_return >= 0 else 'alpha-change-negative' }}{% endif %}">{% if trend.three_day_return is not none %}{{ '%+.2f'|format(trend.three_day_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if trend.five_day_return is not none %} {{ 'alpha-change-positive' if trend.five_day_return >= 0 else 'alpha-change-negative' }}{% endif %}">{% if trend.five_day_return is not none %}{{ '%+.2f'|format(trend.five_day_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric">{{ trend.kline_count }}</td></tr>{% endfor %}
-      </tbody></table></div>{% if not trends %}<p class="empty-state">加载中…</p>{% endif %}
+      </tbody></table></div>{% if not trends %}<p class="empty-state">请点击加载全部数据按钮</p>{% endif %}
     </section>
     <section class="panel alpha-panel active" data-alpha-panel="oi">
       <div class="panel-title alpha-panel-title"><div><h2>OI异动</h2><span>有 U 本位合约的 Alpha 代币 · 每小时变化（数据源：alpha.db）</span><small class="alpha-module-updated" data-alpha-updated="oi">本模块本轮数据更新时间：{{ module_updated_at.oi or '暂无' }}</small></div><button type="button" class="btn btn-secondary alpha-load-all" data-alpha-load="oi">点击加载全部数据</button></div>
@@ -113,7 +118,7 @@
       </form>
       <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="oi"><thead><tr><th>币种</th><th>1小时 OI 涨跌幅</th><th>1小时价格涨跌幅</th></tr></thead><tbody>
       {% for item in oi_changes %}<tr data-oi-change="{{ item.oi_change if item.oi_change is not none else '' }}" data-price-change="{{ item.price_change if item.price_change is not none else '' }}"{% if loop.index > 10 %} class="alpha-oi-extra-row" hidden{% endif %}><td><strong>{{ item.symbol }}</strong></td><td class="numeric alpha-change{% if item.oi_change is not none %} {{ 'alpha-change-positive' if item.oi_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.oi_change is not none %}{{ '%+.2f'|format(item.oi_change * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if item.price_change is not none %} {{ 'alpha-change-positive' if item.price_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.price_change is not none %}{{ '%+.2f'|format(item.price_change * 100) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
-      </tbody></table></div>{% if not oi_changes %}<p class="empty-state">加载中…</p>{% endif %}
+      </tbody></table></div>{% if not oi_changes %}<p class="empty-state">请点击加载全部数据按钮</p>{% endif %}
     </section>
     <section class="panel alpha-panel" hidden data-alpha-panel="funding">
       <div class="panel-title alpha-panel-title"><div><h2>资金费率变化</h2><span>有 U 本位合约的 Alpha 代币 · 近4小时资金费率变化（数据源：alpha.db）</span><small class="alpha-module-updated" data-alpha-updated="funding">本模块本轮数据更新时间：{{ module_updated_at.funding or '暂无' }}</small></div><button type="button" class="btn btn-secondary alpha-load-all" data-alpha-load="funding">点击加载全部数据</button></div>
@@ -125,7 +130,7 @@
       </form>
       <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="funding"><thead><tr><th>币种</th><th>资金费率涨跌幅</th><th>4小时价格涨跌幅</th></tr></thead><tbody>
       {% for item in funding_changes %}<tr data-funding-change="{{ item.funding_change if item.funding_change is not none else '' }}" data-price-change="{{ item.price_change if item.price_change is not none else '' }}"{% if loop.index > 10 %} class="alpha-funding-extra-row" hidden{% endif %}><td><strong>{{ item.symbol }}</strong></td><td class="numeric alpha-change{% if item.funding_change is not none %} {{ 'alpha-change-positive' if item.funding_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.funding_change is not none %}{{ '%+.2f'|format(item.funding_change * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if item.price_change is not none %} {{ 'alpha-change-positive' if item.price_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.price_change is not none %}{{ '%+.2f'|format(item.price_change * 100) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
-      </tbody></table></div>{% if not funding_changes %}<p class="empty-state">加载中…</p>{% endif %}
+      </tbody></table></div>{% if not funding_changes %}<p class="empty-state">请点击加载全部数据按钮</p>{% endif %}
     </section>
   {% endif %}
 {% endblock %}
@@ -144,6 +149,7 @@
       if (!response.ok || payload.error) throw new Error(payload.error || `HTTP ${response.status}`);
       document.querySelector('[data-alpha-summary-value="total_tokens"]').textContent = payload.data.total_tokens;
       document.querySelector('[data-alpha-summary-value="active_tokens"]').textContent = payload.data.active_tokens;
+      document.querySelector('[data-alpha-summary-value="two_day_up_tokens"]').textContent = payload.data.two_day_up_tokens;
       if (status) status.textContent = payload.updated_at
         ? `数据更新时间：${new Date(payload.updated_at).toISOString().replace('T', ' ').replace('.000Z', ' UTC')}`
         : '最新市场快照暂无时间信息';
