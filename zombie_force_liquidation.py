@@ -155,7 +155,25 @@ class ZombieForceLiquidationModule:
         symbol = TradingExperiment._base_symbol(exchange_symbol)
         amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
         entry_price = self._decimal_from(position.get("entryPrice"), Decimal("0"))
-        opened_at = self._latest_opened_at(symbol, now)
+        opened_at = self._latest_opened_at(symbol)
+        if opened_at is not None and opened_at > now:
+            # ``checked_at`` used to be the beginning of the scoring window.
+            # When a worker restarted later in that same window, a position
+            # opened after the window boundary was therefore "in the future".
+            # Never fall back to an older trade for that symbol in this case:
+            # doing so can make a brand-new position look many hours old.
+            self._insert_check(
+                symbol,
+                now,
+                opened_at,
+                Decimal("0"),
+                amount,
+                entry_price,
+                False,
+                False,
+                "opened_after_check_time",
+            )
+            return False
         holding_ms = max(0, now - opened_at) if opened_at is not None else 0
         holding_hours = Decimal(holding_ms) / Decimal(60 * 60 * 1000)
         if opened_at is None:
@@ -226,15 +244,15 @@ class ZombieForceLiquidationModule:
             lock_manager.release(lock_handle)
         self._insert_record(symbol, now, opened_at, side, amount, quantity, entry_price, status, order_id, "; ".join(reason_parts), " | ".join(raw_parts))
 
-    def _latest_opened_at(self, symbol: str, now: int) -> int | None:
+    def _latest_opened_at(self, symbol: str) -> int | None:
         with self._connect() as conn:
             row = conn.execute(
                 f"""
                 SELECT created_at FROM {TradingExperiment.TRADES_TABLE}
-                WHERE symbol = ? AND status = 'opened' AND created_at <= ?
+                WHERE symbol = ? AND status = 'opened'
                 ORDER BY created_at DESC, id DESC LIMIT 1
                 """,
-                (symbol, now),
+                (symbol,),
             ).fetchone()
         return int(row["created_at"]) if row else None
 
