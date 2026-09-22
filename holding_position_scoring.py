@@ -791,8 +791,8 @@ class HoldingPositionScoringSystem:
         if not self._has_macd_for_positions(active_positions, round_ts):
             return []
         equity = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)._fetch_experiment_usdt_equity()
-        one_r = equity * Decimal("0.01")
-        two_r = equity * Decimal("0.02")
+        one_r = self.config.risk_usdt(equity)
+        two_r = one_r * Decimal("2")
         half_r = one_r * Decimal("0.5")
         checks: list[PositionReductionCheck] = []
         for position in active_positions:
@@ -1497,7 +1497,7 @@ class HoldingPositionScoringSystem:
         now_ms = checked_at if checked_at is not None else int(time.time() * 1000)
         active_positions = positions if positions is not None else self._active_positions()
         equity = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)._fetch_experiment_usdt_equity()
-        one_r = equity * Decimal("0.01")
+        one_r = self.config.risk_usdt(equity)
         threshold_r_multiple = self._current_increase_threshold_r_multiple(round_ts, now_ms)
         checks: list[PositionIncreaseCheck] = []
         for position in active_positions:
@@ -1591,7 +1591,7 @@ class HoldingPositionScoringSystem:
             if self._base_symbol(str(position.get("symbol", ""))) in pretrigger_symbols
         ]
         equity = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)._fetch_experiment_usdt_equity()
-        one_r = equity * Decimal("0.01")
+        one_r = self.config.risk_usdt(equity)
         threshold_r_multiple = self._current_increase_threshold_r_multiple(int(round_ts), checked_at)
         refreshed_checks: list[PositionIncreaseCheck] = []
         for position in positions:
@@ -1716,7 +1716,7 @@ class HoldingPositionScoringSystem:
                 raise RuntimeError("increase_position_leverage_missing")
             half_position_margin = original_quantity * current_price * Decimal("0.5") / leverage
             threshold_r_multiple = self._current_increase_threshold_r_multiple(check.decision_round_ts, now_ms)
-            one_r = helper._fetch_experiment_usdt_equity() * Decimal("0.01")
+            one_r = self.config.risk_usdt(helper._fetch_experiment_usdt_equity())
             threshold_margin = one_r * threshold_r_multiple
             required_margin = min(half_position_margin, threshold_margin)
             reason_parts.append(f"dynamic_increase_threshold={self._fmt_decimal(threshold_r_multiple)}R; required_margin=min(half_position_50pct_margin={self._fmt_decimal(half_position_margin)}, threshold_margin={self._fmt_decimal(threshold_margin)})")

@@ -37,6 +37,22 @@ class ExperimentConfig:
     hard_take_profit_usdt: Decimal = Decimal("55")
     max_margin_cost_usdt: Decimal | None = None
 
+    def risk_base_equity(self, account_equity_usdt: Decimal) -> Decimal:
+        """Return the capital base used to calculate R and position risk.
+
+        A configured margin-cost ceiling also caps the amount of account equity
+        that may be put at risk.  This keeps ``R`` aligned with the effective
+        trading budget instead of allowing a larger exchange balance to raise
+        the risk thresholds.
+        """
+        if self.max_margin_cost_usdt is None:
+            return account_equity_usdt
+        return min(account_equity_usdt, self.max_margin_cost_usdt)
+
+    def risk_usdt(self, account_equity_usdt: Decimal) -> Decimal:
+        """Calculate one R from the effective risk capital."""
+        return self.risk_base_equity(account_equity_usdt) * self.risk_fraction
+
 
 @dataclass(frozen=True)
 class TradePlan:
@@ -269,7 +285,7 @@ class TradingExperiment:
         account = self._fetch_account()
         available_balance = self._decimal_from(account.get("availableBalance"), Decimal("0"))
         account_equity = self._fetch_experiment_usdt_equity()
-        max_loss = account_equity * self.config.risk_fraction
+        max_loss = self.config.risk_usdt(account_equity)
         positions = self._fetch_and_store_positions()
         reserved_margin_budget = self._reserved_margin_from_positions(positions)
 
@@ -309,7 +325,7 @@ class TradingExperiment:
             account = self._fetch_account()
             available_balance = self._decimal_from(account.get("availableBalance"), Decimal("0"))
             account_equity = self._fetch_experiment_usdt_equity()
-            max_loss = account_equity * self.config.risk_fraction
+            max_loss = self.config.risk_usdt(account_equity)
             if available_balance < self.config.experiment_uninvested_usdt:
                 self._record_skip(candidate, account_equity, max_loss, "available_balance_reserve_floor_blocked")
                 skipped += 1
@@ -1422,7 +1438,7 @@ class TradingExperiment:
         distance_ratio = self._effective_stop_loss_distance_ratio(candidate)
         if leverage <= 0 or distance_ratio <= 0 or account_equity <= 0:
             return TradePlan(leverage, distance_ratio, Decimal("0"), Decimal("0"))
-        required_margin = (account_equity * self.config.risk_fraction) / (distance_ratio * Decimal(leverage))
+        required_margin = self.config.risk_usdt(account_equity) / (distance_ratio * Decimal(leverage))
         planned_notional = required_margin * Decimal(leverage)
         return TradePlan(leverage, distance_ratio, required_margin, planned_notional)
 

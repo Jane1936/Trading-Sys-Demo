@@ -251,7 +251,7 @@ class PartialTakeProfitStrategy:
         except Exception as exc:
             self._insert_error(now, round_ts, "", "fetch_equity", exc)
             raise
-        r_value = equity * self.config.risk_fraction
+        r_value = self.config.risk_usdt(equity)
         market_round = WeakMarketProfitAdjustmentModule.decision_round_ts(decision_round_ts)
         try:
             adjustment = (

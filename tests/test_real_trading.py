@@ -38,6 +38,24 @@ def test_real_config_uses_100u_without_simulation_reserve_and_10u_take_profit(mo
     assert value.hard_take_profit_usdt == Decimal("10")
 
 
+def test_real_config_caps_one_r_at_live_margin_cost_budget(monkeypatch):
+    monkeypatch.setenv("REAL_TRADING_INITIAL_EQUITY_USDT", "160")
+    monkeypatch.setattr(
+        real_trading,
+        "get_margin_budget_settings",
+        lambda: {
+            "simulation_max_margin_cost_usdt": Decimal("1000"),
+            "live_max_margin_cost_usdt": Decimal("130"),
+        },
+    )
+
+    value = real_trading.config()
+
+    assert value.risk_base_equity(Decimal("160")) == Decimal("130")
+    assert value.risk_usdt(Decimal("160")) == Decimal("1.30")
+    assert value.risk_usdt(Decimal("120")) == Decimal("1.20")
+
+
 def test_real_holding_scoring_uses_live_api_and_real_database(tmp_path, monkeypatch):
     real_db = tmp_path / "real_trading_core.db"
     simulation_db = tmp_path / "trading.db"
