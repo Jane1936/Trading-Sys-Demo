@@ -103,6 +103,8 @@ def test_alpha_summary_is_hidden_until_manual_refresh():
     with (
         patch("web_app.alpha_observer.latest_snapshot", return_value=(1_789_399_183_493, [row])),
         patch("web_app.alpha_observer.daily_trends", return_value=trends),
+        patch("web_app._alpha_oi_changes", return_value=[]),
+        patch("web_app._alpha_funding_changes", return_value=[]),
     ):
         response = app.test_client().get("/market/alpha/data?module=summary")
 
@@ -111,12 +113,16 @@ def test_alpha_summary_is_hidden_until_manual_refresh():
         "total_tokens": 1,
         "active_tokens": 1,
         "two_day_up_tokens": 1,
+        "oi_abnormal_tokens": 0,
+        "funding_abnormal_tokens": 0,
     }
 
     template = (Path(__file__).resolve().parents[1] / "templates" / "alpha.html").read_text()
     assert 'data-alpha-summary-value="total_tokens">—<' in template
     assert 'data-alpha-summary-value="active_tokens">—<' in template
     assert 'data-alpha-summary-value="two_day_up_tokens">—<' in template
+    assert 'data-alpha-summary-value="oi_abnormal_tokens">—<' in template
+    assert 'data-alpha-summary-value="funding_abnormal_tokens">—<' in template
     assert "data-alpha-summary-refresh" in template
     assert "module=summary" in template
 
@@ -135,6 +141,8 @@ def test_alpha_summary_counts_only_activity_at_least_one():
     with (
         patch("web_app.alpha_observer.latest_snapshot", return_value=(1_789_399_183_493, rows)),
         patch("web_app.alpha_observer.daily_trends", return_value=trends),
+        patch("web_app._alpha_oi_changes", return_value=[]),
+        patch("web_app._alpha_funding_changes", return_value=[]),
     ):
         response = app.test_client().get("/market/alpha/data?module=summary")
 
@@ -143,7 +151,35 @@ def test_alpha_summary_counts_only_activity_at_least_one():
         "total_tokens": 3,
         "active_tokens": 1,
         "two_day_up_tokens": 2,
+        "oi_abnormal_tokens": 0,
+        "funding_abnormal_tokens": 0,
     }
+
+
+def test_alpha_summary_counts_oi_and_funding_abnormal_symbols_at_boundaries():
+    oi_changes = [
+        {"symbol": "MATCH", "oi_change": 0.10, "price_change": -0.03},
+        {"symbol": "LOW_OI", "oi_change": 0.0999, "price_change": 0.01},
+        {"symbol": "HIGH_PRICE", "oi_change": 0.20, "price_change": 0.0301},
+        {"symbol": "MISSING", "oi_change": None, "price_change": None},
+    ]
+    funding_changes = [
+        {"symbol": "MATCH", "funding_change": 4.0, "price_change": 0.025},
+        {"symbol": "LOW_FUNDING", "funding_change": 3.999, "price_change": 0.01},
+        {"symbol": "HIGH_PRICE", "funding_change": 5.0, "price_change": -0.0251},
+        {"symbol": "MISSING", "funding_change": None, "price_change": None},
+    ]
+    with (
+        patch("web_app.alpha_observer.latest_snapshot", return_value=(1_789_399_183_493, [])),
+        patch("web_app.alpha_observer.daily_trends", return_value=[]),
+        patch("web_app._alpha_oi_changes", return_value=oi_changes),
+        patch("web_app._alpha_funding_changes", return_value=funding_changes),
+    ):
+        response = app.test_client().get("/market/alpha/data?module=summary")
+
+    assert response.status_code == 200
+    assert response.get_json()["data"]["oi_abnormal_tokens"] == 1
+    assert response.get_json()["data"]["funding_abnormal_tokens"] == 1
 
 
 def test_alpha_deferred_modules_prompt_user_to_load_all_data():
