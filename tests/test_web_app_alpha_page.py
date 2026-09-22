@@ -97,6 +97,34 @@ def test_alpha_page_refreshes_snapshot_at_hourly_minute_one_without_meta_refresh
     assert "loadAlphaModule('snapshot')" in template
 
 
+def test_alpha_summary_is_hidden_until_manual_refresh():
+    row = {"symbol": "ACTIVE", "activity_1d": 1.25}
+    with patch("web_app.alpha_observer.latest_snapshot", return_value=(1_789_399_183_493, [row])):
+        response = app.test_client().get("/market/alpha/data?module=summary")
+
+    assert response.status_code == 200
+    assert response.get_json()["data"] == {"total_tokens": 1, "active_tokens": 1}
+
+    template = (Path(__file__).resolve().parents[1] / "templates" / "alpha.html").read_text()
+    assert 'data-alpha-summary-value="total_tokens">—<' in template
+    assert 'data-alpha-summary-value="active_tokens">—<' in template
+    assert "data-alpha-summary-refresh" in template
+    assert "module=summary" in template
+
+
+def test_alpha_summary_counts_only_activity_at_least_one():
+    rows = [
+        {"symbol": "HIGH", "activity_1d": 1},
+        {"symbol": "LOW", "activity_1d": 0.999},
+        {"symbol": "MISSING", "activity_1d": None},
+    ]
+    with patch("web_app.alpha_observer.latest_snapshot", return_value=(1_789_399_183_493, rows)):
+        response = app.test_client().get("/market/alpha/data?module=summary")
+
+    assert response.status_code == 200
+    assert response.get_json()["data"] == {"total_tokens": 3, "active_tokens": 1}
+
+
 def test_alpha_oi_changes_batches_symbols_and_caches_by_snapshot(tmp_path, monkeypatch):
     db_path = tmp_path / "market.db"
     _create_market_tables(db_path)

@@ -1383,7 +1383,18 @@ def alpha_market_data():
     """Return one deferred Alpha module as JSON for the interactive page."""
     module = request.args.get("module", "")
     try:
-        if module == "oi":
+        if module == "summary":
+            observed_at, rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
+            data = {
+                "total_tokens": len(rows),
+                "active_tokens": sum(
+                    1
+                    for row in rows
+                    if row.get("activity_1d", row.get("activity")) is not None
+                    and float(row.get("activity_1d", row.get("activity"))) >= 1
+                ),
+            }
+        elif module == "oi":
             data = _alpha_oi_changes()
         elif module == "funding":
             data = _alpha_funding_changes()
@@ -1394,7 +1405,7 @@ def alpha_market_data():
             data = [dict(row) for row in rows]
         else:
             return jsonify({"error": "unknown module"}), 400
-        updated_at = _alpha_module_updated_at(module)
+        updated_at = observed_at if module == "summary" else _alpha_module_updated_at(module)
         return jsonify({"module": module, "data": data, "updated_at": updated_at})
     except Exception as exc:
         app.logger.exception("Alpha deferred module failed: %s", module)
