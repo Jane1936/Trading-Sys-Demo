@@ -1386,6 +1386,8 @@ def alpha_market_data():
         if module == "summary":
             observed_at, rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
             trends = alpha_observer.daily_trends(ALPHA_DB_PATH)
+            oi_changes = _alpha_oi_changes()
+            funding_changes = _alpha_funding_changes()
             data = {
                 "total_tokens": len(rows),
                 "active_tokens": sum(
@@ -1396,6 +1398,22 @@ def alpha_market_data():
                 ),
                 "two_day_up_tokens": sum(
                     1 for trend in trends if trend["consecutive_up_days"] >= 2
+                ),
+                "oi_abnormal_tokens": sum(
+                    1
+                    for row in oi_changes
+                    if row["oi_change"] is not None
+                    and row["oi_change"] >= 0.10
+                    and row["price_change"] is not None
+                    and abs(row["price_change"]) <= 0.03
+                ),
+                "funding_abnormal_tokens": sum(
+                    1
+                    for row in funding_changes
+                    if row["funding_change"] is not None
+                    and row["funding_change"] >= 4.0
+                    and row["price_change"] is not None
+                    and abs(row["price_change"]) <= 0.025
                 ),
             }
         elif module == "oi":
