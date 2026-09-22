@@ -79,6 +79,14 @@ PROFIT_MARKET_CONVERGENCE_POLL_SEC = float(
 )
 
 
+def simulation_config() -> ExperimentConfig:
+    """Build the current paper-account config from persisted settings."""
+    max_margin_cost = None
+    if feature_flags.is_feature_enabled(feature_flags.MARGIN_COST_LIMIT):
+        max_margin_cost = get_margin_budget_settings()["simulation_max_margin_cost_usdt"]
+    return ExperimentConfig(max_margin_cost_usdt=max_margin_cost)
+
+
 def _allusdt_24h_change_for_filter() -> float | None:
     """Fetch the headline ticker first without preventing the filter on failure."""
     try:
@@ -569,8 +577,9 @@ def run_first_experiment_after_openable_round(
             print(f"⏸️ trading system disabled round={round_ts}; skipping new positions")
             return
         position_limits = get_position_limit_settings()
-        simulation_config = ExperimentConfig(max_margin_cost_usdt=get_margin_budget_settings()["simulation_max_margin_cost_usdt"] if feature_flags.is_feature_enabled(feature_flags.MARGIN_COST_LIMIT) else None)
-        simulation_experiment = TradingExperiment(db_path=db_config.TRADING_DB_PATH, config=simulation_config)
+        current_simulation_config = simulation_config()
+        simulation_experiment = TradingExperiment(db_path=db_config.TRADING_DB_PATH)
+        simulation_experiment.config = current_simulation_config
         simulation_experiment.max_open_positions = effective_max_open_positions(position_limits["simulation_max_open_positions"], position_limits)
         simulation_experiment.max_new_positions_per_round = position_limits[
             "max_new_positions_per_round"
@@ -592,10 +601,11 @@ def run_first_experiment_after_openable_round(
         # reflects and protects the newly created positions.
         if int(experiment_result.get("opened", 0) or 0) > 0:
             try:
-                holding_result = HoldingPositionScoringSystem(
-                    db_path=db_config.TRADING_DB_PATH,
-                    config=ExperimentConfig(max_margin_cost_usdt=get_margin_budget_settings()["simulation_max_margin_cost_usdt"] if feature_flags.is_feature_enabled(feature_flags.MARGIN_COST_LIMIT) else None),
-                ).run_round(
+                refreshed_holding = HoldingPositionScoringSystem(
+                    db_path=db_config.TRADING_DB_PATH
+                )
+                refreshed_holding.config = current_simulation_config
+                holding_result = refreshed_holding.run_round(
                     decision_round_ts=round_ts,
                     enable_stop_loss=feature_flags.is_feature_enabled(feature_flags.STOP_LOSS_RULE),
                     enable_reduction=feature_flags.is_feature_enabled(feature_flags.REDUCTION_CONDITIONS),
@@ -966,10 +976,11 @@ def run_scoring_round_worker(
         # safety-critical result between two decision rounds.
         holding_scoring = HoldingPositionScoringSystem(
             db_path=db_config.TRADING_DB_PATH,
-            config=ExperimentConfig(max_margin_cost_usdt=get_margin_budget_settings()["simulation_max_margin_cost_usdt"] if feature_flags.is_feature_enabled(feature_flags.MARGIN_COST_LIMIT) else None),
+            config=simulation_config(),
         )
         trailing_reduction = TrailingReductionTracker(
-            db_path=db_config.TRADING_DB_PATH
+            db_path=db_config.TRADING_DB_PATH,
+            config=simulation_config(),
         )
         holding_flags = {
             "stop_loss": feature_flags.is_feature_enabled(feature_flags.STOP_LOSS_RULE),
@@ -1081,6 +1092,10 @@ def start_break_even_take_profit_task() -> None:
     weak_market_adjustment = WeakMarketProfitAdjustmentModule(db_path=db_config.MARKET_DB_PATH)
     print("🟢 Hard take-profit, break-even, partial take-profit, dynamic profit protection and trailing stop tracker task started")
     while True:
+        current_simulation_config = simulation_config()
+        strategy.config = current_simulation_config
+        partial_strategy.config = current_simulation_config
+        dynamic_profit_protection.config = current_simulation_config
         with db_config.sqlite_connection_scope(
             db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
         ):
@@ -1396,7 +1411,9 @@ def start_pre_safety_task() -> None:
 
 def start_increase_pretrigger_refresh_task() -> None:
     """Refresh pre-triggered first-add symbols once per minute."""
-    holding_scoring = HoldingPositionScoringSystem(db_path=db_config.TRADING_DB_PATH)
+    holding_scoring = HoldingPositionScoringSystem(
+        db_path=db_config.TRADING_DB_PATH, config=simulation_config()
+    )
     print("🟣 Increase pre-trigger refresh task started")
     while True:
         if not feature_flags.is_feature_enabled(feature_flags.INCREASE_CONDITIONS):
@@ -1404,6 +1421,7 @@ def start_increase_pretrigger_refresh_task() -> None:
             time.sleep(60)
             continue
         try:
+            holding_scoring.config = simulation_config()
             with db_config.sqlite_connection_scope(
                 db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
             ):
@@ -1525,7 +1543,8 @@ def start_atr_15m_task(symbols: List[str]) -> None:
                 db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
             ):
                 result = TrailingReductionTracker(
-                    db_path=db_config.TRADING_DB_PATH
+                    db_path=db_config.TRADING_DB_PATH,
+                    config=simulation_config(),
                 ).run_round(decision_round_ts=int(time.time() * 1000))
             print(
                 f"🧭 trailing reduction after ATR checked={result.get('checked', 0)} "
@@ -1553,7 +1572,9 @@ def start_atr_15m_task(symbols: List[str]) -> None:
 
 
 def start_trailing_reduction_refresh_task() -> None:
-    tracker = TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH)
+    tracker = TrailingReductionTracker(
+        db_path=db_config.TRADING_DB_PATH, config=simulation_config()
+    )
     scheduler = collector.BlockingScheduler()
 
     def _job():
@@ -1561,6 +1582,7 @@ def start_trailing_reduction_refresh_task() -> None:
             print("⏸️ trailing reduction refresh skipped: feature flag disabled")
             return
         try:
+            tracker.config = simulation_config()
             with db_config.sqlite_connection_scope(
                 db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
             ):

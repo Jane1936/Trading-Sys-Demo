@@ -51,7 +51,7 @@ from scoring_system import (
     set_rule_score_weight_settings,
 )
 from scoring_rule_election import get_settings as get_rule_election_settings, set_settings as set_rule_election_settings
-from trading_experiment import TradingExperiment
+from trading_experiment import ExperimentConfig, TradingExperiment
 import real_trading
 from market_filter_module import MarketFilterModule
 import allusdt_24h_ticker
@@ -101,6 +101,17 @@ WEB_SQLITE_QUICK_CHECK_ON_REQUEST = (
     os.getenv("WEB_SQLITE_QUICK_CHECK_ON_REQUEST", "").strip().lower()
     in {"1", "true", "yes", "on"}
 )
+
+
+def _simulation_config() -> ExperimentConfig:
+    max_margin_cost = None
+    if feature_flags.is_feature_enabled(feature_flags.MARGIN_COST_LIMIT, CONFIG_DB_PATH):
+        max_margin_cost = get_margin_budget_settings(CONFIG_DB_PATH)[
+            "simulation_max_margin_cost_usdt"
+        ]
+    return ExperimentConfig(max_margin_cost_usdt=max_margin_cost)
+
+
 _db_recovery_checked_path: str | None = None
 
 # Analytics are derived from historical tables that change much more often
@@ -1885,7 +1896,11 @@ def trailing_reduction_summary_api():
 @app.post("/api/trailing-reduction/refresh-pretrigger")
 def trailing_reduction_refresh_pretrigger_api():
     try:
-        return jsonify(TrailingReductionTracker(db_path=_trading_db_path()).refresh_pretriggered_symbols())
+        return jsonify(
+            TrailingReductionTracker(
+                db_path=_trading_db_path(), config=_simulation_config()
+            ).refresh_pretriggered_symbols()
+        )
     except BinanceAccountConfigError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:
@@ -2154,7 +2169,9 @@ def live_high_frequency_summary_api(module_key: str):
 @app.post("/api/holding-increase/refresh-pretrigger")
 def holding_increase_refresh_pretrigger_api():
     try:
-        holding_scoring = HoldingPositionScoringSystem(db_path=_trading_db_path())
+        holding_scoring = HoldingPositionScoringSystem(
+            db_path=_trading_db_path(), config=_simulation_config()
+        )
         result = holding_scoring.refresh_pretrigger_increase_checks()
         payload = _holding_increase_payload()
         payload["action_records"] = payload["records"]

@@ -14,6 +14,31 @@ class _NeverConvergedAdjustment:
         return False, "waiting_allusdt_15m_convergence"
 
 
+def test_simulation_config_caps_r_at_paper_margin_budget(monkeypatch):
+    monkeypatch.setattr(app.feature_flags, "is_feature_enabled", lambda flag: True)
+    monkeypatch.setattr(
+        app,
+        "get_margin_budget_settings",
+        lambda: {
+            "simulation_max_margin_cost_usdt": Decimal("900"),
+            "live_max_margin_cost_usdt": Decimal("100"),
+        },
+    )
+
+    config = app.simulation_config()
+
+    assert config.risk_usdt(Decimal("1200")) == Decimal("9.00")
+
+
+def test_simulation_config_does_not_cap_r_when_limit_is_disabled(monkeypatch):
+    monkeypatch.setattr(app.feature_flags, "is_feature_enabled", lambda flag: False)
+
+    config = app.simulation_config()
+
+    assert config.max_margin_cost_usdt is None
+    assert config.risk_usdt(Decimal("1200")) == Decimal("12.00")
+
+
 def test_profit_market_convergence_wait_is_bounded():
     adjustment = _NeverConvergedAdjustment()
 
@@ -70,6 +95,7 @@ def test_profit_task_runs_protection_strategies_in_order_each_loop():
         < trailing_stop_index
     )
     assert "time.sleep(60)" in source
+    assert source.index("current_simulation_config = simulation_config()") < break_even_index
 
 
 def test_profit_task_relies_on_process_startup_schema_barrier():

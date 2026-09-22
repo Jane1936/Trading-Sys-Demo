@@ -155,7 +155,7 @@ class TrailingReductionTracker:
         self.account_manager.validate_config()
         helper = TradingExperiment(self.db_path, account_manager=self.account_manager, config=self.config)
         equity = helper._fetch_experiment_usdt_equity()
-        r_value = equity * self.config.risk_fraction
+        r_value = self.config.risk_usdt(equity)
         trigger_r = r_value * self.TRIGGER_R_MULTIPLE
         positions = helper._fetch_and_store_positions()
         active_positions = [row for row in positions if self._decimal_from(row.get("positionAmt"), Decimal("0")) != 0]
