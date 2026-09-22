@@ -145,6 +145,61 @@ def test_collect_daily_klines_normalizes_symbols_and_skips_bad_candles(tmp_path)
         ).fetchone() == ("AIOT",)
 
 
+def test_collect_daily_klines_uses_alpha_id_and_preserves_display_symbol(tmp_path):
+    db_path = str(tmp_path / "alpha.db")
+    token = {
+        "symbol": "APPon", "alphaId": "ALPHA_123", "name": "App",
+        "chainId": "56", "contractAddress": "0xapp",
+    }
+
+    class AlphaSession:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            payload = {"data": [token]} if "token/list" in url else {
+                "data": [[1, "1", "2", "0.5", "1.5", "10", 2]]
+            }
+            return type("AlphaResponse", (), {
+                "raise_for_status": lambda self: None,
+                "json": lambda self: payload,
+            })()
+
+    session = AlphaSession()
+    alpha_observer.collect_snapshot(db_path, session=session, observed_at=1000)
+    assert alpha_observer.collect_daily_klines(db_path, session=session) == 1
+
+    kline_url, kwargs = session.calls[-1]
+    assert "/alpha-trade/klines" in kline_url
+    assert kwargs["params"] == {
+        "symbol": "ALPHA_123USDT", "interval": "1d", "limit": 30,
+    }
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT symbol FROM alpha_daily_klines"
+        ).fetchone() == ("APPon",)
+
+
+def test_init_db_adds_alpha_id_to_existing_snapshot_table(tmp_path):
+    db_path = str(tmp_path / "legacy.db")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """CREATE TABLE alpha_market_snapshots (
+                id INTEGER PRIMARY KEY, symbol TEXT NOT NULL,
+                name TEXT NOT NULL DEFAULT '', chain_id TEXT NOT NULL DEFAULT '',
+                contract_address TEXT NOT NULL DEFAULT '', icon_url TEXT NOT NULL DEFAULT '',
+                volume_24h TEXT, market_cap TEXT, observed_at INTEGER NOT NULL
+            )"""
+        )
+
+    alpha_observer.init_db(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(alpha_market_snapshots)")}
+    assert "alpha_id" in columns
+
+
 def test_daily_trends_calculates_three_day_return_and_sorts_descending(tmp_path):
     db_path = str(tmp_path / "alpha.db")
     alpha_observer.init_db(db_path)

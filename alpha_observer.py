@@ -24,7 +24,11 @@ ALPHA_TOKEN_LIST_URL = os.getenv(
     # already used to construct the trading/scoring universe.
     "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list",
 )
-ALPHA_KLINE_URL = os.getenv("ALPHA_KLINE_URL", "https://api.binance.com/api/v3/klines")
+ALPHA_KLINE_URL = os.getenv(
+    "ALPHA_KLINE_URL",
+    "https://www.binance.com/bapi/defi/v1/public/alpha-trade/klines",
+)
+SPOT_KLINE_URL = os.getenv("ALPHA_SPOT_KLINE_URL", "https://api.binance.com/api/v3/klines")
 FUTURES_KLINE_URL = os.getenv("ALPHA_FUTURES_KLINE_URL", "https://fapi.binance.com/fapi/v1/klines")
 FUTURES_OI_URL = os.getenv("ALPHA_FUTURES_OI_URL", "https://fapi.binance.com/fapi/v1/openInterest")
 FUTURES_PREMIUM_URL = os.getenv("ALPHA_FUTURES_PREMIUM_URL", "https://fapi.binance.com/fapi/v1/premiumIndex")
@@ -67,6 +71,7 @@ def init_db(db_path: str = db_config.ALPHA_DB_PATH) -> None:
             CREATE TABLE IF NOT EXISTS alpha_market_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL,
+                alpha_id TEXT NOT NULL DEFAULT '',
                 name TEXT NOT NULL DEFAULT '',
                 chain_id TEXT NOT NULL DEFAULT '',
                 contract_address TEXT NOT NULL DEFAULT '',
@@ -78,6 +83,14 @@ def init_db(db_path: str = db_config.ALPHA_DB_PATH) -> None:
             )
             """
         )
+        snapshot_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(alpha_market_snapshots)")
+        }
+        if "alpha_id" not in snapshot_columns:
+            conn.execute(
+                "ALTER TABLE alpha_market_snapshots "
+                "ADD COLUMN alpha_id TEXT NOT NULL DEFAULT ''"
+            )
         conn.execute("""CREATE TABLE IF NOT EXISTS alpha_daily_klines (
             symbol TEXT NOT NULL, open_time INTEGER NOT NULL, open REAL, high REAL,
             low REAL, close REAL, volume REAL, close_time INTEGER,
@@ -92,33 +105,37 @@ def init_db(db_path: str = db_config.ALPHA_DB_PATH) -> None:
         )
 
 def collect_daily_klines(db_path: str = db_config.ALPHA_DB_PATH, *, session=requests,
-                         symbols: list[str] | None = None, limit: int = 30) -> int:
+                         symbols: list[str | dict[str, Any]] | None = None,
+                         limit: int = 30) -> int:
     """Fetch and persist daily candles for Alpha symbols in the isolated DB."""
     if symbols is None:
         _, rows = latest_snapshot(db_path)
-        symbols = [str(r["symbol"]).upper() for r in rows]
+        symbols = rows
     init_db(db_path); inserted = 0
     with db_config.connect_sqlite(db_path) as conn:
-        for symbol in symbols:
-            # Alpha's token endpoint has occasionally returned mixed-case
-            # tickers.  Binance's market endpoint is case-insensitive in
-            # theory, but in practice rejects lower-case symbols; keep the
-            # database key consistent with the snapshot table as well.
-            symbol = str(symbol).strip().upper()
+        for item in symbols:
+            if isinstance(item, dict):
+                symbol = str(item.get("symbol") or "").strip()
+                alpha_id = str(item.get("alpha_id") or item.get("alphaId") or "").strip()
+            else:
+                symbol = str(item).strip().upper()
+                alpha_id = ""
             if not symbol:
                 continue
-            market = symbol if symbol.endswith("USDT") else symbol + "USDT"
-            # Alpha token lists contain tokens that are not necessarily Binance
-            # spot symbols.  One invalid/temporarily unavailable token must not
-            # abort the whole batch (the old behaviour left the table empty).
+            # The Alpha endpoint requires the token-list ``alphaId`` rather
+            # than the display ticker (for example ``APPon``). Keep the spot
+            # fallback only for legacy rows that predate alpha_id persistence.
+            identifier = alpha_id or symbol.upper()
+            market = identifier if identifier.upper().endswith("USDT") else identifier + "USDT"
+            url = ALPHA_KLINE_URL if alpha_id else SPOT_KLINE_URL
             try:
-                response = session.get(ALPHA_KLINE_URL, params={"symbol": market, "interval": "1d", "limit": limit}, timeout=REQUEST_TIMEOUT_SECONDS)
+                response = session.get(url, params={"symbol": market, "interval": "1d", "limit": limit}, timeout=REQUEST_TIMEOUT_SECONDS)
                 response.raise_for_status()
                 payload = response.json()
             except Exception as exc:
                 print(f"⚠️ Alpha daily kline skipped {symbol} ({market}): {exc}")
                 continue
-            candles = payload.get("data", payload) if isinstance(payload, dict) else payload
+            candles = payload.get("data") if isinstance(payload, dict) else payload
             if not isinstance(candles, list): continue
             for c in candles:
                 if not isinstance(c, (list, tuple)) or len(c) < 7: continue
@@ -294,6 +311,7 @@ def collect_snapshot(
         rows.append(
             (
                 symbol,
+                str(token.get("alphaId") or token.get("alpha_id") or "").strip(),
                 str(token.get("name") or "").strip(),
                 str(token.get("chainId") or token.get("chain_id") or ""),
                 str(token.get("contractAddress") or token.get("contract_address") or ""),
@@ -309,9 +327,9 @@ def collect_snapshot(
     with db_config.connect_sqlite(db_path) as conn:
         conn.executemany(
             """INSERT OR REPLACE INTO alpha_market_snapshots
-               (symbol, name, chain_id, contract_address, icon_url,
+               (symbol, alpha_id, name, chain_id, contract_address, icon_url,
                 volume_24h, market_cap, observed_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             rows,
         )
     return len(rows)
@@ -383,7 +401,7 @@ def latest_snapshot(db_path: str = db_config.ALPHA_DB_PATH) -> tuple[int | None,
         if latest is None:
             return None, []
         latest_rows = conn.execute(
-            """SELECT symbol, name, chain_id, contract_address, icon_url,
+            """SELECT symbol, alpha_id, name, chain_id, contract_address, icon_url,
                       volume_24h, market_cap, observed_at
                FROM alpha_market_snapshots WHERE observed_at = ?
                ORDER BY symbol""",
