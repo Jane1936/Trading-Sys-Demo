@@ -84,7 +84,8 @@ def simulation_config() -> ExperimentConfig:
     max_margin_cost = None
     if feature_flags.is_feature_enabled(feature_flags.MARGIN_COST_LIMIT):
         max_margin_cost = get_margin_budget_settings()["simulation_max_margin_cost_usdt"]
-    return ExperimentConfig(max_margin_cost_usdt=max_margin_cost)
+    settings = get_hard_take_profit_settings()
+    return ExperimentConfig(max_margin_cost_usdt=max_margin_cost, hard_take_profit_usdt=Decimal(str(settings["simulation_hard_take_profit_usdt"])))
 
 
 def _allusdt_24h_change_for_filter() -> float | None:
