@@ -202,7 +202,11 @@ class DynamicProfitProtection:
         globally_enabled = bool(protection_settings["enabled"])
         base_enabled = globally_enabled and bool(protection_settings[base_enabled_key])
         protection_settings["enabled"] = base_enabled
-        if rise is not None and rise > float(protection_settings["allusdt_24h_rise_threshold_percent"]):
+        if rise is not None and rise >= float(protection_settings["allusdt_24h_disable_threshold_percent"]):
+            # Keep the module globally enabled so it can resume as the market cools,
+            # but suspend drawdown protection while the extreme-rise threshold holds.
+            protection_settings["enabled"] = False
+        elif rise is not None and rise > float(protection_settings["allusdt_24h_rise_threshold_percent"]):
             high_enabled_key = "high_live_enabled" if is_live else "high_simulation_enabled"
             high_enabled = bool(protection_settings[high_enabled_key])
             protection_settings["enabled"] = globally_enabled and (high_enabled or base_enabled)

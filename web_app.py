@@ -298,6 +298,7 @@ def load_settings_context() -> dict:
                 "simulation_enabled": True,
                 "live_enabled": True,
                 "allusdt_24h_rise_threshold_percent": 4.0,
+                "allusdt_24h_disable_threshold_percent": 10.0,
                 "tier_2_min_r": 2,
                 "tier_3_min_r": 3,
                 "tier_4_min_r": 4,
