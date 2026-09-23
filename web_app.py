@@ -1388,6 +1388,25 @@ def alpha_market_data():
             trends = alpha_observer.daily_trends(ALPHA_DB_PATH)
             oi_changes = _alpha_oi_changes()
             funding_changes = _alpha_funding_changes()
+            by_symbol = {str(row.get("symbol", "")).upper().removesuffix("USDT"): row for row in rows}
+            trend_by_symbol = {str(row.get("symbol", "")).upper().removesuffix("USDT"): row for row in trends}
+            oi_by_symbol = {str(row.get("symbol", "")).upper().removesuffix("USDT"): row for row in oi_changes}
+            funding_by_symbol = {str(row.get("symbol", "")).upper().removesuffix("USDT"): row for row in funding_changes}
+            strong_tokens = []
+            for symbol, token in by_symbol.items():
+                activity = token.get("activity_1d", token.get("activity"))
+                trend = trend_by_symbol.get(symbol, {})
+                oi = oi_by_symbol.get(symbol, {})
+                funding = funding_by_symbol.get(symbol, {})
+                signals = [
+                    activity is not None and float(activity) >= 1,
+                    trend.get("consecutive_up_days", 0) >= 2,
+                    oi.get("oi_change") is not None and oi.get("oi_change") >= 0.10 and oi.get("price_change") is not None and abs(oi["price_change"]) <= 0.03,
+                    funding.get("funding_change") is not None and funding.get("funding_change") >= 4.0 and funding.get("price_change") is not None and abs(funding["price_change"]) <= 0.025,
+                ]
+                if sum(signals) >= 2:
+                    strong_tokens.append({"symbol": token.get("symbol", symbol), "name": token.get("name"), "activity_1d": activity, "consecutive_up_days": trend.get("consecutive_up_days", 0), "oi_change": oi.get("oi_change"), "funding_change": funding.get("funding_change"), "signal_count": sum(signals)})
+            strong_tokens.sort(key=lambda item: (-item["signal_count"], item["symbol"]))
             data = {
                 "total_tokens": len(rows),
                 "active_tokens": sum(
@@ -1415,6 +1434,7 @@ def alpha_market_data():
                     and row["price_change"] is not None
                     and abs(row["price_change"]) <= 0.025
                 ),
+                "strong_tokens": strong_tokens,
             }
         elif module == "oi":
             data = _alpha_oi_changes()

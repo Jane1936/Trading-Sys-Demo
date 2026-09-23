@@ -55,6 +55,11 @@
         <small>资金费率涨跌幅 ≥ 400%，且4小时价格涨跌幅绝对值 ≤ 2.5%</small>
       </article>
     </div>
+    <div class="alpha-strong-signals" data-alpha-strong-signals hidden>
+      <div class="alpha-strong-signals-heading"><h3>强信号代币</h3><button type="button" class="btn btn-secondary" data-alpha-strong-toggle aria-expanded="false">展开全部</button></div>
+      <div class="table-wrap"><table class="alpha-table"><thead><tr><th>币种</th><th>名称</th><th>最近1天活跃度</th><th>连续上涨天数</th><th>1小时 OI 涨跌幅</th><th>资金费率涨跌幅</th></tr></thead><tbody data-alpha-strong-body></tbody></table></div>
+      <p class="alpha-summary-status" data-alpha-strong-empty>暂无同时满足至少2项指标的代币</p>
+    </div>
     <p class="alpha-summary-status" data-alpha-summary-status>点击“刷新数据”加载行情汇总</p>
   </section>
 
@@ -162,6 +167,17 @@
       document.querySelector('[data-alpha-summary-value="two_day_up_tokens"]').textContent = payload.data.two_day_up_tokens;
       document.querySelector('[data-alpha-summary-value="oi_abnormal_tokens"]').textContent = payload.data.oi_abnormal_tokens;
       document.querySelector('[data-alpha-summary-value="funding_abnormal_tokens"]').textContent = payload.data.funding_abnormal_tokens;
+      const strong = payload.data.strong_tokens || [];
+      const box = document.querySelector('[data-alpha-strong-signals]');
+      const body = document.querySelector('[data-alpha-strong-body]');
+      const empty = document.querySelector('[data-alpha-strong-empty]');
+      const toggle = document.querySelector('[data-alpha-strong-toggle]');
+      box.hidden = false;
+      body.innerHTML = strong.map((item, index) => `<tr${index >= 5 ? ' hidden class="alpha-strong-extra-row"' : ''}><td><strong>${esc(item.symbol)}</strong></td><td>${esc(item.name)}</td><td class="numeric">${item.activity_1d == null ? '—' : item.activity_1d}</td><td class="numeric">${item.consecutive_up_days ?? '—'}</td><td class="numeric alpha-change">${pct(item.oi_change)}</td><td class="numeric alpha-change">${item.funding_change == null ? '—' : `${item.funding_change >= 0 ? '+' : ''}${item.funding_change.toFixed(2)}%`}</td></tr>`).join('');
+      empty.hidden = strong.length > 0;
+      toggle.hidden = strong.length <= 5;
+      toggle.textContent = `展开全部（${strong.length}）`;
+      toggle.onclick = () => { const expanded = toggle.getAttribute('aria-expanded') === 'true'; document.querySelectorAll('.alpha-strong-extra-row').forEach((row) => { row.hidden = expanded; }); toggle.setAttribute('aria-expanded', String(!expanded)); toggle.textContent = expanded ? `展开全部（${strong.length}）` : '收起列表'; };
       if (status) status.textContent = payload.updated_at
         ? `数据更新时间：${new Date(payload.updated_at).toISOString().replace('T', ' ').replace('.000Z', ' UTC')}`
         : '最新市场快照暂无时间信息';
