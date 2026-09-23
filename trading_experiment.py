@@ -372,6 +372,10 @@ class TradingExperiment:
                     self._record_skip(candidate, account_equity, max_loss, "invalid_binance_leverage")
                     skipped += 1
                     continue
+                if self._is_insufficient_margin_error(exc):
+                    self._record_skip(candidate, account_equity, max_loss, "binance_margin_insufficient", required_margin)
+                    skipped += 1
+                    continue
                 raise
             except Exception as exc:
                 self._record_error(candidate, "open_long", exc)
@@ -381,6 +385,10 @@ class TradingExperiment:
                     continue
                 if self._is_invalid_leverage_error(exc):
                     self._record_skip(candidate, account_equity, max_loss, "invalid_binance_leverage")
+                    skipped += 1
+                    continue
+                if self._is_insufficient_margin_error(exc):
+                    self._record_skip(candidate, account_equity, max_loss, "binance_margin_insufficient", required_margin)
                     skipped += 1
                     continue
                 raise
@@ -1110,6 +1118,18 @@ class TradingExperiment:
     def _is_invalid_leverage_error(exc: Exception) -> bool:
         message = str(exc)
         return "-4028" in message or ("not valid" in message and "Leverage" in message)
+
+    @staticmethod
+    def _is_insufficient_margin_error(exc: Exception) -> bool:
+        """Recognize Binance's order-time margin rejection.
+
+        The account snapshot checked before an order can become stale, and the
+        exchange can reserve additional margin for concurrent/manual orders.
+        Treat -2019 as a candidate-level skip rather than aborting the entire
+        opening round; the original response remains in the error audit table.
+        """
+        message = str(exc)
+        return "-2019" in message or "Margin is insufficient" in message
 
     @staticmethod
     def _exit_order_request(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
