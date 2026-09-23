@@ -24,6 +24,7 @@ from hard_take_profit import HardTakeProfit
 from trailing_stop_tracker import TrailingStopTracker
 from position_limit_settings import get_settings as get_position_limit_settings, effective_max_open_positions
 from margin_budget_settings import get_settings as get_margin_budget_settings
+from hard_take_profit_settings import get_settings as get_hard_take_profit_settings
 
 
 def config() -> ExperimentConfig:
@@ -34,7 +35,7 @@ def config() -> ExperimentConfig:
         experiment_uninvested_usdt=Decimal("0"),
         total_margin_budget_usdt=initial,
         max_margin_cost_usdt=budget,
-        hard_take_profit_usdt=Decimal("10"),
+        hard_take_profit_usdt=Decimal(str(get_hard_take_profit_settings()["live_hard_take_profit_usdt"])),
     )
 
 

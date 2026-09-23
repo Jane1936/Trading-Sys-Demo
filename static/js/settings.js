@@ -143,13 +143,13 @@ function renderFeatureFlagRow(flag) {
     event.preventDefault();
     if (!form.reportValidity()) return;
     const button = form.querySelector('button[type="submit"]');
-    const payload = {profit_ratio: Number(document.getElementById('hard-take-profit-ratio').value) / 100};
+    const payload = {simulation_hard_take_profit_usdt: Number(document.getElementById('simulation-hard-take-profit-usdt').value), live_hard_take_profit_usdt: Number(document.getElementById('live-hard-take-profit-usdt').value)};
     button.disabled = true; message.textContent = '正在保存硬止盈配置…'; message.classList.remove('error');
     try {
       const response = await fetch('/api/hard-take-profit-settings', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      message.textContent = `配置已保存：未变现盈利率达到 ${result.profit_ratio * 100}% 时全部平仓。`;
+      message.textContent = `配置已保存：模拟盘 ${result.simulation_hard_take_profit_usdt}U，实盘 ${result.live_hard_take_profit_usdt}U。`;
     } catch (err) { message.textContent = `硬止盈配置保存失败：${err.message || err}`; message.classList.add('error'); }
     finally { button.disabled = false; }
   });
