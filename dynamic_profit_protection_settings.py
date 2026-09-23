@@ -17,6 +17,7 @@ DEFAULT_SETTINGS = {
     "high_simulation_enabled": True,
     "high_live_enabled": True,
     "allusdt_24h_rise_threshold_percent": 4.0,
+    "allusdt_24h_disable_threshold_percent": 10.0,
     "tier_2_min_r": 2.0,
     "tier_3_min_r": 3.0,
     "tier_4_min_r": 4.0,
@@ -48,8 +49,11 @@ def _validate_settings(payload: dict) -> dict[str, bool | float]:
     if any(not math.isfinite(value) for value in values.values()):
         raise ValueError("R档位和回撤阈值必须是有限数字")
     threshold = values["allusdt_24h_rise_threshold_percent"]
+    disable_threshold = values["allusdt_24h_disable_threshold_percent"]
     if not math.isfinite(threshold) or threshold < 0 or threshold > 100:
         raise ValueError("ALLUSDT涨幅阈值必须在 0–100% 之间")
+    if not math.isfinite(disable_threshold) or disable_threshold < 0 or disable_threshold > 100 or disable_threshold <= threshold:
+        raise ValueError("关闭动态利润保护阈值必须在 0–100% 之间且高于高涨幅阈值")
     boundaries = [values["tier_2_min_r"], values["tier_3_min_r"], values["tier_4_min_r"]]
     if boundaries[0] <= 0 or not boundaries[0] < boundaries[1] < boundaries[2]:
         raise ValueError("三个R档位必须大于0并严格递增")
@@ -78,6 +82,7 @@ def get_settings(db_path: str | None = None) -> dict[str, bool | float]:
                 high_simulation_enabled INTEGER NOT NULL DEFAULT 1,
                 high_live_enabled INTEGER NOT NULL DEFAULT 1,
                 allusdt_24h_rise_threshold_percent REAL NOT NULL DEFAULT 4.0,
+                allusdt_24h_disable_threshold_percent REAL NOT NULL DEFAULT 10.0,
                 tier_2_min_r REAL NOT NULL,
                 tier_3_min_r REAL NOT NULL,
                 tier_4_min_r REAL NOT NULL,
@@ -88,11 +93,11 @@ def get_settings(db_path: str | None = None) -> dict[str, bool | float]:
             )
         """)
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({SETTINGS_TABLE_NAME})")}
-        for name, definition in (("simulation_enabled", "INTEGER NOT NULL DEFAULT 1"), ("live_enabled", "INTEGER NOT NULL DEFAULT 1"), ("high_simulation_enabled", "INTEGER NOT NULL DEFAULT 1"), ("high_live_enabled", "INTEGER NOT NULL DEFAULT 1"), ("allusdt_24h_rise_threshold_percent", "REAL NOT NULL DEFAULT 4.0")):
+        for name, definition in (("simulation_enabled", "INTEGER NOT NULL DEFAULT 1"), ("live_enabled", "INTEGER NOT NULL DEFAULT 1"), ("high_simulation_enabled", "INTEGER NOT NULL DEFAULT 1"), ("high_live_enabled", "INTEGER NOT NULL DEFAULT 1"), ("allusdt_24h_rise_threshold_percent", "REAL NOT NULL DEFAULT 4.0"), ("allusdt_24h_disable_threshold_percent", "REAL NOT NULL DEFAULT 10.0")):
             if name not in columns:
                 conn.execute(f"ALTER TABLE {SETTINGS_TABLE_NAME} ADD COLUMN {name} {definition}")
         for name in DEFAULT_SETTINGS:
-            if name not in columns and name not in ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled", "allusdt_24h_rise_threshold_percent"):
+            if name not in columns and name not in ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled", "allusdt_24h_rise_threshold_percent", "allusdt_24h_disable_threshold_percent"):
                 conn.execute(f"ALTER TABLE {SETTINGS_TABLE_NAME} ADD COLUMN {name} REAL NOT NULL DEFAULT {DEFAULT_SETTINGS[name]}")
         # Keep the seed columns and values in lockstep as settings evolve.  The
         # high-rise tier fields are added by the migration above and must also

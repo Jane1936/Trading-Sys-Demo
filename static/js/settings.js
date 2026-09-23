@@ -193,6 +193,7 @@ function renderFeatureFlagRow(flag) {
       high_simulation_enabled: document.getElementById('dynamic-profit-high-simulation-enabled').checked,
       high_live_enabled: document.getElementById('dynamic-profit-high-live-enabled').checked,
       allusdt_24h_rise_threshold_percent: Number(document.getElementById('dynamic-profit-allusdt-rise-threshold').value),
+      allusdt_24h_disable_threshold_percent: Number(document.getElementById('dynamic-profit-allusdt-disable-threshold').value),
       tier_2_min_r: Number(document.getElementById('dynamic-profit-tier-2-r').value),
       tier_3_min_r: Number(document.getElementById('dynamic-profit-tier-3-r').value),
       tier_4_min_r: Number(document.getElementById('dynamic-profit-tier-4-r').value),
