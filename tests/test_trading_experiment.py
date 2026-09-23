@@ -207,6 +207,16 @@ class InvalidSymbolOrderAccountManager(FakeAccountManager):
             )
         return {"orderId": len(self.signed_posts)}
 
+class InsufficientMarginOrderAccountManager(FakeAccountManager):
+    def _signed_post(self, endpoint, params=None):
+        self.signed_posts.append((endpoint, dict(params or {})))
+        if endpoint == "/fapi/v1/order":
+            raise RuntimeError(
+                "400 Client Error: Bad Request response_body="
+                '{"code":-2019,"msg":"Margin is insufficient."}'
+            )
+        return {"orderId": len(self.signed_posts)}
+
 class InvalidLeverageAccountManager(FakeAccountManager):
     def _public_get(self, endpoint, params=None):
         if endpoint == "/fapi/v1/exchangeInfo":
@@ -663,6 +673,42 @@ class TradingExperimentSymbolTests(unittest.TestCase):
         self.assertEqual(trade_row["status"], "skipped")
         self.assertEqual(trade_row["reason"], "invalid_binance_symbol")
         self.assertEqual(error_rows[0].operation, "open_long")
+
+    def test_run_round_skips_candidate_when_binance_reports_insufficient_margin(self):
+        fake_account = InsufficientMarginOrderAccountManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "klines.db"
+            experiment = TradingExperiment(
+                db_path=str(db_path),
+                account_manager=fake_account,
+            )
+            candidate = OpenableSymbol(
+                symbol="BANK",
+                decision_round_ts=1,
+                total_score=80,
+                score_band="标准试错单",
+                stop_loss_distance_ratio=0.01,
+                distance_threshold=0.02,
+                stop_loss_distance_tier="A档",
+                opening_leverage="4x",
+                distance_qualified=True,
+                qualified=True,
+                reason="test",
+                evaluated_at=1,
+            )
+
+            experiment.init_tables()
+            result = experiment.run_round([candidate])
+            error_rows = experiment.recent_error_records()
+            with sqlite3.connect(db_path) as conn:
+                trade_row = conn.execute(
+                    f"SELECT status, reason FROM {experiment.TRADES_TABLE} ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+
+        self.assertEqual(result, {"opened": 0, "skipped": 1, "reason": "completed"})
+        self.assertEqual(trade_row, ("skipped", "binance_margin_insufficient"))
+        self.assertEqual(error_rows[0].operation, "open_long")
+        self.assertIn("-2019", error_rows[0].error_message)
 
     def test_stop_loss_price_uses_equity_risk_per_coin_after_quantity_rounding(self):
         fake_account = CoarseLotAccountManager()
