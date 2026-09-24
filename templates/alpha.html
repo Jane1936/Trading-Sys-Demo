@@ -173,7 +173,7 @@
       const empty = document.querySelector('[data-alpha-strong-empty]');
       const toggle = document.querySelector('[data-alpha-strong-toggle]');
       box.hidden = false;
-      body.innerHTML = strong.map((item, index) => `<tr${index >= 5 ? ' hidden class="alpha-strong-extra-row"' : ''}><td><strong>${esc(item.symbol)}</strong></td><td>${esc(item.name)}</td><td class="numeric">${item.activity_1d == null ? '—' : item.activity_1d}</td><td class="numeric">${item.consecutive_up_days ?? '—'}</td><td class="numeric alpha-change">${pct(item.oi_change)}</td><td class="numeric alpha-change">${item.funding_change == null ? '—' : `${item.funding_change >= 0 ? '+' : ''}${item.funding_change.toFixed(2)}%`}</td></tr>`).join('');
+      body.innerHTML = strong.map((item, index) => `<tr${index >= 5 ? ' hidden class="alpha-strong-extra-row"' : ''}><td><strong>${esc(item.symbol)}</strong></td><td>${esc(item.name)}</td><td class="numeric">${item.activity_1d == null ? '—' : item.activity_1d}</td><td class="numeric">${item.consecutive_up_days ?? '—'}</td><td class="numeric alpha-change">${pct(item.oi_change)}</td><td class="numeric alpha-change">${item.funding_change == null ? '—' : `${item.funding_change >= 0 ? '+' : ''}${(item.funding_change * 100).toFixed(2)}%`}</td></tr>`).join('');
       empty.hidden = strong.length > 0;
       toggle.hidden = strong.length <= 5;
       toggle.textContent = `展开全部（${strong.length}）`;
