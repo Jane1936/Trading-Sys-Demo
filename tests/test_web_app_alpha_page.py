@@ -188,6 +188,14 @@ def test_alpha_deferred_modules_prompt_user_to_load_all_data():
     assert template.count("请点击加载全部数据按钮") == 3
 
 
+def test_alpha_strong_signal_funding_change_is_rendered_as_percent():
+    template = (Path(__file__).resolve().parents[1] / "templates" / "alpha.html").read_text()
+
+    # API values are ratios (14.8795 means +1487.95%), unlike the already
+    # percent-formatted values used by the deferred funding table.
+    assert "(item.funding_change * 100).toFixed(2)" in template
+
+
 def test_alpha_oi_changes_batches_symbols_and_caches_by_snapshot(tmp_path, monkeypatch):
     db_path = tmp_path / "market.db"
     _create_market_tables(db_path)
