@@ -35,6 +35,7 @@ def _handle_runtime_database_error(exc: BaseException) -> None:
 BASE_URL = "https://fapi.binance.com/fapi/v1/klines"
 FUNDING_RATE_URL = "https://fapi.binance.com/fapi/v1/premiumIndex"
 OPEN_INTEREST_URL = "https://fapi.binance.com/fapi/v1/openInterest"
+OPEN_INTEREST_HISTORY_URL = "https://fapi.binance.com/futures/data/openInterestHist"
 BTC_5M_TABLE = "btc_usdt_5m_klines"
 BTC_15M_TABLE = "btc_usdt_15m_klines"
 BTC_5M_INTERVAL = "5m"
@@ -49,6 +50,9 @@ ALL_INTERVALS = [BASE_INTERVAL, *AGG_INTERVALS]
 LIMIT = 1000
 MAX_WORKERS = 10
 OI_MAX_WORKERS = 4
+RECOVERY_KLINE_WORKERS = int(os.getenv("RECOVERY_KLINE_WORKERS", "6"))
+RECOVERY_OI_WORKERS = int(os.getenv("RECOVERY_OI_WORKERS", "3"))
+RECOVERY_BATCH_SIZE = int(os.getenv("RECOVERY_BATCH_SIZE", "25"))
 
 DATA_DIR = db_config.DATA_DIR
 DB_PATH = db_config.BASE_DB_PATH
@@ -68,6 +72,8 @@ btc_15m_job_lock = threading.Lock()
 allusdt_15m_ma20_job_lock = threading.Lock()
 atr_15m_job_lock = threading.Lock()
 db_write_lock = threading.Lock()
+base_recovery_active = threading.Event()
+rule_window_ready: dict[str, set[str]] = {"rule8": set(), "rule11": set()}
 last_funding_update_hour = None
 
 
@@ -1102,6 +1108,146 @@ def save_open_interest_round(values):
             return conn.total_changes - before
 
 
+def _fetch_recovery_15m(symbol):
+    """Fetch only the 97 closed 15m candles required by rule 8."""
+    now_ms = int(time.time() * 1000)
+    start = now_ms - 98 * 15 * 60_000
+    params = {"symbol": f"{symbol}USDT", "interval": "15m", "startTime": start, "limit": 100}
+    try:
+        response = HTTP_SESSION.get(BASE_URL, params=params, timeout=(3, 15))
+        response.raise_for_status()
+        rows = response.json()
+        return symbol, [row for row in rows if int(row[6]) <= now_ms][-97:]
+    except Exception as exc:
+        print(f"⚠️ rule8 recovery fetch failed symbol={symbol}: {exc}")
+        return symbol, []
+
+
+def _fetch_recovery_oi(symbol):
+    """Fetch the recent 1m OI history required by rule 11."""
+    try:
+        response = HTTP_SESSION.get(
+            OPEN_INTEREST_HISTORY_URL,
+            params={"symbol": f"{symbol}USDT", "period": "1m", "limit": 500},
+            timeout=(3, 15),
+        )
+        response.raise_for_status()
+        rows = response.json()
+        values = []
+        for row in rows[-240:]:
+            timestamp = row.get("timestamp")
+            oi = row.get("sumOpenInterest") or row.get("openInterest")
+            if timestamp is not None and oi is not None:
+                values.append((symbol, int(timestamp), float(oi)))
+        return symbol, values
+    except Exception as exc:
+        print(f"⚠️ rule11 recovery fetch failed symbol={symbol}: {exc}")
+        return symbol, []
+
+
+def _save_recovery_batch(candles, oi_rows):
+    """Write one completed recovery batch in one protected transaction."""
+    with db_write_lock:
+        with get_db_conn() as conn:
+            for symbol, rows in candles.items():
+                conn.executemany(
+                    f"INSERT OR IGNORE INTO {table_name('15m')} "
+                    "(symbol, open_time, open, high, low, close, volume, close_time) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    [(symbol, int(r[0]), float(r[1]), float(r[2]), float(r[3]),
+                      float(r[4]), float(r[5]), int(r[6])) for r in rows],
+                )
+            if oi_rows:
+                conn.executemany(
+                    "INSERT OR IGNORE INTO open_interest_1m "
+                    "(symbol, snapshot_time, open_interest) VALUES (?, ?, ?)",
+                    oi_rows,
+                )
+
+
+def find_rule_window_gaps(symbols):
+    """Return only symbols whose persisted windows are below rule minima."""
+    symbols = sorted({str(s).upper() for s in symbols if s})
+    if not symbols:
+        return set(), set()
+    placeholders = ",".join("?" for _ in symbols)
+    with get_db_conn() as conn:
+        kline_counts = conn.execute(
+            f"SELECT symbol, COUNT(*) FROM klines_15m WHERE symbol IN ({placeholders}) "
+            "GROUP BY symbol", symbols
+        ).fetchall()
+        oi_counts = conn.execute(
+            f"SELECT symbol, COUNT(*) FROM open_interest_1m WHERE symbol IN ({placeholders}) "
+            "GROUP BY symbol", symbols
+        ).fetchall()
+    kline_map = {str(row[0]).upper(): int(row[1]) for row in kline_counts}
+    oi_map = {str(row[0]).upper(): int(row[1]) for row in oi_counts}
+    return (
+        {symbol for symbol in symbols if kline_map.get(symbol, 0) < 97},
+        {symbol for symbol in symbols if oi_map.get(symbol, 0) < 240},
+    )
+
+
+def recover_rule_windows(
+    symbols=None, *, rule8_symbols=None, rule11_symbols=None, batch_size=None
+):
+    """Backfill missing rule 8/11 windows in bounded, protected batches."""
+    if rule8_symbols is None and rule11_symbols is None:
+        rule8_symbols, rule11_symbols = find_rule_window_gaps(symbols or ())
+    rule8_symbols = {str(s).upper() for s in (rule8_symbols or ()) if s}
+    rule11_symbols = {str(s).upper() for s in (rule11_symbols or ()) if s}
+    symbols = sorted(rule8_symbols | rule11_symbols)
+    batch_size = max(1, int(batch_size or RECOVERY_BATCH_SIZE))
+    if not symbols:
+        print("✅ rule window bootstrap: all rule 8/11 windows are ready")
+        return
+    base_recovery_active.set()
+    try:
+        for offset in range(0, len(symbols), batch_size):
+            batch = symbols[offset:offset + batch_size]
+            candles, oi_rows = {}, []
+            kline_batch = [symbol for symbol in batch if symbol in rule8_symbols]
+            oi_batch = [symbol for symbol in batch if symbol in rule11_symbols]
+            if kline_batch:
+                with ThreadPoolExecutor(max_workers=RECOVERY_KLINE_WORKERS) as executor:
+                    for symbol, rows in executor.map(_fetch_recovery_15m, kline_batch):
+                        if len(rows) >= 97:
+                            candles[symbol] = rows
+                            rule_window_ready["rule8"].add(symbol)
+            if oi_batch:
+                with ThreadPoolExecutor(max_workers=RECOVERY_OI_WORKERS) as executor:
+                    for symbol, rows in executor.map(_fetch_recovery_oi, oi_batch):
+                        if len(rows) >= 240:
+                            oi_rows.extend(rows)
+                            rule_window_ready["rule11"].add(symbol)
+            _save_recovery_batch(candles, oi_rows)
+            print(f"✅ rule window recovery batch offset={offset} size={len(batch)} "
+                  f"rule8={len(candles)} rule11={len({r[0] for r in oi_rows})}")
+    finally:
+        base_recovery_active.clear()
+
+
+def is_base_recovery_active() -> bool:
+    return base_recovery_active.is_set()
+
+
+def bootstrap_rule_windows(symbols):
+    """Startup-only bootstrap that leaves already complete symbols untouched."""
+    try:
+        rule8_symbols, rule11_symbols = find_rule_window_gaps(symbols)
+        print(
+            f"🧩 rule window bootstrap: rule8_missing={len(rule8_symbols)} "
+            f"rule11_missing={len(rule11_symbols)}"
+        )
+        recover_rule_windows(
+            rule8_symbols=rule8_symbols,
+            rule11_symbols=rule11_symbols,
+        )
+    except Exception as exc:
+        _handle_runtime_database_error(exc)
+        print(f"⚠️ rule window bootstrap failed: {exc}")
+
+
 def calculate_atr14_from_15m_rows(rows):
     """Calculate ATR(14) from 15m kline rows using the latest 14 true ranges."""
     if len(rows) < 15:
@@ -1301,6 +1447,10 @@ def run_atr_15m_main(universe):
 def kline_job():
     global kline_job_running
 
+    if base_recovery_active.is_set():
+        print("⏸️ skip kline job while rule-window recovery is active")
+        return
+
     if kline_job_running:
         print("⚠️ Skip kline job (still running)")
         return
@@ -1334,6 +1484,10 @@ def kline_job():
 def oi_job():
     global oi_job_running
 
+    if base_recovery_active.is_set():
+        print("⏸️ skip OI job while rule-window recovery is active")
+        return
+
     if oi_job_running:
         print("⚠️ Skip oi job (still running)")
         return
@@ -1363,6 +1517,10 @@ def oi_job():
 
 def funding_job():
     global funding_job_running
+
+    if base_recovery_active.is_set():
+        print("⏸️ skip funding job while rule-window recovery is active")
+        return
 
     if funding_job_running:
         print("⚠️ Skip funding job (still running)")
