@@ -410,6 +410,11 @@ def check_worker_databases(
                 failure_record, status="recovered", quarantined_files=quarantined
             )
             print(f"✅ SQLite recovered db={db_path}; quarantined={quarantined}")
+            if db_path == db_config.BASE_DB_PATH and getattr(collector, "UNIVERSE", None):
+                # Refill only the bounded windows needed by rules 8 and 11.
+                # The collector sets a recovery fence so scheduled writes are
+                # skipped while each batch is fetched and committed.
+                collector.recover_rule_windows(collector.UNIVERSE)
     return recovered
 
 
@@ -1492,6 +1497,16 @@ def on_indicator_interval_complete(interval: str, results: List[MACalcResult]) -
 def start_collector_task(symbols: List[str]) -> None:
     collector.init_db()
     collector.UNIVERSE = list(symbols)
+    # The database may have been rebuilt before this deployment.  Bootstrap
+    # only missing rule 8/11 windows after the collector owns a universe;
+    # complete symbols are skipped by the gap scan.
+    bootstrap_thread = threading.Thread(
+        target=collector.bootstrap_rule_windows,
+        args=(collector.UNIVERSE,),
+        name="rule-window-bootstrap",
+        daemon=True,
+    )
+    bootstrap_thread.start()
 
     def _run_with_fresh_universe(job_func):
         if not feature_flags.is_feature_enabled(feature_flags.BASE_DATA_COLLECTION):
