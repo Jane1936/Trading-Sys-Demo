@@ -160,7 +160,7 @@
           <span class="score-tab-group-label">OI/资金费率评分</span>
           <button class="tab-btn score-rule-tab" data-score-tab="score-rule-9" style="width:auto;">规则9：3根15m close递减 + OI(1m)&gt;45m前（{{ rule_score_weights[9] }}分）</button>
           <button class="tab-btn score-rule-tab" data-score-tab="score-rule-10" style="width:auto;">规则10：1m close&gt;60m前open 且 OI(1m)&gt;60m前（{{ rule_score_weights[10] }}分）</button>
-          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-11" style="width:auto;">规则11：OI(1m)≥240m前（{{ rule_score_weights[11] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-11" style="width:auto;">规则11：1小时相对市场强度（{{ rule_score_weights[11] }}分）</button>
           <button class="tab-btn score-rule-tab" data-score-tab="score-rule-12" style="width:auto;">规则12：最近4条15m资金费率均在(0.01, 0.1)（{{ rule_score_weights[12] }}分）</button>
         </div>
         <div class="score-tab-group volume">
@@ -359,9 +359,9 @@
         <div class="tip">规则11轮次：{{ score_rule11_round_ts|fmt_ms_datetime }}</div>
         {% endif %}
         <div class="table-wrap"><table>
-          <thead><tr><th>symbol</th><th>score</th><th>latest_open_interest</th><th>open_interest_240m_ago</th><th>oi_loss_rate</th><th>reason</th><th>updated_at</th></tr></thead>
+          <thead><tr><th>symbol</th><th>score</th><th>symbol涨跌幅(delta)</th><th>ALLUSDT涨跌幅(delta_all)</th><th>相对强度</th><th>reason</th><th>updated_at</th></tr></thead>
           <tbody>{% for r in round_scores_rule11 %}
-            <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_open_interest) }}</td><td>{{ '%.6f'|format(r.open_interest_240m_ago) }}</td><td>{{ '%.4f%%'|format(r.oi_loss_rate * 100) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+            <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.2f%%'|format(r.delta * 100) }}</td><td>{{ '%.2f%%'|format(r.delta_all * 100) }}</td><td>{{ '%.2f%%'|format(r.relative_strength * 100) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
           {% else %}<tr><td class="empty" colspan="7">暂无规则11评分数据</td></tr>{% endfor %}</tbody>
         </table></div>
       </div>
