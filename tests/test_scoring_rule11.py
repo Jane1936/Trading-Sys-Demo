@@ -1,37 +1,45 @@
 import sqlite3
 
+import pytest
+
 from scoring_system import ScoringSystem
 
 
-def _score_rule11(tmp_path, latest_oi, oi_240m_ago):
+def _insert_rule11_candles(conn, symbol, first_open, latest_close):
+    conn.executemany(
+        """
+        INSERT INTO klines_15m (symbol, open_time, open, high, low, close, volume)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (symbol, index, first_open if index == 1 else 100, 110, 90,
+             latest_close if index == 4 else 100, 1)
+            for index in range(1, 5)
+        ],
+    )
+
+
+def _score_rule11(tmp_path, symbol_close, market_close):
     db_path = tmp_path / "klines.db"
     scoring = ScoringSystem(db_path=str(db_path), settings_db_path=str(db_path))
     scoring.init_table()
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """
-            CREATE TABLE open_interest_1m (
+            CREATE TABLE klines_15m (
                 symbol TEXT NOT NULL,
-                snapshot_time INTEGER NOT NULL,
-                open_interest REAL NOT NULL,
-                PRIMARY KEY (symbol, snapshot_time)
+                open_time INTEGER NOT NULL,
+                open REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                close REAL NOT NULL,
+                volume REAL NOT NULL,
+                PRIMARY KEY (symbol, open_time)
             )
             """
         )
-        conn.executemany(
-            """
-            INSERT INTO open_interest_1m (symbol, snapshot_time, open_interest)
-            VALUES (?, ?, ?)
-            """,
-            [
-                (
-                    "BTCUSDT",
-                    snapshot_time,
-                    oi_240m_ago if snapshot_time == 1 else latest_oi,
-                )
-                for snapshot_time in range(240, 0, -1)
-            ],
-        )
+        _insert_rule11_candles(conn, "BTCUSDT", 100, symbol_close)
+        _insert_rule11_candles(conn, "ALLUSDT", 100, market_close)
 
     scoring._save_oi_loss_rate_240m_score(
         symbol="BTCUSDT", decision_round_ts=900_000, updated_at=900_001
@@ -40,17 +48,65 @@ def _score_rule11(tmp_path, latest_oi, oi_240m_ago):
     return rows[0]
 
 
-def test_rule11_does_not_score_when_oi_loss_is_within_three_percent(tmp_path):
-    row = _score_rule11(tmp_path, latest_oi=98.0, oi_240m_ago=100.0)
+def test_rule11_does_not_score_below_two_percent_relative_strength(tmp_path):
+    row = _score_rule11(tmp_path, symbol_close=102.9, market_close=101)
 
-    assert row["oi_loss_rate"] == 0.02
+    assert row["delta"] == pytest.approx(0.029)
+    assert row["delta_all"] == pytest.approx(0.01)
+    assert row["relative_strength"] == pytest.approx(0.019)
     assert row["score"] == 0
     assert row["reason"] == "rule11_not_met"
 
 
-def test_rule11_scores_when_latest_oi_is_not_lower_than_240m_ago(tmp_path):
-    row = _score_rule11(tmp_path, latest_oi=101.0, oi_240m_ago=100.0)
+def test_rule11_scores_at_two_percent_relative_strength(tmp_path):
+    row = _score_rule11(tmp_path, symbol_close=103, market_close=101)
 
-    assert row["oi_loss_rate"] == 0.0
+    assert row["relative_strength"] == pytest.approx(0.02)
     assert row["score"] == 5
-    assert row["reason"] == "oi_1m_gte_240m"
+    assert row["reason"] == "relative_strength_gte_2pct"
+
+
+def test_rule11_init_migrates_legacy_open_interest_schema(tmp_path):
+    db_path = tmp_path / "klines.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE symbol_scores_oi_loss_rate_240m (
+                symbol TEXT NOT NULL,
+                decision_round_ts INTEGER NOT NULL,
+                score INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                latest_open_interest REAL NOT NULL,
+                open_interest_240m_ago REAL NOT NULL,
+                oi_loss_rate REAL NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY(symbol, decision_round_ts)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO symbol_scores_oi_loss_rate_240m
+            VALUES ('BTCUSDT', 1, 5, 'legacy', 101, 100, 0, 2)
+            """
+        )
+
+    scoring = ScoringSystem(db_path=str(db_path), settings_db_path=str(db_path))
+    scoring.init_table()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        columns = {
+            row["name"]
+            for row in conn.execute(
+                "PRAGMA table_info(symbol_scores_oi_loss_rate_240m)"
+            )
+        }
+        row = conn.execute(
+            "SELECT * FROM symbol_scores_oi_loss_rate_240m WHERE symbol = 'BTCUSDT'"
+        ).fetchone()
+
+    assert {"delta", "delta_all", "relative_strength"}.issubset(columns)
+    assert "oi_loss_rate" not in columns
+    assert row["score"] == 5
+    assert row["delta"] == 0
