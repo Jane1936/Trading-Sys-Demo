@@ -1078,13 +1078,17 @@ class ScoringSystem:
             self._install_round_snapshot(conn, snapshot)
             conn.commit()
             self._active_round_conn = conn
+            # Rule 11 uses the same ALLUSDT benchmark for every symbol in a
+            # round.  Compute it once and pass the immutable value down to
+            # each per-symbol scorer.
+            delta_all = self._latest_allusdt_15m_delta()
             for batch_start in range(0, len(candidates), SCORING_WRITE_BATCH_SIZE):
                 batch = candidates[batch_start : batch_start + SCORING_WRITE_BATCH_SIZE]
                 conn.execute("BEGIN IMMEDIATE")
                 for symbol in batch:
                     conn.execute("SAVEPOINT scoring_symbol")
                     try:
-                        self._score_symbol(symbol, decision_round_ts, now_ms, results)
+                        self._score_symbol(symbol, decision_round_ts, now_ms, results, delta_all)
                     except Exception as exc:
                         conn.execute("ROLLBACK TO scoring_symbol")
                         conn.execute("RELEASE scoring_symbol")
@@ -1124,6 +1128,7 @@ class ScoringSystem:
         decision_round_ts: int,
         now_ms: int,
         results: list[SymbolScore],
+        delta_all: float | None = None,
     ) -> None:
         """Calculate and stage every rule row for one symbol in the active batch."""
         kwargs = {
@@ -1140,7 +1145,7 @@ class ScoringSystem:
         self._save_15m_latest_highest_prev_96_score(**kwargs)
         self._save_15m_close_desc_3_with_oi_45m_score(**kwargs)
         self._save_1m_close_gt_60m_open_with_oi_60m_score(**kwargs)
-        self._save_oi_loss_rate_240m_score(**kwargs)
+        self._save_oi_loss_rate_240m_score(**kwargs, delta_all=delta_all)
         self._save_15m_funding_rate_4bars_score(**kwargs)
         self._save_15m_bullish_volume_breakout_score(**kwargs)
         self._save_15m_volume_spike_2of3_score(**kwargs)
@@ -1836,21 +1841,46 @@ class ScoringSystem:
                     open_interest_60m_ago=excluded.open_interest_60m_ago, updated_at=excluded.updated_at
             """, (symbol, decision_round_ts, score, reason, latest_close, open_60m_ago, latest_oi, oi_60m_ago, updated_at))
 
-    def _save_oi_loss_rate_240m_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
+    def _latest_allusdt_15m_delta(self) -> float | None:
+        """Return the current round's shared ALLUSDT four-bar delta."""
         with self._round_connection() as conn:
-            rows = conn.execute("SELECT open, close FROM klines_15m WHERE symbol = ? ORDER BY open_time DESC LIMIT 4", (symbol,)).fetchall()
             try:
                 market = conn.execute(
-                    "SELECT open, close FROM allusdt_15m_klines "
-                    "ORDER BY open_time DESC LIMIT 4"
+                    "SELECT open, close FROM allusdt_15m_klines ORDER BY open_time DESC LIMIT 4"
                 ).fetchall()
             except sqlite3.OperationalError:
-                market = []
-        if len(rows) < 4 or len(market) < 4:
+                return None
+        if len(market) < 4:
+            return None
+        oldest_open = float(market[-1]["open"])
+        return (float(market[0]["close"]) / oldest_open - 1) if oldest_open else 0.0
+
+    def _save_oi_loss_rate_240m_score(
+        self,
+        symbol: str,
+        decision_round_ts: int,
+        updated_at: int,
+        delta_all: float | None = None,
+    ) -> None:
+        with self._round_connection() as conn:
+            rows = conn.execute("SELECT open, close FROM klines_15m WHERE symbol = ? ORDER BY open_time DESC LIMIT 4", (symbol,)).fetchall()
+            if delta_all is None:
+                try:
+                    market = conn.execute(
+                        "SELECT open, close FROM allusdt_15m_klines "
+                        "ORDER BY open_time DESC LIMIT 4"
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    market = []
+            else:
+                market = None
+        if len(rows) < 4 or delta_all is None and (market is None or len(market) < 4):
             return
         def change(items):
             return (float(items[0]["close"]) / float(items[-1]["open"]) - 1) if float(items[-1]["open"]) else 0.0
-        delta, delta_all = change(rows), change(market)
+        delta = change(rows)
+        if delta_all is None:
+            delta_all = change(market)
         relative_strength = delta - delta_all
         hit = relative_strength >= 0.02
         score = self._score_weight(11) if hit else 0
