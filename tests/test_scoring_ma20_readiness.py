@@ -510,6 +510,14 @@ def test_round_snapshot_bulk_loads_and_caps_each_symbol_window(tmp_path, monkeyp
                 "INSERT INTO ema_indicators VALUES (?, '15m', ?, ?)",
                 [(symbol, i, 100.0 + i) for i in range(5)],
             )
+        conn.execute(
+            "CREATE TABLE allusdt_15m_klines "
+            "(open_time INTEGER PRIMARY KEY, open REAL, close REAL)"
+        )
+        conn.executemany(
+            "INSERT INTO allusdt_15m_klines VALUES (?, ?, ?)",
+            [(i, 100.0, 101.0) for i in range(4)],
+        )
 
     monkeypatch.setattr(db_config, "BASE_DB_PATH", str(base_path))
     scoring = ScoringSystem(db_path=str(tmp_path / "scoring.db"))
@@ -522,7 +530,11 @@ def test_round_snapshot_bulk_loads_and_caps_each_symbol_window(tmp_path, monkeyp
     assert len(snapshot["open_interest_1m"]) == 480
     assert len(snapshot["ma20_indicators"]) == 12
     assert len(snapshot["ema_indicators"]) == 6
-    assert {row["symbol"] for rows in snapshot.values() for row in rows} == {"AAA", "BBB"}
+    symbol_rows = (
+        rows for table, rows in snapshot.items() if table != "allusdt_15m_klines"
+    )
+    assert {row["symbol"] for rows in symbol_rows for row in rows} == {"AAA", "BBB"}
+    assert len(snapshot["allusdt_15m_klines"]) == 4
     assert snapshot["klines_1m"][0]["open_time"] == 64
 
     scoring.init_table()
