@@ -2782,16 +2782,21 @@ class ScoringSystem:
 
     def get_latest_round_scores_oi_loss_rate_240m(self) -> tuple[int | None, list[sqlite3.Row]]:
         with self._round_connection() as conn:
-            row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_oi_loss_rate_240m").fetchone()
+            # Rows written by the pre-relative-strength implementation used
+            # this table for 240m OI checks (e.g. ``oi_1m_gte_240m``).  The
+            # schema migration keeps those rows for history, but they must
+            # not be treated as current Rule 11 results: their new metrics
+            # are necessarily zero and their reason describes another rule.
+            row = conn.execute("SELECT MAX(decision_round_ts) AS ts FROM symbol_scores_oi_loss_rate_240m WHERE reason NOT LIKE 'oi_1m_%'").fetchone()
             if row["ts"] is None:
                 return None, []
             round_ts = int(row["ts"])
-            rows = conn.execute("SELECT symbol, decision_round_ts, score, reason, delta, delta_all, relative_strength, updated_at FROM symbol_scores_oi_loss_rate_240m WHERE decision_round_ts = ? ORDER BY score DESC, symbol ASC", (round_ts,)).fetchall()
+            rows = conn.execute("SELECT symbol, decision_round_ts, score, reason, delta, delta_all, relative_strength, updated_at FROM symbol_scores_oi_loss_rate_240m WHERE decision_round_ts = ? AND reason NOT LIKE 'oi_1m_%' ORDER BY score DESC, symbol ASC", (round_ts,)).fetchall()
         return round_ts, rows
 
     def _get_round_scores_oi_loss_rate_240m(self, round_ts: int) -> list[sqlite3.Row]:
         with self._round_connection() as conn:
-            return conn.execute("SELECT symbol, decision_round_ts, score, reason, delta, delta_all, relative_strength, updated_at FROM symbol_scores_oi_loss_rate_240m WHERE decision_round_ts = ? ORDER BY symbol ASC", (round_ts,)).fetchall()
+            return conn.execute("SELECT symbol, decision_round_ts, score, reason, delta, delta_all, relative_strength, updated_at FROM symbol_scores_oi_loss_rate_240m WHERE decision_round_ts = ? AND reason NOT LIKE 'oi_1m_%' ORDER BY symbol ASC", (round_ts,)).fetchall()
     def _get_round_scores_15m_latest_highest_prev_96(self, round_ts: int) -> list[sqlite3.Row]:
         with self._round_connection() as conn:
             return conn.execute(
