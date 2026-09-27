@@ -735,6 +735,48 @@ class ScoringSystem:
                 )
                 """
             )
+            rule11_columns = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(symbol_scores_oi_loss_rate_240m)"
+                )
+            }
+            # Rule 11 used to store 240-minute open-interest statistics in this
+            # table.  CREATE TABLE IF NOT EXISTS does not update installations
+            # that already have that schema, so rebuild it when upgrading to
+            # the relative-market-strength rule.  Keeping the common fields
+            # retains the historical rounds while the new metrics default to
+            # zero because they cannot be reconstructed from the score table.
+            rule11_metric_columns = {"delta", "delta_all", "relative_strength"}
+            if not rule11_metric_columns.issubset(rule11_columns):
+                conn.execute(
+                    "ALTER TABLE symbol_scores_oi_loss_rate_240m "
+                    "RENAME TO symbol_scores_oi_loss_rate_240m_legacy"
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE symbol_scores_oi_loss_rate_240m (
+                        symbol TEXT NOT NULL,
+                        decision_round_ts INTEGER NOT NULL,
+                        score INTEGER NOT NULL,
+                        reason TEXT NOT NULL,
+                        delta REAL NOT NULL DEFAULT 0,
+                        delta_all REAL NOT NULL DEFAULT 0,
+                        relative_strength REAL NOT NULL DEFAULT 0,
+                        updated_at INTEGER NOT NULL,
+                        PRIMARY KEY(symbol, decision_round_ts)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO symbol_scores_oi_loss_rate_240m
+                        (symbol, decision_round_ts, score, reason, updated_at)
+                    SELECT symbol, decision_round_ts, score, reason, updated_at
+                    FROM symbol_scores_oi_loss_rate_240m_legacy
+                    """
+                )
+                conn.execute("DROP TABLE symbol_scores_oi_loss_rate_240m_legacy")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_symbol_scores_oi_loss_rate_240m_round ON symbol_scores_oi_loss_rate_240m(decision_round_ts DESC)"
             )
