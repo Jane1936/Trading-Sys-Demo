@@ -483,6 +483,15 @@ class ScoringSystem:
                         ).fetchall()
                     )
                 snapshot[table] = rows
+            try:
+                snapshot["allusdt_15m_klines"] = conn.execute(
+                    "SELECT * FROM allusdt_15m_klines "
+                    "ORDER BY open_time DESC LIMIT 4"
+                ).fetchall()
+            except sqlite3.OperationalError:
+                # The standalone market collector may not have initialized its
+                # table yet; rule 11 will simply be unavailable this round.
+                snapshot["allusdt_15m_klines"] = []
             ma20_rows: list[sqlite3.Row] = []
             for symbol in symbols:
                 for interval in ("5m", "15m"):
@@ -521,6 +530,7 @@ class ScoringSystem:
             "open_interest_1m": ("symbol", "snapshot_time", "open_interest"),
             "ma20_indicators": ("symbol", "interval", "open_time", "ma20"),
             "ema_indicators": ("symbol", "interval", "open_time", "ema20"),
+            "allusdt_15m_klines": ("open_time", "open", "close"),
         }
         for table, columns in table_columns.items():
             definitions = ", ".join(f'"{column}"' for column in columns)
@@ -532,8 +542,10 @@ class ScoringSystem:
                     f'INSERT INTO "{table}" ({definitions}) VALUES ({placeholders})',
                     [tuple(row[column] for column in columns) for row in rows],
                 )
+            index_column = "symbol" if "symbol" in columns else "open_time"
             conn.execute(
-                f'CREATE INDEX "idx_temp_{table}_symbol" ON "{table}" (symbol)'
+                f'CREATE INDEX "idx_temp_{table}_{index_column}" '
+                f'ON "{table}" ({index_column})'
             )
 
     def init_table(self) -> None:
@@ -1827,7 +1839,13 @@ class ScoringSystem:
     def _save_oi_loss_rate_240m_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
         with self._round_connection() as conn:
             rows = conn.execute("SELECT open, close FROM klines_15m WHERE symbol = ? ORDER BY open_time DESC LIMIT 4", (symbol,)).fetchall()
-            market = conn.execute("SELECT open, close FROM klines_15m WHERE symbol = 'ALLUSDT' ORDER BY open_time DESC LIMIT 4").fetchall()
+            try:
+                market = conn.execute(
+                    "SELECT open, close FROM allusdt_15m_klines "
+                    "ORDER BY open_time DESC LIMIT 4"
+                ).fetchall()
+            except sqlite3.OperationalError:
+                market = []
         if len(rows) < 4 or len(market) < 4:
             return
         def change(items):

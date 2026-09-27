@@ -19,8 +19,10 @@ def _insert_rule11_candles(conn, symbol, first_open, latest_close):
     )
 
 
-def _score_rule11(tmp_path, symbol_close, market_close):
+def _score_rule11(tmp_path, monkeypatch, symbol_close, market_close):
     db_path = tmp_path / "klines.db"
+    base_db_path = tmp_path / "base_data.db"
+    monkeypatch.setattr("db_config.BASE_DB_PATH", str(base_db_path))
     scoring = ScoringSystem(db_path=str(db_path), settings_db_path=str(db_path))
     scoring.init_table()
     with sqlite3.connect(db_path) as conn:
@@ -39,7 +41,26 @@ def _score_rule11(tmp_path, symbol_close, market_close):
             """
         )
         _insert_rule11_candles(conn, "BTCUSDT", 100, symbol_close)
-        _insert_rule11_candles(conn, "ALLUSDT", 100, market_close)
+        # A legacy ALLUSDT row in the symbol table must not affect rule 11.
+        _insert_rule11_candles(conn, "ALLUSDT", 100, 150)
+    with sqlite3.connect(base_db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE allusdt_15m_klines (
+                open_time INTEGER NOT NULL PRIMARY KEY,
+                open REAL NOT NULL,
+                close REAL NOT NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO allusdt_15m_klines (open_time, open, close) VALUES (?, ?, ?)",
+            [
+                (index, 100 if index == 1 else 100,
+                 market_close if index == 4 else 100)
+                for index in range(1, 5)
+            ],
+        )
 
     scoring._save_oi_loss_rate_240m_score(
         symbol="BTCUSDT", decision_round_ts=900_000, updated_at=900_001
@@ -48,8 +69,8 @@ def _score_rule11(tmp_path, symbol_close, market_close):
     return rows[0]
 
 
-def test_rule11_does_not_score_below_two_percent_relative_strength(tmp_path):
-    row = _score_rule11(tmp_path, symbol_close=102.9, market_close=101)
+def test_rule11_does_not_score_below_two_percent_relative_strength(tmp_path, monkeypatch):
+    row = _score_rule11(tmp_path, monkeypatch, symbol_close=102.9, market_close=101)
 
     assert row["delta"] == pytest.approx(0.029)
     assert row["delta_all"] == pytest.approx(0.01)
@@ -58,8 +79,8 @@ def test_rule11_does_not_score_below_two_percent_relative_strength(tmp_path):
     assert row["reason"] == "rule11_not_met"
 
 
-def test_rule11_scores_at_two_percent_relative_strength(tmp_path):
-    row = _score_rule11(tmp_path, symbol_close=103, market_close=101)
+def test_rule11_scores_at_two_percent_relative_strength(tmp_path, monkeypatch):
+    row = _score_rule11(tmp_path, monkeypatch, symbol_close=103, market_close=101)
 
     assert row["relative_strength"] == pytest.approx(0.02)
     assert row["score"] == 5
