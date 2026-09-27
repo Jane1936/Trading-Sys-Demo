@@ -47,7 +47,7 @@ RULE_SCORE_NAMES: dict[int, str] = {
     8: "15m 最新高价突破此前96根15m高价",
     9: "15m 回落并配合 OI",
     10: "1m 涨幅并配合 OI",
-    11: "当前 OI 不低于 240m 前",
+    11: "1小时相对市场强度",
     12: "15m 资金费率连续达标",
     13: "15m 阳线放量突破",
     14: "15m 三根中至少两根放量",
@@ -727,9 +727,9 @@ class ScoringSystem:
                     decision_round_ts INTEGER NOT NULL,
                     score INTEGER NOT NULL,
                     reason TEXT NOT NULL,
-                    latest_open_interest REAL NOT NULL,
-                    open_interest_240m_ago REAL NOT NULL,
-                    oi_loss_rate REAL NOT NULL,
+                    delta REAL NOT NULL DEFAULT 0,
+                    delta_all REAL NOT NULL DEFAULT 0,
+                    relative_strength REAL NOT NULL DEFAULT 0,
                     updated_at INTEGER NOT NULL,
                     PRIMARY KEY(symbol, decision_round_ts)
                 )
@@ -1784,30 +1784,26 @@ class ScoringSystem:
 
     def _save_oi_loss_rate_240m_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
         with self._round_connection() as conn:
-            oi_rows = conn.execute("""
-                SELECT open_interest FROM open_interest_1m WHERE symbol = ? ORDER BY snapshot_time DESC LIMIT 240
-            """, (symbol,)).fetchall()
-        if len(oi_rows) < 240:
+            rows = conn.execute("SELECT open, close FROM klines_15m WHERE symbol = ? ORDER BY open_time DESC LIMIT 4", (symbol,)).fetchall()
+            market = conn.execute("SELECT open, close FROM klines_15m WHERE symbol = 'ALLUSDT' ORDER BY open_time DESC LIMIT 4").fetchall()
+        if len(rows) < 4 or len(market) < 4:
             return
-        latest_oi = float(oi_rows[0]["open_interest"])
-        oi_240m_ago = float(oi_rows[239]["open_interest"])
-        if oi_240m_ago <= 0:
-            loss_rate = 1.0
-            hit = False
-        else:
-            loss_rate = max((oi_240m_ago - latest_oi) / oi_240m_ago, 0.0)
-            hit = latest_oi >= oi_240m_ago
+        def change(items):
+            return (float(items[0]["close"]) / float(items[-1]["open"]) - 1) if float(items[-1]["open"]) else 0.0
+        delta, delta_all = change(rows), change(market)
+        relative_strength = delta - delta_all
+        hit = relative_strength >= 0.02
         score = self._score_weight(11) if hit else 0
-        reason = "oi_1m_gte_240m" if hit else "rule11_not_met"
+        reason = "relative_strength_gte_2pct" if hit else "rule11_not_met"
         with self._round_connection() as conn:
             conn.execute("""
                 INSERT INTO symbol_scores_oi_loss_rate_240m
-                (symbol, decision_round_ts, score, reason, latest_open_interest, open_interest_240m_ago, oi_loss_rate, updated_at)
+                (symbol, decision_round_ts, score, reason, delta, delta_all, relative_strength, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
-                    score=excluded.score, reason=excluded.reason, latest_open_interest=excluded.latest_open_interest,
-                    open_interest_240m_ago=excluded.open_interest_240m_ago, oi_loss_rate=excluded.oi_loss_rate, updated_at=excluded.updated_at
-            """, (symbol, decision_round_ts, score, reason, latest_oi, oi_240m_ago, loss_rate, updated_at))
+                    score=excluded.score, reason=excluded.reason, delta=excluded.delta,
+                    delta_all=excluded.delta_all, relative_strength=excluded.relative_strength, updated_at=excluded.updated_at
+            """, (symbol, decision_round_ts, score, reason, delta, delta_all, relative_strength, updated_at))
 
 
     def _latest_four_15m_funding_rates(self, symbol: str) -> tuple[float | None, float | None, float | None, float | None] | None:
@@ -2748,12 +2744,12 @@ class ScoringSystem:
             if row["ts"] is None:
                 return None, []
             round_ts = int(row["ts"])
-            rows = conn.execute("SELECT symbol, decision_round_ts, score, reason, latest_open_interest, open_interest_240m_ago, oi_loss_rate, updated_at FROM symbol_scores_oi_loss_rate_240m WHERE decision_round_ts = ? ORDER BY score DESC, symbol ASC", (round_ts,)).fetchall()
+            rows = conn.execute("SELECT symbol, decision_round_ts, score, reason, delta, delta_all, relative_strength, updated_at FROM symbol_scores_oi_loss_rate_240m WHERE decision_round_ts = ? ORDER BY score DESC, symbol ASC", (round_ts,)).fetchall()
         return round_ts, rows
 
     def _get_round_scores_oi_loss_rate_240m(self, round_ts: int) -> list[sqlite3.Row]:
         with self._round_connection() as conn:
-            return conn.execute("SELECT symbol, decision_round_ts, score, reason, latest_open_interest, open_interest_240m_ago, oi_loss_rate, updated_at FROM symbol_scores_oi_loss_rate_240m WHERE decision_round_ts = ? ORDER BY symbol ASC", (round_ts,)).fetchall()
+            return conn.execute("SELECT symbol, decision_round_ts, score, reason, delta, delta_all, relative_strength, updated_at FROM symbol_scores_oi_loss_rate_240m WHERE decision_round_ts = ? ORDER BY symbol ASC", (round_ts,)).fetchall()
     def _get_round_scores_15m_latest_highest_prev_96(self, round_ts: int) -> list[sqlite3.Row]:
         with self._round_connection() as conn:
             return conn.execute(
