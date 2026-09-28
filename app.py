@@ -1674,10 +1674,16 @@ def start_alpha_observer_task() -> None:
             print(f"⚠️ Alpha observer collection failed: {exc}")
 
     _job()
-    scheduler.add_job(_job, "interval", hours=1, max_instances=1, coalesce=True)
-    scheduler.add_job(_job, "cron", hour=0, minute=0, timezone="UTC",
-                      max_instances=1, coalesce=True)
-    print("🚀 Alpha observer task started (hourly)")
+    scheduler.add_job(
+        _job,
+        "cron",
+        minute=0,
+        second=30,
+        timezone="UTC",
+        max_instances=1,
+        coalesce=True,
+    )
+    print("🚀 Alpha observer task started (hourly at :00:30 UTC)")
     scheduler.start()
 
 
