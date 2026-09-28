@@ -47,12 +47,12 @@
       <article class="alpha-summary-card">
         <span>OI异动的 U 本位 Alpha 币个数</span>
         <strong data-alpha-summary-value="oi_abnormal_tokens">—</strong>
-        <small>1小时 OI 涨跌幅 ≥ 10%，且1小时价格涨跌幅绝对值 ≤ 3%</small>
+        <small>1小时 OI 涨跌幅 ≥ <input class="alpha-summary-param" data-alpha-param="oi_min" type="number" min="0" step="0.1" value="10" aria-label="OI涨跌幅阈值">%，且1小时价格涨跌幅绝对值 ≤ <input class="alpha-summary-param" data-alpha-param="price_max" type="number" min="0" step="0.1" value="3" aria-label="OI价格涨跌幅阈值">%</small>
       </article>
       <article class="alpha-summary-card">
         <span>资金费率异动的 U 本位 Alpha 币个数</span>
         <strong data-alpha-summary-value="funding_abnormal_tokens">—</strong>
-        <small>资金费率涨跌幅 ≥ 400%，且4小时价格涨跌幅绝对值 ≤ 2.5%</small>
+        <small>资金费率涨跌幅 ≥ <input class="alpha-summary-param" data-alpha-param="funding_min" type="number" min="0" step="0.1" value="400" aria-label="资金费率涨跌幅阈值">%，且4小时价格涨跌幅绝对值 ≤ <input class="alpha-summary-param" data-alpha-param="funding_price_max" type="number" min="0" step="0.1" value="2.5" aria-label="资金费率价格涨跌幅阈值">%</small>
       </article>
     </div>
     <div class="alpha-strong-signals" data-alpha-strong-signals hidden>
@@ -159,7 +159,9 @@
     summaryButton.textContent = '刷新中…';
     if (status) status.textContent = '正在读取最新市场快照…';
     try {
-      const response = await fetch('/market/alpha/data?module=summary', {headers: {'X-Requested-With': 'XMLHttpRequest'}});
+      const params = new URLSearchParams({module: 'summary'});
+      document.querySelectorAll('[data-alpha-param]').forEach((input) => { if (input.value !== '') params.set(input.dataset.alphaParam, input.value); });
+      const response = await fetch(`/market/alpha/data?${params}`, {headers: {'X-Requested-With': 'XMLHttpRequest'}});
       const payload = await response.json();
       if (!response.ok || payload.error) throw new Error(payload.error || `HTTP ${response.status}`);
       document.querySelector('[data-alpha-summary-value="total_tokens"]').textContent = payload.data.total_tokens;

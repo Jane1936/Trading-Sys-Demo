@@ -1385,6 +1385,16 @@ def alpha_market_data():
     module = request.args.get("module", "")
     try:
         if module == "summary":
+            def _summary_percent(name, default):
+                try:
+                    value = float(request.args.get(name, default))
+                    return value / 100 if value >= 0 else default / 100
+                except (TypeError, ValueError):
+                    return default / 100
+            oi_min = _summary_percent("oi_min", 10)
+            price_max = _summary_percent("price_max", 3)
+            funding_min = _summary_percent("funding_min", 400)
+            funding_price_max = _summary_percent("funding_price_max", 2.5)
             observed_at, rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
             trends = alpha_observer.daily_trends(ALPHA_DB_PATH)
             oi_changes = _alpha_oi_changes()
@@ -1402,8 +1412,8 @@ def alpha_market_data():
                 signals = [
                     activity is not None and float(activity) >= 1,
                     trend.get("consecutive_up_days", 0) >= 2,
-                    oi.get("oi_change") is not None and oi.get("oi_change") >= 0.10 and oi.get("price_change") is not None and abs(oi["price_change"]) <= 0.03,
-                    funding.get("funding_change") is not None and funding.get("funding_change") >= 4.0 and funding.get("price_change") is not None and abs(funding["price_change"]) <= 0.025,
+                    oi.get("oi_change") is not None and oi.get("oi_change") >= oi_min and oi.get("price_change") is not None and abs(oi["price_change"]) <= price_max,
+                    funding.get("funding_change") is not None and funding.get("funding_change") >= funding_min and funding.get("price_change") is not None and abs(funding["price_change"]) <= funding_price_max,
                 ]
                 if sum(signals) >= 2:
                     strong_tokens.append({"symbol": token.get("symbol", symbol), "name": token.get("name"), "activity_1d": activity, "consecutive_up_days": trend.get("consecutive_up_days", 0), "oi_change": oi.get("oi_change"), "funding_change": funding.get("funding_change"), "signal_count": sum(signals)})
@@ -1423,17 +1433,17 @@ def alpha_market_data():
                     1
                     for row in oi_changes
                     if row["oi_change"] is not None
-                    and row["oi_change"] >= 0.10
+                    and row["oi_change"] >= oi_min
                     and row["price_change"] is not None
-                    and abs(row["price_change"]) <= 0.03
+                    and abs(row["price_change"]) <= price_max
                 ),
                 "funding_abnormal_tokens": sum(
                     1
                     for row in funding_changes
                     if row["funding_change"] is not None
-                    and row["funding_change"] >= 4.0
+                    and row["funding_change"] >= funding_min
                     and row["price_change"] is not None
-                    and abs(row["price_change"]) <= 0.025
+                    and abs(row["price_change"]) <= funding_price_max
                 ),
                 "strong_tokens": strong_tokens,
             }

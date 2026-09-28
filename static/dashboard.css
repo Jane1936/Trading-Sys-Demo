@@ -389,3 +389,5 @@ tbody tr:hover { background: #f8fdff; }
   background: rgba(255,255,255,.45);
 }
 .settings-subsection > strong { grid-column: 1 / -1; }
+.alpha-summary-param { width:4.5em; padding:1px 4px; border:1px solid #94a3b8; border-radius:4px; color:#334155; background:#fff; font:inherit; font-variant-numeric:tabular-nums; }
+.alpha-summary-param:focus { outline:2px solid #5eead4; outline-offset:1px; }
