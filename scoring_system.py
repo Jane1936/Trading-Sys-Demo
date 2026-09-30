@@ -1736,23 +1736,21 @@ class ScoringSystem:
                 """,
                 (symbol,),
             ).fetchall()
-            oi_rows = conn.execute(
-                """
-                SELECT open_interest
-                FROM open_interest_1m
-                WHERE symbol = ?
-                ORDER BY snapshot_time DESC
-                LIMIT 46
-                """,
+            oi_latest = conn.execute(
+                "SELECT snapshot_time, open_interest FROM open_interest_1m WHERE symbol = ? ORDER BY snapshot_time DESC LIMIT 1",
                 (symbol,),
-            ).fetchall()
-        if len(close_rows) < 3 or len(oi_rows) < 46:
+            ).fetchone()
+            oi_45m = conn.execute(
+                "SELECT open_interest FROM open_interest_1m WHERE symbol = ? AND snapshot_time <= ? ORDER BY snapshot_time DESC LIMIT 1",
+                (symbol, (int(oi_latest["snapshot_time"]) - 45 * 60_000) if oi_latest else 0),
+            ).fetchone() if oi_latest else None
+        if len(close_rows) < 3 or oi_latest is None or oi_45m is None:
             return None
         close_latest = float(close_rows[0]["close"])
         close_prev1 = float(close_rows[1]["close"])
         close_prev2 = float(close_rows[2]["close"])
-        latest_oi = float(oi_rows[0]["open_interest"])
-        oi_45m_ago = float(oi_rows[45]["open_interest"])
+        latest_oi = float(oi_latest["open_interest"])
+        oi_45m_ago = float(oi_45m["open_interest"])
         return close_latest, close_prev1, close_prev2, latest_oi, oi_45m_ago
 
     def _save_15m_close_desc_3_with_oi_45m_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
@@ -1818,15 +1816,20 @@ class ScoringSystem:
             k_rows = conn.execute("""
                 SELECT open, close FROM klines_1m WHERE symbol = ? ORDER BY open_time DESC LIMIT 60
             """, (symbol,)).fetchall()
-            oi_rows = conn.execute("""
-                SELECT open_interest FROM open_interest_1m WHERE symbol = ? ORDER BY snapshot_time DESC LIMIT 60
-            """, (symbol,)).fetchall()
-        if len(k_rows) < 60 or len(oi_rows) < 60:
+            oi_latest = conn.execute(
+                "SELECT snapshot_time, open_interest FROM open_interest_1m WHERE symbol = ? ORDER BY snapshot_time DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
+            oi_60m = conn.execute(
+                "SELECT open_interest FROM open_interest_1m WHERE symbol = ? AND snapshot_time <= ? ORDER BY snapshot_time DESC LIMIT 1",
+                (symbol, (int(oi_latest["snapshot_time"]) - 60 * 60_000) if oi_latest else 0),
+            ).fetchone() if oi_latest else None
+        if len(k_rows) < 60 or oi_latest is None or oi_60m is None:
             return
         latest_close = float(k_rows[0]["close"])
         open_60m_ago = float(k_rows[59]["open"])
-        latest_oi = float(oi_rows[0]["open_interest"])
-        oi_60m_ago = float(oi_rows[59]["open_interest"])
+        latest_oi = float(oi_latest["open_interest"])
+        oi_60m_ago = float(oi_60m["open_interest"])
         hit = (latest_close > open_60m_ago) and (latest_oi > oi_60m_ago)
         score = self._score_weight(10) if hit else 0
         reason = "close_1m_gt_60m_open_and_oi_gt_60m" if hit else "rule10_not_met"

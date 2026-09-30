@@ -45,6 +45,7 @@ BTC_15M_LIMIT = 1500
 STARTUP_RECENT_BACKFILL_HOURS = 4
 
 BASE_INTERVAL = "1m"
+OI_INTERVAL = "15m"
 AGG_INTERVALS = ["5m", "15m", "30m", "1h", "4h", "1d"]
 ALL_INTERVALS = [BASE_INTERVAL, *AGG_INTERVALS]
 LIMIT = 1000
@@ -653,7 +654,8 @@ def save_open_interest(symbol, open_interest):
         return 0
 
     now_ms = int(time.time() * 1000)
-    snapshot_time = (now_ms // 60_000) * 60_000
+    oi_interval_ms = 15 * 60_000
+    snapshot_time = (now_ms // oi_interval_ms) * oi_interval_ms
 
     with db_write_lock:
         with get_db_conn() as conn:
@@ -1092,7 +1094,8 @@ def process_symbol_oi(symbol):
 
 def save_open_interest_round(values):
     rows = []
-    snapshot_time = (int(time.time() * 1000) // 60_000) * 60_000
+    oi_interval_ms = 15 * 60_000
+    snapshot_time = (int(time.time() * 1000) // oi_interval_ms) * oi_interval_ms
     for symbol, open_interest in values.items():
         if open_interest is not None:
             rows.append((symbol, snapshot_time, open_interest))
@@ -1124,17 +1127,17 @@ def _fetch_recovery_15m(symbol):
 
 
 def _fetch_recovery_oi(symbol):
-    """Fetch the recent 1m OI history required by rule 11."""
+    """Fetch the recent 15m OI history required by the scoring rules."""
     try:
         response = HTTP_SESSION.get(
             OPEN_INTEREST_HISTORY_URL,
-            params={"symbol": f"{symbol}USDT", "period": "1m", "limit": 500},
+            params={"symbol": f"{symbol}USDT", "period": OI_INTERVAL, "limit": 4},
             timeout=(3, 15),
         )
         response.raise_for_status()
         rows = response.json()
         values = []
-        for row in rows[-240:]:
+        for row in rows[-4:]:
             timestamp = row.get("timestamp")
             oi = row.get("sumOpenInterest") or row.get("openInterest")
             if timestamp is not None and oi is not None:
@@ -1668,7 +1671,7 @@ if __name__ == "__main__":
     scheduler = BlockingScheduler()
 
     scheduler.add_job(kline_job, "cron", second=0)
-    scheduler.add_job(oi_job, "cron", second=20)
+    scheduler.add_job(oi_job, "cron", minute="*/15", second=20)
     scheduler.add_job(funding_job, "cron", minute=1, second=40)
     scheduler.add_job(btc_5m_job, "cron", minute="*/5", second=10)
     scheduler.add_job(atr_15m_job, "cron", minute="*/15", second=30)
