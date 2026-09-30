@@ -67,11 +67,12 @@ def test_allusdt_1h_ma20_calculates_from_1h_klines(tmp_path):
             allusdt_15m_ma20.H1_MA20_TABLE,
         )
         saved = conn.execute(
-            f"SELECT close, ma20 FROM {allusdt_15m_ma20.H1_MA20_TABLE} ORDER BY open_time DESC LIMIT 1"
+            f"SELECT close, ma20, ema20 FROM {allusdt_15m_ma20.H1_MA20_TABLE} ORDER BY open_time DESC LIMIT 1"
         ).fetchone()
 
     assert changed == 1
-    assert saved == (20.0, 10.5)
+    assert saved[0:2] == (20.0, 10.5)
+    assert saved[2] is not None
 
 
 def test_save_kline_round_uses_one_connection_for_all_symbols(tmp_path, monkeypatch):

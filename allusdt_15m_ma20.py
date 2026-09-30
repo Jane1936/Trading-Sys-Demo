@@ -84,10 +84,15 @@ def init_interval_db(conn: sqlite3.Connection, kline_table: str, ma20_table: str
             close_time INTEGER NOT NULL,
             close REAL NOT NULL,
             ma20 REAL NOT NULL,
+            ema20 REAL,
             updated_at INTEGER NOT NULL
         )
         """
     )
+    # Add the hourly EMA20 column to databases created by older versions.
+    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({ma20_table})").fetchall()}
+    if "ema20" not in columns:
+        conn.execute(f"ALTER TABLE {ma20_table} ADD COLUMN ema20 REAL")
     conn.execute(
         f"CREATE INDEX IF NOT EXISTS idx_{ma20_table}_open_time ON {ma20_table}(open_time)"
     )
@@ -180,22 +185,27 @@ def save_ma20(
     now_ms = int(time.time() * 1000)
     values = []
     closes = []
+    ema20 = None
+    alpha = 2 / 21
     for open_time, close_time, close in rows:
-        closes.append(float(close))
+        close = float(close)
+        closes.append(close)
+        ema20 = close if ema20 is None else close * alpha + ema20 * (1 - alpha)
         if len(closes) < 20:
             continue
-        values.append((int(open_time), int(close_time), float(close), sum(closes[-20:]) / 20, now_ms))
+        values.append((int(open_time), int(close_time), close, sum(closes[-20:]) / 20, ema20, now_ms))
 
     before = conn.total_changes
     conn.executemany(
         f"""
         INSERT INTO {ma20_table}
-        (open_time, close_time, close, ma20, updated_at)
-        VALUES (?, ?, ?, ?, ?)
+        (open_time, close_time, close, ma20, ema20, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(open_time) DO UPDATE SET
             close_time=excluded.close_time,
             close=excluded.close,
             ma20=excluded.ma20,
+            ema20=excluded.ema20,
             updated_at=excluded.updated_at
         """,
         values,
