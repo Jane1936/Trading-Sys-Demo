@@ -82,8 +82,8 @@ def set_settings(payload: dict, db_path: str | None = None) -> dict[str, float |
         raise ValueError("BTC吸血阈值必须大于 0% 且不超过 100%")
     if not math.isfinite(crash_threshold) or not 0 < crash_threshold <= 1:
         raise ValueError("大盘暴跌阈值必须大于 0% 且不超过 100%")
-    if not math.isfinite(allusdt_24h_threshold) or not -1 <= allusdt_24h_threshold < 0:
-        raise ValueError("ALLUSDT 最近24h涨跌幅阈值必须不低于 -100% 且小于 0%")
+    if not math.isfinite(allusdt_24h_threshold) or not -1 <= allusdt_24h_threshold <= 1:
+        raise ValueError("ALLUSDT 最近24h涨跌幅阈值必须在 -100% 至 100% 之间")
     if not 1 <= duration <= 10_080:
         raise ValueError("禁止开仓时间必须为 1–10080 分钟")
 
