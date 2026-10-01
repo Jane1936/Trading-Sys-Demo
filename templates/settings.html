@@ -172,6 +172,9 @@
         <label>ALLUSDT 1 小时 EMA20 条件（%）
           <input id="market-filter-ema20-threshold" type="number" min="-100" max="100" step="0.0001" required value="{{ market_filter_settings.allusdt_ema20_threshold * 100 }}">
         </label>
+        <label>ALLUSDT 最近24h涨幅超过（%）时关闭 EMA20 条件
+          <input id="market-filter-ema20-disable-threshold" type="number" min="-100" max="100" step="0.01" required value="{{ market_filter_settings.allusdt_24h_ema20_disable_threshold * 100 }}">
+        </label>
         <label>禁止新开仓时间（分钟）
           <input id="market-filter-block-minutes" type="number" min="1" max="10080" step="1" required value="{{ market_filter_settings.block_duration_minutes }}">
         </label>
