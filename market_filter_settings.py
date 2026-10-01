@@ -48,7 +48,7 @@ def get_settings(db_path: str | None = None) -> dict[str, float | int]:
                 INSERT OR IGNORE INTO {SETTINGS_TABLE_NAME}
                 (id, btc_siphon_threshold, market_crash_threshold,
                  allusdt_24h_drop_threshold, allusdt_ema20_threshold, block_duration_minutes, updated_at)
-                VALUES (1, ?, ?, ?, ?, ?)
+                VALUES (1, ?, ?, ?, ?, ?, ?)
             """, (
                 DEFAULT_BTC_SIPHON_THRESHOLD,
                 DEFAULT_MARKET_CRASH_THRESHOLD,
