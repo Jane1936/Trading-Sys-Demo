@@ -13,6 +13,7 @@ DEFAULT_BTC_SIPHON_THRESHOLD = 0.005
 DEFAULT_MARKET_CRASH_THRESHOLD = 0.03
 DEFAULT_ALLUSDT_24H_DROP_THRESHOLD = -0.05
 DEFAULT_BLOCK_DURATION_MINUTES = 30
+DEFAULT_ALLUSDT_EMA20_THRESHOLD = 0.0015
 SETTINGS_TABLE_NAME = "market_filter_settings"
 
 
@@ -27,6 +28,7 @@ def get_settings(db_path: str | None = None) -> dict[str, float | int]:
                     btc_siphon_threshold REAL NOT NULL,
                     market_crash_threshold REAL NOT NULL,
                     allusdt_24h_drop_threshold REAL NOT NULL DEFAULT -0.05,
+                    allusdt_ema20_threshold REAL NOT NULL DEFAULT 0.0015,
                     block_duration_minutes INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 )
@@ -35,6 +37,8 @@ def get_settings(db_path: str | None = None) -> dict[str, float | int]:
                 row["name"]
                 for row in conn.execute(f"PRAGMA table_info({SETTINGS_TABLE_NAME})")
             }
+            if "allusdt_ema20_threshold" not in columns:
+                conn.execute(f"ALTER TABLE {SETTINGS_TABLE_NAME} ADD COLUMN allusdt_ema20_threshold REAL NOT NULL DEFAULT 0.0015")
             if "allusdt_24h_drop_threshold" not in columns:
                 conn.execute(
                     f"ALTER TABLE {SETTINGS_TABLE_NAME} "
@@ -43,12 +47,13 @@ def get_settings(db_path: str | None = None) -> dict[str, float | int]:
             conn.execute(f"""
                 INSERT OR IGNORE INTO {SETTINGS_TABLE_NAME}
                 (id, btc_siphon_threshold, market_crash_threshold,
-                 allusdt_24h_drop_threshold, block_duration_minutes, updated_at)
+                 allusdt_24h_drop_threshold, allusdt_ema20_threshold, block_duration_minutes, updated_at)
                 VALUES (1, ?, ?, ?, ?, ?)
             """, (
                 DEFAULT_BTC_SIPHON_THRESHOLD,
                 DEFAULT_MARKET_CRASH_THRESHOLD,
                 DEFAULT_ALLUSDT_24H_DROP_THRESHOLD,
+                DEFAULT_ALLUSDT_EMA20_THRESHOLD,
                 DEFAULT_BLOCK_DURATION_MINUTES,
                 int(time.time() * 1000),
             ))
@@ -57,6 +62,7 @@ def get_settings(db_path: str | None = None) -> dict[str, float | int]:
         "btc_siphon_threshold": float(row["btc_siphon_threshold"]),
         "market_crash_threshold": float(row["market_crash_threshold"]),
         "allusdt_24h_drop_threshold": float(row["allusdt_24h_drop_threshold"]),
+        "allusdt_ema20_threshold": float(row["allusdt_ema20_threshold"]),
         "block_duration_minutes": int(row["block_duration_minutes"]),
         "updated_at": int(row["updated_at"]),
     }
@@ -72,6 +78,7 @@ def set_settings(payload: dict, db_path: str | None = None) -> dict[str, float |
         allusdt_24h_threshold = float(payload.get(
             "allusdt_24h_drop_threshold", current["allusdt_24h_drop_threshold"]
         ))
+        ema20_threshold = float(payload.get("allusdt_ema20_threshold", current["allusdt_ema20_threshold"]))
         duration_raw = payload["block_duration_minutes"]
         duration = int(duration_raw)
     except (KeyError, TypeError, ValueError) as exc:
@@ -82,6 +89,8 @@ def set_settings(payload: dict, db_path: str | None = None) -> dict[str, float |
         raise ValueError("BTC吸血阈值必须大于 0% 且不超过 100%")
     if not math.isfinite(crash_threshold) or not 0 < crash_threshold <= 1:
         raise ValueError("大盘暴跌阈值必须大于 0% 且不超过 100%")
+    if not math.isfinite(ema20_threshold) or not -1 <= ema20_threshold <= 1:
+        raise ValueError("ALLUSDT 1小时 EMA20 条件必须在 -100% 至 100% 之间")
     if not math.isfinite(allusdt_24h_threshold) or not -1 <= allusdt_24h_threshold <= 1:
         raise ValueError("ALLUSDT 最近24h涨跌幅阈值必须在 -100% 至 100% 之间")
     if not 1 <= duration <= 10_080:
@@ -92,7 +101,7 @@ def set_settings(payload: dict, db_path: str | None = None) -> dict[str, float |
         conn.execute(f"""
             UPDATE {SETTINGS_TABLE_NAME}
             SET btc_siphon_threshold = ?, market_crash_threshold = ?,
-                allusdt_24h_drop_threshold = ?, block_duration_minutes = ?, updated_at = ?
+                allusdt_24h_drop_threshold = ?, allusdt_ema20_threshold = ?, block_duration_minutes = ?, updated_at = ?
             WHERE id = 1
-        """, (btc_threshold, crash_threshold, allusdt_24h_threshold, duration, updated_at))
+        """, (btc_threshold, crash_threshold, allusdt_24h_threshold, ema20_threshold, duration, updated_at))
     return get_settings(settings_path)

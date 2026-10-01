@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import allusdt_15m_ma20
+import allusdt_hourly_ma20
 import collector
 from market_filter_settings import get_settings
 
@@ -40,6 +41,10 @@ class MarketFilterResult:
     reason: str
     evaluated_at: int
     block_until: Optional[int]
+    allusdt_ema20_latest: Optional[float] = None
+    allusdt_ema20_third: Optional[float] = None
+    allusdt_ema20_ratio: Optional[float] = None
+    ema20_filter_passed: bool = False
 
 
 class MarketFilterModule:
@@ -89,6 +94,10 @@ class MarketFilterModule:
                 self._ensure_column(conn, "block_until", "INTEGER")
                 self._ensure_column(conn, "allusdt_24h_delta", "REAL")
                 self._ensure_column(conn, "allusdt_24h_drop", "INTEGER NOT NULL DEFAULT 0")
+                self._ensure_column(conn, "allusdt_ema20_latest", "REAL")
+                self._ensure_column(conn, "allusdt_ema20_third", "REAL")
+                self._ensure_column(conn, "allusdt_ema20_ratio", "REAL")
+                self._ensure_column(conn, "ema20_filter_passed", "INTEGER NOT NULL DEFAULT 0")
                 conn.execute(
                     f"CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_evaluated "
                     f"ON {self.TABLE_NAME}(evaluated_at DESC)"
@@ -153,6 +162,11 @@ class MarketFilterModule:
         with self._connect() as conn:
             all_rows = self._latest_four(conn, allusdt_15m_ma20.KLINE_TABLE)
             btc_rows = self._latest_four(conn, collector.BTC_15M_TABLE)
+            ema_rows = conn.execute(f"SELECT ema20 FROM {allusdt_hourly_ma20.MA20_TABLE} WHERE ema20 IS NOT NULL ORDER BY open_time DESC LIMIT 3").fetchall()
+            ema_latest = float(ema_rows[0][0]) if len(ema_rows) >= 1 else None
+            ema_third = float(ema_rows[2][0]) if len(ema_rows) >= 3 else None
+            ema_ratio = (ema_latest / ema_third - 1) if ema_latest is not None and ema_third else None
+            ema_passed = ema_ratio is not None and ema_ratio < float(settings["allusdt_ema20_threshold"])
             all_first, all_latest, all_open, all_close, all_delta = self._delta(all_rows)
             btc_first, btc_latest, btc_open, btc_close, btc_delta = self._delta(btc_rows)
             allusdt_24h_delta = (
@@ -169,7 +183,7 @@ class MarketFilterModule:
                 market_crash = False
                 triggered = allusdt_24h_drop
                 block_until = evaluated_ms + block_ms if triggered else self._active_block_until(conn, evaluated_ms)
-                allow = block_until is None
+                allow = block_until is None and ema_passed
                 if allusdt_24h_drop:
                     reason = "allusdt_24h_drop"
                 else:
@@ -179,7 +193,7 @@ class MarketFilterModule:
                 market_crash = all_delta < -market_crash_threshold
                 triggered = btc_siphon or market_crash or allusdt_24h_drop
                 block_until = evaluated_ms + block_ms if triggered else self._active_block_until(conn, evaluated_ms)
-                allow = block_until is None
+                allow = block_until is None and ema_passed
                 reasons = []
                 if btc_siphon:
                     reasons.append("btc_siphon")
@@ -189,8 +203,8 @@ class MarketFilterModule:
                     reasons.append("allusdt_24h_drop")
                 if not triggered and block_until is not None:
                     reasons.append(f"market_filter_cooldown_until_{block_until}")
-                reason = ",".join(reasons) if reasons else "market_filter_passed"
-            result = MarketFilterResult(round_ts, all_first, all_latest, all_open, all_close, all_delta, btc_first, btc_latest, btc_open, btc_close, btc_delta, btc_siphon, market_crash, allusdt_24h_delta, allusdt_24h_drop, allow, reason, evaluated_ms, block_until)
+                reason = ",".join(reasons) if reasons else ("market_filter_passed" if ema_passed else "ema20_filter_not_passed")
+            result = MarketFilterResult(round_ts, all_first, all_latest, all_open, all_close, all_delta, btc_first, btc_latest, btc_open, btc_close, btc_delta, btc_siphon, market_crash, allusdt_24h_delta, allusdt_24h_drop, allow, reason, evaluated_ms, block_until, ema_latest, ema_third, ema_ratio, ema_passed)
             self._save(conn, result)
             return result
 
@@ -213,8 +227,8 @@ class MarketFilterModule:
             INSERT INTO {self.TABLE_NAME}
             (decision_round_ts, allusdt_first_open_time, allusdt_latest_open_time, allusdt_open, allusdt_close, allusdt_delta,
              btc_first_open_time, btc_latest_open_time, btc_open, btc_close, btc_delta, btc_siphon, market_crash,
-             allusdt_24h_delta, allusdt_24h_drop, allow_new_positions, reason, evaluated_at, block_until)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             allusdt_24h_delta, allusdt_24h_drop, allow_new_positions, reason, evaluated_at, block_until, allusdt_ema20_latest, allusdt_ema20_third, allusdt_ema20_ratio, ema20_filter_passed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(decision_round_ts) DO UPDATE SET
                 allusdt_first_open_time=excluded.allusdt_first_open_time,
                 allusdt_latest_open_time=excluded.allusdt_latest_open_time,
@@ -233,10 +247,11 @@ class MarketFilterModule:
                 allow_new_positions=excluded.allow_new_positions,
                 reason=excluded.reason,
                 evaluated_at=excluded.evaluated_at,
-                block_until=excluded.block_until
+                block_until=excluded.block_until,
+                allusdt_ema20_latest=excluded.allusdt_ema20_latest, allusdt_ema20_third=excluded.allusdt_ema20_third, allusdt_ema20_ratio=excluded.allusdt_ema20_ratio, ema20_filter_passed=excluded.ema20_filter_passed
             """,
             (r.decision_round_ts, r.allusdt_first_open_time, r.allusdt_latest_open_time, r.allusdt_open, r.allusdt_close, r.allusdt_delta,
-             r.btc_first_open_time, r.btc_latest_open_time, r.btc_open, r.btc_close, r.btc_delta, int(r.btc_siphon), int(r.market_crash), r.allusdt_24h_delta, int(r.allusdt_24h_drop), int(r.allow_new_positions), r.reason, r.evaluated_at, r.block_until),
+             r.btc_first_open_time, r.btc_latest_open_time, r.btc_open, r.btc_close, r.btc_delta, int(r.btc_siphon), int(r.market_crash), r.allusdt_24h_delta, int(r.allusdt_24h_drop), int(r.allow_new_positions), r.reason, r.evaluated_at, r.block_until, r.allusdt_ema20_latest, r.allusdt_ema20_third, r.allusdt_ema20_ratio, int(r.ema20_filter_passed)),
         )
 
 
@@ -279,4 +294,5 @@ class MarketFilterModule:
             allusdt_24h_delta=row["allusdt_24h_delta"], allusdt_24h_drop=bool(row["allusdt_24h_drop"]),
             allow_new_positions=bool(row["allow_new_positions"]), reason=str(row["reason"]), evaluated_at=int(row["evaluated_at"]),
             block_until=row["block_until"] if row["block_until"] is None else int(row["block_until"]),
+            allusdt_ema20_latest=row["allusdt_ema20_latest"], allusdt_ema20_third=row["allusdt_ema20_third"], allusdt_ema20_ratio=row["allusdt_ema20_ratio"], ema20_filter_passed=bool(row["ema20_filter_passed"]),
         )
