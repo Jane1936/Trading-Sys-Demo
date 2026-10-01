@@ -23,24 +23,24 @@ def _insert_rows(conn, table, closes):
         )
 
 
-def test_market_filter_allows_when_market_data_missing(tmp_path):
+def test_market_filter_blocks_when_market_data_or_ema20_missing(tmp_path):
     db_path = tmp_path / "klines.db"
     with sqlite3.connect(db_path) as conn:
         _init_source_tables(conn)
 
     result = MarketFilterModule(db_path=str(db_path)).run_round(decision_round_ts=900_000, evaluated_at=900_001)
 
-    assert result.allow_new_positions is True
+    assert result.allow_new_positions is False
     assert result.btc_siphon is False
     assert result.market_crash is False
-    assert result.reason == "insufficient_market_data_allow_open"
+    assert result.reason == "market_filter_cooldown_until_None"
 
     with sqlite3.connect(db_path) as conn:
         saved = conn.execute(
             "SELECT allow_new_positions, reason FROM market_filter_rounds WHERE decision_round_ts = ?",
             (900_000,),
         ).fetchone()
-    assert saved == (1, "insufficient_market_data_allow_open")
+    assert saved == (0, "market_filter_cooldown_until_None")
 
 
 def test_market_filter_blocks_btc_siphon_above_half_percent_delta_gap(tmp_path):
@@ -82,8 +82,8 @@ def test_market_filter_blocks_for_thirty_minutes_after_trigger(tmp_path):
     assert cooldown.allow_new_positions is False
     assert cooldown.reason == "market_filter_cooldown_until_2700001"
     assert cooldown.block_until == 2_700_001
-    assert expired.allow_new_positions is True
-    assert expired.reason == "market_filter_passed"
+    assert expired.allow_new_positions is False
+    assert expired.reason == "ema20_filter_not_passed"
     assert expired.block_until is None
 
 
@@ -208,7 +208,35 @@ def test_market_filter_uses_configured_allusdt_24h_threshold(tmp_path):
     )
 
     assert result.allusdt_24h_drop is False
+    assert result.allow_new_positions is False
+
+
+def test_market_filter_disables_ema20_requirement_after_configured_24h_rise(tmp_path):
+    db_path = tmp_path / "klines.db"
+    settings_path = tmp_path / "config.db"
+    set_settings({
+        "btc_siphon_threshold": 0.005,
+        "market_crash_threshold": 0.03,
+        "allusdt_24h_drop_threshold": -0.05,
+        "allusdt_ema20_threshold": 0.0015,
+        "allusdt_24h_ema20_disable_threshold": 0.04,
+        "block_duration_minutes": 30,
+    }, str(settings_path))
+    module = MarketFilterModule(str(db_path), settings_db_path=str(settings_path))
+    with sqlite3.connect(db_path) as conn:
+        _init_source_tables(conn)
+        _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100] * 4)
+        _insert_rows(conn, collector.BTC_15M_TABLE, [100] * 4)
+
+    result = module.run_round(
+        decision_round_ts=900_000,
+        evaluated_at=900_001,
+        allusdt_24h_change_percent=5,
+    )
+
     assert result.allow_new_positions is True
+    assert result.ema20_filter_passed is True
+    assert result.reason == "market_filter_passed"
 
 
 def test_market_filter_does_not_apply_24h_rule_without_ticker_result(tmp_path):

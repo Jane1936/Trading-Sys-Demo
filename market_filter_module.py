@@ -156,6 +156,7 @@ class MarketFilterModule:
         btc_siphon_threshold = float(settings["btc_siphon_threshold"])
         market_crash_threshold = float(settings["market_crash_threshold"])
         allusdt_24h_drop_threshold = float(settings["allusdt_24h_drop_threshold"])
+        allusdt_24h_ema20_disable_threshold = float(settings["allusdt_24h_ema20_disable_threshold"])
         block_ms = int(settings["block_duration_minutes"]) * 60_000
         round_ts = self.decision_round_ts() if decision_round_ts is None else int(decision_round_ts)
         evaluated_ms = int(time.time() * 1000) if evaluated_at is None else int(evaluated_at)
@@ -167,7 +168,6 @@ class MarketFilterModule:
             ema_third = float(ema_rows[2][0]) if len(ema_rows) >= 3 else None
             ema_ratio = (ema_latest / ema_third - 1) if ema_latest is not None and ema_third else None
             # A sufficiently rising 1h EMA20 is required before opening.
-            ema_passed = ema_ratio is not None and ema_ratio >= float(settings["allusdt_ema20_threshold"])
             all_first, all_latest, all_open, all_close, all_delta = self._delta(all_rows)
             btc_first, btc_latest, btc_open, btc_close, btc_delta = self._delta(btc_rows)
             allusdt_24h_delta = (
@@ -178,6 +178,13 @@ class MarketFilterModule:
             allusdt_24h_drop = (
                 allusdt_24h_delta is not None
                 and allusdt_24h_delta < allusdt_24h_drop_threshold
+            )
+            ema20_disabled_by_24h_rise = (
+                allusdt_24h_delta is not None
+                and allusdt_24h_delta > allusdt_24h_ema20_disable_threshold
+            )
+            ema_passed = ema20_disabled_by_24h_rise or (
+                ema_ratio is not None and ema_ratio >= float(settings["allusdt_ema20_threshold"])
             )
             if all_delta is None or btc_delta is None:
                 btc_siphon = False
