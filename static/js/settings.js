@@ -232,6 +232,7 @@ function renderFeatureFlagRow(flag) {
       btc_siphon_threshold: Number(document.getElementById('market-filter-btc-threshold').value) / 100,
       market_crash_threshold: Number(document.getElementById('market-filter-crash-threshold').value) / 100,
       allusdt_24h_drop_threshold: Number(document.getElementById('market-filter-allusdt-24h-threshold').value) / 100,
+      allusdt_ema20_threshold: Number(document.getElementById('market-filter-ema20-threshold').value) / 100,
       block_duration_minutes: Number(document.getElementById('market-filter-block-minutes').value),
     };
     button.disabled = true;
