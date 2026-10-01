@@ -166,7 +166,8 @@ class MarketFilterModule:
             ema_latest = float(ema_rows[0][0]) if len(ema_rows) >= 1 else None
             ema_third = float(ema_rows[2][0]) if len(ema_rows) >= 3 else None
             ema_ratio = (ema_latest / ema_third - 1) if ema_latest is not None and ema_third else None
-            ema_passed = ema_ratio is not None and ema_ratio < float(settings["allusdt_ema20_threshold"])
+            # A sufficiently rising 1h EMA20 is required before opening.
+            ema_passed = ema_ratio is not None and ema_ratio >= float(settings["allusdt_ema20_threshold"])
             all_first, all_latest, all_open, all_close, all_delta = self._delta(all_rows)
             btc_first, btc_latest, btc_open, btc_close, btc_delta = self._delta(btc_rows)
             allusdt_24h_delta = (
