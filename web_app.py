@@ -1554,6 +1554,8 @@ def _alpha_oi_changes():
                     ) WHERE rn <= 2 GROUP BY symbol
                 )
                 SELECT latest.symbol,
+                       latest.open_interest,
+                       prices.latest_close AS close,
                        CASE WHEN old.open_interest != 0
                             THEN latest.open_interest / old.open_interest - 1 END AS oi_change,
                        CASE WHEN prices.previous_close != 0
