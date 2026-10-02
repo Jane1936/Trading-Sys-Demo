@@ -69,6 +69,14 @@ def test_ensure_sqlite_database_usable_skips_quick_check_by_default(tmp_path):
     assert db_path.read_bytes() == b"not a sqlite database"
 
 
+def test_is_malformed_database_error_detects_attach_schema_corruption():
+    # ATTACH can fail before quick_check runs and reports this distinct SQLite
+    # wording; it must still enter the same fenced recovery path.
+    assert is_malformed_database_error(
+        sqlite3.DatabaseError("malformed database schema (base)")
+    )
+
+
 def test_ensure_sqlite_database_usable_checks_path_once_per_process(tmp_path):
     db_path = tmp_path / "klines.db"
     db_path.write_bytes(b"not a sqlite database")
