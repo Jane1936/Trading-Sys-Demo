@@ -102,7 +102,18 @@ def _write_failure_record(path: Path, record: dict[str, object]) -> None:
 def is_malformed_database_error(exc: BaseException) -> bool:
     """Return True when SQLite reports an unrecoverable malformed database image."""
     message = str(exc).lower()
-    return "database disk image is malformed" in message or "file is not a database" in message
+    # ``malformed database schema`` is emitted by SQLite while opening an
+    # attached database (before ``quick_check`` can run).  Treat it the same
+    # as the page/header errors so runtime callers fence and recover the
+    # affected file instead of repeatedly retrying the same attachment.
+    return any(
+        marker in message
+        for marker in (
+            "database disk image is malformed",
+            "file is not a database",
+            "malformed database schema",
+        )
+    )
 
 
 def is_sqlite_integrity_failure(detail: str) -> bool:
