@@ -1556,6 +1556,8 @@ def _alpha_oi_changes():
                 SELECT latest.symbol,
                        latest.open_interest,
                        prices.latest_close AS close,
+                       CASE WHEN latest.open_interest IS NOT NULL AND prices.latest_close IS NOT NULL
+                            THEN latest.open_interest * prices.latest_close END AS oi_value,
                        CASE WHEN old.open_interest != 0
                             THEN latest.open_interest / old.open_interest - 1 END AS oi_change,
                        CASE WHEN prices.previous_close != 0
