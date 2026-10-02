@@ -12,6 +12,7 @@ x-app-env: &app-env
   MARKET_DB_PATH: "${MARKET_DB_PATH:-data/market.db}"
   ALPHA_DB_PATH: "${ALPHA_DB_PATH:-data/alpha.db}"
   SQLITE_RECOVERY_LOG_DIR: "${SQLITE_RECOVERY_LOG_DIR:-logs/sqlite-recovery}"
+  SQLITE_CHECKPOINT_LOG_DIR: "${SQLITE_CHECKPOINT_LOG_DIR:-logs}"
   # Never let delayed market aggregation block minute-level position protection indefinitely.
   PROFIT_MARKET_CONVERGENCE_TIMEOUT_SEC: "${PROFIT_MARKET_CONVERGENCE_TIMEOUT_SEC:-10}"
   BINANCE_TESTNET: "${BINANCE_TESTNET:-true}"
