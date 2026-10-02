@@ -8,12 +8,14 @@
 from __future__ import annotations
 
 import multiprocessing
+import json
 import os
 import requests
 import sqlite3
 import threading
 import time
 import traceback
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Callable, Iterable, List
@@ -71,6 +73,14 @@ _universe_refresh_interval_sec = 12 * 60 * 60
 _universe_refresh_failure_retry_sec = 5 * 60
 _universe_last_refresh_ts = 0.0
 DATABASE_HEALTH_CHECK_INTERVAL_SEC = 5 * 60
+SQLITE_CHECKPOINT_LOG_DIR = os.getenv("SQLITE_CHECKPOINT_LOG_DIR", "trade/logs")
+SQLITE_CHECKPOINT_ALERT_AFTER = int(os.getenv("SQLITE_CHECKPOINT_ALERT_AFTER", "3"))
+SQLITE_CHECKPOINT_LOG_RETENTION_DAYS = int(
+    os.getenv("SQLITE_CHECKPOINT_LOG_RETENTION_DAYS", "14")
+)
+_checkpoint_abnormal_counts: dict[str, int] = {}
+_checkpoint_log_lock = threading.Lock()
+_checkpoint_last_log_cleanup_date: str | None = None
 PROFIT_MARKET_CONVERGENCE_TIMEOUT_SEC = float(
     os.getenv("PROFIT_MARKET_CONVERGENCE_TIMEOUT_SEC", "10")
 )
@@ -435,9 +445,111 @@ def start_database_health_check_task() -> None:
     while True:
         try:
             check_worker_databases()
+            collect_sqlite_checkpoint_status()
         except Exception as exc:
             print(f"⚠️ SQLite health check failed: {exc}")
         time.sleep(DATABASE_HEALTH_CHECK_INTERVAL_SEC)
+
+
+def _checkpoint_file_state(path: str) -> dict[str, object]:
+    """Return sidecar metadata without creating or opening the file."""
+    try:
+        stat_result = os.stat(path)
+    except FileNotFoundError:
+        return {"exists": False}
+    except OSError as exc:
+        return {"exists": False, "error": str(exc)}
+    return {
+        "exists": True,
+        "size_bytes": stat_result.st_size,
+        "inode": stat_result.st_ino,
+        "mtime_epoch": stat_result.st_mtime,
+    }
+
+
+def _write_checkpoint_log(record: dict[str, object]) -> None:
+    """Append one JSON record to a daily file and expire old telemetry.
+
+    Daily rotation prevents a single JSONL file from growing without bound.
+    Cleanup is performed at most once per UTC day and failures are non-fatal.
+    """
+    global _checkpoint_last_log_cleanup_date
+    try:
+        log_dir = Path(SQLITE_CHECKPOINT_LOG_DIR)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc)
+        day = now.strftime("%Y%m%d")
+        log_path = log_dir / f"sqlite-checkpoint-{day}.jsonl"
+        with log_path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+        if (
+            SQLITE_CHECKPOINT_LOG_RETENTION_DAYS > 0
+            and _checkpoint_last_log_cleanup_date != day
+        ):
+            cutoff = now - timedelta(days=SQLITE_CHECKPOINT_LOG_RETENTION_DAYS)
+            for candidate in log_dir.glob("sqlite-checkpoint-*.jsonl"):
+                try:
+                    date_text = candidate.stem.removeprefix("sqlite-checkpoint-")
+                    candidate_day = datetime.strptime(date_text, "%Y%m%d").replace(
+                        tzinfo=timezone.utc
+                    )
+                except ValueError:
+                    continue
+                if candidate_day < cutoff:
+                    candidate.unlink(missing_ok=True)
+            _checkpoint_last_log_cleanup_date = day
+    except OSError as exc:
+        print(f"⚠️ SQLite checkpoint telemetry write failed: {exc}")
+
+
+def collect_sqlite_checkpoint_status() -> None:
+    """Collect low-impact WAL evidence for the high-volume base database.
+
+    The five-minute experiment intentionally targets only ``base_data.db`` so
+    it cannot add checkpoint work to the lower-volume configuration, scoring,
+    trading, and auxiliary databases.
+    """
+    for db_path in (db_config.BASE_DB_PATH,):
+        record: dict[str, object] = {
+            "event": "sqlite_checkpoint",
+            "timestamp_epoch": time.time(),
+            "db_path": str(Path(db_path).resolve()),
+            "files": {
+                "main": _checkpoint_file_state(db_path),
+                "wal": _checkpoint_file_state(f"{db_path}-wal"),
+                "shm": _checkpoint_file_state(f"{db_path}-shm"),
+            },
+        }
+        abnormal = False
+        try:
+            with db_config.connect_sqlite(db_path) as conn:
+                row = conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+            if row is None or len(row) < 3:
+                raise sqlite3.DatabaseError("wal_checkpoint returned no status")
+            busy, log_frames, checkpointed_frames = (int(row[0]), int(row[1]), int(row[2]))
+            pending_frames = max(0, log_frames - checkpointed_frames)
+            abnormal = busy != 0 or pending_frames > 0
+            record.update(
+                busy=busy,
+                log_frames=log_frames,
+                checkpointed_frames=checkpointed_frames,
+                pending_frames=pending_frames,
+                status="ok" if not abnormal else "pending",
+            )
+        except (sqlite3.DatabaseError, OSError) as exc:
+            abnormal = True
+            record.update(status="error", error=str(exc))
+
+        with _checkpoint_log_lock:
+            count = _checkpoint_abnormal_counts.get(db_path, 0) + 1 if abnormal else 0
+            _checkpoint_abnormal_counts[db_path] = count
+        record["abnormal_consecutive"] = count
+        _write_checkpoint_log(record)
+        if count == SQLITE_CHECKPOINT_ALERT_AFTER:
+            print(
+                "⚠️ SQLite checkpoint abnormal consecutively "
+                f"db={db_path} count={count} details={record}"
+            )
 
 
 def verify_db_writable(db_path: str) -> None:
