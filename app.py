@@ -73,7 +73,11 @@ _universe_refresh_interval_sec = 12 * 60 * 60
 _universe_refresh_failure_retry_sec = 5 * 60
 _universe_last_refresh_ts = 0.0
 DATABASE_HEALTH_CHECK_INTERVAL_SEC = 5 * 60
-SQLITE_CHECKPOINT_LOG_DIR = os.getenv("SQLITE_CHECKPOINT_LOG_DIR", "trade/logs")
+# ``logs`` is mounted to the host by docker-compose (and is also a sensible
+# project-relative location for local runs).  The previous ``trade/logs``
+# default resolved to ``/app/trade/logs`` in the container, which is not the
+# mounted volume and therefore made telemetry appear to be missing.
+SQLITE_CHECKPOINT_LOG_DIR = os.getenv("SQLITE_CHECKPOINT_LOG_DIR", "logs")
 SQLITE_CHECKPOINT_ALERT_AFTER = int(os.getenv("SQLITE_CHECKPOINT_ALERT_AFTER", "3"))
 SQLITE_CHECKPOINT_LOG_RETENTION_DAYS = int(
     os.getenv("SQLITE_CHECKPOINT_LOG_RETENTION_DAYS", "14")
