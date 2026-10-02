@@ -188,6 +188,47 @@ def test_alpha_deferred_modules_prompt_user_to_load_all_data():
     assert template.count("请点击加载全部数据按钮") == 3
 
 
+def test_alpha_oi_table_displays_hourly_oi_and_close_columns():
+    template = (Path(__file__).resolve().parents[1] / "templates" / "alpha.html").read_text()
+
+    assert "1小时 OI 数据" in template
+    assert "1小时收盘价" in template
+    assert "numberCell(item.open_interest)" in template
+    assert "numberCell(item.close)" in template
+
+
+def test_alpha_oi_changes_include_latest_oi_and_close(tmp_path, monkeypatch):
+    db_path = tmp_path / "alpha.db"
+    now = int(time.time() * 1000)
+    hour = 3_600_000
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE alpha_hourly_market "
+            "(symbol TEXT, open_time INTEGER, close REAL, open_interest REAL, "
+            "funding_rate REAL, PRIMARY KEY(symbol, open_time))"
+        )
+        conn.executemany(
+            "INSERT INTO alpha_hourly_market VALUES (?, ?, ?, ?, ?)",
+            [("AAA", now - hour, 1.25, 100, None), ("AAA", now, 1.5, 125, None)],
+        )
+    monkeypatch.setattr(web_app, "ALPHA_DB_PATH", str(db_path))
+    monkeypatch.setattr(
+        web_app.alpha_observer,
+        "latest_snapshot",
+        lambda _path: (now, [{"symbol": "AAA"}]),
+    )
+    web_app._alpha_analytics_cache.clear()
+
+    rows = web_app._alpha_oi_changes()
+    assert rows == [{
+        "symbol": "AAA",
+        "open_interest": 125.0,
+        "close": 1.5,
+        "oi_change": 0.25,
+        "price_change": pytest.approx(0.2),
+    }]
+
+
 def test_alpha_strong_signal_funding_change_is_rendered_as_percent():
     template = (Path(__file__).resolve().parents[1] / "templates" / "alpha.html").read_text()
 
