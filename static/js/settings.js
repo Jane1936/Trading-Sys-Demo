@@ -149,7 +149,7 @@ function renderFeatureFlagRow(flag) {
       const response = await fetch('/api/hard-take-profit-settings', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      message.textContent = `配置已保存：模拟盘 ${result.simulation_hard_take_profit_usdt}U，实盘 ${result.live_hard_take_profit_usdt}U。`;
+      message.textContent = `配置已保存：模拟盘${result.simulation_enabled ? '开启' : '关闭'}（切换阈值 ${result.simulation_allusdt_24h_rise_threshold_percent}%）、实盘${result.live_enabled ? '开启' : '关闭'}（切换阈值 ${result.live_allusdt_24h_rise_threshold_percent}%）。`;
     } catch (err) { message.textContent = `硬止盈配置保存失败：${err.message || err}`; message.classList.add('error'); }
     finally { button.disabled = false; }
   });
@@ -195,12 +195,6 @@ function renderFeatureFlagRow(flag) {
       simulation_allusdt_24h_rise_threshold_percent: Number(document.getElementById('dynamic-profit-simulation-rise-threshold').value),
       live_allusdt_24h_rise_threshold_percent: Number(document.getElementById('dynamic-profit-live-rise-threshold').value),
       allusdt_24h_disable_threshold_percent: Number(document.getElementById('dynamic-profit-allusdt-disable-threshold').value),
-      tier_2_min_r: Number(document.getElementById('dynamic-profit-tier-2-r').value),
-      tier_3_min_r: Number(document.getElementById('dynamic-profit-tier-3-r').value),
-      tier_4_min_r: Number(document.getElementById('dynamic-profit-tier-4-r').value),
-      tier_2_drawdown_ratio: Number(document.getElementById('dynamic-profit-tier-2-drawdown').value) / 100,
-      tier_3_drawdown_ratio: Number(document.getElementById('dynamic-profit-tier-3-drawdown').value) / 100,
-      tier_4_drawdown_ratio: Number(document.getElementById('dynamic-profit-tier-4-drawdown').value) / 100,
       high_tier_2_min_r: Number(document.getElementById('dynamic-profit-high-tier-2-r').value), high_tier_3_min_r: Number(document.getElementById('dynamic-profit-high-tier-3-r').value), high_tier_4_min_r: Number(document.getElementById('dynamic-profit-high-tier-4-r').value),
       ...Object.fromEntries(['simulation','live'].flatMap(env => [2,3,4].map(n => [`${env}_tier_${n}_min_r`, Number(document.getElementById(`dynamic-profit-${env}-tier-${n}-r`).value)]).concat([2,3,4].map(n => [`${env}_tier_${n}_drawdown_ratio`, Number(document.getElementById(`dynamic-profit-${env}-tier-${n}-drawdown`).value) / 100])))),
       high_tier_2_drawdown_ratio: Number(document.getElementById('dynamic-profit-high-tier-2-drawdown').value) / 100, high_tier_3_drawdown_ratio: Number(document.getElementById('dynamic-profit-high-tier-3-drawdown').value) / 100, high_tier_4_drawdown_ratio: Number(document.getElementById('dynamic-profit-high-tier-4-drawdown').value) / 100,
@@ -214,7 +208,7 @@ function renderFeatureFlagRow(flag) {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      message.textContent = `配置已保存：模拟盘${result.simulation_enabled ? '开启' : '关闭'}、实盘${result.live_enabled ? '开启' : '关闭'}；ALLUSDT涨幅超过${result.allusdt_24h_rise_threshold_percent}%时切换。(${result.tier_2_min_r}R, ${result.tier_3_min_r}R] 回撤≥${result.tier_2_drawdown_ratio * 100}%，(${result.tier_3_min_r}R, ${result.tier_4_min_r}R] 回撤≥${result.tier_3_drawdown_ratio * 100}%，${result.tier_4_min_r}R以上回撤≥${result.tier_4_drawdown_ratio * 100}%。`;
+      message.textContent = `配置已保存：模拟盘${result.simulation_enabled ? '开启' : '关闭'}、实盘${result.live_enabled ? '开启' : '关闭'}；ALLUSDT涨幅超过${模拟盘阈值${result.simulation_allusdt_24h_rise_threshold_percent}%、实盘阈值${result.live_allusdt_24h_rise_threshold_percent}%时切换。(${result.tier_2_min_r}R, ${result.tier_3_min_r}R] 回撤≥${result.tier_2_drawdown_ratio * 100}%，(${result.tier_3_min_r}R, ${result.tier_4_min_r}R] 回撤≥${result.tier_3_drawdown_ratio * 100}%，${result.tier_4_min_r}R以上回撤≥${result.tier_4_drawdown_ratio * 100}%。`;
     } catch (err) {
       message.textContent = `动态利润保护配置保存失败：${err.message || err}`;
       message.classList.add('error');
