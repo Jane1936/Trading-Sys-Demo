@@ -17,6 +17,7 @@ DEFAULT_SETTINGS = {
     "high_simulation_enabled": True,
     "high_live_enabled": True,
     "allusdt_24h_rise_threshold_percent": 4.0,
+    "simulation_allusdt_24h_rise_threshold_percent": 4.0, "live_allusdt_24h_rise_threshold_percent": 4.0,
     "allusdt_24h_disable_threshold_percent": 10.0,
     "tier_2_min_r": 2.0,
     "tier_3_min_r": 3.0,
