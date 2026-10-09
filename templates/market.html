@@ -260,7 +260,7 @@
               <th>决策轮次</th><th>执行时间</th><th>实盘是否允许新开仓</th><th>模拟盘是否允许新开仓</th><th>禁止开仓至</th><th>触发原因</th>
               <th>ALLUSDT第4条open时间</th><th>ALLUSDT最近K线时间</th><th>ALLUSDT open/close</th><th>ALLUSDT delta</th>
               <th>BTC第4条open时间</th><th>BTC最近K线时间</th><th>BTC open/close</th><th>BTC delta</th><th>BTC-ALLUSDT差值</th>
-              <th>ALLUSDT 最近24h涨跌幅</th><th>ALLUSDT (1小时EMA20最近第1条/第3条-1)</th><th>BTC吸血</th><th>大盘暴跌</th><th>1h EMA20变化≥0.15%</th><th>24h跌破{{ '%.4g'|format(market_filter_settings.allusdt_24h_drop_threshold * 100) }}%</th>
+              <th>ALLUSDT 最近24h涨跌幅</th><th>ALLUSDT (1小时EMA20最近第1条/第3条-1)</th><th>BTC吸血</th><th>大盘暴跌</th><th>1h EMA20变化≥实盘配置值（{{ '%.4g'|format((market_filter_settings.live_allusdt_ema20_threshold|default(market_filter_settings.allusdt_ema20_threshold|default(0.0015), true)) * 100) }}%）</th><th>1h EMA20变化≥模拟盘配置值（{{ '%.4g'|format((market_filter_settings.simulation_allusdt_ema20_threshold|default(market_filter_settings.allusdt_ema20_threshold|default(0.0015), true)) * 100) }}%）</th><th>24h跌破{{ '%.4g'|format(market_filter_settings.allusdt_24h_drop_threshold * 100) }}%</th>
             </tr>
           </thead>
           <tbody>
@@ -285,11 +285,12 @@
                 <td>{{ '%.4f%%'|format(row.allusdt_ema20_ratio * 100) if row.allusdt_ema20_ratio is not none else '-' }}</td>
                 <td>{{ '是' if row.btc_siphon else '否' }}</td>
                 <td>{{ '是' if row.market_crash else '否' }}</td>
-                <td>{{ '是' if row.ema20_filter_passed else '否' }}</td>
+                <td>{{ '是' if row.live_ema20_filter_passed else '否' }}</td>
+                <td>{{ '是' if row.simulation_ema20_filter_passed else '否' }}</td>
                 <td>{{ '是' if row.allusdt_24h_drop else '否' }}</td>
               </tr>
             {% else %}
-              <tr><td colspan="20" class="muted">暂无市场行情过滤执行结果。</td></tr>
+              <tr><td colspan="21" class="muted">暂无市场行情过滤执行结果。</td></tr>
             {% endfor %}
           </tbody>
         </table>
