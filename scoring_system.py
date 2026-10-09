@@ -3317,7 +3317,12 @@ class ScoringSystem:
         with self._connect() as conn:
             return conn.execute(
                 """
-                SELECT decision_round_ts, total_score
+                SELECT decision_round_ts, total_score,
+                       rule1_score, rule2_score, rule3_score, rule4_score,
+                       rule5_score, rule6_score, rule7_score, rule8_score,
+                       rule9_score, rule10_score, rule11_score, rule12_score,
+                       rule13_score, rule14_score, rule15_score, rule16_score,
+                       rule17_score, rule18_score
                 FROM symbol_total_scores
                 WHERE symbol = ? AND decision_round_ts >= ?
                 ORDER BY decision_round_ts ASC
