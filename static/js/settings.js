@@ -208,7 +208,7 @@ function renderFeatureFlagRow(flag) {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      message.textContent = `配置已保存：模拟盘${result.simulation_enabled ? '开启' : '关闭'}、实盘${result.live_enabled ? '开启' : '关闭'}；ALLUSDT涨幅超过${模拟盘阈值${result.simulation_allusdt_24h_rise_threshold_percent}%、实盘阈值${result.live_allusdt_24h_rise_threshold_percent}%时切换。(${result.tier_2_min_r}R, ${result.tier_3_min_r}R] 回撤≥${result.tier_2_drawdown_ratio * 100}%，(${result.tier_3_min_r}R, ${result.tier_4_min_r}R] 回撤≥${result.tier_3_drawdown_ratio * 100}%，${result.tier_4_min_r}R以上回撤≥${result.tier_4_drawdown_ratio * 100}%。`;
+      message.textContent = `配置已保存：模拟盘${result.simulation_enabled ? '开启' : '关闭'}（切换阈值 ${result.simulation_allusdt_24h_rise_threshold_percent}%）、实盘${result.live_enabled ? '开启' : '关闭'}（切换阈值 ${result.live_allusdt_24h_rise_threshold_percent}%）。`;
     } catch (err) {
       message.textContent = `动态利润保护配置保存失败：${err.message || err}`;
       message.classList.add('error');
