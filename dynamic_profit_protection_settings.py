@@ -57,12 +57,9 @@ def _validate_settings(payload: dict) -> dict[str, bool | float]:
         raise ValueError("R档位和回撤阈值必须是数字") from exc
     if any(not math.isfinite(value) for value in values.values()):
         raise ValueError("R档位和回撤阈值必须是有限数字")
-    threshold = values["allusdt_24h_rise_threshold_percent"]
     disable_threshold = values["allusdt_24h_disable_threshold_percent"]
-    if not math.isfinite(threshold) or threshold < 0 or threshold > 100:
-        raise ValueError("ALLUSDT涨幅阈值必须在 0–100% 之间")
-    if not math.isfinite(disable_threshold) or disable_threshold < 0 or disable_threshold > 100 or disable_threshold <= threshold:
-        raise ValueError("关闭动态利润保护阈值必须在 0–100% 之间且高于高涨幅阈值")
+    if not math.isfinite(disable_threshold) or disable_threshold < 0 or disable_threshold > 100:
+        raise ValueError("关闭动态利润保护阈值必须在 0–100% 之间")
     boundaries = [values["tier_2_min_r"], values["tier_3_min_r"], values["tier_4_min_r"]]
     if boundaries[0] <= 0 or not boundaries[0] < boundaries[1] < boundaries[2]:
         raise ValueError("三个R档位必须大于0并严格递增")
