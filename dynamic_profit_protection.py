@@ -199,6 +199,12 @@ class DynamicProfitProtection:
         is_live = os.path.abspath(self.db_path) == os.path.abspath(db_config.REAL_TRADING_DB_PATH)
         base_enabled_key = "live_enabled" if is_live else "simulation_enabled"
         protection_settings = dict(protection_settings)
+        env = "live" if is_live else "simulation"
+        for n in (2, 3, 4):
+            protection_settings[f"tier_{n}_min_r"] = protection_settings[f"{env}_tier_{n}_min_r"]
+            protection_settings[f"tier_{n}_drawdown_ratio"] = protection_settings[f"{env}_tier_{n}_drawdown_ratio"]
+            protection_settings[f"high_tier_{n}_min_r"] = protection_settings[f"{env}_high_tier_{n}_min_r"]
+            protection_settings[f"high_tier_{n}_drawdown_ratio"] = protection_settings[f"{env}_high_tier_{n}_drawdown_ratio"]
         globally_enabled = bool(protection_settings["enabled"])
         base_enabled = globally_enabled and bool(protection_settings[base_enabled_key])
         protection_settings["enabled"] = base_enabled

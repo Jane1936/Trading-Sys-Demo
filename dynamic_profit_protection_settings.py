@@ -26,6 +26,14 @@ DEFAULT_SETTINGS = {
     "tier_4_drawdown_ratio": 0.20,
     "high_tier_2_min_r": 2.0, "high_tier_3_min_r": 3.0, "high_tier_4_min_r": 4.0,
     "high_tier_2_drawdown_ratio": 0.40, "high_tier_3_drawdown_ratio": 0.30, "high_tier_4_drawdown_ratio": 0.20,
+    "simulation_tier_2_min_r": 2.0, "simulation_tier_3_min_r": 3.0, "simulation_tier_4_min_r": 4.0,
+    "simulation_tier_2_drawdown_ratio": 0.40, "simulation_tier_3_drawdown_ratio": 0.30, "simulation_tier_4_drawdown_ratio": 0.20,
+    "live_tier_2_min_r": 2.0, "live_tier_3_min_r": 3.0, "live_tier_4_min_r": 4.0,
+    "live_tier_2_drawdown_ratio": 0.40, "live_tier_3_drawdown_ratio": 0.30, "live_tier_4_drawdown_ratio": 0.20,
+    "simulation_high_tier_2_min_r": 2.0, "simulation_high_tier_3_min_r": 3.0, "simulation_high_tier_4_min_r": 4.0,
+    "simulation_high_tier_2_drawdown_ratio": 0.40, "simulation_high_tier_3_drawdown_ratio": 0.30, "simulation_high_tier_4_drawdown_ratio": 0.20,
+    "live_high_tier_2_min_r": 2.0, "live_high_tier_3_min_r": 3.0, "live_high_tier_4_min_r": 4.0,
+    "live_high_tier_2_drawdown_ratio": 0.40, "live_high_tier_3_drawdown_ratio": 0.30, "live_high_tier_4_drawdown_ratio": 0.20,
 }
 
 

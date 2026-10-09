@@ -201,6 +201,7 @@ function renderFeatureFlagRow(flag) {
       tier_3_drawdown_ratio: Number(document.getElementById('dynamic-profit-tier-3-drawdown').value) / 100,
       tier_4_drawdown_ratio: Number(document.getElementById('dynamic-profit-tier-4-drawdown').value) / 100,
       high_tier_2_min_r: Number(document.getElementById('dynamic-profit-high-tier-2-r').value), high_tier_3_min_r: Number(document.getElementById('dynamic-profit-high-tier-3-r').value), high_tier_4_min_r: Number(document.getElementById('dynamic-profit-high-tier-4-r').value),
+      ...Object.fromEntries(['simulation','live'].flatMap(env => [2,3,4].map(n => [`${env}_tier_${n}_min_r`, Number(document.getElementById(`dynamic-profit-${env}-tier-${n}-r`).value)]).concat([2,3,4].map(n => [`${env}_tier_${n}_drawdown_ratio`, Number(document.getElementById(`dynamic-profit-${env}-tier-${n}-drawdown`).value) / 100])))),
       high_tier_2_drawdown_ratio: Number(document.getElementById('dynamic-profit-high-tier-2-drawdown').value) / 100, high_tier_3_drawdown_ratio: Number(document.getElementById('dynamic-profit-high-tier-3-drawdown').value) / 100, high_tier_4_drawdown_ratio: Number(document.getElementById('dynamic-profit-high-tier-4-drawdown').value) / 100,
     };
     button.disabled = true;
