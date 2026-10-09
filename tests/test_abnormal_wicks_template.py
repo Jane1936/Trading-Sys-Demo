@@ -784,6 +784,10 @@ def test_feature_flags_include_independent_market_filter_settings_form():
     assert "大盘暴跌阈值（%）" in section
     assert "ALLUSDT 最近24h涨跌幅低于（%）" in section
     assert 'id="market-filter-allusdt-24h-threshold"' in section
+    assert 'id="market-filter-simulation-ema20-enabled"' in section
+    assert 'id="market-filter-live-ema20-enabled"' in section
+    assert "应用于模拟盘" in section
+    assert "应用于实盘" in section
     assert "禁止新开仓时间（分钟）" in section
     assert "fetch('/api/market-filter-settings'" in script
 
@@ -856,7 +860,7 @@ def test_market_filter_highlights_latest_decisions_and_permission_statuses():
 
     assert section.count("latest-decision-row") >= 5
     assert section.count("latest-decision-badge") >= 5
-    assert section.count("'success' if row.allow_") >= 3
+    assert section.count("'success' if row.allow_") + section.count("'success' if row.live_allow_") + section.count("'success' if row.simulation_allow_") >= 3
     assert section.count("'danger'") >= 3
 
 

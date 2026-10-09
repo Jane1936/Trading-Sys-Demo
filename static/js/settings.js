@@ -230,8 +230,12 @@ function renderFeatureFlagRow(flag) {
       btc_siphon_threshold: Number(document.getElementById('market-filter-btc-threshold').value) / 100,
       market_crash_threshold: Number(document.getElementById('market-filter-crash-threshold').value) / 100,
       allusdt_24h_drop_threshold: Number(document.getElementById('market-filter-allusdt-24h-threshold').value) / 100,
-      allusdt_ema20_threshold: Number(document.getElementById('market-filter-ema20-threshold').value) / 100,
-      allusdt_24h_ema20_disable_threshold: Number(document.getElementById('market-filter-ema20-disable-threshold').value) / 100,
+      simulation_allusdt_ema20_enabled: document.getElementById('market-filter-simulation-ema20-enabled').checked,
+      live_allusdt_ema20_enabled: document.getElementById('market-filter-live-ema20-enabled').checked,
+      simulation_allusdt_ema20_threshold: Number(document.getElementById('market-filter-simulation-ema20-threshold').value) / 100,
+      live_allusdt_ema20_threshold: Number(document.getElementById('market-filter-live-ema20-threshold').value) / 100,
+      simulation_allusdt_24h_ema20_disable_threshold: Number(document.getElementById('market-filter-simulation-ema20-disable-threshold').value) / 100,
+      live_allusdt_24h_ema20_disable_threshold: Number(document.getElementById('market-filter-live-ema20-disable-threshold').value) / 100,
       block_duration_minutes: Number(document.getElementById('market-filter-block-minutes').value),
     };
     button.disabled = true;
@@ -243,7 +247,7 @@ function renderFeatureFlagRow(flag) {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      message.textContent = `配置已保存：EMA20条件 ${result.allusdt_ema20_threshold * 100}%，ALLUSDT 24h涨幅超过 ${result.allusdt_24h_ema20_disable_threshold * 100}% 时关闭 EMA20 条件。`;
+      message.textContent = `配置已保存：模拟盘 EMA20${result.simulation_allusdt_ema20_enabled ? '开启' : '关闭'}，实盘 EMA20${result.live_allusdt_ema20_enabled ? '开启' : '关闭'}。`;
     } catch (err) {
       message.textContent = `独立市场过滤配置保存失败：${err.message || err}`;
       message.classList.add('error');

@@ -682,23 +682,26 @@ def run_first_experiment_after_openable_round(
                 f"🧪 first trading experiment round={round_ts} skipped after zombie force liquidation: no qualified symbols"
             )
             return
-        if market_result is not None and not market_result.allow_new_positions:
-            print(f"🧪 first trading experiment round={round_ts} skipped by market filter: {market_result.reason}")
-            return
         if live_trading_enabled:
-            try:
-                live_result = real_trading.experiment().run_round(openable_rows)
-                print(
-                    f"💰 live trading round={round_ts} "
-                    f"opened={live_result.get('opened', 0)} "
-                    f"skipped={live_result.get('skipped', 0)} "
-                    f"reason={live_result.get('reason', '')}"
-                )
-            except Exception as exc:
-                live = real_trading.experiment()
-                live.init_error_tables()
-                live.record_error(symbol="SYSTEM", decision_round_ts=round_ts, operation="real_open_round", exc=exc)
-                print(f"⚠️ live open failed round={round_ts}: {exc}")
+            if market_result is not None and not (market_result.live_allow_new_positions if market_result.live_allow_new_positions is not None else market_result.allow_new_positions):
+                print(f"🧪 live trading round={round_ts} skipped by market filter: {market_result.reason}")
+            else:
+                try:
+                    live_result = real_trading.experiment().run_round(openable_rows)
+                    print(
+                        f"💰 live trading round={round_ts} "
+                        f"opened={live_result.get('opened', 0)} "
+                        f"skipped={live_result.get('skipped', 0)} "
+                        f"reason={live_result.get('reason', '')}"
+                    )
+                except Exception as exc:
+                    live = real_trading.experiment()
+                    live.init_error_tables()
+                    live.record_error(symbol="SYSTEM", decision_round_ts=round_ts, operation="real_open_round", exc=exc)
+                    print(f"⚠️ live open failed round={round_ts}: {exc}")
+        if market_result is not None and not market_result.allow_new_positions:
+            print(f"🧪 simulation trading round={round_ts} skipped by market filter: {market_result.reason}")
+            return
         if not feature_flags.is_feature_enabled(feature_flags.TRADING_SYSTEM):
             print(f"⏸️ trading system disabled round={round_ts}; skipping new positions")
             return

@@ -31,6 +31,12 @@ def get_settings(db_path: str | None = None) -> dict[str, float | int]:
                     allusdt_24h_drop_threshold REAL NOT NULL DEFAULT -0.05,
                     allusdt_ema20_threshold REAL NOT NULL DEFAULT 0.0015,
                     allusdt_24h_ema20_disable_threshold REAL NOT NULL DEFAULT 0.04,
+                    simulation_allusdt_ema20_enabled INTEGER NOT NULL DEFAULT 1,
+                    live_allusdt_ema20_enabled INTEGER NOT NULL DEFAULT 1,
+                    simulation_allusdt_ema20_threshold REAL NOT NULL DEFAULT 0.0015,
+                    live_allusdt_ema20_threshold REAL NOT NULL DEFAULT 0.0015,
+                    simulation_allusdt_24h_ema20_disable_threshold REAL NOT NULL DEFAULT 0.04,
+                    live_allusdt_24h_ema20_disable_threshold REAL NOT NULL DEFAULT 0.04,
                     block_duration_minutes INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 )
@@ -48,6 +54,27 @@ def get_settings(db_path: str | None = None) -> dict[str, float | int]:
                     f"ALTER TABLE {SETTINGS_TABLE_NAME} "
                     "ADD COLUMN allusdt_24h_drop_threshold REAL NOT NULL DEFAULT -0.05"
                 )
+            migrations = {
+                "simulation_allusdt_ema20_enabled": "INTEGER NOT NULL DEFAULT 1",
+                "live_allusdt_ema20_enabled": "INTEGER NOT NULL DEFAULT 1",
+                "simulation_allusdt_ema20_threshold": "REAL NOT NULL DEFAULT 0.0015",
+                "live_allusdt_ema20_threshold": "REAL NOT NULL DEFAULT 0.0015",
+                "simulation_allusdt_24h_ema20_disable_threshold": "REAL NOT NULL DEFAULT 0.04",
+                "live_allusdt_24h_ema20_disable_threshold": "REAL NOT NULL DEFAULT 0.04",
+            }
+            legacy_sources = {
+                "simulation_allusdt_ema20_threshold": "allusdt_ema20_threshold",
+                "live_allusdt_ema20_threshold": "allusdt_ema20_threshold",
+                "simulation_allusdt_24h_ema20_disable_threshold": "allusdt_24h_ema20_disable_threshold",
+                "live_allusdt_24h_ema20_disable_threshold": "allusdt_24h_ema20_disable_threshold",
+            }
+            for name, definition in migrations.items():
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE {SETTINGS_TABLE_NAME} ADD COLUMN {name} {definition}")
+                    source = legacy_sources.get(name)
+                    if source:
+                        conn.execute(f"UPDATE {SETTINGS_TABLE_NAME} SET {name} = {source}")
+                    columns.add(name)
             conn.execute(f"""
                 INSERT OR IGNORE INTO {SETTINGS_TABLE_NAME}
                 (id, btc_siphon_threshold, market_crash_threshold,
@@ -71,6 +98,12 @@ def get_settings(db_path: str | None = None) -> dict[str, float | int]:
         "allusdt_ema20_threshold": float(row["allusdt_ema20_threshold"]),
         "allusdt_24h_ema20_disable_threshold": float(row["allusdt_24h_ema20_disable_threshold"]),
         "block_duration_minutes": int(row["block_duration_minutes"]),
+        "simulation_allusdt_ema20_enabled": bool(row["simulation_allusdt_ema20_enabled"]),
+        "live_allusdt_ema20_enabled": bool(row["live_allusdt_ema20_enabled"]),
+        "simulation_allusdt_ema20_threshold": float(row["simulation_allusdt_ema20_threshold"]),
+        "live_allusdt_ema20_threshold": float(row["live_allusdt_ema20_threshold"]),
+        "simulation_allusdt_24h_ema20_disable_threshold": float(row["simulation_allusdt_24h_ema20_disable_threshold"]),
+        "live_allusdt_24h_ema20_disable_threshold": float(row["live_allusdt_24h_ema20_disable_threshold"]),
         "updated_at": int(row["updated_at"]),
     }
 
@@ -87,20 +120,30 @@ def set_settings(payload: dict, db_path: str | None = None) -> dict[str, float |
         ))
         ema20_threshold = float(payload.get("allusdt_ema20_threshold", current["allusdt_ema20_threshold"]))
         ema20_disable_threshold = float(payload.get("allusdt_24h_ema20_disable_threshold", current["allusdt_24h_ema20_disable_threshold"]))
+        simulation_ema20_enabled = payload.get("simulation_allusdt_ema20_enabled", current["simulation_allusdt_ema20_enabled"])
+        live_ema20_enabled = payload.get("live_allusdt_ema20_enabled", current["live_allusdt_ema20_enabled"])
+        simulation_ema20_threshold = float(payload.get("simulation_allusdt_ema20_threshold", current["simulation_allusdt_ema20_threshold"]))
+        live_ema20_threshold = float(payload.get("live_allusdt_ema20_threshold", current["live_allusdt_ema20_threshold"]))
+        simulation_ema20_disable_threshold = float(payload.get("simulation_allusdt_24h_ema20_disable_threshold", current["simulation_allusdt_24h_ema20_disable_threshold"]))
+        live_ema20_disable_threshold = float(payload.get("live_allusdt_24h_ema20_disable_threshold", current["live_allusdt_24h_ema20_disable_threshold"]))
         duration_raw = payload["block_duration_minutes"]
         duration = int(duration_raw)
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("BTC吸血阈值、大盘暴跌阈值和禁止开仓时间必须是数字") from exc
     if isinstance(duration_raw, bool) or float(duration_raw) != duration:
         raise ValueError("禁止开仓时间必须是整数分钟")
+    if not isinstance(simulation_ema20_enabled, bool) or not isinstance(live_ema20_enabled, bool):
+        raise ValueError("EMA20条件应用开关必须是布尔值")
     if not math.isfinite(btc_threshold) or not 0 < btc_threshold <= 1:
         raise ValueError("BTC吸血阈值必须大于 0% 且不超过 100%")
     if not math.isfinite(crash_threshold) or not 0 < crash_threshold <= 1:
         raise ValueError("大盘暴跌阈值必须大于 0% 且不超过 100%")
-    if not math.isfinite(ema20_threshold) or not -1 <= ema20_threshold <= 1:
-        raise ValueError("ALLUSDT 1小时 EMA20 条件必须在 -100% 至 100% 之间")
-    if not math.isfinite(ema20_disable_threshold) or not -1 <= ema20_disable_threshold <= 1:
-        raise ValueError("ALLUSDT 24h涨幅关闭 EMA20 条件阈值必须在 -100% 至 100% 之间")
+    for value in (ema20_threshold, simulation_ema20_threshold, live_ema20_threshold):
+        if not math.isfinite(value) or not -1 <= value <= 1:
+            raise ValueError("ALLUSDT 1小时 EMA20 条件必须在 -100% 至 100% 之间")
+    for value in (ema20_disable_threshold, simulation_ema20_disable_threshold, live_ema20_disable_threshold):
+        if not math.isfinite(value) or not -1 <= value <= 1:
+            raise ValueError("ALLUSDT 24h涨幅关闭 EMA20 条件阈值必须在 -100% 至 100% 之间")
     if not math.isfinite(allusdt_24h_threshold) or not -1 <= allusdt_24h_threshold <= 1:
         raise ValueError("ALLUSDT 最近24h涨跌幅阈值必须在 -100% 至 100% 之间")
     if not 1 <= duration <= 10_080:
@@ -112,8 +155,15 @@ def set_settings(payload: dict, db_path: str | None = None) -> dict[str, float |
             UPDATE {SETTINGS_TABLE_NAME}
             SET btc_siphon_threshold = ?, market_crash_threshold = ?,
                 allusdt_24h_drop_threshold = ?, allusdt_ema20_threshold = ?,
-                allusdt_24h_ema20_disable_threshold = ?, block_duration_minutes = ?, updated_at = ?
+                allusdt_24h_ema20_disable_threshold = ?,
+                simulation_allusdt_ema20_enabled = ?, live_allusdt_ema20_enabled = ?,
+                simulation_allusdt_ema20_threshold = ?, live_allusdt_ema20_threshold = ?,
+                simulation_allusdt_24h_ema20_disable_threshold = ?, live_allusdt_24h_ema20_disable_threshold = ?,
+                block_duration_minutes = ?, updated_at = ?
             WHERE id = 1
         """, (btc_threshold, crash_threshold, allusdt_24h_threshold, ema20_threshold,
-              ema20_disable_threshold, duration, updated_at))
+              ema20_disable_threshold, int(simulation_ema20_enabled), int(live_ema20_enabled),
+              simulation_ema20_threshold, live_ema20_threshold,
+              simulation_ema20_disable_threshold, live_ema20_disable_threshold,
+              duration, updated_at))
     return get_settings(settings_path)

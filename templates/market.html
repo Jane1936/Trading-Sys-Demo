@@ -252,12 +252,12 @@
           </div>
           <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
         </div>
-        <div class="collapse-hint">规则：先取得页面顶部同源的 ALLUSDT 最近24小时涨跌幅结果，再启动独立市场过滤；模块读取 ALLUSDT 与 BTC 最近4条15分钟K线计算最近1小时涨幅。只有在当前没有市场过滤冷却/封锁，且 ALLUSDT 1小时EMA20趋势条件通过（最近一条1小时EMA20 ÷ 第三条1小时EMA20 − 1 ≥ 0.15%）时才允许新开仓。若触发以下任一风险条件：BTC吸血（BTC delta − ALLUSDT delta &gt; {{ '%.4g'|format(market_filter_settings.btc_siphon_threshold * 100) }}%）、大盘暴跌（ALLUSDT delta &lt; −{{ '%.4g'|format(market_filter_settings.market_crash_threshold * 100) }}%），或 ALLUSDT 最近24小时涨跌幅 &lt; {{ '%.4g'|format(market_filter_settings.allusdt_24h_drop_threshold * 100) }}%，则从触发时刻起接下来{{ market_filter_settings.block_duration_minutes }}分钟不允许新开仓；即使本轮没有新触发条件，只要此前封锁尚未到期，仍不允许开仓。点击“展开全部”查看最近7天完整记录。</div>
+        <div class="collapse-hint">规则：先取得页面顶部同源的 ALLUSDT 最近24小时涨跌幅结果，再启动独立市场过滤；模块读取 ALLUSDT 与 BTC 最近4条15分钟K线计算最近1小时涨幅。模拟盘和实盘分别读取各自的 ALLUSDT 1小时 EMA20 条件；若对应开关关闭，则该条件不参与该账户的开仓判断。若触发以下任一风险条件：BTC吸血（BTC delta − ALLUSDT delta &gt; {{ '%.4g'|format(market_filter_settings.btc_siphon_threshold * 100) }}%）、大盘暴跌（ALLUSDT delta &lt; −{{ '%.4g'|format(market_filter_settings.market_crash_threshold * 100) }}%），或 ALLUSDT 最近24小时涨跌幅&lt;{{ '%.4g'|format(market_filter_settings.allusdt_24h_drop_threshold * 100) }}%，则从触发时刻起接下来{{ market_filter_settings.block_duration_minutes }}分钟不允许新开仓；即使本轮没有新触发条件，只要此前封锁尚未到期，仍不允许开仓。点击“展开全部”查看最近7天完整记录。</div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>决策轮次</th><th>执行时间</th><th>是否允许新开仓</th><th>禁止开仓至</th><th>触发原因</th>
+              <th>决策轮次</th><th>执行时间</th><th>实盘是否允许新开仓</th><th>模拟盘是否允许新开仓</th><th>禁止开仓至</th><th>触发原因</th>
               <th>ALLUSDT第4条open时间</th><th>ALLUSDT最近K线时间</th><th>ALLUSDT open/close</th><th>ALLUSDT delta</th>
               <th>BTC第4条open时间</th><th>BTC最近K线时间</th><th>BTC open/close</th><th>BTC delta</th><th>BTC-ALLUSDT差值</th>
               <th>ALLUSDT 最近24h涨跌幅</th><th>ALLUSDT (1小时EMA20最近第1条/第3条-1)</th><th>BTC吸血</th><th>大盘暴跌</th><th>1h EMA20变化≥0.15%</th><th>24h跌破{{ '%.4g'|format(market_filter_settings.allusdt_24h_drop_threshold * 100) }}%</th>
@@ -268,7 +268,8 @@
               <tr class="{% if loop.first %}latest-decision-row{% endif %}{% if loop.index > 10 %} collapsed-extra{% endif %}">
                 <td>{{ row.decision_round_ts|fmt_ms_datetime }}{% if loop.first %}<span class="latest-decision-badge">最新</span>{% endif %}</td>
                 <td>{{ row.evaluated_at|fmt_ms_datetime }}</td>
-                <td><span class="chip decision-status {{ 'success' if row.allow_new_positions else 'danger' }}">{{ '允许' if row.allow_new_positions else '禁止' }}</span></td>
+                <td><span class="chip decision-status {{ 'success' if row.live_allow_new_positions else 'danger' }}">{{ '允许' if row.live_allow_new_positions else '禁止' }}</span></td>
+                <td><span class="chip decision-status {{ 'success' if row.simulation_allow_new_positions else 'danger' }}">{{ '允许' if row.simulation_allow_new_positions else '禁止' }}</span></td>
                 <td>{{ row.block_until|fmt_ms_datetime if row.block_until else '-' }}</td>
                 <td>{{ row.reason }}</td>
                 <td>{{ row.allusdt_first_open_time|fmt_ms_datetime if row.allusdt_first_open_time else '-' }}</td>
