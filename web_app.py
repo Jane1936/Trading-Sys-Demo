@@ -1693,6 +1693,13 @@ def score_trend_api():
                 {
                     "decision_round_ts": int(row["decision_round_ts"]),
                     "total_score": int(row["total_score"]),
+                    **{
+                        f"rule{rule_id}_score": (
+                            int(row[f"rule{rule_id}_score"])
+                            if row[f"rule{rule_id}_score"] is not None else None
+                        )
+                        for rule_id in range(1, 19)
+                    },
                 }
                 for row in rows
             ],
