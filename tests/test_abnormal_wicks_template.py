@@ -788,6 +788,11 @@ def test_feature_flags_include_independent_market_filter_settings_form():
     assert 'id="market-filter-live-ema20-enabled"' in section
     assert "应用于模拟盘" in section
     assert "应用于实盘" in section
+    market_template = Path("templates/market.html").read_text(encoding="utf-8")
+    assert "1h EMA20变化≥实盘配置值" in market_template
+    assert "1h EMA20变化≥模拟盘配置值" in market_template
+    assert "live_allusdt_ema20_threshold" in market_template
+    assert "simulation_allusdt_ema20_threshold" in market_template
     assert "禁止新开仓时间（分钟）" in section
     assert "fetch('/api/market-filter-settings'" in script
 
