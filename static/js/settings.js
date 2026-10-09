@@ -194,10 +194,12 @@ function renderFeatureFlagRow(flag) {
       high_live_enabled: document.getElementById('dynamic-profit-high-live-enabled').checked,
       simulation_allusdt_24h_rise_threshold_percent: Number(document.getElementById('dynamic-profit-simulation-rise-threshold').value),
       live_allusdt_24h_rise_threshold_percent: Number(document.getElementById('dynamic-profit-live-rise-threshold').value),
-      allusdt_24h_disable_threshold_percent: Number(document.getElementById('dynamic-profit-allusdt-disable-threshold').value),
-      high_tier_2_min_r: Number(document.getElementById('dynamic-profit-high-tier-2-r').value), high_tier_3_min_r: Number(document.getElementById('dynamic-profit-high-tier-3-r').value), high_tier_4_min_r: Number(document.getElementById('dynamic-profit-high-tier-4-r').value),
       ...Object.fromEntries(['simulation','live'].flatMap(env => [2,3,4].map(n => [`${env}_tier_${n}_min_r`, Number(document.getElementById(`dynamic-profit-${env}-tier-${n}-r`).value)]).concat([2,3,4].map(n => [`${env}_tier_${n}_drawdown_ratio`, Number(document.getElementById(`dynamic-profit-${env}-tier-${n}-drawdown`).value) / 100])))),
-      high_tier_2_drawdown_ratio: Number(document.getElementById('dynamic-profit-high-tier-2-drawdown').value) / 100, high_tier_3_drawdown_ratio: Number(document.getElementById('dynamic-profit-high-tier-3-drawdown').value) / 100, high_tier_4_drawdown_ratio: Number(document.getElementById('dynamic-profit-high-tier-4-drawdown').value) / 100,
+      ...Object.fromEntries(['simulation','live'].flatMap(env => [
+        [`${env}_allusdt_24h_disable_threshold_percent`, Number(document.getElementById(`dynamic-profit-${env}-disable-threshold`).value)],
+        ...[2,3,4].map(n => [`${env}_high_tier_${n}_min_r`, Number(document.getElementById(`dynamic-profit-${env}-high-tier-${n}-r`).value)]),
+        ...[2,3,4].map(n => [`${env}_high_tier_${n}_drawdown_ratio`, Number(document.getElementById(`dynamic-profit-${env}-high-tier-${n}-drawdown`).value) / 100]),
+      ])),
     };
     button.disabled = true;
     message.textContent = '正在保存动态利润保护配置…';

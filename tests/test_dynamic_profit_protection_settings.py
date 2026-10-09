@@ -7,6 +7,7 @@ import web_app
 
 def _custom_settings():
     return {
+        **dynamic_profit_protection_settings.DEFAULT_SETTINGS,
         "enabled": True,
         "tier_2_min_r": 2.5,
         "tier_3_min_r": 3.5,
@@ -19,15 +20,7 @@ def _custom_settings():
 
 def test_settings_persist_with_production_defaults(tmp_path):
     path = str(tmp_path / "config.db")
-    assert dynamic_profit_protection_settings.get_settings(path) == {
-        "enabled": True,
-        "tier_2_min_r": 2.0,
-        "tier_3_min_r": 3.0,
-        "tier_4_min_r": 4.0,
-        "tier_2_drawdown_ratio": 0.4,
-        "tier_3_drawdown_ratio": 0.3,
-        "tier_4_drawdown_ratio": 0.2,
-    }
+    assert dynamic_profit_protection_settings.get_settings(path) == dynamic_profit_protection_settings.DEFAULT_SETTINGS
     assert dynamic_profit_protection_settings.set_settings(_custom_settings(), path) == _custom_settings()
 
 
@@ -62,3 +55,25 @@ def test_settings_api_is_shared_in_config_database(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.get_json() == _custom_settings()
     assert client.get("/api/dynamic-profit-protection-settings").get_json() == _custom_settings()
+
+
+def test_simulation_and_live_high_rise_settings_persist_independently(tmp_path):
+    path = str(tmp_path / "config.db")
+    settings = _custom_settings()
+    settings.update({
+        "simulation_allusdt_24h_disable_threshold_percent": 7.5,
+        "live_allusdt_24h_disable_threshold_percent": 3.5,
+        "simulation_high_tier_2_min_r": 2.2,
+        "simulation_high_tier_3_min_r": 3.3,
+        "simulation_high_tier_4_min_r": 4.4,
+        "live_high_tier_2_min_r": 4.0,
+        "live_high_tier_3_min_r": 5.5,
+        "live_high_tier_4_min_r": 6.5,
+    })
+
+    saved = dynamic_profit_protection_settings.set_settings(settings, path)
+
+    assert saved["simulation_allusdt_24h_disable_threshold_percent"] == 7.5
+    assert saved["live_allusdt_24h_disable_threshold_percent"] == 3.5
+    assert saved["simulation_high_tier_2_min_r"] == 2.2
+    assert saved["live_high_tier_2_min_r"] == 4.0

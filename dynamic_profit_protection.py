@@ -199,6 +199,7 @@ class DynamicProfitProtection:
         is_live = os.path.abspath(self.db_path) == os.path.abspath(db_config.REAL_TRADING_DB_PATH)
         base_enabled_key = "live_enabled" if is_live else "simulation_enabled"
         rise_threshold_key = "live_allusdt_24h_rise_threshold_percent" if is_live else "simulation_allusdt_24h_rise_threshold_percent"
+        disable_threshold_key = "live_allusdt_24h_disable_threshold_percent" if is_live else "simulation_allusdt_24h_disable_threshold_percent"
         protection_settings = dict(protection_settings)
         env = "live" if is_live else "simulation"
         for n in (2, 3, 4):
@@ -209,7 +210,7 @@ class DynamicProfitProtection:
         globally_enabled = bool(protection_settings["enabled"])
         base_enabled = globally_enabled and bool(protection_settings[base_enabled_key])
         protection_settings["enabled"] = base_enabled
-        if rise is not None and rise >= float(protection_settings["allusdt_24h_disable_threshold_percent"]):
+        if rise is not None and rise >= float(protection_settings[disable_threshold_key]):
             # Keep the module globally enabled so it can resume as the market cools,
             # but suspend drawdown protection while the extreme-rise threshold holds.
             protection_settings["enabled"] = False
