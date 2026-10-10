@@ -51,7 +51,7 @@ RULE_SCORE_NAMES: dict[int, str] = {
     12: "15m 资金费率连续达标",
     13: "15m 阳线放量突破",
     14: "15m 三根中至少两根放量",
-    15: "1h 最新K线放量",
+    15: "15m 最近30分钟成交量超过前12小时均量1.8倍",
     16: "15m 缩量回调",
     17: "15m 低位反弹",
     18: "结构止损位距离与15m节奏",
@@ -863,10 +863,26 @@ class ScoringSystem:
                     latest_volume REAL NOT NULL,
                     volume_avg REAL NOT NULL,
                     updated_at INTEGER NOT NULL,
+                    volume_30m REAL NOT NULL DEFAULT 0,
+                    volume_pre_12h REAL NOT NULL DEFAULT 0,
+                    volume_avg_30m REAL NOT NULL DEFAULT 0,
                     PRIMARY KEY(symbol, decision_round_ts)
                 )
                 """
             )
+            # Rule 15 used to evaluate one 1h candle.  Add the new 15m
+            # aggregates in place so existing databases keep their history.
+            rule15_columns = {
+                row[1] for row in conn.execute(
+                    "PRAGMA table_info(symbol_scores_1h_volume_spike_latest)"
+                )
+            }
+            for column in ("volume_30m", "volume_pre_12h", "volume_avg_30m"):
+                if column not in rule15_columns:
+                    conn.execute(
+                        f"ALTER TABLE symbol_scores_1h_volume_spike_latest "
+                        f"ADD COLUMN {column} REAL NOT NULL DEFAULT 0"
+                    )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_symbol_scores_1h_volume_spike_latest_round ON symbol_scores_1h_volume_spike_latest(decision_round_ts DESC)"
             )
@@ -2120,47 +2136,53 @@ class ScoringSystem:
                 (round_ts,),
             ).fetchall()
 
-    def _latest_13_1h_volumes(self, symbol: str) -> list[float] | None:
+    def _latest_50_15m_volumes(self, symbol: str) -> list[float] | None:
         with self._round_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT volume
-                FROM klines_1h
+                FROM klines_15m
                 WHERE symbol = ?
                 ORDER BY open_time DESC
-                LIMIT 13
+                LIMIT 50
                 """,
                 (symbol,),
             ).fetchall()
-        if len(rows) < 13:
+        if len(rows) < 50:
             return None
         return [float(row["volume"]) for row in rows]
 
     def _save_1h_volume_spike_latest_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
-        volumes = self._latest_13_1h_volumes(symbol)
+        volumes = self._latest_50_15m_volumes(symbol)
         if volumes is None:
             return
 
-        latest_volume = volumes[0]
-        volume_avg = sum(volumes[1:13]) / 12
-        hit = latest_volume > 1.5 * volume_avg
+        volume_30m = sum(volumes[:2])
+        volume_pre_12h = sum(volumes[2:50])
+        volume_avg_30m = volume_pre_12h / 24
+        hit = volume_30m > 1.8 * volume_avg_30m
         score = self._score_weight(15) if hit else 0
-        reason = "latest_1h_volume_gt_1_5_avg_prev_12" if hit else "rule15_not_met"
+        reason = "latest_30m_volume_gt_1_8_avg_prev_12h" if hit else "rule15_not_met"
 
         with self._round_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO symbol_scores_1h_volume_spike_latest
-                (symbol, decision_round_ts, score, reason, latest_volume, volume_avg, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (symbol, decision_round_ts, score, reason, latest_volume, volume_avg,
+                 volume_30m, volume_pre_12h, volume_avg_30m, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, decision_round_ts) DO UPDATE SET
                     score=excluded.score,
                     reason=excluded.reason,
                     latest_volume=excluded.latest_volume,
                     volume_avg=excluded.volume_avg,
+                    volume_30m=excluded.volume_30m,
+                    volume_pre_12h=excluded.volume_pre_12h,
+                    volume_avg_30m=excluded.volume_avg_30m,
                     updated_at=excluded.updated_at
                 """,
-                (symbol, decision_round_ts, score, reason, latest_volume, volume_avg, updated_at),
+                (symbol, decision_round_ts, score, reason, volume_30m, volume_avg_30m,
+                 volume_30m, volume_pre_12h, volume_avg_30m, updated_at),
             )
 
     def get_latest_round_scores_1h_volume_spike_latest(self) -> tuple[int | None, list[sqlite3.Row]]:
@@ -2171,7 +2193,8 @@ class ScoringSystem:
             round_ts = int(row["ts"])
             rows = conn.execute(
                 """
-                SELECT symbol, decision_round_ts, score, reason, latest_volume, volume_avg, updated_at
+                SELECT symbol, decision_round_ts, score, reason, latest_volume, volume_avg,
+                       volume_30m, volume_pre_12h, volume_avg_30m, updated_at
                 FROM symbol_scores_1h_volume_spike_latest
                 WHERE decision_round_ts = ?
                 ORDER BY score DESC, symbol ASC
@@ -2184,7 +2207,8 @@ class ScoringSystem:
         with self._round_connection() as conn:
             return conn.execute(
                 """
-                SELECT symbol, decision_round_ts, score, reason, latest_volume, volume_avg, updated_at
+                SELECT symbol, decision_round_ts, score, reason, latest_volume, volume_avg,
+                       volume_30m, volume_pre_12h, volume_avg_30m, updated_at
                 FROM symbol_scores_1h_volume_spike_latest
                 WHERE decision_round_ts = ?
                 ORDER BY symbol ASC
