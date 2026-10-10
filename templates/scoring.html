@@ -180,7 +180,7 @@
 
       <div id="score-rule-1" class="score-rule-panel">
         {% if score_round_ts %}
-        <div class="tip">规则1轮次：{{ score_round_ts|fmt_ms_datetime }}</div>
+        <div class="tip">规则1轮次：{{ score_round_ts|fmt_ms_datetime }}。查询最近3条15m EMA20；若最新、前1条、前2条满足 EMA20_latest &gt; EMA20_prev1 &gt; EMA20_prev2，则得{{ rule_score_weights[1] }}分。</div>
         {% endif %}
         <div class="table-wrap">
           <table>
@@ -216,7 +216,7 @@
 
       <div id="score-rule-3" class="score-rule-panel">
         {% if score_rule3_round_ts %}
-        <div class="tip">规则3轮次：{{ score_rule3_round_ts|fmt_ms_datetime }}</div>
+        <div class="tip">规则3轮次：{{ score_rule3_round_ts|fmt_ms_datetime }}。比较最近两条1h K线收盘价；若最新1h收盘价 &gt; 前一条1h收盘价，则得{{ rule_score_weights[3] }}分。</div>
         {% endif %}
         <div class="table-wrap">
           <table>
@@ -235,7 +235,7 @@
 
       <div id="score-rule-4" class="score-rule-panel">
         {% if score_rule4_round_ts %}
-        <div class="tip">规则4轮次：{{ score_rule4_round_ts|fmt_ms_datetime }}</div>
+        <div class="tip">规则4轮次：{{ score_rule4_round_ts|fmt_ms_datetime }}。查询最近4条15m K线；收盘价高于开盘价的阳线数量达到3条或以上，则得{{ rule_score_weights[4] }}分。</div>
         {% endif %}
         <div class="table-wrap">
           <table>
@@ -253,7 +253,7 @@
 
       <div id="score-rule-5" class="score-rule-panel">
         {% if score_rule5_round_ts %}
-        <div class="tip">规则5轮次：{{ score_rule5_round_ts|fmt_ms_datetime }}</div>
+        <div class="tip">规则5轮次：{{ score_rule5_round_ts|fmt_ms_datetime }}。查询最近4条15m收盘价（按时间从旧到新）；只要其中存在3个按时间递增的收盘价（不要求连续），则得{{ rule_score_weights[5] }}分。</div>
         {% endif %}
         <div class="table-wrap">
           <table>
@@ -272,7 +272,7 @@
 
       <div id="score-rule-6" class="score-rule-panel">
         {% if score_rule6_round_ts %}
-        <div class="tip">规则6轮次：{{ score_rule6_round_ts|fmt_ms_datetime }}</div>
+        <div class="tip">规则6轮次：{{ score_rule6_round_ts|fmt_ms_datetime }}。若最新1m收盘价 &gt; 最新5m MA20，则得{{ rule_score_weights[6] }}分。</div>
         {% endif %}
         <div class="table-wrap">
           <table>
@@ -325,7 +325,7 @@
       </div>
       <div id="score-rule-9" class="score-rule-panel">
         {% if score_rule9_round_ts %}
-        <div class="tip">规则9轮次：{{ score_rule9_round_ts|fmt_ms_datetime }}</div>
+        <div class="tip">规则9轮次：{{ score_rule9_round_ts|fmt_ms_datetime }}。若最近3条15m收盘价满足 close_latest &gt; close_prev1 &gt; close_prev2，且最新1m OI &gt; 45分钟前OI，则得{{ rule_score_weights[9] }}分。</div>
         {% endif %}
         <div class="table-wrap">
           <table>
@@ -344,7 +344,7 @@
 
       <div id="score-rule-10" class="score-rule-panel">
         {% if score_rule10_round_ts %}
-        <div class="tip">规则10轮次：{{ score_rule10_round_ts|fmt_ms_datetime }}</div>
+        <div class="tip">规则10轮次：{{ score_rule10_round_ts|fmt_ms_datetime }}。若最新1m收盘价 &gt; 60分钟前1m开盘价，且最新1m OI &gt; 60分钟前OI，则得{{ rule_score_weights[10] }}分。</div>
         {% endif %}
         <div class="table-wrap"><table>
           <thead><tr><th>symbol</th><th>score</th><th>latest_1m_close</th><th>open_60m_ago</th><th>latest_open_interest</th><th>open_interest_60m_ago</th><th>reason</th><th>updated_at</th></tr></thead>
@@ -356,7 +356,7 @@
 
       <div id="score-rule-11" class="score-rule-panel">
         {% if score_rule11_round_ts %}
-        <div class="tip">规则11轮次：{{ score_rule11_round_ts|fmt_ms_datetime }}</div>
+        <div class="tip">规则11轮次：{{ score_rule11_round_ts|fmt_ms_datetime }}。分别计算 symbol 与 ALLUSDT 最近4条15m K线的涨跌幅；若 symbol 涨跌幅 − ALLUSDT 涨跌幅 ≥ 2%，即相对强度达标，则得{{ rule_score_weights[11] }}分。</div>
         {% endif %}
         <div class="table-wrap"><table>
           <thead><tr><th>symbol</th><th>score</th><th>symbol涨跌幅(delta)</th><th>ALLUSDT涨跌幅(delta_all)</th><th>相对强度</th><th>reason</th><th>updated_at</th></tr></thead>
