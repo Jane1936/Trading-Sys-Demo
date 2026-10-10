@@ -167,7 +167,7 @@
           <span class="score-tab-group-label">成交量评分</span>
           <button class="tab-btn score-rule-tab" data-score-tab="score-rule-13" style="width:auto;">规则13：15m阳线放量突破（{{ rule_score_weights[13] }}分）</button>
           <button class="tab-btn score-rule-tab" data-score-tab="score-rule-14" style="width:auto;">规则14：最近3条15m有≥2条量能达标（{{ rule_score_weights[14] }}分）</button>
-          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-15" style="width:auto;">规则15：1h最新量&gt;前12条均量1.5倍（{{ rule_score_weights[15] }}分）</button>
+          <button class="tab-btn score-rule-tab" data-score-tab="score-rule-15" style="width:auto;">规则15：最近30分钟量&gt;前12小时平均30分钟量1.8倍（{{ rule_score_weights[15] }}分）</button>
           <button class="tab-btn score-rule-tab" data-score-tab="score-rule-16" style="width:auto;">规则16：15m缩量回落/实体缩小（{{ rule_score_weights[16] }}分）</button>
         </div>
         <div class="score-tab-group rhythm">
@@ -405,13 +405,13 @@
 
       <div id="score-rule-15" class="score-rule-panel">
         {% if score_rule15_round_ts %}
-        <div class="tip">规则15轮次：{{ score_rule15_round_ts|fmt_ms_datetime }}。查询最近13条1h K线volume；计算最近第13条到最近第2条共12条volume的平均值volume_avg，若最近第1条volume &gt; 1.5 × volume_avg 则得2分。</div>
+        <div class="tip">规则15轮次：{{ score_rule15_round_ts|fmt_ms_datetime }}。每个 symbol 查询最近50条15m K线；最近第1、2条成交量之和为 volume_30m，最近第3至第50条成交量之和为 volume_pre_12h，volume_pre_12h ÷ 24 为前12小时平均30分钟成交量。若 volume_30m &gt; 1.8 × (volume_pre_12h ÷ 24) 则得{{ rule_score_weights[15] }}分。</div>
         {% endif %}
         <div class="table-wrap"><table>
-          <thead><tr><th>symbol</th><th>score</th><th>latest_volume</th><th>volume_avg</th><th>1.5×volume_avg</th><th>reason</th><th>updated_at</th></tr></thead>
+          <thead><tr><th>symbol</th><th>score</th><th>volume_30m</th><th>volume_pre_12h</th><th>前12小时平均30分钟成交量</th><th>1.8×平均值</th><th>reason</th><th>updated_at</th></tr></thead>
           <tbody>{% for r in round_scores_rule15 %}
-            <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.latest_volume) }}</td><td>{{ '%.6f'|format(r.volume_avg) }}</td><td>{{ '%.6f'|format(r.volume_avg * 1.5) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
-          {% else %}<tr><td class="empty" colspan="7">暂无规则15评分数据</td></tr>{% endfor %}</tbody>
+            <tr><td>{{ r.symbol }}</td><td>{{ r.score }}</td><td>{{ '%.6f'|format(r.volume_30m) }}</td><td>{{ '%.6f'|format(r.volume_pre_12h) }}</td><td>{{ '%.6f'|format(r.volume_avg_30m) }}</td><td>{{ '%.6f'|format(r.volume_avg_30m * 1.8) }}</td><td>{{ r.reason }}</td><td>{{ r.updated_at|fmt_ms_datetime }}</td></tr>
+          {% else %}<tr><td class="empty" colspan="8">暂无规则15评分数据</td></tr>{% endfor %}</tbody>
         </table></div>
       </div>
 
