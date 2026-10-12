@@ -33,6 +33,10 @@ from pre_safety_module import PreSafetyModule
 from partial_take_profit import PartialTakeProfitStrategy
 from dynamic_profit_protection import DynamicProfitProtection
 from price_gain_take_profit import PriceGainTakeProfit
+from price_gain_take_profit_settings import (
+    get_settings as get_price_gain_take_profit_settings,
+    set_settings as set_price_gain_take_profit_settings,
+)
 from hard_take_profit_settings import (
     get_settings as get_hard_take_profit_settings,
     set_settings as set_hard_take_profit_settings,
@@ -306,6 +310,10 @@ def load_settings_context() -> dict:
                 "tier_3_drawdown_ratio": 0.3,
                 "tier_4_drawdown_ratio": 0.2,
             },
+        ),
+        "price_gain_take_profit_settings": load_setting(
+            "涨幅止盈配置", lambda: get_price_gain_take_profit_settings(CONFIG_DB_PATH),
+            {"simulation_profit_ratio": 0.2, "live_profit_ratio": 0.2},
         ),
         "hard_take_profit_settings": load_setting(
             "硬止盈配置",
@@ -2424,6 +2432,20 @@ def update_dynamic_profit_protection_settings_api():
         return jsonify(set_dynamic_profit_protection_settings(
             request.get_json(silent=True) or {}, CONFIG_DB_PATH
         ))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+
+@app.get("/api/price-gain-take-profit-settings")
+def price_gain_take_profit_settings_api():
+    return jsonify(get_price_gain_take_profit_settings(CONFIG_DB_PATH))
+
+
+@app.put("/api/price-gain-take-profit-settings")
+def update_price_gain_take_profit_settings_api():
+    try:
+        return jsonify(set_price_gain_take_profit_settings(request.get_json(silent=True) or {}, CONFIG_DB_PATH))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
