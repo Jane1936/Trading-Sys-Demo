@@ -44,6 +44,7 @@ from partial_take_profit import PartialTakeProfitStrategy
 from dynamic_profit_protection import DynamicProfitProtection
 from price_gain_take_profit import PriceGainTakeProfit
 from hard_take_profit_settings import get_settings as get_hard_take_profit_settings
+from price_gain_take_profit_settings import get_settings as get_price_gain_take_profit_settings
 from trailing_stop_tracker import TrailingStopTracker
 from trailing_reduction_tracker import TrailingReductionTracker
 from holding_position_scoring import HoldingPositionScoringSystem
@@ -1257,7 +1258,7 @@ def start_break_even_take_profit_task() -> None:
             if feature_flags.is_feature_enabled(feature_flags.HARD_TAKE_PROFIT):
                 try:
                     price_gain_take_profit.profit_threshold = Decimal(str(
-                        get_hard_take_profit_settings()["profit_ratio"]
+                        get_price_gain_take_profit_settings()["simulation_profit_ratio"]
                     ))
                     hard_result = price_gain_take_profit.run_round()
                     print(
@@ -1342,7 +1343,7 @@ def start_break_even_take_profit_task() -> None:
 def _run_live_high_frequency_round() -> None:
     """Run the live protection modules with isolated DBs and live REST."""
     break_even, partial, _reduction, dynamic, hard, trailing = real_trading.high_frequency_modules()
-    hard.profit_threshold = Decimal(str(get_hard_take_profit_settings()["profit_ratio"]))
+    hard.profit_threshold = Decimal(str(get_price_gain_take_profit_settings()["live_profit_ratio"]))
     modules = (
         (feature_flags.REAL_BREAK_EVEN_TAKE_PROFIT, "live break-even", break_even.run_round),
         (feature_flags.REAL_PARTIAL_TAKE_PROFIT, "live partial take-profit", partial.run_round),

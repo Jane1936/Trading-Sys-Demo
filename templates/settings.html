@@ -89,6 +89,16 @@
       </form>
     </div>
     <div class="card feature-config-yellow">
+      <div class="header"><h2>涨幅止盈配置</h2></div>
+      <div class="tip">按持仓未变现盈利率触发涨幅止盈，模拟盘与实盘独立配置，默认均为20%，保存后从下一轮扫描生效。</div>
+      <div id="price-gain-take-profit-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
+      <form id="price-gain-take-profit-settings-form" class="score-weight-actions">
+        <label>模拟盘止盈涨幅（%）<input id="simulation-price-gain-ratio" type="number" min="0.01" max="100" step="0.01" required value="{{ price_gain_take_profit_settings.simulation_profit_ratio * 100 }}"></label>
+        <label>实盘止盈涨幅（%）<input id="live-price-gain-ratio" type="number" min="0.01" max="100" step="0.01" required value="{{ price_gain_take_profit_settings.live_profit_ratio * 100 }}"></label>
+        <button class="btn btn-success" type="submit">保存涨幅止盈配置</button>
+      </form>
+    </div>
+    <div class="card feature-config-yellow">
       <div class="header"><h2>最大同时持仓仓位个数</h2></div>
       <div class="tip">每个 symbol 新开仓前都会重新查询当前已持仓仓位个数；仅当已持仓个数小于对应配置值，且本轮新开仓数未达到限制时才允许开仓。模拟盘与实盘的最大持仓配置相互独立，每轮新开仓限制由二者共用。</div>
       <div id="position-limit-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
