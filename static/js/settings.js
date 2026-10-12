@@ -135,6 +135,25 @@ function renderFeatureFlagRow(flag) {
   });
 })();
 
+(function initPriceGainTakeProfitSettingsForm() {
+  const form = document.getElementById('price-gain-take-profit-settings-form');
+  const message = document.getElementById('price-gain-take-profit-settings-message');
+  if (!form || !message) return;
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); if (!form.reportValidity()) return;
+    const button = form.querySelector('button[type="submit"]');
+    const payload = {simulation_profit_ratio: Number(document.getElementById('simulation-price-gain-ratio').value) / 100, live_profit_ratio: Number(document.getElementById('live-price-gain-ratio').value) / 100};
+    button.disabled = true; message.textContent = '正在保存涨幅止盈配置…'; message.classList.remove('error');
+    try {
+      const response = await fetch('/api/price-gain-take-profit-settings', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      message.textContent = `配置已保存：模拟盘 ${result.simulation_profit_ratio * 100}%、实盘 ${result.live_profit_ratio * 100}%。`;
+    } catch (err) { message.textContent = `涨幅止盈配置保存失败：${err.message || err}`; message.classList.add('error'); }
+    finally { button.disabled = false; }
+  });
+})();
+
 (function initHardTakeProfitSettingsForm() {
   const form = document.getElementById('hard-take-profit-settings-form');
   const message = document.getElementById('hard-take-profit-settings-message');
