@@ -42,7 +42,7 @@ from openable_symbol_module import OpenableSymbol, OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
 from partial_take_profit import PartialTakeProfitStrategy
 from dynamic_profit_protection import DynamicProfitProtection
-from hard_take_profit import HardTakeProfit
+from price_gain_take_profit import PriceGainTakeProfit
 from hard_take_profit_settings import get_settings as get_hard_take_profit_settings
 from trailing_stop_tracker import TrailingStopTracker
 from trailing_reduction_tracker import TrailingReductionTracker
@@ -189,7 +189,7 @@ def _database_initializers() -> dict[str, Callable[[], None]]:
             BreakEvenTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH).init_tables(),
             PartialTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH).init_tables(),
             DynamicProfitProtection(db_path=db_config.TRADING_DB_PATH).init_tables(),
-            HardTakeProfit(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            PriceGainTakeProfit(db_path=db_config.TRADING_DB_PATH).init_tables(),
             TrailingStopTracker(db_path=db_config.TRADING_DB_PATH).init_tables(),
             TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH).init_tables(),
             DynamicAddPositionThresholdModule(db_path=db_config.TRADING_DB_PATH).init_table(),
@@ -203,7 +203,7 @@ def _database_initializers() -> dict[str, Callable[[], None]]:
             HoldingPositionScoringSystem(
                 db_path=db_config.TRADING_DB_PATH
             ).init_tables(),
-            HardTakeProfit(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            PriceGainTakeProfit(db_path=db_config.TRADING_DB_PATH).init_tables(),
             ZombieForceLiquidationModule(db_path=db_config.TRADING_DB_PATH).init_tables(),
         ),
         db_config.TRADING_INFO_DB_PATH: lambda: (
@@ -211,7 +211,7 @@ def _database_initializers() -> dict[str, Callable[[], None]]:
             BreakEvenTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH).init_tables(),
             PartialTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH).init_tables(),
             TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH).init_tables(),
-            HardTakeProfit(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            PriceGainTakeProfit(db_path=db_config.TRADING_DB_PATH).init_tables(),
         ),
         db_config.REAL_TRADING_DB_PATH: real_trading.initialize,
         db_config.REAL_TRADING_INFO_DB_PATH: real_trading.initialize,
@@ -1227,10 +1227,10 @@ def start_break_even_take_profit_task() -> None:
     strategy = BreakEvenTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH)
     partial_strategy = PartialTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH)
     dynamic_profit_protection = DynamicProfitProtection(db_path=db_config.TRADING_DB_PATH)
-    hard_take_profit = HardTakeProfit(db_path=db_config.TRADING_DB_PATH)
+    price_gain_take_profit = PriceGainTakeProfit(db_path=db_config.TRADING_DB_PATH)
     trailing_stop_tracker = TrailingStopTracker(db_path=db_config.TRADING_DB_PATH)
     weak_market_adjustment = WeakMarketProfitAdjustmentModule(db_path=db_config.MARKET_DB_PATH)
-    print("🟢 Hard take-profit, break-even, partial take-profit, dynamic profit protection and trailing stop tracker task started")
+    print("🟢 Price-gain take-profit, break-even, partial take-profit, dynamic profit protection and trailing stop tracker task started")
     while True:
         current_simulation_config = simulation_config()
         strategy.config = current_simulation_config
@@ -1256,19 +1256,19 @@ def start_break_even_take_profit_task() -> None:
             # own switch and reloads its threshold before every scan.
             if feature_flags.is_feature_enabled(feature_flags.HARD_TAKE_PROFIT):
                 try:
-                    hard_take_profit.profit_threshold = Decimal(str(
+                    price_gain_take_profit.profit_threshold = Decimal(str(
                         get_hard_take_profit_settings()["profit_ratio"]
                     ))
-                    hard_result = hard_take_profit.run_round()
+                    hard_result = price_gain_take_profit.run_round()
                     print(
-                        f"🟢 hard take-profit checked={hard_result.get('checked', 0)} "
+                        f"🟢 price-gain take-profit checked={hard_result.get('checked', 0)} "
                         f"triggered={hard_result.get('triggered', 0)}"
                     )
                 except Exception as exc:
                     recover_after_worker_error(exc)
-                    print(f"⚠️ hard take-profit failed: {exc}")
+                    print(f"⚠️ price-gain take-profit failed: {exc}")
             else:
-                print("⏸️ hard take-profit skipped: feature flag disabled")
+                print("⏸️ price-gain take-profit skipped: feature flag disabled")
 
             if feature_flags.is_feature_enabled(feature_flags.BREAK_EVEN_TAKE_PROFIT):
               try:
@@ -1347,7 +1347,7 @@ def _run_live_high_frequency_round() -> None:
         (feature_flags.REAL_BREAK_EVEN_TAKE_PROFIT, "live break-even", break_even.run_round),
         (feature_flags.REAL_PARTIAL_TAKE_PROFIT, "live partial take-profit", partial.run_round),
         (feature_flags.REAL_DYNAMIC_PROFIT_PROTECTION, "live dynamic profit protection", dynamic.run_round),
-        (feature_flags.REAL_HARD_TAKE_PROFIT, "live hard take-profit", hard.run_round),
+        (feature_flags.REAL_HARD_TAKE_PROFIT, "live price-gain take-profit", hard.run_round),
         (feature_flags.REAL_TRAILING_STOP, "live trailing stop", trailing.run_round),
     )
     with db_config.sqlite_connection_scope(

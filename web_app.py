@@ -32,7 +32,7 @@ from openable_symbol_settings import get_settings as get_openable_symbol_setting
 from pre_safety_module import PreSafetyModule
 from partial_take_profit import PartialTakeProfitStrategy
 from dynamic_profit_protection import DynamicProfitProtection
-from hard_take_profit import HardTakeProfit
+from price_gain_take_profit import PriceGainTakeProfit
 from hard_take_profit_settings import (
     get_settings as get_hard_take_profit_settings,
     set_settings as set_hard_take_profit_settings,
@@ -467,7 +467,7 @@ def load_simulation_context() -> dict:
         "移动追踪减仓", _trailing_reduction_payload
     )
     dynamic_round, dynamic_checks, dynamic_records = payload_values("动态利润保护", _dynamic_profit_protection_payload)
-    hard_round, hard_checks, hard_records = payload_values("硬止盈", _hard_take_profit_payload)
+    hard_round, hard_checks, hard_records = payload_values("涨幅止盈", _hard_take_profit_payload)
 
     partial = PartialTakeProfitStrategy(db_path=_trading_db_path())
     partial_round, partial_checks = load_module("分批止盈检查", partial.get_latest_round_checks, (0, []))
@@ -564,7 +564,7 @@ def load_live_context() -> dict:
         ("partial-take-profit", "分批止盈", "recent_records"),
         ("trailing-reduction", "移动追踪减仓", "recent_action_records"),
         ("dynamic-profit-protection", "动态利润保护", "recent_action_records"),
-        ("hard-take-profit", "硬止盈", "recent_action_records"),
+        ("hard-take-profit", "涨幅止盈", "recent_action_records"),
         ("trailing-stop", "移动追踪止盈", "recent_action_records"),
     )
     for (key, label, records_method), module in zip(definitions, modules):
@@ -917,9 +917,9 @@ def _filled_order_exit_reason_matches(
                     break
         return matches
 
-    if _table_exists(conn, HardTakeProfit.RECORDS_TABLE, schema=info_schema):
+    if _table_exists(conn, PriceGainTakeProfit.RECORDS_TABLE, schema=info_schema):
         hard_take_profit_table = _qualified_table(
-            info_schema, HardTakeProfit.RECORDS_TABLE
+            info_schema, PriceGainTakeProfit.RECORDS_TABLE
         )
         # ``CREATE TABLE IF NOT EXISTS`` does not migrate databases created by
         # older deployments.  In particular, production may already have this
@@ -930,7 +930,7 @@ def _filled_order_exit_reason_matches(
             row["name"]
             for row in conn.execute(
                 f"PRAGMA {db_config.quote_identifier(info_schema)}.table_info("
-                f"{db_config.quote_identifier(HardTakeProfit.RECORDS_TABLE)})"
+                f"{db_config.quote_identifier(PriceGainTakeProfit.RECORDS_TABLE)})"
             ).fetchall()
         }
         hard_take_profit_order_id_select = (
@@ -961,7 +961,7 @@ def _filled_order_exit_reason_matches(
                 row["close_quantity"], quantity
             ):
                 matches.append(
-                    {"type": "自动化硬止盈", "matched_at": str(row["matched_at"] or "")}
+                    {"type": "自动化涨幅止盈", "matched_at": str(row["matched_at"] or "")}
                 )
                 break
 
@@ -1096,8 +1096,8 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
     if side not in {"SELL", "BUY"}:
         return ""
 
-    if "自动化硬止盈" in match_types:
-        return "自动化硬止盈"
+    if "自动化涨幅止盈" in match_types:
+        return "自动化涨幅止盈"
     if "减仓失败强平" in match_types:
         return "减仓失败强平"
     if "僵尸强平" in match_types:
@@ -1995,7 +1995,7 @@ def dynamic_profit_protection_summary_api():
 
 
 def _hard_take_profit_payload() -> dict:
-    return HardTakeProfit(db_path=_trading_db_path()).summary_payload()
+    return PriceGainTakeProfit(db_path=_trading_db_path()).summary_payload()
 
 
 @app.get("/api/hard-take-profit/summary")
@@ -2077,7 +2077,7 @@ LIVE_HIGH_FREQUENCY_MODULES = {
     "partial-take-profit": (1, "分批止盈", "recent_records"),
     "trailing-reduction": (2, "移动追踪减仓", "recent_action_records"),
     "dynamic-profit-protection": (3, "动态利润保护", "recent_action_records"),
-    "hard-take-profit": (4, "硬止盈", "recent_action_records"),
+    "hard-take-profit": (4, "涨幅止盈", "recent_action_records"),
     "trailing-stop": (5, "移动追踪止盈", "recent_action_records"),
 }
 

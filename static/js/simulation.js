@@ -393,13 +393,13 @@ function renderDynamicProfitProtectionRecords(rows) {
 
 function renderHardTakeProfitSummary(payload) {
   const note = document.getElementById('hard-take-profit-round-note');
-  if (note) note.textContent = payload.round_ts ? `最近判断轮次：${formatMsDatetime(payload.round_ts)}。独立扫描全部已持仓 symbol；未变现盈利率达到默认 20% 时，调用 reduceOnly MARKET 市价单全部平仓。` : '暂无硬止盈扫描结果。';
+  if (note) note.textContent = payload.round_ts ? `最近判断轮次：${formatMsDatetime(payload.round_ts)}。独立扫描全部已持仓 symbol；未变现盈利率达到默认 20% 时，调用 reduceOnly MARKET 市价单全部平仓。` : '暂无涨幅止盈扫描结果。';
   const checks = payload.checks || [];
   const records = payload.records || [];
   const checksBody = document.getElementById('hard-take-profit-checks-body');
   const recordsBody = document.getElementById('hard-take-profit-records-body');
-  if (checksBody) checksBody.innerHTML = checks.length ? checks.map(row => `<tr><td>${formatMsDatetime(row.checked_at)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.entry_price)}</td><td>${escapeHtml(row.position_amt)}</td><td>${escapeHtml(row.unrealized_pnl)}</td><td>${escapeHtml(row.position_notional)}</td><td>${escapeHtml(row.profit_ratio)} / ${escapeHtml(row.profit_threshold)}</td><td>${row.triggered ? '是' : '否'}</td><td>${escapeHtml(row.close_quantity)} / ${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td><td>${escapeHtml(row.reason)}</td></tr>`).join('') : '<tr><td class="empty" colspan="10">暂无硬止盈扫描结果</td></tr>';
-  if (recordsBody) recordsBody.innerHTML = records.length ? records.map((row, index) => `<tr class="${index >= 10 ? 'collapsed-extra' : ''}"><td>${formatMsDatetime(row.checked_at)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.position_amt)}</td><td>${escapeHtml(row.entry_price)}</td><td>${escapeHtml(row.unrealized_pnl)}</td><td>${escapeHtml(row.profit_ratio)} / ${escapeHtml(row.profit_threshold)}</td><td>${escapeHtml(row.close_quantity)}</td><td>${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td><td>${escapeHtml(row.reason)}</td></tr>`).join('') : '<tr><td class="empty" colspan="9">暂无硬止盈操作记录</td></tr>';
+  if (checksBody) checksBody.innerHTML = checks.length ? checks.map(row => `<tr><td>${formatMsDatetime(row.checked_at)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.entry_price)}</td><td>${escapeHtml(row.position_amt)}</td><td>${escapeHtml(row.unrealized_pnl)}</td><td>${escapeHtml(row.position_notional)}</td><td>${escapeHtml(row.profit_ratio)} / ${escapeHtml(row.profit_threshold)}</td><td>${row.triggered ? '是' : '否'}</td><td>${escapeHtml(row.close_quantity)} / ${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td><td>${escapeHtml(row.reason)}</td></tr>`).join('') : '<tr><td class="empty" colspan="10">暂无涨幅止盈扫描结果</td></tr>';
+  if (recordsBody) recordsBody.innerHTML = records.length ? records.map((row, index) => `<tr class="${index >= 10 ? 'collapsed-extra' : ''}"><td>${formatMsDatetime(row.checked_at)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.position_amt)}</td><td>${escapeHtml(row.entry_price)}</td><td>${escapeHtml(row.unrealized_pnl)}</td><td>${escapeHtml(row.profit_ratio)} / ${escapeHtml(row.profit_threshold)}</td><td>${escapeHtml(row.close_quantity)}</td><td>${escapeHtml(row.close_order_id || '-')} / ${escapeHtml(row.close_status)}</td><td>${escapeHtml(row.reason)}</td></tr>`).join('') : '<tr><td class="empty" colspan="9">暂无涨幅止盈操作记录</td></tr>';
 }
 
 (function initHardTakeProfitRefresh() {
@@ -408,7 +408,7 @@ function renderHardTakeProfitSummary(payload) {
   if (!btn) return;
   btn.addEventListener('click', async () => {
     btn.disabled = true; btn.textContent = '刷新中...';
-    if (status) status.textContent = '正在获取硬止盈模块最新信息...';
+    if (status) status.textContent = '正在获取涨幅止盈模块最新信息...';
     try {
       const response = await fetch('/api/hard-take-profit/summary', {headers: {'Accept': 'application/json'}});
       const payload = await response.json();
