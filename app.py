@@ -1006,29 +1006,40 @@ def run_scoring_round_worker(
         )
 
     market_filter_result = None
-    log_stage("market_filter_lookup", "started")
+    log_stage("market_filter_evaluation", "started")
     if feature_flags.is_feature_enabled(feature_flags.MARKET_FILTER):
         try:
-            market_filter_result = MarketFilterModule(
-                db_path=db_config.MARKET_DB_PATH
-            ).get_result_for_round(decision_round_ts)
+            # Re-evaluate the independent market filter for this scoring round
+            # immediately before selecting openable symbols.  Looking up the
+            # persisted row alone can replay a stale decision written earlier
+            # in the round (or a prior blocked evaluation) while the market
+            # data has since advanced.  ``run_round`` upserts the same round
+            # atomically, so the decision used here is also the one shown in
+            # the market-filter history.
+            market_filter = MarketFilterModule(db_path=db_config.MARKET_DB_PATH)
+            allusdt_24h_change = _allusdt_24h_change_for_filter()
+            market_filter_kwargs = {"decision_round_ts": decision_round_ts}
+            if allusdt_24h_change is not None:
+                market_filter_kwargs["allusdt_24h_change_percent"] = allusdt_24h_change
+            market_filter_result = market_filter.run_round(**market_filter_kwargs)
         except Exception as exc:
             recover_after_worker_error(exc)
-            print(f"⚠️ market filter lookup failed round={decision_round_ts}: {exc}")
+            print(f"⚠️ market filter evaluation failed round={decision_round_ts}: {exc}")
             log_stage(
-                "market_filter_lookup",
+                "market_filter_evaluation",
                 "failed",
                 error_type=type(exc).__name__,
                 error=repr(exc),
             )
         else:
             log_stage(
-                "market_filter_lookup",
+                "market_filter_evaluation",
                 "completed",
-                result_found=market_filter_result is not None,
+                allow=market_filter_result.allow_new_positions,
+                reason=market_filter_result.reason,
             )
     else:
-        log_stage("market_filter_lookup", "skipped", reason="feature_flag_disabled")
+        log_stage("market_filter_evaluation", "skipped", reason="feature_flag_disabled")
 
     # No current-round dynamic result means no dynamic minimum or dynamic
     # opening ban.  Independent filters below still retain their authority.
