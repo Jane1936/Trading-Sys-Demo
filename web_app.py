@@ -93,6 +93,45 @@ from sqlite_recovery import (
 
 app = Flask(__name__)
 
+LIVE_ACCOUNT_SNAPSHOT_TABLE = "live_account_equity_snapshots"
+
+
+def _init_live_account_snapshot_table() -> None:
+    """Create the durable source used by the live account equity display."""
+    with db_config.connect_sqlite(db_config.REAL_TRADING_CORE_DB_PATH) as conn:
+        conn.execute(f"""
+            CREATE TABLE IF NOT EXISTS {LIVE_ACCOUNT_SNAPSHOT_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recorded_at INTEGER NOT NULL,
+                account_balance_usdt TEXT NOT NULL,
+                available_balance_usdt TEXT NOT NULL DEFAULT '',
+                unrealized_pnl_usdt TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'manual_balance_query'
+            )
+        """)
+        conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{LIVE_ACCOUNT_SNAPSHOT_TABLE}_recorded_at ON {LIVE_ACCOUNT_SNAPSHOT_TABLE}(recorded_at DESC)")
+
+
+def _record_live_account_snapshot(payload: dict) -> dict:
+    balances = payload.get("balances") or []
+    usdt = next((row for row in balances if str(row.get("asset", "")).upper() == "USDT"), None)
+    if not usdt or usdt.get("balance") in (None, ""):
+        return None
+    recorded_at = int(payload.get("queried_at") or time.time() * 1000)
+    snapshot = {
+        "recorded_at": recorded_at,
+        "account_balance_usdt": str(usdt.get("balance")),
+        "available_balance_usdt": str(usdt.get("available_balance") or ""),
+        "unrealized_pnl_usdt": str(usdt.get("cross_un_pnl") or ""),
+    }
+    _init_live_account_snapshot_table()
+    with db_config.connect_sqlite(db_config.REAL_TRADING_CORE_DB_PATH) as conn:
+        conn.execute(
+            f"INSERT INTO {LIVE_ACCOUNT_SNAPSHOT_TABLE} (recorded_at, account_balance_usdt, available_balance_usdt, unrealized_pnl_usdt) VALUES (?, ?, ?, ?)",
+            (snapshot["recorded_at"], snapshot["account_balance_usdt"], snapshot["available_balance_usdt"], snapshot["unrealized_pnl_usdt"]),
+        )
+    return snapshot
+
 DB_PATH = db_config.BASE_DB_PATH
 BASE_DB_PATH = db_config.BASE_DB_PATH
 CONFIG_DB_PATH = db_config.CONFIG_DB_PATH
@@ -541,6 +580,7 @@ def load_live_context() -> dict:
 
     since_ms = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp() * 1000)
     load_module("实盘交易表初始化", real_trading.initialize, None)
+    load_module("实盘账户快照表初始化", _init_live_account_snapshot_table, None)
     experiment = load_module("实盘交易实验模块", real_trading.experiment, None)
     trade_records = load_module(
         "实盘交易实验记录",
@@ -601,6 +641,7 @@ def load_live_context() -> dict:
         "live_zombie_records": load_module("实盘僵尸强平记录", lambda: real_trading.zombie_module().recent_records(limit=100, since_ms=since_ms), []),
         "live_equity_trend_rows": equity_rows,
         "live_trading_equity": equity,
+        "live_equity_last_recorded_at": equity_rows[-1]["recorded_at"] if equity_rows else None,
         "live_seven_day_return": _seven_day_equity_return(equity_rows),
         "live_holding_stop_loss_round_ts": stop_round,
         "live_holding_stop_loss_checks": _sync_live_module_checks(stop_checks, positions),
@@ -667,6 +708,7 @@ def _experiment_equity_trend_rows(
 ) -> list[sqlite3.Row]:
     """Return one experiment USDT equity point per recorded scan/open timestamp."""
     sources = [
+        (LIVE_ACCOUNT_SNAPSHOT_TABLE, "recorded_at", "account_balance_usdt"),
         (TradingExperiment.TRADES_TABLE, "created_at"),
         (BreakEvenTakeProfitStrategy.CHECKS_TABLE, "checked_at"),
         (PartialTakeProfitStrategy.CHECKS_TABLE, "checked_at"),
@@ -677,17 +719,19 @@ def _experiment_equity_trend_rows(
             conn.row_factory = sqlite3.Row
             union_queries = []
             params: list[int] = []
-            for table_name, ts_column in sources:
+            for source in sources:
+                table_name, ts_column = source[0], source[1]
+                value_column = source[2] if len(source) > 2 else "account_equity_usdt"
                 if not _table_exists(conn, table_name):
                     continue
                 union_queries.append(
                     f"""
                     SELECT {ts_column} AS recorded_at,
-                           CAST(account_equity_usdt AS REAL) AS account_equity_usdt
+                           CAST({value_column} AS REAL) AS account_equity_usdt
                     FROM {table_name}
                     WHERE {ts_column} >= ?
-                      AND account_equity_usdt IS NOT NULL
-                      AND account_equity_usdt != ''
+                      AND {value_column} IS NOT NULL
+                      AND {value_column} != ''
                     """
                 )
                 params.append(int(since_ms))
@@ -1732,7 +1776,10 @@ def account_balance_api():
 def live_account_balance_api():
     """Read production account balances without changing demo trading mode."""
     try:
-        return jsonify(BinanceAccountManager.live().futures_balance())
+        payload = BinanceAccountManager.live().futures_balance()
+        snapshot = _record_live_account_snapshot(payload)
+        payload["equity_snapshot"] = snapshot
+        return jsonify(payload)
     except BinanceAccountConfigError as exc:
         return jsonify({"error": str(exc)}), 400
     except requests.exceptions.RequestException as exc:
