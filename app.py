@@ -53,6 +53,7 @@ from trading_experiment import ExperimentConfig, TradingExperiment
 from market_filter_module import MarketFilterModule
 import allusdt_24h_ticker
 import alpha_observer
+import alpha_funding_collector
 from weak_market_profit_adjustment import WeakMarketProfitAdjustmentModule
 from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import DynamicOpenThresholdModule
@@ -1783,6 +1784,31 @@ def start_processor_task(symbols: List[str]) -> None:
     )
 
 
+def start_alpha_realtime_funding_task() -> None:
+    """Run real-time 1h funding collection in its own Alpha worker thread."""
+    scheduler = collector.BlockingScheduler()
+
+    def _job() -> None:
+        try:
+            count = alpha_funding_collector.collect_once(db_config.ALPHA_DB_PATH)
+            print(f"💰 Alpha realtime funding collected symbols={count}")
+        except Exception as exc:
+            recover_after_worker_error(exc)
+            print(f"⚠️ Alpha realtime funding collection failed: {exc}")
+
+    scheduler.add_job(
+        _job,
+        "cron",
+        minute=1,
+        second=0,
+        timezone="UTC",
+        max_instances=1,
+        coalesce=True,
+    )
+    print("🚀 Alpha realtime funding task started (hourly at :01:00 UTC)")
+    scheduler.start()
+
+
 def start_alpha_observer_task() -> None:
     """Collect Alpha snapshots hourly and automatically repair 24h gaps."""
     alpha_observer.init_db()
@@ -1832,6 +1858,11 @@ if __name__ == "__main__":
         target=start_alpha_observer_task, daemon=True
     )
     alpha_observer_thread.start()
+
+    alpha_realtime_funding_thread = threading.Thread(
+        target=start_alpha_realtime_funding_task, daemon=True
+    )
+    alpha_realtime_funding_thread.start()
 
     # 预先构建一次 universe，并按12小时周期刷新
     symbols = ensure_universe()
