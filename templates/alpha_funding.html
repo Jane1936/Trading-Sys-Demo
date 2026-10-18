@@ -28,11 +28,11 @@
 {% else %}
   <section class="panel alpha-panel">
     <div class="panel-header">
-      <div><h2>最新采集批次</h2><p>{{ rows|length }} 个 symbol · 采集时间：{{ observed_at_text }}（北京时间）</p></div>
+      <div><h2>最新采集批次</h2><p>{{ rows|length }} 个 symbol · 采集时间：{{ observed_at_text }}（UTC）</p></div>
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Symbol</th><th>Interval</th><th>Funding Rate</th><th>采集时间（北京时间）</th></tr></thead>
+        <thead><tr><th>Symbol</th><th>Interval</th><th>Funding Rate</th><th>采集时间（UTC）</th></tr></thead>
         <tbody>
         {% for row in rows %}
           <tr><td><strong>{{ row.symbol }}</strong></td><td>{{ row.interval }}</td><td>{{ '%.8f'|format(row.funding_rate) }}</td><td>{{ observed_at_text }}</td></tr>

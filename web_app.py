@@ -1353,7 +1353,7 @@ def alpha_realtime_funding():
             if observed_at is not None:
                 observed_at_text = datetime.fromtimestamp(
                     int(observed_at) / 1000, timezone.utc
-                ).astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
+                ).strftime("%Y-%m-%d %H:%M:%S")
                 rows = [dict(row) for row in conn.execute(
                     """SELECT symbol, funding_rate, observed_at, interval
                        FROM alpha_realtime_funding
