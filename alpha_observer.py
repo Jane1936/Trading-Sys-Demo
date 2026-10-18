@@ -99,6 +99,15 @@ def init_db(db_path: str = db_config.ALPHA_DB_PATH) -> None:
             symbol TEXT NOT NULL, open_time INTEGER NOT NULL, close REAL,
             open_interest REAL, funding_rate REAL, PRIMARY KEY(symbol, open_time))""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_alpha_hourly_market_time ON alpha_hourly_market(open_time)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS alpha_realtime_funding (
+            symbol TEXT NOT NULL,
+            observed_at INTEGER NOT NULL,
+            funding_rate REAL NOT NULL,
+            interval TEXT NOT NULL DEFAULT '1h',
+            payload_json TEXT,
+            PRIMARY KEY(symbol, observed_at)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_alpha_realtime_funding_time ON alpha_realtime_funding(observed_at)")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_alpha_snapshot_latest "
             "ON alpha_market_snapshots(observed_at DESC, symbol)"

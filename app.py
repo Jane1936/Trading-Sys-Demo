@@ -262,6 +262,7 @@ def _database_schema_requirements() -> dict[str, dict[str, set[str]]]:
         },
         db_config.ALPHA_DB_PATH: {
             "alpha_market_snapshots": {"symbol", "volume_24h", "market_cap", "observed_at"},
+            "alpha_realtime_funding": {"symbol", "observed_at", "funding_rate", "interval"},
         },
         db_config.TRADING_DB_PATH: {
             TradingExperiment.ERRORS_TABLE: {"created_at"},
