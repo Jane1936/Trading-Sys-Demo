@@ -26,7 +26,7 @@
 {% elif not rows %}
   <section class="empty-state"><h2>暂无数据</h2><p>等待下一轮每小时第 1 分钟的采集任务完成。</p></section>
 {% else %}
-  <section class="panel">
+  <section class="panel alpha-panel">
     <div class="panel-header">
       <div><h2>最新采集批次</h2><p>{{ rows|length }} 个 symbol · 采集时间：{{ observed_at }}</p></div>
     </div>
