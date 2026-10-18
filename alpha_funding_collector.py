@@ -34,11 +34,20 @@ def http_session() -> requests.Session:
 
 
 def _rows(payload: Any) -> Iterable[dict[str, Any]]:
-    """Accept Binance's list or wrapped {data: ...} response variants."""
-    data = payload.get("data", payload) if isinstance(payload, dict) else payload
-    if isinstance(data, dict):
-        data = data.get("list", data.get("rows", []))
-    return data if isinstance(data, list) else []
+    """Extract row dictionaries from Binance's changing wrapper shapes."""
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in ("data", "list", "rows", "result", "symbols"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        if isinstance(value, dict):
+            nested = _rows(value)
+            if nested:
+                return nested
+    return []
 
 
 def fetch_funding_rates(session: requests.Session | None = None) -> list[dict[str, Any]]:
@@ -68,7 +77,10 @@ def fetch_funding_rates(session: requests.Session | None = None) -> list[dict[st
             skipped_rate += 1
             continue
         try:
-            numeric_rate = float(rate)
+            rate_text = str(rate).strip()
+            numeric_rate = float(rate_text.rstrip("%"))
+            if rate_text.endswith("%"):
+                numeric_rate /= 100.0
         except (TypeError, ValueError):
             skipped_rate += 1
             continue
