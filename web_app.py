@@ -1342,6 +1342,8 @@ def alpha_realtime_funding():
     observed_at = None
     error = None
     try:
+        # Keep the page usable even when Flask is started without the app factory.
+        alpha_observer.init_db(ALPHA_DB_PATH)
         with db_config.connect_sqlite(ALPHA_DB_PATH, row_factory=sqlite3.Row) as conn:
             latest = conn.execute(
                 "SELECT MAX(observed_at) AS observed_at FROM alpha_realtime_funding WHERE interval = '1h'"
