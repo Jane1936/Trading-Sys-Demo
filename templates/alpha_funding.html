@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}实时资金费率提示{% endblock %}
+{% block navigation %}
+  <div class="sidebar-brand">
+    <span class="sidebar-brand-mark">TS</span>
+    <span><strong>Alpha币观测</strong><small>实时资金费率</small></span>
+  </div>
+  <a class="tab-btn" href="{{ url_for('index') }}">← 返回主页</a>
+  <a class="tab-btn" href="{{ url_for('alpha_market') }}">Alpha币观测</a>
+  <a class="tab-btn active" href="{{ url_for('alpha_realtime_funding') }}">实时资金费率提示</a>
+{% endblock %}
+
+{% block content %}
+<section class="page-header alpha-header">
+  <div>
+    <span class="home-eyebrow">BINANCE REALTIME FUNDING · 1H</span>
+    <h1>实时资金费率提示</h1>
+    <p>展示最新一轮 interval = 1h 的 Binance 实时资金费率。</p>
+  </div>
+  <a class="btn btn-secondary" href="{{ url_for('alpha_realtime_funding') }}">刷新</a>
+</section>
+
+{% if error %}
+  <div class="module-error-banner" role="alert">读取实时资金费率失败：{{ error }}</div>
+{% elif not rows %}
+  <section class="empty-state"><h2>暂无数据</h2><p>等待下一轮每小时第 1 分钟的采集任务完成。</p></section>
+{% else %}
+  <section class="panel">
+    <div class="panel-header">
+      <div><h2>最新采集批次</h2><p>{{ rows|length }} 个 symbol · 采集时间：{{ observed_at }}</p></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Symbol</th><th>Interval</th><th>Funding Rate</th><th>采集时间（UTC 毫秒）</th></tr></thead>
+        <tbody>
+        {% for row in rows %}
+          <tr><td><strong>{{ row.symbol }}</strong></td><td>{{ row.interval }}</td><td>{{ '%.8f'|format(row.funding_rate) }}</td><td>{{ row.observed_at }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endif %}
+{% endblock %}
