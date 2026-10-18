@@ -18,7 +18,7 @@ from urllib3.util.retry import Retry
 
 API_URL = os.getenv(
     "BINANCE_REALTIME_FUNDING_URL",
-    "https://www.binance.com/bapi/futures/v1/public/future/fundingRate/realTimeFundingRate",
+    "https://www.binance.com/bapi/futures/v1/public/future/common/get-funding-info",
 )
 DB_PATH = os.getenv("ALPHA_DB_PATH", "data/alpha.db")
 LOG = logging.getLogger("alpha_funding_collector")
