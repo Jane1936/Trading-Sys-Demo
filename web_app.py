@@ -1283,6 +1283,33 @@ def market_safety():
     return render_template("market.html", **load_market_safety_context())
 
 
+@app.get("/market/alpha/funding")
+def alpha_realtime_funding():
+    """Display the latest 1h realtime funding-rate collection batch."""
+    rows = []
+    observed_at = None
+    error = None
+    try:
+        with db_config.connect_sqlite(ALPHA_DB_PATH, row_factory=sqlite3.Row) as conn:
+            latest = conn.execute(
+                "SELECT MAX(observed_at) AS observed_at FROM alpha_realtime_funding WHERE interval = '1h'"
+            ).fetchone()
+            observed_at = latest["observed_at"] if latest else None
+            if observed_at is not None:
+                rows = [dict(row) for row in conn.execute(
+                    """SELECT symbol, funding_rate, observed_at, interval
+                       FROM alpha_realtime_funding
+                       WHERE interval = '1h' AND observed_at = ?
+                       ORDER BY ABS(funding_rate) DESC, symbol""",
+                    (observed_at,),
+                ).fetchall()]
+    except (sqlite3.Error, OSError) as exc:
+        error = str(exc)
+    return render_template(
+        "alpha_funding.html", rows=rows, observed_at=observed_at, error=error
+    )
+
+
 @app.get("/market/alpha")
 def alpha_market():
     """Show the most recently completed hourly Alpha-token snapshot."""
