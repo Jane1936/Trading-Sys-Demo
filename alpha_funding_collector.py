@@ -20,6 +20,9 @@ API_URL = os.getenv(
     "BINANCE_REALTIME_FUNDING_URL",
     "https://www.binance.com/bapi/futures/v1/public/future/common/get-funding-info",
 )
+PREMIUM_INDEX_URL = os.getenv(
+    "BINANCE_PREMIUM_INDEX_URL", "https://fapi.binance.com/fapi/v1/premiumIndex"
+)
 DB_PATH = os.getenv("ALPHA_DB_PATH", "data/alpha.db")
 LOG = logging.getLogger("alpha_funding_collector")
 
@@ -51,42 +54,39 @@ def _rows(payload: Any) -> Iterable[dict[str, Any]]:
 
 
 def fetch_funding_rates(session: requests.Session | None = None) -> list[dict[str, Any]]:
+    """Combine funding intervals from Binance web BAPI with current rates.
+
+    The web ``get-funding-info`` endpoint contains interval/cap metadata only;
+    current rates come from the public futures ``premiumIndex`` endpoint.
+    """
     session = session or http_session()
     response = session.get(API_URL, timeout=20, headers={"User-Agent": "alpha-funding-collector/1.0"})
     response.raise_for_status()
-    payload = response.json()
-    items = list(_rows(payload))
+    info_items = list(_rows(response.json()))
+    one_hour = {}
+    for item in info_items:
+        raw_interval = item.get("interval", item.get("fundingInterval", item.get("fundingIntervalHours", item.get("fundingIntervalHour"))))
+        if str(raw_interval).strip().lower() in {"1", "1.0", "1h", "1hour", "60m", "60min"} and item.get("symbol"):
+            one_hour[str(item["symbol"]).upper()] = item
+
+    premium = session.get(PREMIUM_INDEX_URL, timeout=20, headers={"User-Agent": "alpha-funding-collector/1.0"})
+    premium.raise_for_status()
+    premium_items = list(_rows(premium.json()))
+    rates = {str(item.get("symbol", "")).upper(): item for item in premium_items if isinstance(item, dict)}
     result = []
-    skipped_interval = skipped_rate = 0
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        # Binance has used several names for this field across the web API.
-        raw_interval = item.get("interval", item.get("fundingInterval"))
-        if raw_interval is None:
-            raw_interval = item.get("fundingIntervalHours", item.get("fundingIntervalHour"))
-        interval = str(raw_interval).strip().lower() if raw_interval is not None else ""
-        is_one_hour = interval in {"1", "1.0", "1h", "1hour", "60m", "60min"}
-        if not is_one_hour:
-            skipped_interval += 1
-            continue
-        symbol = item.get("symbol")
-        # The real-time page commonly calls this lastFundingRate.
-        rate = item.get("fundingRate", item.get("lastFundingRate", item.get("funding_rate")))
-        if not symbol or rate is None:
-            skipped_rate += 1
+    missing_rate = 0
+    for symbol, info in one_hour.items():
+        rate_item = rates.get(symbol, {})
+        rate = rate_item.get("lastFundingRate", rate_item.get("fundingRate"))
+        if rate is None:
+            missing_rate += 1
             continue
         try:
-            rate_text = str(rate).strip()
-            numeric_rate = float(rate_text.rstrip("%"))
-            if rate_text.endswith("%"):
-                numeric_rate /= 100.0
+            result.append({"symbol": symbol, "funding_rate": float(rate), "raw": {**info, **rate_item}})
         except (TypeError, ValueError):
-            skipped_rate += 1
-            continue
-        result.append({"symbol": str(symbol), "funding_rate": numeric_rate, "raw": item})
-    LOG.info("funding API response items=%d, 1h=%d, skipped_interval=%d, skipped_rate=%d",
-             len(items), len(result), skipped_interval, skipped_rate)
+            missing_rate += 1
+    LOG.info("funding info items=%d, 1h symbols=%d, premium items=%d, parsed=%d, missing_rate=%d",
+             len(info_items), len(one_hour), len(premium_items), len(result), missing_rate)
     return result
 
 
