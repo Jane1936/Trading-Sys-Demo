@@ -1797,6 +1797,9 @@ def start_alpha_realtime_funding_task() -> None:
             recover_after_worker_error(exc)
             print(f"⚠️ Alpha realtime funding collection failed: {exc}")
 
+    # Collect once on startup so a deployment does not wait for the next
+    # hourly boundary and so connectivity/response-shape failures are visible.
+    _job()
     scheduler.add_job(
         _job,
         "cron",
