@@ -1340,6 +1340,7 @@ def alpha_realtime_funding():
     """Display the latest 1h realtime funding-rate collection batch."""
     rows = []
     observed_at = None
+    observed_at_text = None
     error = None
     try:
         # Keep the page usable even when Flask is started without the app factory.
@@ -1350,6 +1351,9 @@ def alpha_realtime_funding():
             ).fetchone()
             observed_at = latest["observed_at"] if latest else None
             if observed_at is not None:
+                observed_at_text = datetime.fromtimestamp(
+                    int(observed_at) / 1000, timezone.utc
+                ).strftime("%Y-%m-%d %H:%M:%S")
                 rows = [dict(row) for row in conn.execute(
                     """SELECT symbol, funding_rate, observed_at, interval
                        FROM alpha_realtime_funding
@@ -1360,7 +1364,8 @@ def alpha_realtime_funding():
     except (sqlite3.Error, OSError) as exc:
         error = str(exc)
     return render_template(
-        "alpha_funding.html", rows=rows, observed_at=observed_at, error=error
+        "alpha_funding.html", rows=rows, observed_at=observed_at,
+        observed_at_text=observed_at_text, error=error
     )
 
 
