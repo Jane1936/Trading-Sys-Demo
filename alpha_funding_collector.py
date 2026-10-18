@@ -46,17 +46,35 @@ def fetch_funding_rates(session: requests.Session | None = None) -> list[dict[st
     response = session.get(API_URL, timeout=20, headers={"User-Agent": "alpha-funding-collector/1.0"})
     response.raise_for_status()
     payload = response.json()
+    items = list(_rows(payload))
     result = []
-    for item in _rows(payload):
+    skipped_interval = skipped_rate = 0
+    for item in items:
         if not isinstance(item, dict):
             continue
-        interval = str(item.get("interval", item.get("fundingInterval", ""))).lower()
-        if interval not in {"1h", "1hour", "60m", "60min"}:
+        # Binance has used several names for this field across the web API.
+        raw_interval = item.get("interval", item.get("fundingInterval"))
+        if raw_interval is None:
+            raw_interval = item.get("fundingIntervalHours", item.get("fundingIntervalHour"))
+        interval = str(raw_interval).strip().lower() if raw_interval is not None else ""
+        is_one_hour = interval in {"1", "1.0", "1h", "1hour", "60m", "60min"}
+        if not is_one_hour:
+            skipped_interval += 1
             continue
         symbol = item.get("symbol")
-        rate = item.get("fundingRate", item.get("funding_rate"))
-        if symbol and rate is not None:
-            result.append({"symbol": str(symbol), "funding_rate": float(rate), "raw": item})
+        # The real-time page commonly calls this lastFundingRate.
+        rate = item.get("fundingRate", item.get("lastFundingRate", item.get("funding_rate")))
+        if not symbol or rate is None:
+            skipped_rate += 1
+            continue
+        try:
+            numeric_rate = float(rate)
+        except (TypeError, ValueError):
+            skipped_rate += 1
+            continue
+        result.append({"symbol": str(symbol), "funding_rate": numeric_rate, "raw": item})
+    LOG.info("funding API response items=%d, 1h=%d, skipped_interval=%d, skipped_rate=%d",
+             len(items), len(result), skipped_interval, skipped_rate)
     return result
 
 
