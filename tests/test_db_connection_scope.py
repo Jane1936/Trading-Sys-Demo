@@ -5,6 +5,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import db_config
+from trade_action_lock import TradeActionLockManager
+from trading_experiment import TradingExperiment
 
 
 def test_connection_scope_reuses_one_physical_connection(tmp_path, monkeypatch):
@@ -123,3 +125,27 @@ def test_connection_scopes_reuses_trading_and_core_connections(tmp_path, monkeyp
                 conn.execute("INSERT INTO events VALUES (?)", (value,))
 
     assert physical_opens == [trading_path, core_path]
+
+
+def test_trading_experiment_connection_does_not_attach_unrelated_databases(tmp_path, monkeypatch):
+    core_path = str(tmp_path / "trading_core.db")
+    monkeypatch.setattr(db_config, "TRADING_CORE_DB_PATH", core_path)
+    calls = []
+    monkeypatch.setattr(db_config, "attach_databases", lambda *args: calls.append(args))
+
+    experiment = TradingExperiment(db_path=str(tmp_path / "trading.db"))
+    with experiment._connect() as conn:
+        conn.execute("SELECT 1")
+
+    assert calls == []
+
+
+def test_trade_action_lock_does_not_attach_unrelated_databases(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "trading.db")
+    calls = []
+    monkeypatch.setattr(db_config, "attach_databases", lambda *args: calls.append(args))
+
+    manager = TradeActionLockManager(db_path=db_path)
+    manager.init_table()
+
+    assert calls == []
