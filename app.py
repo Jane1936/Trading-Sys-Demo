@@ -488,11 +488,17 @@ def check_worker_databases(
                 failure_record, status="recovered", quarantined_files=quarantined
             )
             print(f"✅ SQLite recovered db={db_path}; quarantined={quarantined}")
-            if db_path == db_config.BASE_DB_PATH and getattr(collector, "UNIVERSE", None):
-                # Refill only the bounded windows needed by rules 8 and 11.
-                # The collector sets a recovery fence so scheduled writes are
-                # skipped while each batch is fetched and committed.
-                collector.recover_rule_windows(collector.UNIVERSE)
+            if db_path == db_config.BASE_DB_PATH:
+                # Always trigger the bounded rule-window bootstrap after base
+                # recovery.  The collector may not have published its cached
+                # universe yet, so bootstrap resolves it when necessary and
+                # reports failures for the periodic retry.
+                try:
+                    collector.bootstrap_rule_windows(
+                        getattr(collector, "UNIVERSE", None)
+                    )
+                except Exception as recovery_exc:
+                    print(f"⚠️ rule window bootstrap after recovery failed: {recovery_exc}")
     return recovered
 
 
@@ -1750,8 +1756,22 @@ def start_collector_task(symbols: List[str]) -> None:
         ensure_universe()
         job_func()
 
+    def _rule_window_bootstrap_job():
+        if not feature_flags.is_feature_enabled(feature_flags.BASE_DATA_COLLECTION):
+            print("⏸️ base data collection disabled; skipping rule-window bootstrap")
+            return
+        ensure_universe()
+        collector.bootstrap_rule_windows(collector.UNIVERSE)
+
     scheduler = collector.BlockingScheduler()
     scheduler.add_job(ensure_universe, "interval", hours=12)
+    scheduler.add_job(
+        _rule_window_bootstrap_job,
+        "interval",
+        minutes=15,
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.add_job(
         lambda: _run_with_fresh_universe(collector.kline_job), "cron", second=0
     )
