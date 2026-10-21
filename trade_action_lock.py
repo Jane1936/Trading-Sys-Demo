@@ -28,9 +28,10 @@ class TradeActionLockManager:
         self.ttl_ms = ttl_ms
 
     def _connect(self) -> sqlite3.Connection:
-        conn = db_config.connect_sqlite(self.db_path)
-        conn.row_factory = sqlite3.Row
-        db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
+        # The lock table is owned by the trading database.  Attaching unrelated
+        # databases here only extends their shared access-lock lifetime during
+        # BEGIN IMMEDIATE and makes recovery unnecessarily wait on lock calls.
+        conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
         return conn
 
     def init_table(self) -> None:
