@@ -1,10 +1,11 @@
 """Zombie-position force liquidation for stale experiment positions.
 
 Every 15-minute custom execution round scans existing Binance Futures positions.
-As soon as a position has been held for 24 hours, the module cancels all open
-stop-loss/take-profit orders for that symbol and closes the full position with
-a reduce-only market order. Break-even protection does not exempt a stale
-position from this hard holding-time limit.
+As soon as a position reaches the configured ordinary holding limit, the module
+cancels all open stop-loss/take-profit orders for that symbol and closes the
+full position with a reduce-only market order. A successful break-even
+protection record also starts a separate configurable countdown (48 hours by
+default) for that position.
 """
 
 from __future__ import annotations
@@ -56,7 +57,7 @@ class ZombieForceLiquidationRecord:
 
 
 class ZombieForceLiquidationModule:
-    """Force-close every position as soon as it reaches the 24-hour limit."""
+    """Force-close stale positions and positions past the break-even limit."""
 
     CHECKS_TABLE = "zombie_force_liquidation_checks"
     RECORDS_TABLE = "zombie_force_liquidation_records"
@@ -70,6 +71,7 @@ class ZombieForceLiquidationModule:
     ) -> None:
         self.db_path = db_path
         self.core_db_path = db_config.trading_core_path(db_path)
+        self.info_db_path = db_config.trading_info_path(db_path)
         self.account_manager = account_manager or BinanceAccountManager()
         self.config = config or ExperimentConfig()
         self.zombie_settings = get_zombie_settings(db_config.CONFIG_DB_PATH)
@@ -140,6 +142,7 @@ class ZombieForceLiquidationModule:
         except Exception: rise = None
         hours = self.zombie_settings["high_rise_holding_hours"] if rise is not None and rise > self.zombie_settings["allusdt_rise_threshold_percent"] else self.zombie_settings["holding_hours"]
         self.holding_threshold_ms = int(hours * 60 * 60 * 1000)
+        self.break_even_holding_threshold_ms = int(self.zombie_settings["break_even_holding_hours"] * 60 * 60 * 1000)
         for position in positions:
             amount = self._decimal_from(position.get("positionAmt"), Decimal("0"))
             if amount == 0:
@@ -179,13 +182,40 @@ class ZombieForceLiquidationModule:
         if opened_at is None:
             self._insert_check(symbol, now, None, holding_hours, amount, entry_price, False, False, "opened_at_missing")
             return False
-        if holding_ms < self.holding_threshold_ms:
-            self._insert_check(symbol, now, opened_at, holding_hours, amount, entry_price, False, False, "holding_time_below_threshold")
+        break_even_at = self._latest_break_even_at(symbol, entry_price, opened_at, now)
+        has_break_even = break_even_at is not None
+        break_even_holding_ms = max(0, now - break_even_at) if break_even_at is not None else 0
+        normal_due = holding_ms >= self.holding_threshold_ms
+        break_even_due = has_break_even and break_even_holding_ms >= self.break_even_holding_threshold_ms
+        if not normal_due and not break_even_due:
+            reason = "break_even_holding_time_below_threshold" if has_break_even else "holding_time_below_threshold"
+            self._insert_check(symbol, now, opened_at, holding_hours, amount, entry_price, has_break_even, False, reason)
             return False
 
-        self._insert_check(symbol, now, opened_at, holding_hours, amount, entry_price, False, True, "holding_time_reached_threshold")
+        reason = "break_even_holding_time_reached_threshold" if break_even_due and not normal_due else "holding_time_reached_threshold"
+        self._insert_check(symbol, now, opened_at, holding_hours, amount, entry_price, has_break_even, True, reason)
         self._force_close(helper, exchange_symbol, symbol, amount, entry_price, opened_at, now)
         return True
+
+    def _latest_break_even_at(self, symbol: str, entry_price: Decimal, opened_at: int, now: int) -> int | None:
+        """Return the activation time of the latest successful break-even order.
+
+        Records are kept in the info database, which is separate for simulation
+        and live trading. Matching the entry price and opening window prevents a
+        previous position in the same symbol from ageing the current position.
+        """
+        try:
+            with db_config.connect_sqlite(self.info_db_path, row_factory=sqlite3.Row) as conn:
+                row = conn.execute(
+                    "SELECT checked_at FROM break_even_stop_loss_records "
+                    "WHERE symbol = ? AND entry_price = ? AND status = 'submitted' "
+                    "AND checked_at >= ? AND checked_at <= ? "
+                    "ORDER BY checked_at DESC, id DESC LIMIT 1",
+                    (symbol, self._fmt_decimal(entry_price), int(opened_at), int(now)),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return None
+        return int(row["checked_at"]) if row else None
 
     def _force_close(self, helper: TradingExperiment, exchange_symbol: str, symbol: str, amount: Decimal, entry_price: Decimal, opened_at: int | None, now: int) -> None:
         side = "SELL" if amount > 0 else "BUY"

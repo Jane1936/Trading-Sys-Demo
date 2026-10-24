@@ -1216,7 +1216,7 @@
           <div class="symbol-strip collapsible-header">
             <div>
               <div><strong>僵尸单强平操作记录</strong></div>
-              <div class="muted">只显示最近7天内记录；持仓时间一旦达到24小时，无论是否已有保本止盈保护，都会立即触发强平：先取消该 symbol 的所有止盈/止损挂单，再通过 reduceOnly 市价单将当前持仓全部平仓。</div>
+              <div class="muted">只显示最近7天内记录；持仓时间一旦达到24小时，无论是否已有保本止盈保护，都会立即触发强平；已触发保本止盈的仓位还会从保本触发时刻起按配置时长（默认48小时）强平：先取消该 symbol 的所有止盈/止损挂单，再通过 reduceOnly 市价单将当前持仓全部平仓。</div>
             </div>
             <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
           </div>

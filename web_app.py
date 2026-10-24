@@ -288,7 +288,7 @@ def load_settings_context() -> dict:
                 "allusdt_24h_rise_max_open_positions": 15,
             },
         ),
-        "zombie_force_liquidation_settings": load_setting("僵尸强平时间配置", lambda: get_zombie_force_settings(CONFIG_DB_PATH), {"holding_hours": 24, "allusdt_rise_threshold_percent": 4, "high_rise_holding_hours": 12}),
+        "zombie_force_liquidation_settings": load_setting("僵尸强平时间配置", lambda: get_zombie_force_settings(CONFIG_DB_PATH), {"holding_hours": 24, "allusdt_rise_threshold_percent": 4, "high_rise_holding_hours": 12, "break_even_holding_hours": 48}),
         "margin_budget_settings": load_setting("总仓位成本配置", lambda: get_margin_budget_settings(CONFIG_DB_PATH), {"simulation_max_margin_cost_usdt": Decimal("1000"), "live_max_margin_cost_usdt": Decimal("100")}),
         "dynamic_profit_protection_settings": load_setting(
             "动态利润保护配置",
