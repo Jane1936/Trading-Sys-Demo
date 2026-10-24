@@ -428,9 +428,9 @@ function renderFeatureFlagRow(flag) {
     event.preventDefault(); if (!form.reportValidity()) return;
     const button = form.querySelector('button[type="submit"]'); button.disabled = true;
     try {
-      const response = await fetch('/api/zombie-force-liquidation-settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({holding_hours: Number(document.getElementById('zombie-force-liquidation-hours').value), allusdt_rise_threshold_percent: Number(document.getElementById('zombie-force-liquidation-threshold').value), high_rise_holding_hours: Number(document.getElementById('zombie-force-liquidation-high-hours').value)})});
+      const response = await fetch('/api/zombie-force-liquidation-settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({holding_hours: Number(document.getElementById('zombie-force-liquidation-hours').value), allusdt_rise_threshold_percent: Number(document.getElementById('zombie-force-liquidation-threshold').value), high_rise_holding_hours: Number(document.getElementById('zombie-force-liquidation-high-hours').value), break_even_holding_hours: Number(document.getElementById('zombie-force-liquidation-break-even-hours').value)})});
       const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      message.textContent = `配置已保存：持仓达到 ${result.holding_hours} 小时后全部平仓。`; message.classList.remove('error');
+      message.textContent = `配置已保存：普通持仓 ${result.holding_hours} 小时、触发保本止盈后 ${result.break_even_holding_hours} 小时强平。`; message.classList.remove('error');
     } catch (err) { message.textContent = `僵尸强平时间配置保存失败：${err.message || err}`; message.classList.add('error'); }
     finally { button.disabled = false; }
   });

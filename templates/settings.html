@@ -69,12 +69,13 @@
     </div>
     <div class="card feature-config-yellow">
       <div class="header"><h2>僵尸强平时间配置</h2></div>
-      <div class="tip">当某个仓位持仓时间达到配置时，系统将默认执行全部平仓。默认 24 小时，保存后从下一轮僵尸仓位扫描开始生效。</div>
+      <div class="tip">当某个仓位持仓时间达到配置时，系统将执行全部平仓；已触发保本止盈的仓位从保本止盈触发起单独计时。默认普通仓位 24 小时、保本止盈仓位 48 小时，保存后从下一轮扫描开始生效。</div>
       <div id="zombie-force-liquidation-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
       <form id="zombie-force-liquidation-settings-form" class="score-weight-actions">
         <label>持仓超过（小时）<input id="zombie-force-liquidation-hours" type="number" min="0.01" max="8760" step="0.01" required value="{{ zombie_force_liquidation_settings.holding_hours }}"></label>
         <label>ALLUSDT 最近24h涨幅超过（%）<input id="zombie-force-liquidation-threshold" type="number" min="0" max="1000" step="0.01" required value="{{ zombie_force_liquidation_settings.allusdt_rise_threshold_percent }}"></label>
         <label>涨幅超过阈值时强平时间（小时）<input id="zombie-force-liquidation-high-hours" type="number" min="0.01" max="8760" step="0.01" required value="{{ zombie_force_liquidation_settings.high_rise_holding_hours }}"></label>
+        <label>触发保本止盈后强平时间（小时）<input id="zombie-force-liquidation-break-even-hours" type="number" min="0.01" max="8760" step="0.01" required value="{{ zombie_force_liquidation_settings.break_even_holding_hours }}"></label>
         <button class="btn btn-success" type="submit">保存僵尸强平时间配置</button>
       </form>
     </div>

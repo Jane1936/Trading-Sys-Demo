@@ -13,6 +13,7 @@ import weak_market_profit_adjustment
 import position_limit_settings
 import dynamic_profit_protection_settings
 import hard_take_profit_settings
+import zombie_force_liquidation_settings
 from dynamic_open_threshold import get_settings as get_dynamic_open_threshold_settings
 from scoring_system import init_rule_score_weight_settings
 
@@ -46,6 +47,7 @@ def _seed_config_database(config_db_path: str) -> None:
     position_limit_settings.get_settings(config_db_path)
     dynamic_profit_protection_settings.get_settings(config_db_path)
     hard_take_profit_settings.get_settings(config_db_path)
+    zombie_force_liquidation_settings.get_settings(config_db_path)
 
 
 def _source_table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
