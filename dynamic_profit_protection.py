@@ -190,8 +190,8 @@ class DynamicProfitProtection:
         positions = helper._fetch_and_store_positions()
         protection_settings = get_settings()
         # Each environment has its own base enable flag.  A high-rise market
-        # may additionally replace the base bands, but opting out of the high
-        # rise mode must fall back to that environment's base configuration.
+        # may replace the base bands. Live accounts that opt out of high-rise
+        # mode suspend protection above the switch threshold.
         try:
             rise = float(allusdt_24h_ticker.fetch_change_percent())
         except Exception:
@@ -209,10 +209,12 @@ class DynamicProfitProtection:
         elif rise is not None and rise > float(protection_settings["allusdt_24h_rise_threshold_percent"]):
             high_enabled_key = "high_live_enabled" if is_live else "high_simulation_enabled"
             high_enabled = bool(protection_settings[high_enabled_key])
-            protection_settings["enabled"] = globally_enabled and (high_enabled or base_enabled)
+            protection_settings["enabled"] = globally_enabled and (
+                high_enabled or (base_enabled and not is_live)
+            )
             # Replace the base R bands with the separately configured
-            # high-market bands only for the opted-in account.  If high-rise
-            # mode is disabled, retain the base bands and base enable state.
+            # high-market bands only for the opted-in account. Simulated
+            # accounts retain their base mode when high-rise mode is disabled.
             if high_enabled:
                 for n in (2, 3, 4):
                     protection_settings[f"tier_{n}_min_r"] = protection_settings[f"high_tier_{n}_min_r"]
