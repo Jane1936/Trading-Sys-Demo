@@ -16,6 +16,10 @@ DEFAULT_SETTINGS = {
     "live_enabled": True,
     "high_simulation_enabled": True,
     "high_live_enabled": True,
+    "floating_profit_disable_simulation_enabled": True,
+    "floating_profit_disable_live_enabled": True,
+    "floating_profit_disable_simulation_min_r": 6.0,
+    "floating_profit_disable_live_min_r": 6.0,
     "allusdt_24h_rise_threshold_percent": 4.0,
     "simulation_allusdt_24h_rise_threshold_percent": 4.0, "live_allusdt_24h_rise_threshold_percent": 4.0,
     "allusdt_24h_disable_threshold_percent": 10.0,
@@ -44,7 +48,7 @@ def _validate_settings(payload: dict) -> dict[str, bool | float]:
     if not isinstance(payload, dict) or not set(payload).issubset(DEFAULT_SETTINGS):
         raise ValueError("动态利润保护配置包含未知字段")
     payload = {**DEFAULT_SETTINGS, **payload}
-    boolean_fields = ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled")
+    boolean_fields = ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled", "floating_profit_disable_simulation_enabled", "floating_profit_disable_live_enabled")
     for flag in boolean_fields:
         if not isinstance(payload.get(flag, DEFAULT_SETTINGS[flag]), bool):
             raise ValueError("动态利润保护启用状态必须是布尔值")
@@ -82,6 +86,9 @@ def _validate_settings(payload: dict) -> dict[str, bool | float]:
         drawdowns = [values[f"{prefix}_{n}_drawdown_ratio"] for n in (2, 3, 4)]
         if any(value <= 0 or value > 1 for value in drawdowns):
             raise ValueError(f"{label}回撤阈值必须大于0%且不超过100%")
+    for key in ("floating_profit_disable_simulation_min_r", "floating_profit_disable_live_min_r"):
+        if values[key] <= 0:
+            raise ValueError("浮盈关闭动态利润回撤保护的R阈值必须大于0")
     return {key: payload[key] for key in boolean_fields} | values
 
 
@@ -108,7 +115,7 @@ def get_settings(db_path: str | None = None) -> dict[str, bool | float]:
             )
         """)
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({SETTINGS_TABLE_NAME})")}
-        for name, definition in (("simulation_enabled", "INTEGER NOT NULL DEFAULT 1"), ("live_enabled", "INTEGER NOT NULL DEFAULT 1"), ("high_simulation_enabled", "INTEGER NOT NULL DEFAULT 1"), ("high_live_enabled", "INTEGER NOT NULL DEFAULT 1"), ("allusdt_24h_rise_threshold_percent", "REAL NOT NULL DEFAULT 4.0"), ("allusdt_24h_disable_threshold_percent", "REAL NOT NULL DEFAULT 10.0")):
+        for name, definition in (("simulation_enabled", "INTEGER NOT NULL DEFAULT 1"), ("live_enabled", "INTEGER NOT NULL DEFAULT 1"), ("high_simulation_enabled", "INTEGER NOT NULL DEFAULT 1"), ("high_live_enabled", "INTEGER NOT NULL DEFAULT 1"), ("floating_profit_disable_simulation_enabled", "INTEGER NOT NULL DEFAULT 1"), ("floating_profit_disable_live_enabled", "INTEGER NOT NULL DEFAULT 1"), ("floating_profit_disable_simulation_min_r", "REAL NOT NULL DEFAULT 6.0"), ("floating_profit_disable_live_min_r", "REAL NOT NULL DEFAULT 6.0"), ("allusdt_24h_rise_threshold_percent", "REAL NOT NULL DEFAULT 4.0"), ("allusdt_24h_disable_threshold_percent", "REAL NOT NULL DEFAULT 10.0")):
             if name not in columns:
                 conn.execute(f"ALTER TABLE {SETTINGS_TABLE_NAME} ADD COLUMN {name} {definition}")
                 columns.add(name)
@@ -123,7 +130,7 @@ def get_settings(db_path: str | None = None) -> dict[str, bool | float]:
                 )
                 columns.add(name)
         for name in DEFAULT_SETTINGS:
-            if name not in columns and name not in ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled", "allusdt_24h_rise_threshold_percent", "allusdt_24h_disable_threshold_percent"):
+            if name not in columns and name not in ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled", "floating_profit_disable_simulation_enabled", "floating_profit_disable_live_enabled", "allusdt_24h_rise_threshold_percent", "allusdt_24h_disable_threshold_percent"):
                 conn.execute(f"ALTER TABLE {SETTINGS_TABLE_NAME} ADD COLUMN {name} REAL NOT NULL DEFAULT {DEFAULT_SETTINGS[name]}")
         # Keep the seed columns and values in lockstep as settings evolve.  The
         # high-rise tier fields are added by the migration above and must also
@@ -132,7 +139,7 @@ def get_settings(db_path: str | None = None) -> dict[str, bool | float]:
         seed_columns = ["id", *DEFAULT_SETTINGS, "updated_at"]
         seed_values = [
             1,
-            *(int(DEFAULT_SETTINGS[key]) if key in ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled")
+            *(int(DEFAULT_SETTINGS[key]) if key in ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled", "floating_profit_disable_simulation_enabled", "floating_profit_disable_live_enabled")
               else DEFAULT_SETTINGS[key] for key in DEFAULT_SETTINGS),
             int(time.time() * 1000),
         ]
@@ -146,7 +153,7 @@ def get_settings(db_path: str | None = None) -> dict[str, bool | float]:
         ).fetchone()
         conn.commit()
     return {
-        key: bool(row[key]) if key in ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled") else float(row[key])
+        key: bool(row[key]) if key in ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled", "floating_profit_disable_simulation_enabled", "floating_profit_disable_live_enabled") else float(row[key])
         for key in DEFAULT_SETTINGS
     }
 
@@ -162,7 +169,7 @@ def set_settings(payload: dict, db_path: str | None = None) -> dict[str, bool | 
             + ", ".join(f"{key} = ?" for key in keys)
             + ", updated_at = ? WHERE id = 1",
             (
-                *(int(settings[key]) if key in ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled") else settings[key] for key in keys),
+                *(int(settings[key]) if key in ("enabled", "simulation_enabled", "live_enabled", "high_simulation_enabled", "high_live_enabled", "floating_profit_disable_simulation_enabled", "floating_profit_disable_live_enabled") else settings[key] for key in keys),
                 int(time.time() * 1000),
             ),
         )

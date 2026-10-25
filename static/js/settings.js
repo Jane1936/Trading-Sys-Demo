@@ -168,7 +168,7 @@ function renderFeatureFlagRow(flag) {
       const response = await fetch('/api/hard-take-profit-settings', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      message.textContent = `配置已保存：模拟盘${result.simulation_enabled ? '开启' : '关闭'}（切换阈值 ${result.simulation_allusdt_24h_rise_threshold_percent}%）、实盘${result.live_enabled ? '开启' : '关闭'}（切换阈值 ${result.live_allusdt_24h_rise_threshold_percent}%）。`;
+      message.textContent = `配置已保存：模拟盘${result.simulation_enabled ? '开启' : '关闭'}、实盘${result.live_enabled ? '开启' : '关闭'}；浮盈达档关闭：模拟盘${result.floating_profit_disable_simulation_min_r}R、实盘${result.floating_profit_disable_live_min_r}R。`;
     } catch (err) { message.textContent = `硬止盈配置保存失败：${err.message || err}`; message.classList.add('error'); }
     finally { button.disabled = false; }
   });
@@ -211,6 +211,10 @@ function renderFeatureFlagRow(flag) {
       live_enabled: document.getElementById('dynamic-profit-live-enabled').checked,
       high_simulation_enabled: document.getElementById('dynamic-profit-high-simulation-enabled').checked,
       high_live_enabled: document.getElementById('dynamic-profit-high-live-enabled').checked,
+      floating_profit_disable_simulation_enabled: document.getElementById('dynamic-profit-floating-simulation-enabled').checked,
+      floating_profit_disable_live_enabled: document.getElementById('dynamic-profit-floating-live-enabled').checked,
+      floating_profit_disable_simulation_min_r: Number(document.getElementById('dynamic-profit-floating-simulation-r').value),
+      floating_profit_disable_live_min_r: Number(document.getElementById('dynamic-profit-floating-live-r').value),
       simulation_allusdt_24h_rise_threshold_percent: Number(document.getElementById('dynamic-profit-simulation-rise-threshold').value),
       live_allusdt_24h_rise_threshold_percent: Number(document.getElementById('dynamic-profit-live-rise-threshold').value),
       ...Object.fromEntries(['simulation','live'].flatMap(env => [2,3,4].map(n => [`${env}_tier_${n}_min_r`, Number(document.getElementById(`dynamic-profit-${env}-tier-${n}-r`).value)]).concat([2,3,4].map(n => [`${env}_tier_${n}_drawdown_ratio`, Number(document.getElementById(`dynamic-profit-${env}-tier-${n}-drawdown`).value) / 100])))),
@@ -229,7 +233,7 @@ function renderFeatureFlagRow(flag) {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      message.textContent = `配置已保存：模拟盘${result.simulation_enabled ? '开启' : '关闭'}（切换阈值 ${result.simulation_allusdt_24h_rise_threshold_percent}%）、实盘${result.live_enabled ? '开启' : '关闭'}（切换阈值 ${result.live_allusdt_24h_rise_threshold_percent}%）。`;
+      message.textContent = `配置已保存：模拟盘${result.simulation_enabled ? '开启' : '关闭'}、实盘${result.live_enabled ? '开启' : '关闭'}；浮盈达档关闭：模拟盘${result.floating_profit_disable_simulation_min_r}R、实盘${result.floating_profit_disable_live_min_r}R。`;
     } catch (err) {
       message.textContent = `动态利润保护配置保存失败：${err.message || err}`;
       message.classList.add('error');
