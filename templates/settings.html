@@ -124,9 +124,15 @@
     </div>
     <div class="card feature-config-yellow">
       <div class="header"><h2>动态利润保护配置</h2></div>
-      <div class="tip">按周期累积盈亏历史最高到达档位动态保护；周期累积盈亏为开仓后已实现盈亏与当前浮盈之和。默认规则为：周期累积盈亏到达过(2R, 3R] 回撤≥40%、周期累积盈亏到达过(3R, 4R] 回撤≥30%、周期累积盈亏到达过4R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓。模拟盘和实盘可分别启停；当 ALLUSDT 最近24h涨幅超过阈值时，对应账户的动态利润保护将切换为启用状态（按各自下一轮扫描生效）。</div>
+      <div class="tip">按周期累积盈亏历史最高到达档位动态保护；周期累积盈亏为开仓后已实现盈亏与当前浮盈之和。默认规则为：周期累积盈亏到达过(2R, 3R] 回撤≥40%、周期累积盈亏到达过(3R, 4R] 回撤≥30%、周期累积盈亏到达过4R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓。模拟盘和实盘可分别启停；当 ALLUSDT 最近24h涨幅超过阈值时，对应账户的动态利润保护将切换为启用状态。</div>
       <div id="dynamic-profit-protection-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
       <form id="dynamic-profit-protection-settings-form" class="score-weight-actions">
+        <div class="settings-subsection dynamic-profit-highlight" style="border:2px solid #f59e0b;background:#fff7ed;padding:12px;border-radius:8px;order:-1"><strong>浮盈达档后关闭动态利润回撤保护</strong><div class="muted">浮盈达到设定 R 倍数后，立即跳过动态利润回撤保护；该配置独立于基础模式和高涨幅模式，模拟盘与实盘分别生效。默认 6R。</div>
+        <label><input id="dynamic-profit-floating-simulation-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.floating_profit_disable_simulation_enabled else '' }}> 启用模拟盘浮盈达档关闭</label>
+        <label>模拟盘浮盈阈值（R）<input id="dynamic-profit-floating-simulation-r" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.floating_profit_disable_simulation_min_r }}"></label>
+        <label><input id="dynamic-profit-floating-live-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.floating_profit_disable_live_enabled else '' }}> 启用实盘浮盈达档关闭</label>
+        <label>实盘浮盈阈值（R）<input id="dynamic-profit-floating-live-r" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.floating_profit_disable_live_min_r }}"></label>
+        </div>
         <label><input id="dynamic-profit-protection-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.enabled else '' }}> 启用“周期累积盈亏历史最高到达档位动态保护”</label>
         <div class="settings-subsection"><strong>基础模式（涨幅未超过阈值）</strong>
         <label><input id="dynamic-profit-simulation-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.simulation_enabled else '' }}> 启用模拟盘基础模式</label>
