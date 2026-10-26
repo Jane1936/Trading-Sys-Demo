@@ -1310,6 +1310,7 @@ def alpha_market():
         consecutive_up_days_min = 2
     try:
         observed_at, rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
+        realtime_funding_batches = _alpha_realtime_funding_batches()
         try:
             trends = alpha_observer.daily_trends(ALPHA_DB_PATH) if not defer_modules and (not is_partial_filter or "consecutive_up_days_min" in request.args) else []
         except sqlite3.DatabaseError:
@@ -1350,6 +1351,7 @@ def alpha_market():
         except Exception:
             observed_at, tokens = None, []
         trends, database_status, oi_changes, funding_changes, error = [], None, [], [], str(exc)
+        realtime_funding_batches = {"latest_ts": None, "previous_ts": None, "latest": [], "previous": [], "new_symbols": []}
     observed_time = (
         datetime.fromtimestamp(observed_at / 1000, timezone.utc)
         .strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -1369,6 +1371,7 @@ def alpha_market():
         price_max=price_max,
         funding_min=funding_min,
         funding_price_max=funding_price_max,
+        realtime_funding_batches=realtime_funding_batches,
         consecutive_up_days_min=consecutive_up_days_min,
         module_updated_at={
             "oi": _alpha_module_updated_text("oi"),
@@ -1571,6 +1574,41 @@ def _alpha_oi_changes():
         return sorted(result, key=lambda row: (row["oi_change"] is None, -(row["oi_change"] or 0)))
 
     return _cached_alpha_analytics("oi", int(observed_at), load)
+
+
+def _alpha_realtime_funding_batches() -> dict:
+    """Return the newest two hourly Alpha funding-rate batches."""
+    empty = {"latest_ts": None, "previous_ts": None, "latest": [], "previous": [], "new_symbols": []}
+    try:
+        with db_config.connect_sqlite(ALPHA_DB_PATH) as conn:
+            times = [row[0] for row in conn.execute(
+                "SELECT DISTINCT open_time FROM alpha_hourly_market "
+                "WHERE funding_rate IS NOT NULL ORDER BY open_time DESC LIMIT 2"
+            ).fetchall()]
+            if not times:
+                return empty
+            latest_ts, previous_ts = times[0], (times[1] if len(times) > 1 else None)
+
+            def rows_for(batch_ts):
+                if batch_ts is None:
+                    return []
+                return [
+                    {"symbol": row[0], "funding_rate": row[1], "interval": "1h"}
+                    for row in conn.execute(
+                        "SELECT symbol, funding_rate FROM alpha_hourly_market "
+                        "WHERE open_time = ? AND funding_rate IS NOT NULL ORDER BY symbol",
+                        (batch_ts,),
+                    ).fetchall()
+                ]
+
+            latest, previous = rows_for(latest_ts), rows_for(previous_ts)
+            previous_symbols = {row["symbol"] for row in previous}
+            new_symbols = sorted(row["symbol"] for row in latest if row["symbol"] not in previous_symbols)
+            for row in latest:
+                row["is_new"] = row["symbol"] not in previous_symbols
+            return {"latest_ts": latest_ts, "previous_ts": previous_ts, "latest": latest, "previous": previous, "new_symbols": new_symbols}
+    except (sqlite3.Error, OSError):
+        return empty
 
 
 def _alpha_funding_changes():
