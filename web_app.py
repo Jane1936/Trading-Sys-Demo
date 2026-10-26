@@ -1337,19 +1337,27 @@ def market_safety():
 
 @app.get("/market/alpha/funding")
 def alpha_realtime_funding():
-    """Display the latest 1h realtime funding-rate collection batch."""
+    """Display the latest two 1h realtime funding-rate collection batches."""
     rows = []
+    previous_rows = []
     observed_at = None
+    previous_observed_at = None
     observed_at_text = None
+    previous_observed_at_text = None
+    new_symbols = set()
     error = None
     try:
         # Keep the page usable even when Flask is started without the app factory.
         alpha_observer.init_db(ALPHA_DB_PATH)
         with db_config.connect_sqlite(ALPHA_DB_PATH, row_factory=sqlite3.Row) as conn:
-            latest = conn.execute(
-                "SELECT MAX(observed_at) AS observed_at FROM alpha_realtime_funding WHERE interval = '1h'"
-            ).fetchone()
-            observed_at = latest["observed_at"] if latest else None
+            batches = [row["observed_at"] for row in conn.execute(
+                """SELECT DISTINCT observed_at
+                   FROM alpha_realtime_funding
+                   WHERE interval = '1h'
+                   ORDER BY observed_at DESC LIMIT 2"""
+            ).fetchall()]
+            observed_at = batches[0] if batches else None
+            previous_observed_at = batches[1] if len(batches) > 1 else None
             if observed_at is not None:
                 observed_at_text = datetime.fromtimestamp(
                     int(observed_at) / 1000, timezone.utc
@@ -1361,11 +1369,32 @@ def alpha_realtime_funding():
                        ORDER BY ABS(funding_rate) DESC, symbol""",
                     (observed_at,),
                 ).fetchall()]
+            if previous_observed_at is not None:
+                previous_observed_at_text = datetime.fromtimestamp(
+                    int(previous_observed_at) / 1000, timezone.utc
+                ).strftime("%Y-%m-%d %H:%M:%S")
+                previous_rows = [dict(row) for row in conn.execute(
+                    """SELECT symbol, funding_rate, observed_at, interval
+                       FROM alpha_realtime_funding
+                       WHERE interval = '1h' AND observed_at = ?
+                       ORDER BY ABS(funding_rate) DESC, symbol""",
+                    (previous_observed_at,),
+                ).fetchall()]
+                previous_symbols = {row["symbol"] for row in previous_rows}
+                new_symbols = {row["symbol"] for row in rows if row["symbol"] not in previous_symbols}
+                for row in rows:
+                    row["is_new"] = row["symbol"] in new_symbols
     except (sqlite3.Error, OSError) as exc:
         error = str(exc)
     return render_template(
-        "alpha_funding.html", rows=rows, observed_at=observed_at,
-        observed_at_text=observed_at_text, error=error
+        "alpha_funding.html",
+        rows=rows,
+        previous_rows=previous_rows,
+        observed_at=observed_at,
+        previous_observed_at=previous_observed_at,
+        observed_at_text=observed_at_text,
+        previous_observed_at_text=previous_observed_at_text,
+        error=error,
     )
 
 

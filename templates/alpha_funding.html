@@ -35,11 +35,29 @@
         <thead><tr><th>Symbol</th><th>Interval</th><th>Funding Rate</th><th>采集时间（UTC）</th></tr></thead>
         <tbody>
         {% for row in rows %}
-          <tr><td><strong>{{ row.symbol }}</strong></td><td>{{ row.interval }}</td><td>{{ '%.8f'|format(row.funding_rate) }}</td><td>{{ observed_at_text }}</td></tr>
+          <tr><td>{% if row.is_new %}<span class="new-open-symbol-badge" title="本轮新增 symbol">{{ row.symbol }}</span>{% else %}<strong>{{ row.symbol }}</strong>{% endif %}</td><td>{{ row.interval }}</td><td>{{ '%.8f'|format(row.funding_rate) }}</td><td>{{ observed_at_text }}</td></tr>
         {% endfor %}
         </tbody>
       </table>
     </div>
   </section>
+
+  {% if previous_rows %}
+  <section class="panel alpha-panel">
+    <div class="panel-header">
+      <div><h2>上一批资金费率数据</h2><p>{{ previous_rows|length }} 个 symbol · 采集时间：{{ previous_observed_at_text }}（UTC）</p></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Symbol</th><th>Interval</th><th>Funding Rate</th><th>采集时间（UTC）</th></tr></thead>
+        <tbody>
+        {% for row in previous_rows %}
+          <tr><td><strong>{{ row.symbol }}</strong></td><td>{{ row.interval }}</td><td>{{ '%.8f'|format(row.funding_rate) }}</td><td>{{ previous_observed_at_text }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
 {% endif %}
 {% endblock %}
