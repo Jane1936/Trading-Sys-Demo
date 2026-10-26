@@ -20,6 +20,21 @@
     </div>
   </section>
 
+  {% set realtime_funding = realtime_funding_batches %}
+  <section class="panel alpha-realtime-funding-panel" aria-labelledby="alpha-realtime-funding-title">
+    <div class="panel-title alpha-panel-title">
+      <div><h2 id="alpha-realtime-funding-title">实时资金费率提示</h2><span>对比 Alpha 币观测页上一轮与最新一轮 1h 资金费率采集批次；本轮新增 symbol 高亮显示。</span></div>
+      {% if realtime_funding.latest_ts %}<span class="muted">最新采集批次：{{ realtime_funding.latest_ts|fmt_ms_datetime }}</span>{% endif %}
+    </div>
+    {% if realtime_funding.latest %}
+    <div class="chips"><span class="chip">最新 {{ realtime_funding.latest|length }} 个 symbol</span><span class="chip">上一批 {{ realtime_funding.previous|length }} 个 symbol</span>{% if realtime_funding.new_symbols %}<span class="chip danger">本轮新增 {{ realtime_funding.new_symbols|length }} 个</span>{% endif %}</div>
+    {% if realtime_funding.previous_ts %}<div class="muted realtime-funding-previous">上一轮采集批次：{{ realtime_funding.previous_ts|fmt_ms_datetime }}</div>{% endif %}
+    <div class="table-wrap"><table class="alpha-table"><thead><tr><th>Symbol</th><th>Interval</th><th>Funding Rate</th><th>采集时间（UTC）</th></tr></thead><tbody>
+      {% for row in realtime_funding.latest %}<tr><td>{% if row.is_new %}<span class="new-open-symbol-badge" title="本轮新增 symbol">{{ row.symbol }}</span>{% else %}<strong>{{ row.symbol }}</strong>{% endif %}</td><td>{{ row.interval }}</td><td class="numeric">{{ '%.8f'|format(row.funding_rate) }}</td><td>{{ realtime_funding.latest_ts|fmt_ms_datetime }}</td></tr>{% endfor %}
+    </tbody></table></div>
+    {% else %}<p class="empty-state">暂无实时资金费率采集批次</p>{% endif %}
+  </section>
+
   <section class="alpha-market-summary" aria-labelledby="alpha-summary-title">
     <div class="alpha-summary-heading">
       <div>
