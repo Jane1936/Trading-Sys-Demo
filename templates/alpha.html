@@ -31,6 +31,12 @@
     <div class="table-wrap"><table class="alpha-table"><thead><tr><th>Symbol</th><th>Interval</th><th>Funding Rate</th><th>采集时间（UTC）</th></tr></thead><tbody>
       {% for row in realtime_funding.latest %}<tr><td>{% if row.is_new %}<span class="new-open-symbol-badge" title="本轮新增 symbol">{{ row.symbol }}</span>{% else %}<strong>{{ row.symbol }}</strong>{% endif %}</td><td>{{ row.interval }}</td><td class="numeric">{{ '%.8f'|format(row.funding_rate) }}</td><td>{{ realtime_funding.latest_ts|fmt_ms_datetime }}</td></tr>{% endfor %}
     </tbody></table></div>
+    {% if realtime_funding.previous_ts %}
+    <h3 class="alpha-realtime-funding-subtitle">上一批资金费率数据</h3>
+    <div class="table-wrap"><table class="alpha-table"><thead><tr><th>Symbol</th><th>Interval</th><th>Funding Rate</th><th>采集时间（UTC）</th></tr></thead><tbody>
+      {% for row in realtime_funding.previous %}<tr><td><strong>{{ row.symbol }}</strong></td><td>{{ row.interval }}</td><td class="numeric">{{ '%.8f'|format(row.funding_rate) }}</td><td>{{ realtime_funding.previous_ts|fmt_ms_datetime }}</td></tr>{% endfor %}
+    </tbody></table></div>
+    {% endif %}
     {% else %}<p class="empty-state">暂无实时资金费率采集批次</p>{% endif %}
   </section>
 
