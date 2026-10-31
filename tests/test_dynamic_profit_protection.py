@@ -265,6 +265,56 @@ def test_dynamic_profit_protection_uses_highest_reached_tier_priority_over_curre
     assert account.signed_posts[-1][1]["type"] == "MARKET"
 
 
+@pytest.mark.parametrize(
+    "is_live,floating_r,simulation_guard_enabled,expected_tier,expected_drawdown,expected_eligible",
+    [
+        (False, "7", True, "最高档 6.5 R", "0", False),
+        (True, "7", True, "4R以上", "0.2", True),
+        (True, "8", True, "最高档 8 R", "0", False),
+        (False, "7", False, "4R以上", "0.2", True),
+    ],
+)
+def test_floating_profit_final_tier_uses_environment_cutoff_and_enable_flag(
+    tmp_path, monkeypatch, is_live, floating_r, simulation_guard_enabled,
+    expected_tier, expected_drawdown, expected_eligible,
+):
+    db_path = str(tmp_path / "positions.db")
+    _seed_db(db_path, close=10.05, high=10.1)
+    monkeypatch.setattr(
+        protection_module.db_config, "REAL_TRADING_DB_PATH",
+        db_path if is_live else str(tmp_path / "other-live.db"),
+    )
+    monkeypatch.setattr(protection_module.db_config, "REAL_TRADING_CORE_DB_PATH", db_path)
+    monkeypatch.setattr(protection_module.db_config, "REAL_TRADING_INFO_DB_PATH", db_path)
+    monkeypatch.setattr(
+        protection_module,
+        "get_settings",
+        lambda: {
+            **protection_module.DEFAULT_SETTINGS,
+            "floating_profit_disable_simulation_enabled": simulation_guard_enabled,
+            "floating_profit_disable_simulation_min_r": 6.5,
+            "floating_profit_disable_live_min_r": 8.0,
+        },
+    )
+    monkeypatch.setattr(
+        protection_module.allusdt_24h_ticker, "fetch_change_percent", lambda: 0.0
+    )
+    account = FakeAccountManager(unrealized_profit="0")
+    tracker = DynamicProfitProtection(db_path=db_path, account_manager=account)
+    baseline = tracker.run_round()
+    account.unrealized_profit = str(Decimal(floating_r) * Decimal(baseline["r_usdt"]))
+    result = tracker.run_round()
+    _, checks = tracker.get_latest_round_checks()
+
+    assert result["triggered"] == 0
+    assert checks[0].current_tier == expected_tier
+    assert checks[0].drawdown_threshold == expected_drawdown
+    assert checks[0].eligible is expected_eligible
+    if not expected_eligible:
+        assert checks[0].reason == "floating_profit_reached_threshold_dynamic_drawdown_protection_disabled"
+    assert account.signed_posts == []
+
+
 def test_dynamic_profit_protection_tier_boundaries():
     tier_for = DynamicProfitProtection._tier_and_threshold_for_reached_r_multiple
 

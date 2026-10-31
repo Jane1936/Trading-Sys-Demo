@@ -305,11 +305,17 @@ class DynamicProfitProtection:
             )
             highest_floating_pnl = max(pnl, (highest - entry_price) * amount)
             highest_floating_r_multiple = highest_floating_pnl / r_value if r_value > 0 else Decimal("0")
+            floating_profit_disable_min_r = Decimal(
+                str(protection_settings.get("floating_profit_disable_min_r", 6))
+            )
             floating_profit_disable_reached = bool(
                 protection_settings.get("floating_profit_disable_enabled", False)
-                and max(floating_r_multiple, highest_floating_r_multiple) >= Decimal(str(protection_settings.get("floating_profit_disable_min_r", 6)))
+                and max(floating_r_multiple, highest_floating_r_multiple) >= floating_profit_disable_min_r
             )
             if floating_profit_disable_reached:
+                # This is the final tier for the account: the same floating-profit
+                # cutoff also suspends all dynamic profit drawdown protection.
+                current_tier = f"最高档 {self._fmt_decimal(floating_profit_disable_min_r)} R"
                 threshold = Decimal("0")
             eligible = eligible and cycle_total_pnl is not None and bool(protection_settings["enabled"]) and threshold > 0
             if amount <= 0:
