@@ -10,6 +10,15 @@
 {% endblock %}
 
 {% block content %}
+  {% macro live_bool_badge(value, key, reason='') -%}
+    {% if key == 'triggered' and reason == 'break_even_already_completed' %}
+      <span class="status-badge status-pass">已完成保本</span>
+    {% elif key == 'triggered' or key.endswith('_triggered') %}
+      <span class="status-badge {{ 'status-fail' if value else 'status-pass' }}">{{ '是' if value else '否' }}</span>
+    {% else %}
+      <span class="status-badge {{ 'status-pass' if value else 'status-fail' }}">{{ '是' if value else '否' }}</span>
+    {% endif %}
+  {%- endmacro %}
   <section id="tab-live" class="panel {{ 'active' if active_tab == 'tab-live' else '' }}">
     <div class="card">
       <div class="header"><h2>实盘数据</h2></div>
@@ -138,7 +147,7 @@
         </div>
         </div>
 
-        <div id="live-holding-module-reduction" class="holding-module-panel" role="tabpanel">
+        <div id="live-holding-module-reduction" class="holding-module-panel" role="tabpanel" hidden>
         <div class="critical-section" aria-label="减仓条件模块">
           <div class="symbol-strip">
             <div><strong>实盘减仓条件模块：本轮执行结果</strong></div>
@@ -316,7 +325,7 @@
         </div>
 
 
-        <div id="live-holding-module-increase" class="holding-module-panel" role="tabpanel">
+        <div id="live-holding-module-increase" class="holding-module-panel" role="tabpanel" hidden>
         <div class="critical-section sky-theme-section" aria-label="加仓条件模块">
           <div class="symbol-strip">
             <div><strong>实盘加仓条件模块：本轮判断结果</strong></div>
@@ -446,7 +455,7 @@
         </div>
 
 
-        <div id="live-holding-module-portfolio-risk" class="holding-module-panel" role="tabpanel">
+        <div id="live-holding-module-portfolio-risk" class="holding-module-panel" role="tabpanel" hidden>
         <div class="critical-section portfolio-risk-section" aria-label="组合风险约束">
           <div class="symbol-strip">
             <div><strong>实盘组合风险约束</strong></div>
@@ -504,11 +513,10 @@
         </div>
         </div>
 
-        <span class="sr-only">保本止盈 分批止盈 移动追踪减仓 动态利润保护 移动追踪止盈</span>
         {% for module in live_high_frequency_modules %}
-        <div id="{{ module.key }}" class="holding-module-panel" role="tabpanel">
+        <div id="{{ module.key }}" class="holding-module-panel" role="tabpanel" hidden>
           <div class="experiment-note"><div>{{ module.label }}判断结果存储于 <code>real_trading_core.db</code>，操作记录存储于 <code>real_trading_info.db</code>；订单使用 Binance 实盘接口。{% if module.api_key == 'hard-take-profit' %}涨幅止盈按盈利率阈值扫描平仓，阈值与模拟盘共用；“硬止盈配置”设置固定金额止盈挂单。{% endif %}</div><div><button class="btn btn-primary btn-small live-module-refresh" type="button" data-live-module="{{ module.api_key }}">刷新</button> <span class="muted live-module-refresh-status">仅刷新本模块最新数据</span></div><div class="muted live-high-frequency-round-note">最近轮次：{{ module.round_ts|fmt_ms_datetime if module.round_ts else '-' }}</div></div>
-          <div class="critical-section sky-theme-section"><div class="symbol-strip"><div><strong>实盘{{ module.label }}判断结果</strong><div class="muted">字段与模拟盘对应模块保持一致；新开仓但尚未完成本模块扫描的 symbol 会标记为“待扫描”。</div></div></div><div class="table-wrap"><table><thead><tr>{% for column in module.tables.check_columns %}<th>{{ column[0] }}</th>{% endfor %}</tr></thead><tbody class="live-high-frequency-checks-body">{% for row in module.checks %}<tr>{% for column in module.tables.check_columns %}<td>{% if column[2] == 'time' %}{{ row.get(column[1])|fmt_ms_datetime if row.get(column[1]) else '-' }}{% elif column[2] == 'bool' %}{{ '是' if row.get(column[1]) else '否' }}{% else %}{{ row.get(column[1]) if row.get(column[1]) is not none and row.get(column[1]) != '' else '-' }}{% endif %}</td>{% endfor %}</tr>{% else %}<tr><td class="empty" colspan="{{ module.tables.check_columns|length }}">暂无实盘{{ module.label }}判断结果</td></tr>{% endfor %}</tbody></table></div></div>
+          <div class="critical-section sky-theme-section"><div class="symbol-strip"><div><strong>实盘{{ module.label }}判断结果</strong><div class="muted">字段与模拟盘对应模块保持一致；新开仓但尚未完成本模块扫描的 symbol 会标记为“待扫描”。</div></div></div><div class="table-wrap"><table><thead><tr>{% for column in module.tables.check_columns %}<th>{{ column[0] }}</th>{% endfor %}</tr></thead><tbody class="live-high-frequency-checks-body">{% for row in module.checks %}<tr>{% for column in module.tables.check_columns %}<td>{% if column[2] == 'time' %}{{ row.get(column[1])|fmt_ms_datetime if row.get(column[1]) else '-' }}{% elif column[2] == 'bool' %}{{ live_bool_badge(row.get(column[1]), column[1], row.get('reason', '')) }}{% else %}{{ row.get(column[1]) if row.get(column[1]) is not none and row.get(column[1]) != '' else '-' }}{% endif %}</td>{% endfor %}</tr>{% else %}<tr><td class="empty" colspan="{{ module.tables.check_columns|length }}">暂无实盘{{ module.label }}判断结果</td></tr>{% endfor %}</tbody></table></div></div>
           <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10"><div class="symbol-strip collapsible-header"><div><strong>实盘{{ module.label }}操作记录</strong><div class="muted">默认展示最新 10 条，字段与模拟盘对应操作记录保持一致。</div></div><button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button></div><div class="table-wrap"><table><thead><tr>{% for column in module.tables.record_columns %}<th>{{ column[0] }}</th>{% endfor %}</tr></thead><tbody class="live-high-frequency-records-body">{% for row in module.records %}<tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">{% for column in module.tables.record_columns %}<td>{% if column[2] == 'time' %}{{ row.get(column[1])|fmt_ms_datetime if row.get(column[1]) else '-' }}{% elif column[2] == 'bool' %}{{ '是' if row.get(column[1]) else '否' }}{% else %}{{ row.get(column[1]) if row.get(column[1]) is not none and row.get(column[1]) != '' else '-' }}{% endif %}</td>{% endfor %}</tr>{% else %}<tr><td class="empty" colspan="{{ module.tables.record_columns|length }}">暂无实盘{{ module.label }}操作记录</td></tr>{% endfor %}</tbody></table></div></div>
         </div>
         {% endfor %}

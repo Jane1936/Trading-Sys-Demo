@@ -18,7 +18,13 @@
       item.classList.toggle('active', selected);
       item.setAttribute('aria-selected', String(selected));
     });
-    panels.forEach(panel => panel.classList.toggle('active', panel.id === button.dataset[attribute]));
+    panels.forEach(panel => {
+      const selected = panel.id === button.dataset[attribute];
+      panel.classList.toggle('active', selected);
+      // Keep inactive panels out of the accessibility tree and the layout even
+      // if a stale stylesheet is cached by the browser.
+      panel.hidden = !selected;
+    });
   }
 
   const liveButtons = [...document.querySelectorAll('.bookmark-tab[data-live-tab]')];
@@ -278,7 +284,14 @@
       const [, key, type] = column;
       const value = row[key];
       if (type === 'time') return `<td>${formatTime(value)}</td>`;
-      if (type === 'bool') return `<td>${value ? '是' : '否'}</td>`;
+      if (type === 'bool') {
+        if (key === 'triggered' && row.reason === 'break_even_already_completed') {
+          return '<td><span class="status-badge status-pass">已完成保本</span></td>';
+        }
+        const triggered = key === 'triggered' || key.endsWith('_triggered');
+        const statusClass = triggered ? (value ? 'status-fail' : 'status-pass') : (value ? 'status-pass' : 'status-fail');
+        return `<td><span class="status-badge ${statusClass}">${value ? '是' : '否'}</span></td>`;
+      }
       return `<td>${escapeHtml(value === null || value === undefined || value === '' ? '-' : value)}</td>`;
     }).join('')}</tr>`).join('') : `<tr><td class="empty" colspan="${columns.length}">${emptyText}</td></tr>`;
   }

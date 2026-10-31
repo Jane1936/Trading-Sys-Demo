@@ -147,7 +147,7 @@ def test_live_hard_take_profit_summary_exposes_matching_tables(monkeypatch):
 
     assert response.status_code == 200
     payload = response.get_json()
-    assert payload["label"] == "硬止盈"
+    assert payload["label"] == "涨幅止盈"
     assert [column[1] for column in payload["tables"]["check_columns"]] == [
         "checked_at", "symbol", "entry_price", "position_amt", "unrealized_pnl",
         "position_notional", "profit_ratio", "profit_threshold", "triggered",

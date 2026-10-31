@@ -313,6 +313,7 @@ tbody tr:hover { background: #f8fdff; }
 .holding-module-tab:hover { transform:translateY(-1px); background:#dbeafe; }
 .holding-module-tab.active { background:linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%); border-color:#2563eb; color:#fff; box-shadow:0 8px 18px rgba(37, 99, 235, 0.22); }
 .holding-module-panel { display:none; padding-top:16px; }
+.holding-module-panel[hidden] { display:none !important; }
 .holding-module-panel.active { display:block; }
 .account-summary { display:flex; gap:12px; flex-wrap:wrap; padding:14px 20px; border-bottom:1px solid var(--line); background:#f8fdff; }
 .account-metric { min-width:180px; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:#fff; box-shadow:0 3px 12px rgba(14, 116, 144, 0.08); }
