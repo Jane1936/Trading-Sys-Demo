@@ -32,7 +32,11 @@ from openable_symbol_settings import get_settings as get_openable_symbol_setting
 from pre_safety_module import PreSafetyModule
 from partial_take_profit import PartialTakeProfitStrategy
 from dynamic_profit_protection import DynamicProfitProtection
-from hard_take_profit import HardTakeProfit
+from price_gain_take_profit import PriceGainTakeProfit
+from price_gain_take_profit_settings import (
+    get_settings as get_price_gain_take_profit_settings,
+    set_settings as set_price_gain_take_profit_settings,
+)
 from hard_take_profit_settings import (
     get_settings as get_hard_take_profit_settings,
     set_settings as set_hard_take_profit_settings,
@@ -88,6 +92,45 @@ from sqlite_recovery import (
 )
 
 app = Flask(__name__)
+
+LIVE_ACCOUNT_SNAPSHOT_TABLE = "live_account_equity_snapshots"
+
+
+def _init_live_account_snapshot_table() -> None:
+    """Create the durable source used by the live account equity display."""
+    with db_config.connect_sqlite(db_config.REAL_TRADING_CORE_DB_PATH) as conn:
+        conn.execute(f"""
+            CREATE TABLE IF NOT EXISTS {LIVE_ACCOUNT_SNAPSHOT_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recorded_at INTEGER NOT NULL,
+                account_balance_usdt TEXT NOT NULL,
+                available_balance_usdt TEXT NOT NULL DEFAULT '',
+                unrealized_pnl_usdt TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'manual_balance_query'
+            )
+        """)
+        conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{LIVE_ACCOUNT_SNAPSHOT_TABLE}_recorded_at ON {LIVE_ACCOUNT_SNAPSHOT_TABLE}(recorded_at DESC)")
+
+
+def _record_live_account_snapshot(payload: dict) -> dict:
+    balances = payload.get("balances") or []
+    usdt = next((row for row in balances if str(row.get("asset", "")).upper() == "USDT"), None)
+    if not usdt or usdt.get("balance") in (None, ""):
+        return None
+    recorded_at = int(payload.get("queried_at") or time.time() * 1000)
+    snapshot = {
+        "recorded_at": recorded_at,
+        "account_balance_usdt": str(usdt.get("balance")),
+        "available_balance_usdt": str(usdt.get("available_balance") or ""),
+        "unrealized_pnl_usdt": str(usdt.get("cross_un_pnl") or ""),
+    }
+    _init_live_account_snapshot_table()
+    with db_config.connect_sqlite(db_config.REAL_TRADING_CORE_DB_PATH) as conn:
+        conn.execute(
+            f"INSERT INTO {LIVE_ACCOUNT_SNAPSHOT_TABLE} (recorded_at, account_balance_usdt, available_balance_usdt, unrealized_pnl_usdt) VALUES (?, ?, ?, ?)",
+            (snapshot["recorded_at"], snapshot["account_balance_usdt"], snapshot["available_balance_usdt"], snapshot["unrealized_pnl_usdt"]),
+        )
+    return snapshot
 
 DB_PATH = db_config.BASE_DB_PATH
 BASE_DB_PATH = db_config.BASE_DB_PATH
@@ -288,7 +331,7 @@ def load_settings_context() -> dict:
                 "allusdt_24h_rise_max_open_positions": 15,
             },
         ),
-        "zombie_force_liquidation_settings": load_setting("僵尸强平时间配置", lambda: get_zombie_force_settings(CONFIG_DB_PATH), {"holding_hours": 24, "allusdt_rise_threshold_percent": 4, "high_rise_holding_hours": 12}),
+        "zombie_force_liquidation_settings": load_setting("僵尸强平时间配置", lambda: get_zombie_force_settings(CONFIG_DB_PATH), {"holding_hours": 24, "allusdt_rise_threshold_percent": 4, "high_rise_holding_hours": 12, "break_even_holding_hours": 48}),
         "margin_budget_settings": load_setting("总仓位成本配置", lambda: get_margin_budget_settings(CONFIG_DB_PATH), {"simulation_max_margin_cost_usdt": Decimal("1000"), "live_max_margin_cost_usdt": Decimal("100")}),
         "dynamic_profit_protection_settings": load_setting(
             "动态利润保护配置",
@@ -306,6 +349,10 @@ def load_settings_context() -> dict:
                 "tier_3_drawdown_ratio": 0.3,
                 "tier_4_drawdown_ratio": 0.2,
             },
+        ),
+        "price_gain_take_profit_settings": load_setting(
+            "涨幅止盈配置", lambda: get_price_gain_take_profit_settings(CONFIG_DB_PATH),
+            {"simulation_profit_ratio": 0.2, "live_profit_ratio": 0.2},
         ),
         "hard_take_profit_settings": load_setting(
             "硬止盈配置",
@@ -471,7 +518,7 @@ def load_simulation_context() -> dict:
         "移动追踪减仓", _trailing_reduction_payload
     )
     dynamic_round, dynamic_checks, dynamic_records = payload_values("动态利润保护", _dynamic_profit_protection_payload)
-    hard_round, hard_checks, hard_records = payload_values("硬止盈", _hard_take_profit_payload)
+    hard_round, hard_checks, hard_records = payload_values("涨幅止盈", _hard_take_profit_payload)
 
     partial = PartialTakeProfitStrategy(db_path=_trading_db_path())
     partial_round, partial_checks = load_module("分批止盈检查", partial.get_latest_round_checks, (0, []))
@@ -538,6 +585,7 @@ def load_live_context() -> dict:
 
     since_ms = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp() * 1000)
     load_module("实盘交易表初始化", real_trading.initialize, None)
+    load_module("实盘账户快照表初始化", _init_live_account_snapshot_table, None)
     experiment = load_module("实盘交易实验模块", real_trading.experiment, None)
     trade_records = load_module(
         "实盘交易实验记录",
@@ -575,7 +623,7 @@ def load_live_context() -> dict:
         ("partial-take-profit", "分批止盈", "recent_records"),
         ("trailing-reduction", "移动追踪减仓", "recent_action_records"),
         ("dynamic-profit-protection", "动态利润保护", "recent_action_records"),
-        ("hard-take-profit", "硬止盈", "recent_action_records"),
+        ("hard-take-profit", "涨幅止盈", "recent_action_records"),
         ("trailing-stop", "移动追踪止盈", "recent_action_records"),
     )
     for (key, label, records_method), module in zip(definitions, modules):
@@ -604,6 +652,7 @@ def load_live_context() -> dict:
         "live_zombie_records": load_module("实盘僵尸强平记录", lambda: real_trading.zombie_module().recent_records(limit=100, since_ms=since_ms), []),
         "live_equity_trend_rows": equity_rows,
         "live_trading_equity": equity,
+        "live_equity_last_recorded_at": equity_rows[-1]["recorded_at"] if equity_rows else None,
         "live_seven_day_return": _equity_return(equity_rows),
         "live_fifteen_day_return": _equity_return(fifteen_day_equity_rows),
         "live_holding_stop_loss_round_ts": stop_round,
@@ -671,6 +720,7 @@ def _experiment_equity_trend_rows(
 ) -> list[sqlite3.Row]:
     """Return one experiment USDT equity point per recorded scan/open timestamp."""
     sources = [
+        (LIVE_ACCOUNT_SNAPSHOT_TABLE, "recorded_at", "account_balance_usdt"),
         (TradingExperiment.TRADES_TABLE, "created_at"),
         (BreakEvenTakeProfitStrategy.CHECKS_TABLE, "checked_at"),
         (PartialTakeProfitStrategy.CHECKS_TABLE, "checked_at"),
@@ -681,17 +731,19 @@ def _experiment_equity_trend_rows(
             conn.row_factory = sqlite3.Row
             union_queries = []
             params: list[int] = []
-            for table_name, ts_column in sources:
+            for source in sources:
+                table_name, ts_column = source[0], source[1]
+                value_column = source[2] if len(source) > 2 else "account_equity_usdt"
                 if not _table_exists(conn, table_name):
                     continue
                 union_queries.append(
                     f"""
                     SELECT {ts_column} AS recorded_at,
-                           CAST(account_equity_usdt AS REAL) AS account_equity_usdt
+                           CAST({value_column} AS REAL) AS account_equity_usdt
                     FROM {table_name}
                     WHERE {ts_column} >= ?
-                      AND account_equity_usdt IS NOT NULL
-                      AND account_equity_usdt != ''
+                      AND {value_column} IS NOT NULL
+                      AND {value_column} != ''
                     """
                 )
                 params.append(int(since_ms))
@@ -934,9 +986,9 @@ def _filled_order_exit_reason_matches(
                     break
         return matches
 
-    if _table_exists(conn, HardTakeProfit.RECORDS_TABLE, schema=info_schema):
+    if _table_exists(conn, PriceGainTakeProfit.RECORDS_TABLE, schema=info_schema):
         hard_take_profit_table = _qualified_table(
-            info_schema, HardTakeProfit.RECORDS_TABLE
+            info_schema, PriceGainTakeProfit.RECORDS_TABLE
         )
         # ``CREATE TABLE IF NOT EXISTS`` does not migrate databases created by
         # older deployments.  In particular, production may already have this
@@ -947,7 +999,7 @@ def _filled_order_exit_reason_matches(
             row["name"]
             for row in conn.execute(
                 f"PRAGMA {db_config.quote_identifier(info_schema)}.table_info("
-                f"{db_config.quote_identifier(HardTakeProfit.RECORDS_TABLE)})"
+                f"{db_config.quote_identifier(PriceGainTakeProfit.RECORDS_TABLE)})"
             ).fetchall()
         }
         hard_take_profit_order_id_select = (
@@ -978,7 +1030,7 @@ def _filled_order_exit_reason_matches(
                 row["close_quantity"], quantity
             ):
                 matches.append(
-                    {"type": "自动化硬止盈", "matched_at": str(row["matched_at"] or "")}
+                    {"type": "自动化涨幅止盈", "matched_at": str(row["matched_at"] or "")}
                 )
                 break
 
@@ -1113,8 +1165,8 @@ def _filled_order_exit_reason_label(order: dict, matches: list[dict[str, str]]) 
     if side not in {"SELL", "BUY"}:
         return ""
 
-    if "自动化硬止盈" in match_types:
-        return "自动化硬止盈"
+    if "自动化涨幅止盈" in match_types:
+        return "自动化涨幅止盈"
     if "减仓失败强平" in match_types:
         return "减仓失败强平"
     if "僵尸强平" in match_types:
@@ -1300,6 +1352,69 @@ def market_safety():
     return render_template("market.html", **load_market_safety_context())
 
 
+@app.get("/market/alpha/funding")
+def alpha_realtime_funding():
+    """Display the latest two 1h realtime funding-rate collection batches."""
+    rows = []
+    previous_rows = []
+    observed_at = None
+    previous_observed_at = None
+    observed_at_text = None
+    previous_observed_at_text = None
+    new_symbols = set()
+    error = None
+    try:
+        # Keep the page usable even when Flask is started without the app factory.
+        alpha_observer.init_db(ALPHA_DB_PATH)
+        with db_config.connect_sqlite(ALPHA_DB_PATH, row_factory=sqlite3.Row) as conn:
+            batches = [row["observed_at"] for row in conn.execute(
+                """SELECT DISTINCT observed_at
+                   FROM alpha_realtime_funding
+                   WHERE interval = '1h'
+                   ORDER BY observed_at DESC LIMIT 2"""
+            ).fetchall()]
+            observed_at = batches[0] if batches else None
+            previous_observed_at = batches[1] if len(batches) > 1 else None
+            if observed_at is not None:
+                observed_at_text = datetime.fromtimestamp(
+                    int(observed_at) / 1000, timezone.utc
+                ).strftime("%Y-%m-%d %H:%M:%S")
+                rows = [dict(row) for row in conn.execute(
+                    """SELECT symbol, funding_rate, observed_at, interval
+                       FROM alpha_realtime_funding
+                       WHERE interval = '1h' AND observed_at = ?
+                       ORDER BY ABS(funding_rate) DESC, symbol""",
+                    (observed_at,),
+                ).fetchall()]
+            if previous_observed_at is not None:
+                previous_observed_at_text = datetime.fromtimestamp(
+                    int(previous_observed_at) / 1000, timezone.utc
+                ).strftime("%Y-%m-%d %H:%M:%S")
+                previous_rows = [dict(row) for row in conn.execute(
+                    """SELECT symbol, funding_rate, observed_at, interval
+                       FROM alpha_realtime_funding
+                       WHERE interval = '1h' AND observed_at = ?
+                       ORDER BY ABS(funding_rate) DESC, symbol""",
+                    (previous_observed_at,),
+                ).fetchall()]
+                previous_symbols = {row["symbol"] for row in previous_rows}
+                new_symbols = {row["symbol"] for row in rows if row["symbol"] not in previous_symbols}
+                for row in rows:
+                    row["is_new"] = row["symbol"] in new_symbols
+    except (sqlite3.Error, OSError) as exc:
+        error = str(exc)
+    return render_template(
+        "alpha_funding.html",
+        rows=rows,
+        previous_rows=previous_rows,
+        observed_at=observed_at,
+        previous_observed_at=previous_observed_at,
+        observed_at_text=observed_at_text,
+        previous_observed_at_text=previous_observed_at_text,
+        error=error,
+    )
+
+
 @app.get("/market/alpha")
 def alpha_market():
     """Show the most recently completed hourly Alpha-token snapshot."""
@@ -1327,6 +1442,7 @@ def alpha_market():
         consecutive_up_days_min = 2
     try:
         observed_at, rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
+        realtime_funding_batches = _alpha_realtime_funding_batches()
         try:
             trends = alpha_observer.daily_trends(ALPHA_DB_PATH) if not defer_modules and (not is_partial_filter or "consecutive_up_days_min" in request.args) else []
         except sqlite3.DatabaseError:
@@ -1367,6 +1483,7 @@ def alpha_market():
         except Exception:
             observed_at, tokens = None, []
         trends, database_status, oi_changes, funding_changes, error = [], None, [], [], str(exc)
+        realtime_funding_batches = {"latest_ts": None, "previous_ts": None, "latest": [], "previous": [], "new_symbols": []}
     observed_time = (
         datetime.fromtimestamp(observed_at / 1000, timezone.utc)
         .strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -1386,6 +1503,7 @@ def alpha_market():
         price_max=price_max,
         funding_min=funding_min,
         funding_price_max=funding_price_max,
+        realtime_funding_batches=realtime_funding_batches,
         consecutive_up_days_min=consecutive_up_days_min,
         module_updated_at={
             "oi": _alpha_module_updated_text("oi"),
@@ -1590,6 +1708,41 @@ def _alpha_oi_changes():
     return _cached_alpha_analytics("oi", int(observed_at), load)
 
 
+def _alpha_realtime_funding_batches() -> dict:
+    """Return the newest two hourly Alpha funding-rate batches."""
+    empty = {"latest_ts": None, "previous_ts": None, "latest": [], "previous": [], "new_symbols": []}
+    try:
+        with db_config.connect_sqlite(ALPHA_DB_PATH) as conn:
+            times = [row[0] for row in conn.execute(
+                "SELECT DISTINCT open_time FROM alpha_hourly_market "
+                "WHERE funding_rate IS NOT NULL ORDER BY open_time DESC LIMIT 2"
+            ).fetchall()]
+            if not times:
+                return empty
+            latest_ts, previous_ts = times[0], (times[1] if len(times) > 1 else None)
+
+            def rows_for(batch_ts):
+                if batch_ts is None:
+                    return []
+                return [
+                    {"symbol": row[0], "funding_rate": row[1], "interval": "1h"}
+                    for row in conn.execute(
+                        "SELECT symbol, funding_rate FROM alpha_hourly_market "
+                        "WHERE open_time = ? AND funding_rate IS NOT NULL ORDER BY symbol",
+                        (batch_ts,),
+                    ).fetchall()
+                ]
+
+            latest, previous = rows_for(latest_ts), rows_for(previous_ts)
+            previous_symbols = {row["symbol"] for row in previous}
+            new_symbols = sorted(row["symbol"] for row in latest if row["symbol"] not in previous_symbols)
+            for row in latest:
+                row["is_new"] = row["symbol"] not in previous_symbols
+            return {"latest_ts": latest_ts, "previous_ts": previous_ts, "latest": latest, "previous": previous, "new_symbols": new_symbols}
+    except (sqlite3.Error, OSError):
+        return empty
+
+
 def _alpha_funding_changes():
     """Return four-hour funding-rate and price changes for Alpha futures."""
     observed_at, alpha_rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
@@ -1710,6 +1863,13 @@ def score_trend_api():
                 {
                     "decision_round_ts": int(row["decision_round_ts"]),
                     "total_score": int(row["total_score"]),
+                    **{
+                        f"rule{rule_id}_score": (
+                            int(row[f"rule{rule_id}_score"])
+                            if row[f"rule{rule_id}_score"] is not None else None
+                        )
+                        for rule_id in range(1, 19)
+                    },
                 }
                 for row in rows
             ],
@@ -1734,7 +1894,10 @@ def account_balance_api():
 def live_account_balance_api():
     """Read production account balances without changing demo trading mode."""
     try:
-        return jsonify(BinanceAccountManager.live().futures_balance())
+        payload = BinanceAccountManager.live().futures_balance()
+        snapshot = _record_live_account_snapshot(payload)
+        payload["equity_snapshot"] = snapshot
+        return jsonify(payload)
     except BinanceAccountConfigError as exc:
         return jsonify({"error": str(exc)}), 400
     except requests.exceptions.RequestException as exc:
@@ -2005,7 +2168,7 @@ def dynamic_profit_protection_summary_api():
 
 
 def _hard_take_profit_payload() -> dict:
-    return HardTakeProfit(db_path=_trading_db_path()).summary_payload()
+    return PriceGainTakeProfit(db_path=_trading_db_path()).summary_payload()
 
 
 @app.get("/api/hard-take-profit/summary")
@@ -2087,7 +2250,7 @@ LIVE_HIGH_FREQUENCY_MODULES = {
     "partial-take-profit": (1, "分批止盈", "recent_records"),
     "trailing-reduction": (2, "移动追踪减仓", "recent_action_records"),
     "dynamic-profit-protection": (3, "动态利润保护", "recent_action_records"),
-    "hard-take-profit": (4, "硬止盈", "recent_action_records"),
+    "hard-take-profit": (4, "涨幅止盈", "recent_action_records"),
     "trailing-stop": (5, "移动追踪止盈", "recent_action_records"),
 }
 
@@ -2434,6 +2597,20 @@ def update_dynamic_profit_protection_settings_api():
         return jsonify(set_dynamic_profit_protection_settings(
             request.get_json(silent=True) or {}, CONFIG_DB_PATH
         ))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+
+@app.get("/api/price-gain-take-profit-settings")
+def price_gain_take_profit_settings_api():
+    return jsonify(get_price_gain_take_profit_settings(CONFIG_DB_PATH))
+
+
+@app.put("/api/price-gain-take-profit-settings")
+def update_price_gain_take_profit_settings_api():
+    try:
+        return jsonify(set_price_gain_take_profit_settings(request.get_json(silent=True) or {}, CONFIG_DB_PATH))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 

@@ -42,8 +42,9 @@ from openable_symbol_module import OpenableSymbol, OpenableSymbolModule
 from pre_safety_module import PreSafetyModule
 from partial_take_profit import PartialTakeProfitStrategy
 from dynamic_profit_protection import DynamicProfitProtection
-from hard_take_profit import HardTakeProfit
+from price_gain_take_profit import PriceGainTakeProfit
 from hard_take_profit_settings import get_settings as get_hard_take_profit_settings
+from price_gain_take_profit_settings import get_settings as get_price_gain_take_profit_settings
 from trailing_stop_tracker import TrailingStopTracker
 from trailing_reduction_tracker import TrailingReductionTracker
 from holding_position_scoring import HoldingPositionScoringSystem
@@ -52,6 +53,7 @@ from trading_experiment import ExperimentConfig, TradingExperiment
 from market_filter_module import MarketFilterModule
 import allusdt_24h_ticker
 import alpha_observer
+import alpha_funding_collector
 from weak_market_profit_adjustment import WeakMarketProfitAdjustmentModule
 from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import DynamicOpenThresholdModule
@@ -85,12 +87,67 @@ SQLITE_CHECKPOINT_LOG_RETENTION_DAYS = int(
 _checkpoint_abnormal_counts: dict[str, int] = {}
 _checkpoint_log_lock = threading.Lock()
 _checkpoint_last_log_cleanup_date: str | None = None
+_active_scoring_processes: dict[int, multiprocessing.Process] = {}
+_active_scoring_processes_lock = threading.Lock()
+SCORING_WORKER_DRAIN_TIMEOUT_SEC = float(
+    os.getenv("SCORING_WORKER_DRAIN_TIMEOUT_SEC", "15")
+)
 PROFIT_MARKET_CONVERGENCE_TIMEOUT_SEC = float(
     os.getenv("PROFIT_MARKET_CONVERGENCE_TIMEOUT_SEC", "10")
 )
 PROFIT_MARKET_CONVERGENCE_POLL_SEC = float(
     os.getenv("PROFIT_MARKET_CONVERGENCE_POLL_SEC", "2")
 )
+
+
+def register_scoring_process(process: multiprocessing.Process) -> None:
+    """Make a scoring child visible to database recovery coordination."""
+    if process.pid is None:
+        return
+    with _active_scoring_processes_lock:
+        _active_scoring_processes[process.pid] = process
+
+
+def unregister_scoring_process(process: multiprocessing.Process | None) -> None:
+    if process is None or process.pid is None:
+        return
+    with _active_scoring_processes_lock:
+        _active_scoring_processes.pop(process.pid, None)
+
+
+def drain_scoring_processes(timeout: float | None = None) -> list[int]:
+    """Stop scoring children before an exclusive SQLite recovery operation.
+
+    Recovery can be invoked by the parent process while a scoring child still
+    owns an attached database connection.  Waiting only on the file lock can
+    therefore stall until the normal round deadline.  Ask children to exit,
+    then terminate any child that does not cooperate within a short grace
+    period.  A child never terminates itself when recovery is called from its
+    own process.
+    """
+    wait_timeout = SCORING_WORKER_DRAIN_TIMEOUT_SEC if timeout is None else max(0.0, timeout)
+    current_pid = os.getpid()
+    with _active_scoring_processes_lock:
+        processes = [
+            process
+            for pid, process in _active_scoring_processes.items()
+            if pid != current_pid and process.is_alive()
+        ]
+    drained: list[int] = []
+    deadline = time.monotonic() + wait_timeout
+    for process in processes:
+        remaining = max(0.0, deadline - time.monotonic())
+        process.join(timeout=remaining)
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=2)
+        if process.is_alive() and hasattr(process, "kill"):
+            process.kill()
+            process.join(timeout=2)
+        if not process.is_alive() and process.pid is not None:
+            drained.append(process.pid)
+            unregister_scoring_process(process)
+    return drained
 
 
 def simulation_config() -> ExperimentConfig:
@@ -189,7 +246,7 @@ def _database_initializers() -> dict[str, Callable[[], None]]:
             BreakEvenTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH).init_tables(),
             PartialTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH).init_tables(),
             DynamicProfitProtection(db_path=db_config.TRADING_DB_PATH).init_tables(),
-            HardTakeProfit(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            PriceGainTakeProfit(db_path=db_config.TRADING_DB_PATH).init_tables(),
             TrailingStopTracker(db_path=db_config.TRADING_DB_PATH).init_tables(),
             TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH).init_tables(),
             DynamicAddPositionThresholdModule(db_path=db_config.TRADING_DB_PATH).init_table(),
@@ -203,7 +260,7 @@ def _database_initializers() -> dict[str, Callable[[], None]]:
             HoldingPositionScoringSystem(
                 db_path=db_config.TRADING_DB_PATH
             ).init_tables(),
-            HardTakeProfit(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            PriceGainTakeProfit(db_path=db_config.TRADING_DB_PATH).init_tables(),
             ZombieForceLiquidationModule(db_path=db_config.TRADING_DB_PATH).init_tables(),
         ),
         db_config.TRADING_INFO_DB_PATH: lambda: (
@@ -211,7 +268,7 @@ def _database_initializers() -> dict[str, Callable[[], None]]:
             BreakEvenTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH).init_tables(),
             PartialTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH).init_tables(),
             TrailingReductionTracker(db_path=db_config.TRADING_DB_PATH).init_tables(),
-            HardTakeProfit(db_path=db_config.TRADING_DB_PATH).init_tables(),
+            PriceGainTakeProfit(db_path=db_config.TRADING_DB_PATH).init_tables(),
         ),
         db_config.REAL_TRADING_DB_PATH: real_trading.initialize,
         db_config.REAL_TRADING_INFO_DB_PATH: real_trading.initialize,
@@ -260,6 +317,7 @@ def _database_schema_requirements() -> dict[str, dict[str, set[str]]]:
         },
         db_config.ALPHA_DB_PATH: {
             "alpha_market_snapshots": {"symbol", "volume_24h", "market_cap", "observed_at"},
+            "alpha_realtime_funding": {"symbol", "observed_at", "funding_rate", "interval"},
         },
         db_config.TRADING_DB_PATH: {
             TradingExperiment.ERRORS_TABLE: {"created_at"},
@@ -373,6 +431,12 @@ def check_worker_databases(
         quarantined: list[str] = []
         marker = Path(db_config.database_recovery_marker(db_path))
         marker.write_text(f"pid={os.getpid()} detail={detail}\n", encoding="utf-8")
+        drained = drain_scoring_processes()
+        if drained:
+            print(
+                f"🧹 scoring workers drained before SQLite recovery "
+                f"db={db_path} pids={drained}"
+            )
         # The marker rejects new connections. EX waits until every managed main
         # or ATTACH connection has closed, so no process retains the old inode.
         repaired = False
@@ -424,11 +488,17 @@ def check_worker_databases(
                 failure_record, status="recovered", quarantined_files=quarantined
             )
             print(f"✅ SQLite recovered db={db_path}; quarantined={quarantined}")
-            if db_path == db_config.BASE_DB_PATH and getattr(collector, "UNIVERSE", None):
-                # Refill only the bounded windows needed by rules 8 and 11.
-                # The collector sets a recovery fence so scheduled writes are
-                # skipped while each batch is fetched and committed.
-                collector.recover_rule_windows(collector.UNIVERSE)
+            if db_path == db_config.BASE_DB_PATH:
+                # Always trigger the bounded rule-window bootstrap after base
+                # recovery.  The collector may not have published its cached
+                # universe yet, so bootstrap resolves it when necessary and
+                # reports failures for the periodic retry.
+                try:
+                    collector.bootstrap_rule_windows(
+                        getattr(collector, "UNIVERSE", None)
+                    )
+                except Exception as recovery_exc:
+                    print(f"⚠️ rule window bootstrap after recovery failed: {recovery_exc}")
     return recovered
 
 
@@ -440,6 +510,7 @@ def recover_after_worker_error(exc: BaseException) -> bool:
     # owned by the current round when a nested strategy reports corruption.
     for db_path in db_config.DB_LABELS.values():
         db_config.close_scoped_connection(db_path)
+    drain_scoring_processes()
     check_worker_databases(source="runtime_exception", trigger_exception=exc)
     return True
 
@@ -682,23 +753,26 @@ def run_first_experiment_after_openable_round(
                 f"🧪 first trading experiment round={round_ts} skipped after zombie force liquidation: no qualified symbols"
             )
             return
-        if market_result is not None and not market_result.allow_new_positions:
-            print(f"🧪 first trading experiment round={round_ts} skipped by market filter: {market_result.reason}")
-            return
         if live_trading_enabled:
-            try:
-                live_result = real_trading.experiment().run_round(openable_rows)
-                print(
-                    f"💰 live trading round={round_ts} "
-                    f"opened={live_result.get('opened', 0)} "
-                    f"skipped={live_result.get('skipped', 0)} "
-                    f"reason={live_result.get('reason', '')}"
-                )
-            except Exception as exc:
-                live = real_trading.experiment()
-                live.init_error_tables()
-                live.record_error(symbol="SYSTEM", decision_round_ts=round_ts, operation="real_open_round", exc=exc)
-                print(f"⚠️ live open failed round={round_ts}: {exc}")
+            if market_result is not None and not (market_result.live_allow_new_positions if market_result.live_allow_new_positions is not None else market_result.allow_new_positions):
+                print(f"🧪 live trading round={round_ts} skipped by market filter: {market_result.reason}")
+            else:
+                try:
+                    live_result = real_trading.experiment().run_round(openable_rows)
+                    print(
+                        f"💰 live trading round={round_ts} "
+                        f"opened={live_result.get('opened', 0)} "
+                        f"skipped={live_result.get('skipped', 0)} "
+                        f"reason={live_result.get('reason', '')}"
+                    )
+                except Exception as exc:
+                    live = real_trading.experiment()
+                    live.init_error_tables()
+                    live.record_error(symbol="SYSTEM", decision_round_ts=round_ts, operation="real_open_round", exc=exc)
+                    print(f"⚠️ live open failed round={round_ts}: {exc}")
+        if market_result is not None and not market_result.allow_new_positions:
+            print(f"🧪 simulation trading round={round_ts} skipped by market filter: {market_result.reason}")
+            return
         if not feature_flags.is_feature_enabled(feature_flags.TRADING_SYSTEM):
             print(f"⏸️ trading system disabled round={round_ts}; skipping new positions")
             return
@@ -801,6 +875,7 @@ def _reap_or_timeout_scoring_worker(
 
     if not process.is_alive():
         process.join(timeout=0)
+        unregister_scoring_process(process)
         status = "✅" if process.exitcode == 0 else "❌"
         print(
             f"{status} scoring worker finished round={round_ts} "
@@ -822,6 +897,7 @@ def _reap_or_timeout_scoring_worker(
             )
             process.kill()
             process.join(timeout=5)
+        unregister_scoring_process(process)
         print(
             f"✅ scoring worker cleared round={round_ts} "
             f"exitcode={process.exitcode}"
@@ -839,7 +915,43 @@ def _reap_or_timeout_scoring_worker(
     return process, round_ts, deadline_ts, terminate_after_ts
 
 
+def _is_database_lock_error(exc: BaseException) -> bool:
+    """Return True for transient SQLite lock/busy failures."""
+    message = str(exc).lower()
+    return "database is locked" in message or "database is busy" in message
+
+
 def run_scoring_round_worker(
+    db_path: str,
+    decision_round_ts: int,
+    symbols: List[str],
+    abnormal_symbols: List[str],
+    evaluated_at: int,
+    deadline_ts: int | None = None,
+) -> None:
+    """Run a scoring round and abort immediately on an SQLite lock failure."""
+    try:
+        _run_scoring_round_worker(
+            db_path=db_path,
+            decision_round_ts=decision_round_ts,
+            symbols=symbols,
+            abnormal_symbols=abnormal_symbols,
+            evaluated_at=evaluated_at,
+            deadline_ts=deadline_ts,
+        )
+    except Exception as exc:
+        if not _is_database_lock_error(exc):
+            raise
+        for path in db_config.DB_LABELS.values():
+            db_config.close_scoped_connection(path)
+        print(
+            f"🛑 scoring round aborted after SQLite lock "
+            f"round={decision_round_ts}: {exc}",
+            flush=True,
+        )
+
+
+def _run_scoring_round_worker(
     db_path: str,
     decision_round_ts: int,
     symbols: List[str],
@@ -986,6 +1098,8 @@ def run_scoring_round_worker(
             error=repr(exc),
         )
         print(traceback.format_exc(), flush=True)
+        if _is_database_lock_error(exc):
+            raise
         recover_after_worker_error(exc)
         try:
             DynamicOpenThresholdModule.record_error(
@@ -995,6 +1109,8 @@ def run_scoring_round_worker(
                 created_at=evaluated_at,
             )
         except Exception as record_exc:
+            if _is_database_lock_error(record_exc):
+                raise
             recover_after_worker_error(record_exc)
             print(
                 f"⚠️ dynamic open threshold error record failed "
@@ -1006,29 +1122,42 @@ def run_scoring_round_worker(
         )
 
     market_filter_result = None
-    log_stage("market_filter_lookup", "started")
+    log_stage("market_filter_evaluation", "started")
     if feature_flags.is_feature_enabled(feature_flags.MARKET_FILTER):
         try:
-            market_filter_result = MarketFilterModule(
-                db_path=db_config.MARKET_DB_PATH
-            ).get_result_for_round(decision_round_ts)
+            # Re-evaluate the independent market filter for this scoring round
+            # immediately before selecting openable symbols.  Looking up the
+            # persisted row alone can replay a stale decision written earlier
+            # in the round (or a prior blocked evaluation) while the market
+            # data has since advanced.  ``run_round`` upserts the same round
+            # atomically, so the decision used here is also the one shown in
+            # the market-filter history.
+            market_filter = MarketFilterModule(db_path=db_config.MARKET_DB_PATH)
+            allusdt_24h_change = _allusdt_24h_change_for_filter()
+            market_filter_kwargs = {"decision_round_ts": decision_round_ts}
+            if allusdt_24h_change is not None:
+                market_filter_kwargs["allusdt_24h_change_percent"] = allusdt_24h_change
+            market_filter_result = market_filter.run_round(**market_filter_kwargs)
         except Exception as exc:
+            if _is_database_lock_error(exc):
+                raise
             recover_after_worker_error(exc)
-            print(f"⚠️ market filter lookup failed round={decision_round_ts}: {exc}")
+            print(f"⚠️ market filter evaluation failed round={decision_round_ts}: {exc}")
             log_stage(
-                "market_filter_lookup",
+                "market_filter_evaluation",
                 "failed",
                 error_type=type(exc).__name__,
                 error=repr(exc),
             )
         else:
             log_stage(
-                "market_filter_lookup",
+                "market_filter_evaluation",
                 "completed",
-                result_found=market_filter_result is not None,
+                allow=market_filter_result.allow_new_positions,
+                reason=market_filter_result.reason,
             )
     else:
-        log_stage("market_filter_lookup", "skipped", reason="feature_flag_disabled")
+        log_stage("market_filter_evaluation", "skipped", reason="feature_flag_disabled")
 
     # No current-round dynamic result means no dynamic minimum or dynamic
     # opening ban.  Independent filters below still retain their authority.
@@ -1115,37 +1244,32 @@ def run_scoring_round_worker(
             "portfolio_risk": feature_flags.is_feature_enabled(feature_flags.PORTFOLIO_RISK),
         }
         log_stage("holding_feature_flags", "completed", **holding_flags)
-        with db_config.sqlite_connection_scopes(
-            db_config.TRADING_DB_PATH,
-            db_config.trading_core_path(db_config.TRADING_DB_PATH),
-            row_factory=sqlite3.Row,
-        ):
-            holding_result = holding_scoring.run_round(
-                decision_round_ts=decision_round_ts,
-                enable_stop_loss=holding_flags["stop_loss"],
-                enable_reduction=holding_flags["reduction"],
-                enable_increase=holding_flags["increase"],
-                enable_portfolio_risk=holding_flags["portfolio_risk"],
-            )
+        holding_result = holding_scoring.run_round(
+            decision_round_ts=decision_round_ts,
+            enable_stop_loss=holding_flags["stop_loss"],
+            enable_reduction=holding_flags["reduction"],
+            enable_increase=holding_flags["increase"],
+            enable_portfolio_risk=holding_flags["portfolio_risk"],
+        )
+        print(
+            f"📊 holding scoring round={decision_round_ts} "
+            f"checked={holding_result.get('checked', 0)} "
+            f"triggered={holding_result.get('triggered', 0)} "
+            f"records={holding_result.get('records', 0)} "
+            f"reduction_checked={holding_result.get('reduction_checked', 0)} "
+            f"reduction_triggered={holding_result.get('reduction_triggered', 0)}"
+        )
+        if not feature_flags.is_feature_enabled(feature_flags.TRAILING_REDUCTION):
+            print("⏸️ trailing reduction skipped: feature flag disabled")
+        else:
+            trailing_reduction_result = trailing_reduction.run_round(decision_round_ts=decision_round_ts)
             print(
-                f"📊 holding scoring round={decision_round_ts} "
-                f"checked={holding_result.get('checked', 0)} "
-                f"triggered={holding_result.get('triggered', 0)} "
-                f"records={holding_result.get('records', 0)} "
-                f"reduction_checked={holding_result.get('reduction_checked', 0)} "
-                f"reduction_triggered={holding_result.get('reduction_triggered', 0)}"
+                f"🧭 trailing reduction round={decision_round_ts} "
+                f"checked={trailing_reduction_result.get('checked', 0)} "
+                f"eligible={trailing_reduction_result.get('eligible', 0)} "
+                f"pretriggered={trailing_reduction_result.get('pretriggered', 0)} "
+                f"2R={trailing_reduction_result.get('trigger_r_usdt', '')}"
             )
-            if not feature_flags.is_feature_enabled(feature_flags.TRAILING_REDUCTION):
-                print("⏸️ trailing reduction skipped: feature flag disabled")
-            else:
-                trailing_reduction_result = trailing_reduction.run_round(decision_round_ts=decision_round_ts)
-                print(
-                    f"🧭 trailing reduction round={decision_round_ts} "
-                    f"checked={trailing_reduction_result.get('checked', 0)} "
-                    f"eligible={trailing_reduction_result.get('eligible', 0)} "
-                    f"pretriggered={trailing_reduction_result.get('pretriggered', 0)} "
-                    f"2R={trailing_reduction_result.get('trigger_r_usdt', '')}"
-                )
         log_stage(
             "holding_pipeline",
             "completed",
@@ -1158,24 +1282,21 @@ def run_scoring_round_worker(
         # Production positions use the same low-frequency rules and shared
         # market/scoring inputs, but all checks, actions and locks are routed to
         # real_trading_core.db and all exchange calls use the live REST client.
-        with db_config.sqlite_connection_scope(
-            db_config.REAL_TRADING_CORE_DB_PATH, row_factory=sqlite3.Row
-        ):
-            live_holding_result = real_trading.holding_scoring().run_round(
-                decision_round_ts=decision_round_ts,
-                enable_stop_loss=feature_flags.is_feature_enabled(
-                    feature_flags.REAL_STOP_LOSS_RULE
-                ),
-                enable_reduction=feature_flags.is_feature_enabled(
-                    feature_flags.REAL_REDUCTION_CONDITIONS
-                ),
-                enable_increase=feature_flags.is_feature_enabled(
-                    feature_flags.REAL_INCREASE_CONDITIONS
-                ),
-                enable_portfolio_risk=feature_flags.is_feature_enabled(
-                    feature_flags.REAL_PORTFOLIO_RISK
-                ),
-            )
+        live_holding_result = real_trading.holding_scoring().run_round(
+            decision_round_ts=decision_round_ts,
+            enable_stop_loss=feature_flags.is_feature_enabled(
+                feature_flags.REAL_STOP_LOSS_RULE
+            ),
+            enable_reduction=feature_flags.is_feature_enabled(
+                feature_flags.REAL_REDUCTION_CONDITIONS
+            ),
+            enable_increase=feature_flags.is_feature_enabled(
+                feature_flags.REAL_INCREASE_CONDITIONS
+            ),
+            enable_portfolio_risk=feature_flags.is_feature_enabled(
+                feature_flags.REAL_PORTFOLIO_RISK
+            ),
+        )
         log_stage(
             "live_holding_pipeline",
             "completed",
@@ -1192,6 +1313,15 @@ def run_scoring_round_worker(
             error=repr(exc),
         )
         print(traceback.format_exc(), flush=True)
+        if _is_database_lock_error(exc):
+            for path in db_config.DB_LABELS.values():
+                db_config.close_scoped_connection(path)
+            print(
+                f"🛑 scoring round aborted after holding-pipeline lock "
+                f"round={decision_round_ts}: {exc}",
+                flush=True,
+            )
+            return
         recover_after_worker_error(exc)
         print(f"⚠️ holding scoring failed round={decision_round_ts}: {exc}")
 
@@ -1213,113 +1343,110 @@ def start_break_even_take_profit_task() -> None:
     strategy = BreakEvenTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH)
     partial_strategy = PartialTakeProfitStrategy(db_path=db_config.TRADING_DB_PATH)
     dynamic_profit_protection = DynamicProfitProtection(db_path=db_config.TRADING_DB_PATH)
-    hard_take_profit = HardTakeProfit(db_path=db_config.TRADING_DB_PATH)
+    price_gain_take_profit = PriceGainTakeProfit(db_path=db_config.TRADING_DB_PATH)
     trailing_stop_tracker = TrailingStopTracker(db_path=db_config.TRADING_DB_PATH)
     weak_market_adjustment = WeakMarketProfitAdjustmentModule(db_path=db_config.MARKET_DB_PATH)
-    print("🟢 Hard take-profit, break-even, partial take-profit, dynamic profit protection and trailing stop tracker task started")
+    print("🟢 Price-gain take-profit, break-even, partial take-profit, dynamic profit protection and trailing stop tracker task started")
     while True:
         current_simulation_config = simulation_config()
         strategy.config = current_simulation_config
         partial_strategy.config = current_simulation_config
         dynamic_profit_protection.config = current_simulation_config
-        with db_config.sqlite_connection_scope(
-            db_config.TRADING_DB_PATH, row_factory=sqlite3.Row
-        ):
+        try:
+            reconcile_result = TradingExperiment(
+                db_path=db_config.TRADING_DB_PATH
+            ).reconcile_missing_exit_orders()
+            print(
+                f"🧩 exit-order reconcile checked={reconcile_result.get('checked', 0)} "
+                f"created={reconcile_result.get('created', 0)} "
+                f"errors={reconcile_result.get('errors', 0)}"
+            )
+        except Exception as exc:
+            recover_after_worker_error(exc)
+            print(f"⚠️ exit-order reconcile failed: {exc}")
+
+        # This protection remains independent of preceding modules, but has its
+        # own switch and reloads its threshold before every scan.
+        if feature_flags.is_feature_enabled(feature_flags.HARD_TAKE_PROFIT):
             try:
-                reconcile_result = TradingExperiment(
-                    db_path=db_config.TRADING_DB_PATH
-                ).reconcile_missing_exit_orders()
+                price_gain_take_profit.profit_threshold = Decimal(str(
+                    get_price_gain_take_profit_settings()["simulation_profit_ratio"]
+                ))
+                hard_result = price_gain_take_profit.run_round()
                 print(
-                    f"🧩 exit-order reconcile checked={reconcile_result.get('checked', 0)} "
-                    f"created={reconcile_result.get('created', 0)} "
-                    f"errors={reconcile_result.get('errors', 0)}"
+                    f"🟢 price-gain take-profit checked={hard_result.get('checked', 0)} "
+                    f"triggered={hard_result.get('triggered', 0)}"
                 )
             except Exception as exc:
                 recover_after_worker_error(exc)
-                print(f"⚠️ exit-order reconcile failed: {exc}")
+                print(f"⚠️ price-gain take-profit failed: {exc}")
+        else:
+            print("⏸️ price-gain take-profit skipped: feature flag disabled")
 
-            # This protection remains independent of preceding modules, but has its
-            # own switch and reloads its threshold before every scan.
-            if feature_flags.is_feature_enabled(feature_flags.HARD_TAKE_PROFIT):
-                try:
-                    hard_take_profit.profit_threshold = Decimal(str(
-                        get_hard_take_profit_settings()["profit_ratio"]
-                    ))
-                    hard_result = hard_take_profit.run_round()
-                    print(
-                        f"🟢 hard take-profit checked={hard_result.get('checked', 0)} "
-                        f"triggered={hard_result.get('triggered', 0)}"
-                    )
-                except Exception as exc:
-                    recover_after_worker_error(exc)
-                    print(f"⚠️ hard take-profit failed: {exc}")
-            else:
-                print("⏸️ hard take-profit skipped: feature flag disabled")
+        if feature_flags.is_feature_enabled(feature_flags.BREAK_EVEN_TAKE_PROFIT):
+          try:
+            result = strategy.run_round()
+            print(
+                f"🟢 break-even take-profit checked={result.get('checked', 0)} "
+                f"triggered={result.get('triggered', 0)} "
+                f"records={result.get('records', 0)} R={result.get('r_usdt', '')}"
+            )
+          except Exception as exc:
+            recover_after_worker_error(exc)
+            print(f"⚠️ break-even take-profit failed: {exc}")
 
-            if feature_flags.is_feature_enabled(feature_flags.BREAK_EVEN_TAKE_PROFIT):
-              try:
-                result = strategy.run_round()
-                print(
-                    f"🟢 break-even take-profit checked={result.get('checked', 0)} "
-                    f"triggered={result.get('triggered', 0)} "
-                    f"records={result.get('records', 0)} R={result.get('r_usdt', '')}"
+        try:
+            scan_ms = int(time.time() * 1000)
+            market_round_ts = WeakMarketProfitAdjustmentModule.decision_round_ts(scan_ms)
+            # The first minute-level scan observed in every quarter-hour must
+            # not overtake the adjustment, even when this worker started late.
+            if weak_market_adjustment.latest_result_for_round(market_round_ts) is None:
+                converged, convergence_reason = wait_for_profit_market_convergence(
+                    weak_market_adjustment, market_round_ts
                 )
-              except Exception as exc:
-                recover_after_worker_error(exc)
-                print(f"⚠️ break-even take-profit failed: {exc}")
-
-            try:
-                scan_ms = int(time.time() * 1000)
-                market_round_ts = WeakMarketProfitAdjustmentModule.decision_round_ts(scan_ms)
-                # The first minute-level scan observed in every quarter-hour must
-                # not overtake the adjustment, even when this worker started late.
-                if weak_market_adjustment.latest_result_for_round(market_round_ts) is None:
-                    converged, convergence_reason = wait_for_profit_market_convergence(
-                        weak_market_adjustment, market_round_ts
+                if not converged:
+                    print(
+                        f"⚠️ weak-market profit adjustment round={market_round_ts} "
+                        f"convergence timeout ({convergence_reason}); using latest data "
+                        "so position-protection strategies can continue"
                     )
-                    if not converged:
-                        print(
-                            f"⚠️ weak-market profit adjustment round={market_round_ts} "
-                            f"convergence timeout ({convergence_reason}); using latest data "
-                            "so position-protection strategies can continue"
-                        )
-                    adjustment = weak_market_adjustment.run_round(market_round_ts)
-                    print(f"📉 weak-market profit adjustment round={market_round_ts} weak={adjustment.weak_market} trigger={adjustment.trigger_r_multiple}R fraction={adjustment.take_profit_fraction}")
-                partial_result = partial_strategy.run_round(decision_round_ts=scan_ms) if feature_flags.is_feature_enabled(feature_flags.PARTIAL_TAKE_PROFIT) else {"checked": 0, "triggered": 0, "records": 0}
+                adjustment = weak_market_adjustment.run_round(market_round_ts)
+                print(f"📉 weak-market profit adjustment round={market_round_ts} weak={adjustment.weak_market} trigger={adjustment.trigger_r_multiple}R fraction={adjustment.take_profit_fraction}")
+            partial_result = partial_strategy.run_round(decision_round_ts=scan_ms) if feature_flags.is_feature_enabled(feature_flags.PARTIAL_TAKE_PROFIT) else {"checked": 0, "triggered": 0, "records": 0}
+            print(
+                f"🟢 partial take-profit checked={partial_result.get('checked', 0)} "
+                f"triggered={partial_result.get('triggered', 0)} "
+                f"records={partial_result.get('records', 0)} 2R={partial_result.get('trigger_r_usdt', '')}"
+            )
+        except Exception as exc:
+            recover_after_worker_error(exc)
+            print(f"⚠️ partial take-profit failed: {exc}")
+
+        if feature_flags.is_feature_enabled(feature_flags.DYNAMIC_PROFIT_PROTECTION):
+          try:
+            dynamic_result = dynamic_profit_protection.run_round()
+            print(
+                f"🟢 dynamic profit protection checked={dynamic_result.get('checked', 0)} "
+                f"eligible={dynamic_result.get('eligible', 0)} "
+                f"triggered={dynamic_result.get('triggered', 0)} R={dynamic_result.get('r_usdt', '')}"
+            )
+          except Exception as exc:
+            recover_after_worker_error(exc)
+            print(f"⚠️ dynamic profit protection failed: {exc}")
+
+        if feature_flags.is_feature_enabled(feature_flags.TRAILING_STOP):
+            try:
+                trailing_result = trailing_stop_tracker.run_round()
                 print(
-                    f"🟢 partial take-profit checked={partial_result.get('checked', 0)} "
-                    f"triggered={partial_result.get('triggered', 0)} "
-                    f"records={partial_result.get('records', 0)} 2R={partial_result.get('trigger_r_usdt', '')}"
+                    f"🟢 trailing stop tracker checked={trailing_result.get('checked', 0)} "
+                    f"eligible={trailing_result.get('eligible', 0)} "
+                    f"updated={trailing_result.get('updated', 0)}"
                 )
             except Exception as exc:
                 recover_after_worker_error(exc)
-                print(f"⚠️ partial take-profit failed: {exc}")
-
-            if feature_flags.is_feature_enabled(feature_flags.DYNAMIC_PROFIT_PROTECTION):
-              try:
-                dynamic_result = dynamic_profit_protection.run_round()
-                print(
-                    f"🟢 dynamic profit protection checked={dynamic_result.get('checked', 0)} "
-                    f"eligible={dynamic_result.get('eligible', 0)} "
-                    f"triggered={dynamic_result.get('triggered', 0)} R={dynamic_result.get('r_usdt', '')}"
-                )
-              except Exception as exc:
-                recover_after_worker_error(exc)
-                print(f"⚠️ dynamic profit protection failed: {exc}")
-
-            if feature_flags.is_feature_enabled(feature_flags.TRAILING_STOP):
-                try:
-                    trailing_result = trailing_stop_tracker.run_round()
-                    print(
-                        f"🟢 trailing stop tracker checked={trailing_result.get('checked', 0)} "
-                        f"eligible={trailing_result.get('eligible', 0)} "
-                        f"updated={trailing_result.get('updated', 0)}"
-                    )
-                except Exception as exc:
-                    recover_after_worker_error(exc)
-                    print(f"⚠️ trailing stop tracker failed: {exc}")
-            else:
-                print("⏸️ trailing stop tracker skipped: feature flag disabled")
+                print(f"⚠️ trailing stop tracker failed: {exc}")
+        else:
+            print("⏸️ trailing stop tracker skipped: feature flag disabled")
 
         _run_live_high_frequency_round()
         time.sleep(60)
@@ -1328,32 +1455,29 @@ def start_break_even_take_profit_task() -> None:
 def _run_live_high_frequency_round() -> None:
     """Run the live protection modules with isolated DBs and live REST."""
     break_even, partial, _reduction, dynamic, hard, trailing = real_trading.high_frequency_modules()
-    hard.profit_threshold = Decimal(str(get_hard_take_profit_settings()["profit_ratio"]))
+    hard.profit_threshold = Decimal(str(get_price_gain_take_profit_settings()["live_profit_ratio"]))
     modules = (
         (feature_flags.REAL_BREAK_EVEN_TAKE_PROFIT, "live break-even", break_even.run_round),
         (feature_flags.REAL_PARTIAL_TAKE_PROFIT, "live partial take-profit", partial.run_round),
         (feature_flags.REAL_DYNAMIC_PROFIT_PROTECTION, "live dynamic profit protection", dynamic.run_round),
-        (feature_flags.REAL_HARD_TAKE_PROFIT, "live hard take-profit", hard.run_round),
+        (feature_flags.REAL_HARD_TAKE_PROFIT, "live price-gain take-profit", hard.run_round),
         (feature_flags.REAL_TRAILING_STOP, "live trailing stop", trailing.run_round),
     )
-    with db_config.sqlite_connection_scope(
-        db_config.REAL_TRADING_DB_PATH, row_factory=sqlite3.Row
-    ):
+    try:
+        real_trading.experiment().reconcile_missing_exit_orders()
+    except Exception as exc:
+        recover_after_worker_error(exc)
+        print(f"⚠️ live exit-order reconcile failed: {exc}")
+    for flag, label, runner in modules:
+        if not feature_flags.is_feature_enabled(flag):
+            print(f"⏸️ {label} skipped: feature flag disabled")
+            continue
         try:
-            real_trading.experiment().reconcile_missing_exit_orders()
+            result = runner()
+            print(f"🟢 {label} result={result}")
         except Exception as exc:
             recover_after_worker_error(exc)
-            print(f"⚠️ live exit-order reconcile failed: {exc}")
-        for flag, label, runner in modules:
-            if not feature_flags.is_feature_enabled(flag):
-                print(f"⏸️ {label} skipped: feature flag disabled")
-                continue
-            try:
-                result = runner()
-                print(f"🟢 {label} result={result}")
-            except Exception as exc:
-                recover_after_worker_error(exc)
-                print(f"⚠️ {label} failed: {exc}")
+            print(f"⚠️ {label} failed: {exc}")
 
 
 def start_pre_safety_task() -> None:
@@ -1519,6 +1643,7 @@ def start_pre_safety_task() -> None:
                     name=f"scoring-round-{round_ts}",
                 )
                 active_scoring_process.start()
+                register_scoring_process(active_scoring_process)
                 last_scoring_started_round_ts = round_ts
                 print(
                     f"🚀 scoring worker started round={round_ts} "
@@ -1631,8 +1756,22 @@ def start_collector_task(symbols: List[str]) -> None:
         ensure_universe()
         job_func()
 
+    def _rule_window_bootstrap_job():
+        if not feature_flags.is_feature_enabled(feature_flags.BASE_DATA_COLLECTION):
+            print("⏸️ base data collection disabled; skipping rule-window bootstrap")
+            return
+        ensure_universe()
+        collector.bootstrap_rule_windows(collector.UNIVERSE)
+
     scheduler = collector.BlockingScheduler()
     scheduler.add_job(ensure_universe, "interval", hours=12)
+    scheduler.add_job(
+        _rule_window_bootstrap_job,
+        "interval",
+        minutes=15,
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.add_job(
         lambda: _run_with_fresh_universe(collector.kline_job), "cron", second=0
     )
@@ -1768,6 +1907,34 @@ def start_processor_task(symbols: List[str]) -> None:
     )
 
 
+def start_alpha_realtime_funding_task() -> None:
+    """Run real-time 1h funding collection in its own Alpha worker thread."""
+    scheduler = collector.BlockingScheduler()
+
+    def _job() -> None:
+        try:
+            count = alpha_funding_collector.collect_once(db_config.ALPHA_DB_PATH)
+            print(f"💰 Alpha realtime funding collected symbols={count}")
+        except Exception as exc:
+            recover_after_worker_error(exc)
+            print(f"⚠️ Alpha realtime funding collection failed: {exc}")
+
+    # Collect once on startup so a deployment does not wait for the next
+    # hourly boundary and so connectivity/response-shape failures are visible.
+    _job()
+    scheduler.add_job(
+        _job,
+        "cron",
+        minute=1,
+        second=0,
+        timezone="UTC",
+        max_instances=1,
+        coalesce=True,
+    )
+    print("🚀 Alpha realtime funding task started (hourly at :01:00 UTC)")
+    scheduler.start()
+
+
 def start_alpha_observer_task() -> None:
     """Collect Alpha snapshots hourly and automatically repair 24h gaps."""
     alpha_observer.init_db()
@@ -1817,6 +1984,11 @@ if __name__ == "__main__":
         target=start_alpha_observer_task, daemon=True
     )
     alpha_observer_thread.start()
+
+    alpha_realtime_funding_thread = threading.Thread(
+        target=start_alpha_realtime_funding_task, daemon=True
+    )
+    alpha_realtime_funding_thread.start()
 
     # 预先构建一次 universe，并按12小时周期刷新
     symbols = ensure_universe()

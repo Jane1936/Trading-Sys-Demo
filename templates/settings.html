@@ -69,12 +69,13 @@
     </div>
     <div class="card feature-config-yellow">
       <div class="header"><h2>僵尸强平时间配置</h2></div>
-      <div class="tip">当某个仓位持仓时间达到配置时，系统将默认执行全部平仓。默认 24 小时，保存后从下一轮僵尸仓位扫描开始生效。</div>
+      <div class="tip">当某个仓位持仓时间达到配置时，系统将执行全部平仓；已触发保本止盈的仓位从保本止盈触发起单独计时。默认普通仓位 24 小时、保本止盈仓位 48 小时，保存后从下一轮扫描开始生效。</div>
       <div id="zombie-force-liquidation-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
       <form id="zombie-force-liquidation-settings-form" class="score-weight-actions">
         <label>持仓超过（小时）<input id="zombie-force-liquidation-hours" type="number" min="0.01" max="8760" step="0.01" required value="{{ zombie_force_liquidation_settings.holding_hours }}"></label>
         <label>ALLUSDT 最近24h涨幅超过（%）<input id="zombie-force-liquidation-threshold" type="number" min="0" max="1000" step="0.01" required value="{{ zombie_force_liquidation_settings.allusdt_rise_threshold_percent }}"></label>
         <label>涨幅超过阈值时强平时间（小时）<input id="zombie-force-liquidation-high-hours" type="number" min="0.01" max="8760" step="0.01" required value="{{ zombie_force_liquidation_settings.high_rise_holding_hours }}"></label>
+        <label>触发保本止盈后强平时间（小时）<input id="zombie-force-liquidation-break-even-hours" type="number" min="0.01" max="8760" step="0.01" required value="{{ zombie_force_liquidation_settings.break_even_holding_hours }}"></label>
         <button class="btn btn-success" type="submit">保存僵尸强平时间配置</button>
       </form>
     </div>
@@ -86,6 +87,16 @@
         <label>模拟盘硬止盈金额（U）<input id="simulation-hard-take-profit-usdt" type="number" min="0.01" step="0.01" required value="{{ hard_take_profit_settings.simulation_hard_take_profit_usdt }}"></label>
         <label>实盘硬止盈金额（U）<input id="live-hard-take-profit-usdt" type="number" min="0.01" step="0.01" required value="{{ hard_take_profit_settings.live_hard_take_profit_usdt }}"></label>
         <button class="btn btn-success" type="submit">保存硬止盈配置</button>
+      </form>
+    </div>
+    <div class="card feature-config-yellow">
+      <div class="header"><h2>涨幅止盈配置</h2></div>
+      <div class="tip">按持仓未变现盈利率触发涨幅止盈，模拟盘与实盘独立配置，默认均为20%，保存后从下一轮扫描生效。</div>
+      <div id="price-gain-take-profit-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
+      <form id="price-gain-take-profit-settings-form" class="score-weight-actions">
+        <label>模拟盘止盈涨幅（%）<input id="simulation-price-gain-ratio" type="number" min="0.01" max="100" step="0.01" required value="{{ price_gain_take_profit_settings.simulation_profit_ratio * 100 }}"></label>
+        <label>实盘止盈涨幅（%）<input id="live-price-gain-ratio" type="number" min="0.01" max="100" step="0.01" required value="{{ price_gain_take_profit_settings.live_profit_ratio * 100 }}"></label>
+        <button class="btn btn-success" type="submit">保存涨幅止盈配置</button>
       </form>
     </div>
     <div class="card feature-config-yellow">
@@ -113,32 +124,54 @@
     </div>
     <div class="card feature-config-yellow">
       <div class="header"><h2>动态利润保护配置</h2></div>
-      <div class="tip">按周期累积盈亏历史最高到达档位动态保护；周期累积盈亏为开仓后已实现盈亏与当前浮盈之和。默认规则为：周期累积盈亏到达过(2R, 3R] 回撤≥40%、周期累积盈亏到达过(3R, 4R] 回撤≥30%、周期累积盈亏到达过4R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓。模拟盘和实盘可分别启停；当 ALLUSDT 最近24h涨幅超过阈值时，对应账户的动态利润保护将切换为启用状态（按各自下一轮扫描生效）。</div>
+      <div class="tip">按周期累积盈亏历史最高到达档位动态保护；周期累积盈亏为开仓后已实现盈亏与当前浮盈之和。默认规则为：周期累积盈亏到达过(2R, 3R] 回撤≥40%、周期累积盈亏到达过(3R, 4R] 回撤≥30%、周期累积盈亏到达过4R以上 回撤≥20% 时，立即调用 reduceOnly MARKET 市价单全部平仓。模拟盘和实盘可分别启停；当 ALLUSDT 最近24h涨幅超过阈值时，对应账户的动态利润保护将切换为启用状态。</div>
       <div id="dynamic-profit-protection-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
       <form id="dynamic-profit-protection-settings-form" class="score-weight-actions">
+        <div class="settings-subsection dynamic-profit-highlight" style="border:2px solid #f59e0b;background:#fff7ed;padding:12px;border-radius:8px;order:-1"><strong>浮盈达档后关闭动态利润回撤保护</strong><div class="muted">浮盈达到设定 R 倍数后，立即跳过动态利润回撤保护；该配置独立于基础模式和高涨幅模式，模拟盘与实盘分别生效。默认 6R。</div>
+        <label><input id="dynamic-profit-floating-simulation-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.floating_profit_disable_simulation_enabled else '' }}> 启用模拟盘浮盈达档关闭</label>
+        <label>模拟盘浮盈阈值（R）<input id="dynamic-profit-floating-simulation-r" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.floating_profit_disable_simulation_min_r }}"></label>
+        <label><input id="dynamic-profit-floating-live-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.floating_profit_disable_live_enabled else '' }}> 启用实盘浮盈达档关闭</label>
+        <label>实盘浮盈阈值（R）<input id="dynamic-profit-floating-live-r" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.floating_profit_disable_live_min_r }}"></label>
+        </div>
         <label><input id="dynamic-profit-protection-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.enabled else '' }}> 启用“周期累积盈亏历史最高到达档位动态保护”</label>
         <div class="settings-subsection"><strong>基础模式（涨幅未超过阈值）</strong>
         <label><input id="dynamic-profit-simulation-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.simulation_enabled else '' }}> 启用模拟盘基础模式</label>
         <label><input id="dynamic-profit-live-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.live_enabled else '' }}> 启用实盘基础模式</label>
-        <label>ALLUSDT最近24h涨幅超过（%）时切换
-          <input id="dynamic-profit-allusdt-rise-threshold" type="number" min="0" max="100" step="0.01" required value="{{ dynamic_profit_protection_settings.allusdt_24h_rise_threshold_percent }}">
-        </label>
-        <label>第1档起点（R，严格大于）<input id="dynamic-profit-tier-2-r" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_2_min_r }}"></label>
-        <label>第2档起点（R，严格大于）<input id="dynamic-profit-tier-3-r" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_3_min_r }}"></label>
-        <label>最高档起点（R，严格大于）<input id="dynamic-profit-tier-4-r" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_4_min_r }}"></label>
-        <label>第1档回撤阈值（%）<input id="dynamic-profit-tier-2-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_2_drawdown_ratio * 100 }}"></label>
-        <label>第2档回撤阈值（%）<input id="dynamic-profit-tier-3-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_3_drawdown_ratio * 100 }}"></label>
-        <label>最高档回撤阈值（%）<input id="dynamic-profit-tier-4-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.tier_4_drawdown_ratio * 100 }}"></label>
-        </div><div class="settings-subsection"><strong>高涨幅模式（阈值以上）</strong>
+                <div class="settings-subsection"><strong>模拟盘档位参数</strong>
+        <label>ALLUSDT最近24h涨幅超过（%）时切换 <input id="dynamic-profit-simulation-rise-threshold" type="number" min="0" max="100" step="0.01" required value="{{ dynamic_profit_protection_settings.simulation_allusdt_24h_rise_threshold_percent }}"></label>
+        <label>第1档R <input id="dynamic-profit-simulation-tier-2-r" type="number" step="0.1" required value="{{ dynamic_profit_protection_settings.simulation_tier_2_min_r }}"></label>
+        <label>第2档R <input id="dynamic-profit-simulation-tier-3-r" type="number" step="0.1" required value="{{ dynamic_profit_protection_settings.simulation_tier_3_min_r }}"></label>
+        <label>最高档R <input id="dynamic-profit-simulation-tier-4-r" type="number" step="0.1" required value="{{ dynamic_profit_protection_settings.simulation_tier_4_min_r }}"></label>
+        <label>回撤阈值(%) <input id="dynamic-profit-simulation-tier-2-drawdown" type="number" step="0.1" required value="{{ dynamic_profit_protection_settings.simulation_tier_2_drawdown_ratio * 100 }}"></label>
+        <label>回撤阈值(%) <input id="dynamic-profit-simulation-tier-3-drawdown" type="number" step="0.1" required value="{{ dynamic_profit_protection_settings.simulation_tier_3_drawdown_ratio * 100 }}"></label>
+        <label>最高档回撤(%) <input id="dynamic-profit-simulation-tier-4-drawdown" type="number" step="0.1" required value="{{ dynamic_profit_protection_settings.simulation_tier_4_drawdown_ratio * 100 }}"></label></div>
+        <div class="settings-subsection"><strong>实盘档位参数</strong>
+        <label>ALLUSDT最近24h涨幅超过（%）时切换 <input id="dynamic-profit-live-rise-threshold" type="number" min="0" max="100" step="0.01" required value="{{ dynamic_profit_protection_settings.live_allusdt_24h_rise_threshold_percent }}"></label>
+        <label>第1档R <input id="dynamic-profit-live-tier-2-r" type="number" step="0.1" required value="{{ dynamic_profit_protection_settings.live_tier_2_min_r }}"></label>
+        <label>第2档R <input id="dynamic-profit-live-tier-3-r" type="number" step="0.1" required value="{{ dynamic_profit_protection_settings.live_tier_3_min_r }}"></label>
+        <label>最高档R <input id="dynamic-profit-live-tier-4-r" type="number" step="0.1" required value="{{ dynamic_profit_protection_settings.live_tier_4_min_r }}"></label>
+        <label>回撤阈值(%) <input id="dynamic-profit-live-tier-2-drawdown" type="number" step="0.1" required value="{{ dynamic_profit_protection_settings.live_tier_2_drawdown_ratio * 100 }}"></label>
+        <label>回撤阈值(%) <input id="dynamic-profit-live-tier-3-drawdown" type="number" step="0.1" required value="{{ dynamic_profit_protection_settings.live_tier_3_drawdown_ratio * 100 }}"></label>
+        <label>最高档回撤(%) <input id="dynamic-profit-live-tier-4-drawdown" type="number" step="0.1" required value="{{ dynamic_profit_protection_settings.live_tier_4_drawdown_ratio * 100 }}"></label></div>
+</div><div class="settings-subsection"><strong>高涨幅模式（阈值以上）</strong>
+        <div class="settings-subsection"><strong>模拟盘高涨幅档位参数</strong>
         <label><input id="dynamic-profit-high-simulation-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.high_simulation_enabled else '' }}> 启用模拟盘高涨幅模式</label>
+        <label>ALLUSDT最近24h涨幅超过（%）时关闭动态利润回撤保护 <input id="dynamic-profit-simulation-disable-threshold" type="number" min="0" max="100" step="0.01" required value="{{ dynamic_profit_protection_settings.simulation_allusdt_24h_disable_threshold_percent }}"></label>
+        <label>高涨幅第1档 R <input id="dynamic-profit-simulation-high-tier-2-r" type="number" min="0.1" step="0.1" required value="{{ dynamic_profit_protection_settings.simulation_high_tier_2_min_r }}"></label>
+        <label>高涨幅第2档 R <input id="dynamic-profit-simulation-high-tier-3-r" type="number" min="0.1" step="0.1" required value="{{ dynamic_profit_protection_settings.simulation_high_tier_3_min_r }}"></label>
+        <label>高涨幅最高档 R <input id="dynamic-profit-simulation-high-tier-4-r" type="number" min="0.1" step="0.1" required value="{{ dynamic_profit_protection_settings.simulation_high_tier_4_min_r }}"></label>
+        <label>第1档回撤（%）<input id="dynamic-profit-simulation-high-tier-2-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.simulation_high_tier_2_drawdown_ratio * 100 }}"></label>
+        <label>第2档回撤（%）<input id="dynamic-profit-simulation-high-tier-3-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.simulation_high_tier_3_drawdown_ratio * 100 }}"></label>
+        <label>最高档回撤（%）<input id="dynamic-profit-simulation-high-tier-4-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.simulation_high_tier_4_drawdown_ratio * 100 }}"></label></div>
+        <div class="settings-subsection"><strong>实盘高涨幅档位参数</strong>
         <label><input id="dynamic-profit-high-live-enabled" type="checkbox" {{ 'checked' if dynamic_profit_protection_settings.high_live_enabled else '' }}> 启用实盘高涨幅模式</label>
-        <label>ALLUSDT最近24h涨幅超过（%）时关闭动态利润回撤保护<input id="dynamic-profit-allusdt-disable-threshold" type="number" min="0" max="100" step="0.01" required value="{{ dynamic_profit_protection_settings.allusdt_24h_disable_threshold_percent }}"></label>
-        <label>高涨幅第1档 R<input id="dynamic-profit-high-tier-2-r" type="number" min="0.1" step="0.1" required value="{{ dynamic_profit_protection_settings.high_tier_2_min_r }}"></label>
-        <label>高涨幅第1档回撤（%）<input id="dynamic-profit-high-tier-2-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.high_tier_2_drawdown_ratio * 100 }}"></label>
-        <label>高涨幅第2档 R<input id="dynamic-profit-high-tier-3-r" type="number" min="0.1" step="0.1" required value="{{ dynamic_profit_protection_settings.high_tier_3_min_r }}"></label>
-        <label>高涨幅第2档回撤（%）<input id="dynamic-profit-high-tier-3-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.high_tier_3_drawdown_ratio * 100 }}"></label>
-        <label>高涨幅最高档 R<input id="dynamic-profit-high-tier-4-r" type="number" min="0.1" step="0.1" required value="{{ dynamic_profit_protection_settings.high_tier_4_min_r }}"></label>
-        <label>高涨幅最高档回撤（%）<input id="dynamic-profit-high-tier-4-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.high_tier_4_drawdown_ratio * 100 }}"></label>
+        <label>ALLUSDT最近24h涨幅超过（%）时关闭动态利润回撤保护 <input id="dynamic-profit-live-disable-threshold" type="number" min="0" max="100" step="0.01" required value="{{ dynamic_profit_protection_settings.live_allusdt_24h_disable_threshold_percent }}"></label>
+        <label>高涨幅第1档 R <input id="dynamic-profit-live-high-tier-2-r" type="number" min="0.1" step="0.1" required value="{{ dynamic_profit_protection_settings.live_high_tier_2_min_r }}"></label>
+        <label>高涨幅第2档 R <input id="dynamic-profit-live-high-tier-3-r" type="number" min="0.1" step="0.1" required value="{{ dynamic_profit_protection_settings.live_high_tier_3_min_r }}"></label>
+        <label>高涨幅最高档 R <input id="dynamic-profit-live-high-tier-4-r" type="number" min="0.1" step="0.1" required value="{{ dynamic_profit_protection_settings.live_high_tier_4_min_r }}"></label>
+        <label>第1档回撤（%）<input id="dynamic-profit-live-high-tier-2-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.live_high_tier_2_drawdown_ratio * 100 }}"></label>
+        <label>第2档回撤（%）<input id="dynamic-profit-live-high-tier-3-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.live_high_tier_3_drawdown_ratio * 100 }}"></label>
+        <label>最高档回撤（%）<input id="dynamic-profit-live-high-tier-4-drawdown" type="number" min="0.1" max="100" step="0.1" required value="{{ dynamic_profit_protection_settings.live_high_tier_4_drawdown_ratio * 100 }}"></label></div>
         </div>
         <button class="btn btn-success" type="submit">保存动态利润保护配置</button>
       </form>
@@ -157,7 +190,7 @@
     </div>
     <div class="card feature-config-purple">
       <div class="header"><h2>独立市场过滤配置</h2></div>
-      <div class="tip">配置 BTC 相对大盘涨幅差、大盘跌幅、ALLUSDT 最近24h涨跌幅以及触发后的禁止新开仓时间。阈值按百分比填写，保存后从独立市场过滤模块下一轮执行开始生效。</div>
+      <div class="tip">配置 BTC 相对大盘涨幅差、大盘跌幅、ALLUSDT 最近24h涨跌幅以及触发后的禁止新开仓时间。ALLUSDT 1 小时 EMA20 条件可分别应用于模拟盘和实盘。阈值按百分比填写，保存后从独立市场过滤模块下一轮执行开始生效。</div>
       <div id="market-filter-settings-message" class="feature-flag-message" role="status" aria-live="polite"></div>
       <form id="market-filter-settings-form" class="score-weight-actions">
         <label>BTC吸血阈值（%）
@@ -169,12 +202,16 @@
         <label>ALLUSDT 最近24h涨跌幅低于（%）
           <input id="market-filter-allusdt-24h-threshold" type="number" min="-100" max="100" step="0.0001" required value="{{ market_filter_settings.allusdt_24h_drop_threshold * 100 }}">
         </label>
-        <label>ALLUSDT 1 小时 EMA20 条件（%）
-          <input id="market-filter-ema20-threshold" type="number" min="-100" max="100" step="0.0001" required value="{{ market_filter_settings.allusdt_ema20_threshold * 100 }}">
-        </label>
-        <label>ALLUSDT 最近24h涨幅超过（%）时关闭 EMA20 条件
-          <input id="market-filter-ema20-disable-threshold" type="number" min="-100" max="100" step="0.01" required value="{{ market_filter_settings.allusdt_24h_ema20_disable_threshold * 100 }}">
-        </label>
+        <div class="settings-subsection"><strong>ALLUSDT 1 小时 EMA20 条件</strong>
+          <label><input id="market-filter-simulation-ema20-enabled" type="checkbox" {{ 'checked' if market_filter_settings.simulation_allusdt_ema20_enabled else '' }}> 应用于模拟盘</label>
+          <label>EMA20 条件阈值（%）<input id="market-filter-simulation-ema20-threshold" type="number" min="-100" max="100" step="0.0001" required value="{{ market_filter_settings.simulation_allusdt_ema20_threshold * 100 }}"></label>
+          <label>ALLUSDT 最近24h涨幅超过（%）时关闭 EMA20 条件<input id="market-filter-simulation-ema20-disable-threshold" type="number" min="-100" max="100" step="0.01" required value="{{ market_filter_settings.simulation_allusdt_24h_ema20_disable_threshold * 100 }}"></label>
+        </div>
+        <div class="settings-subsection"><strong>ALLUSDT 1 小时 EMA20 条件</strong>
+          <label><input id="market-filter-live-ema20-enabled" type="checkbox" {{ 'checked' if market_filter_settings.live_allusdt_ema20_enabled else '' }}> 应用于实盘</label>
+          <label>EMA20 条件阈值（%）<input id="market-filter-live-ema20-threshold" type="number" min="-100" max="100" step="0.0001" required value="{{ market_filter_settings.live_allusdt_ema20_threshold * 100 }}"></label>
+          <label>ALLUSDT 最近24h涨幅超过（%）时关闭 EMA20 条件<input id="market-filter-live-ema20-disable-threshold" type="number" min="-100" max="100" step="0.01" required value="{{ market_filter_settings.live_allusdt_24h_ema20_disable_threshold * 100 }}"></label>
+        </div>
         <label>禁止新开仓时间（分钟）
           <input id="market-filter-block-minutes" type="number" min="1" max="10080" step="1" required value="{{ market_filter_settings.block_duration_minutes }}">
         </label>

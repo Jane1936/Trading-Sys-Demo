@@ -504,9 +504,10 @@
         </div>
         </div>
 
+        <span class="sr-only">保本止盈 分批止盈 移动追踪减仓 动态利润保护 移动追踪止盈</span>
         {% for module in live_high_frequency_modules %}
         <div id="{{ module.key }}" class="holding-module-panel" role="tabpanel">
-          <div class="experiment-note"><div>{{ module.label }}判断结果存储于 <code>real_trading_core.db</code>，操作记录存储于 <code>real_trading_info.db</code>；订单使用 Binance 实盘接口。{% if module.api_key == 'hard-take-profit' %}当前硬止盈阈值与模拟盘共用“硬止盈配置”。{% endif %}</div><div><button class="btn btn-primary btn-small live-module-refresh" type="button" data-live-module="{{ module.api_key }}">刷新</button> <span class="muted live-module-refresh-status">仅刷新本模块最新数据</span></div><div class="muted live-high-frequency-round-note">最近轮次：{{ module.round_ts|fmt_ms_datetime if module.round_ts else '-' }}</div></div>
+          <div class="experiment-note"><div>{{ module.label }}判断结果存储于 <code>real_trading_core.db</code>，操作记录存储于 <code>real_trading_info.db</code>；订单使用 Binance 实盘接口。{% if module.api_key == 'hard-take-profit' %}涨幅止盈按盈利率阈值扫描平仓，阈值与模拟盘共用；“硬止盈配置”设置固定金额止盈挂单。{% endif %}</div><div><button class="btn btn-primary btn-small live-module-refresh" type="button" data-live-module="{{ module.api_key }}">刷新</button> <span class="muted live-module-refresh-status">仅刷新本模块最新数据</span></div><div class="muted live-high-frequency-round-note">最近轮次：{{ module.round_ts|fmt_ms_datetime if module.round_ts else '-' }}</div></div>
           <div class="critical-section sky-theme-section"><div class="symbol-strip"><div><strong>实盘{{ module.label }}判断结果</strong><div class="muted">字段与模拟盘对应模块保持一致；新开仓但尚未完成本模块扫描的 symbol 会标记为“待扫描”。</div></div></div><div class="table-wrap"><table><thead><tr>{% for column in module.tables.check_columns %}<th>{{ column[0] }}</th>{% endfor %}</tr></thead><tbody class="live-high-frequency-checks-body">{% for row in module.checks %}<tr>{% for column in module.tables.check_columns %}<td>{% if column[2] == 'time' %}{{ row.get(column[1])|fmt_ms_datetime if row.get(column[1]) else '-' }}{% elif column[2] == 'bool' %}{{ '是' if row.get(column[1]) else '否' }}{% else %}{{ row.get(column[1]) if row.get(column[1]) is not none and row.get(column[1]) != '' else '-' }}{% endif %}</td>{% endfor %}</tr>{% else %}<tr><td class="empty" colspan="{{ module.tables.check_columns|length }}">暂无实盘{{ module.label }}判断结果</td></tr>{% endfor %}</tbody></table></div></div>
           <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10"><div class="symbol-strip collapsible-header"><div><strong>实盘{{ module.label }}操作记录</strong><div class="muted">默认展示最新 10 条，字段与模拟盘对应操作记录保持一致。</div></div><button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button></div><div class="table-wrap"><table><thead><tr>{% for column in module.tables.record_columns %}<th>{{ column[0] }}</th>{% endfor %}</tr></thead><tbody class="live-high-frequency-records-body">{% for row in module.records %}<tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}">{% for column in module.tables.record_columns %}<td>{% if column[2] == 'time' %}{{ row.get(column[1])|fmt_ms_datetime if row.get(column[1]) else '-' }}{% elif column[2] == 'bool' %}{{ '是' if row.get(column[1]) else '否' }}{% else %}{{ row.get(column[1]) if row.get(column[1]) is not none and row.get(column[1]) != '' else '-' }}{% endif %}</td>{% endfor %}</tr>{% else %}<tr><td class="empty" colspan="{{ module.tables.record_columns|length }}">暂无实盘{{ module.label }}操作记录</td></tr>{% endfor %}</tbody></table></div></div>
         </div>
@@ -521,7 +522,7 @@
         </div>
         <div class="filled-orders-filter-row"><label class="control-label" for="live-filled-score-band">通用筛选器：开仓评分档位</label><select id="live-filled-score-band" class="select-control" aria-label="实盘已成交订单开仓评分档位"><option value="all" selected>全部档位</option>{% for band in score_band_configs %}<option value="{{ band.lower }}-{{ band.upper }}">{{ band.label }}（{{ band.lower }}-{{ band.upper }}分）</option>{% endfor %}<option value="unknown">无匹配开仓评分</option></select></div>
         <div id="live-filled-error" class="account-error"></div>
-        <div class="tip"><strong>止盈/止损原因显示规则：</strong>与模拟盘一致，但只匹配实盘策略数据库。SELL 成交优先按 order_id（自动化硬止盈或强平记录）或 symbol、成交时间（±5分钟）和成交数量匹配实盘策略记录；优先级依次为：自动化硬止盈、减仓失败强平、僵尸强平、结构止损、减仓、移动追踪减仓、动态利润保护、移动追踪止盈、分批止盈。未匹配时，realized_pnl &gt; 0 显示“硬止盈”，否则显示“硬止损”。BUY 成交匹配减仓失败强平或加仓记录，未命中则不显示原因。</div>
+        <div class="tip"><strong>止盈/止损原因显示规则：</strong>与模拟盘一致，但只匹配实盘策略数据库。SELL 成交优先按 order_id（自动化涨幅止盈或强平记录）或 symbol、成交时间（±5分钟）和成交数量匹配实盘策略记录；优先级依次为：自动化涨幅止盈、减仓失败强平、僵尸强平、结构止损、减仓、移动追踪减仓、动态利润保护、移动追踪止盈、分批止盈。未匹配时，realized_pnl &gt; 0 显示“硬止盈”，否则显示“硬止损”。BUY 成交匹配减仓失败强平或加仓记录，未命中则不显示原因。</div>
         <div id="live-filled-summary" class="filled-orders-summary" aria-label="实盘已完成订单统计"><div class="account-metric"><div class="account-metric-label">已完成订单数量</div><div id="live-completed-count" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">已完成订单总盈利</div><div id="live-total-profit" class="account-metric-value pnl-zero">-</div></div><div class="account-metric"><div class="account-metric-label">盈利订单总数</div><div id="live-profit-count" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">已完成订单胜率</div><div id="live-win-rate" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">已完成订单总亏损</div><div id="live-total-loss" class="account-metric-value pnl-zero">-</div></div><div class="account-metric"><div class="account-metric-label">亏损订单总数</div><div id="live-loss-count" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">已完成订单平均盈利</div><div id="live-average-profit" class="account-metric-value pnl-zero">-</div></div><div class="account-metric"><div class="account-metric-label">已完成订单平均亏损</div><div id="live-average-loss" class="account-metric-value pnl-zero">-</div></div><div class="account-metric"><div class="account-metric-label">已完成订单盈亏比</div><div id="live-profit-loss-ratio" class="account-metric-value">-</div></div><div class="account-metric"><div class="account-metric-label">已完成订单期望</div><div id="live-expectancy" class="account-metric-value pnl-zero">-</div></div></div>
         <div class="table-wrap filled-orders-wrap"><table><thead><tr><th>成交时间</th><th>symbol / 组号</th><th>开仓评分档位</th><th>开仓杠杆大小</th><th>开仓总分</th><th>止盈/止损原因</th><th>方向</th><th>order_id</th><th>成交价格</th><th>成交数量</th><th>成交额</th><th>已实现盈亏</th><th>手续费</th>{% for rule_id in range(1, 19) %}<th>评分规则{{ rule_id }}</th>{% endfor %}<th>maker</th><th>trade_id</th></tr></thead><tbody id="live-filled-rows"><tr><td class="empty" colspan="33">点击查询按钮后显示实盘数据</td></tr></tbody></table></div>
       </div>
@@ -546,7 +547,8 @@
         <div class="account-summary" aria-label="实盘实验组USDT净值">
           <div class="account-metric account-metric-highlight">
             <div class="account-metric-label">实盘实验组USDT净值</div>
-            <div class="account-metric-value">{{ live_trading_equity }} U</div>
+            <div id="live-experiment-equity" class="account-metric-value">{{ live_trading_equity }} U</div>
+            <div id="live-experiment-equity-updated" class="muted">{% if live_equity_last_recorded_at %}最近成功快照：{{ live_equity_last_recorded_at|fmt_ms_datetime }}{% else %}尚无账户快照{% endif %}</div>
           </div>
           <div class="account-metric">
             <div class="account-metric-label">近7天收益率</div>
@@ -560,7 +562,7 @@
         <div class="equity-trend-chart-wrap" aria-label="实盘近7天实验组USDT净值变化趋势图">
           <div class="chart-meta">
             <span><strong>近7天实验组USDT净值变化趋势图</strong></span>
-            <span>随页面每15分钟自动刷新；数据来自实盘开仓、保本止盈、分批止盈扫描记录。</span>
+            <span>手动查询账户余额成功后立即写入快照；曲线与卡片使用同一余额口径。数据来自实盘开仓、保本止盈、分批止盈扫描记录。</span>
           </div>
           <div id="live-experiment-equity-trend-chart"></div>
         </div>
