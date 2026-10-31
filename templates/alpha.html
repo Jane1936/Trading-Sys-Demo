@@ -111,9 +111,13 @@
         <div><h2>最新市场快照</h2><span>按1天活跃度从高到低排列（周期成交量/当前市值）</span><small class="alpha-module-updated" data-alpha-updated="snapshot">本模块本轮数据更新时间：{{ module_updated_at.snapshot or '暂无' }}</small></div>
         <button type="button" class="btn btn-secondary alpha-load-all" data-alpha-load="snapshot">点击加载全部数据</button>
       </div>
+      <form class="alpha-filter" data-alpha-filter="snapshot">
+        <label>市值 ≥ <input type="number" name="market_cap_min" min="0" step="1" value="50" inputmode="decimal"> K</label>
+        <button class="btn btn-secondary" type="submit">筛选</button>
+      </form>
       <div class="table-wrap">
         <table class="alpha-table" data-alpha-deferred="snapshot">
-          <thead><tr><th>#</th><th>币种</th><th>名称</th><th>24小时成交量</th><th>市值</th><th>1天活跃度</th><th>最近第2天活跃度</th><th>最近第3天活跃度</th><th>最近第4天活跃度</th><th>最近第5天活跃度</th></tr></thead>
+          <thead><tr><th data-alpha-sort-key="rank" tabindex="0" aria-sort="none">#</th><th data-alpha-sort-key="symbol" tabindex="0" aria-sort="none">币种</th><th data-alpha-sort-key="name" tabindex="0" aria-sort="none">名称</th><th data-alpha-sort-key="volume" tabindex="0" aria-sort="none">24小时成交量</th><th data-alpha-sort-key="market_cap" tabindex="0" aria-sort="none">市值</th><th data-alpha-sort-key="activity_1d" tabindex="0" aria-sort="none">1天活跃度</th><th data-alpha-sort-key="activity_2d" tabindex="0" aria-sort="none">最近第2天活跃度</th><th data-alpha-sort-key="activity_3d" tabindex="0" aria-sort="none">最近第3天活跃度</th><th data-alpha-sort-key="activity_4d" tabindex="0" aria-sort="none">最近第4天活跃度</th><th data-alpha-sort-key="activity_5d" tabindex="0" aria-sort="none">最近第5天活跃度</th></tr></thead>
           <tbody>
           {% for token in tokens %}
             <tr class="{% if loop.index > 10 %}alpha-extra-row{% endif %}"{% if loop.index > 10 %} hidden{% endif %}>
@@ -141,7 +145,7 @@
         <button class="btn btn-secondary" type="submit">筛选</button>
         {% if consecutive_up_days_min != 2 %}<a class="btn btn-secondary" href="{{ url_for('alpha_market') }}">清除</a>{% endif %}
       </form>
-      <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="trend"><thead><tr><th>币种</th><th>连续上涨天数</th><th>近5日内上涨天数</th><th>近3日累计涨幅</th><th>近5日累计涨幅</th><th>日线数量</th></tr></thead><tbody>
+      <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="trend"><thead><tr><th data-alpha-sort-key="symbol" tabindex="0" aria-sort="none">币种</th><th data-alpha-sort-key="consecutive_up_days" tabindex="0" aria-sort="none">连续上涨天数</th><th data-alpha-sort-key="recent_five_up_days" tabindex="0" aria-sort="none">近5日内上涨天数</th><th data-alpha-sort-key="three_day_return" tabindex="0" aria-sort="none">近3日累计涨幅</th><th data-alpha-sort-key="five_day_return" tabindex="0" aria-sort="none">近5日累计涨幅</th><th data-alpha-sort-key="kline_count" tabindex="0" aria-sort="none">日线数量</th></tr></thead><tbody>
       {% for trend in trends %}<tr data-consecutive-up-days="{{ trend.consecutive_up_days }}"{% if loop.index > 10 or trend.consecutive_up_days < consecutive_up_days_min %} class="alpha-trend-extra-row" hidden{% endif %}><td><strong>{{ trend.symbol }}</strong></td><td class="numeric">{{ trend.consecutive_up_days }}</td><td class="numeric">{{ trend.recent_five_up_days }}</td><td class="numeric alpha-change{% if trend.three_day_return is not none %} {{ 'alpha-change-positive' if trend.three_day_return >= 0 else 'alpha-change-negative' }}{% endif %}">{% if trend.three_day_return is not none %}{{ '%+.2f'|format(trend.three_day_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if trend.five_day_return is not none %} {{ 'alpha-change-positive' if trend.five_day_return >= 0 else 'alpha-change-negative' }}{% endif %}">{% if trend.five_day_return is not none %}{{ '%+.2f'|format(trend.five_day_return * 100) }}%{% else %}—{% endif %}</td><td class="numeric">{{ trend.kline_count }}</td></tr>{% endfor %}
       </tbody></table></div>{% if not trends %}<p class="empty-state">请点击加载全部数据按钮</p>{% endif %}
     </section>
@@ -153,7 +157,7 @@
         <button class="btn btn-secondary" type="submit">筛选</button>
         {% if oi_min is not none or price_max is not none %}<a class="btn btn-secondary" href="{{ url_for('alpha_market') }}">清除</a>{% endif %}
       </form>
-      <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="oi"><thead><tr><th>币种</th><th>1小时 OI 数据</th><th>1小时收盘价</th><th>OI持仓价值</th><th>1小时 OI 涨跌幅</th><th>1小时价格涨跌幅</th></tr></thead><tbody>
+      <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="oi"><thead><tr><th data-alpha-sort-key="symbol" tabindex="0" aria-sort="none">币种</th><th data-alpha-sort-key="open_interest" tabindex="0" aria-sort="none">1小时 OI 数据</th><th data-alpha-sort-key="close" tabindex="0" aria-sort="none">1小时收盘价</th><th data-alpha-sort-key="oi_value" tabindex="0" aria-sort="none">OI持仓价值</th><th data-alpha-sort-key="oi_change" tabindex="0" aria-sort="none">1小时 OI 涨跌幅</th><th data-alpha-sort-key="price_change" tabindex="0" aria-sort="none">1小时价格涨跌幅</th></tr></thead><tbody>
       {% for item in oi_changes %}<tr data-oi-change="{{ item.oi_change if item.oi_change is not none else '' }}" data-price-change="{{ item.price_change if item.price_change is not none else '' }}"{% if loop.index > 10 %} class="alpha-oi-extra-row" hidden{% endif %}><td><strong>{{ item.symbol }}</strong></td><td class="numeric" data-compact-value="{{ item.get('open_interest') if item.get('open_interest') is not none else '' }}">{{ item.get('open_interest')|format_km }}</td><td class="numeric">{% if item.get('close') is not none %}{{ '{:,.8f}'.format(item.get('close')).rstrip('0').rstrip('.') }}{% else %}—{% endif %}</td><td class="numeric{% if item.get('oi_value') is not none and item.get('oi_value') >= 5000000 %} alpha-active{% endif %}" data-compact-value="{{ item.get('oi_value') if item.get('oi_value') is not none else '' }}">{{ item.get('oi_value')|format_km }}</td><td class="numeric alpha-change{% if item.oi_change is not none %} {{ 'alpha-change-positive' if item.oi_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.oi_change is not none %}{{ '%+.2f'|format(item.oi_change * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if item.price_change is not none %} {{ 'alpha-change-positive' if item.price_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.price_change is not none %}{{ '%+.2f'|format(item.price_change * 100) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
       </tbody></table></div>{% if not oi_changes %}<p class="empty-state">请点击加载全部数据按钮</p>{% endif %}
     </section>
@@ -165,7 +169,7 @@
         <button class="btn btn-secondary" type="submit">筛选</button>
         {% if funding_min is not none or funding_price_max is not none %}<a class="btn btn-secondary" href="{{ url_for('alpha_market') }}">清除</a>{% endif %}
       </form>
-      <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="funding"><thead><tr><th>币种</th><th>资金费率涨跌幅</th><th>4小时价格涨跌幅</th></tr></thead><tbody>
+      <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="funding"><thead><tr><th data-alpha-sort-key="symbol" tabindex="0" aria-sort="none">币种</th><th data-alpha-sort-key="funding_change" tabindex="0" aria-sort="none">资金费率涨跌幅</th><th data-alpha-sort-key="price_change" tabindex="0" aria-sort="none">4小时价格涨跌幅</th></tr></thead><tbody>
       {% for item in funding_changes %}<tr data-funding-change="{{ item.funding_change if item.funding_change is not none else '' }}" data-price-change="{{ item.price_change if item.price_change is not none else '' }}"{% if loop.index > 10 %} class="alpha-funding-extra-row" hidden{% endif %}><td><strong>{{ item.symbol }}</strong></td><td class="numeric alpha-change{% if item.funding_change is not none %} {{ 'alpha-change-positive' if item.funding_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.funding_change is not none %}{{ '%+.2f'|format(item.funding_change * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if item.price_change is not none %} {{ 'alpha-change-positive' if item.price_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.price_change is not none %}{{ '%+.2f'|format(item.price_change * 100) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
       </tbody></table></div>{% if not funding_changes %}<p class="empty-state">请点击加载全部数据按钮</p>{% endif %}
     </section>
@@ -253,6 +257,68 @@
       : number.toLocaleString('en-US', {maximumFractionDigits: 8});
     return `<td class="numeric">${text}</td>`;
   };
+  const alphaSortKeys = {
+    snapshot: ['rank', 'symbol', 'name', 'volume', 'market_cap', 'activity_1d', 'activity_2d', 'activity_3d', 'activity_4d', 'activity_5d'],
+    trend: ['symbol', 'consecutive_up_days', 'recent_five_up_days', 'three_day_return', 'five_day_return', 'kline_count'],
+    oi: ['symbol', 'open_interest', 'close', 'oi_value', 'oi_change', 'price_change'],
+    funding: ['symbol', 'funding_change', 'price_change'],
+  };
+  const alphaSortStates = Object.fromEntries(Object.keys(alphaSortKeys).map((module) => [module, {key: null, direction: 1}]));
+  const alphaDataLoaded = {snapshot: false, trend: false, oi: false, funding: false};
+  const snapshotFilterState = {marketCapMin: 50000};
+  const alphaSortNumber = (value) => {
+    let raw = String(value ?? '').replace(/,/g, '').trim();
+    if (raw === '' || raw === '—') return null;
+    if (raw.endsWith('%')) raw = raw.slice(0, -1).trim();
+    const compact = raw.match(/^(-?\d+(?:\.\d+)?)([KM])$/i);
+    const number = compact
+      ? Number(compact[1]) * (compact[2].toUpperCase() === 'M' ? 1000000 : 1000)
+      : Number(raw);
+    return Number.isFinite(number) ? number : null;
+  };
+  const applyAlphaSort = (module) => {
+    const state = alphaSortStates[module];
+    const table = document.querySelector(`[data-alpha-deferred="${module}"]`);
+    const body = table?.querySelector('tbody');
+    if (!body || !state?.key) return;
+    const keyIndex = alphaSortKeys[module].indexOf(state.key);
+    if (keyIndex < 0) return;
+    const type = state.key === 'symbol' || state.key === 'name' ? 'text' : 'number';
+    const rows = Array.from(body.querySelectorAll('tr'));
+    rows.sort((left, right) => {
+      const leftRaw = left.cells[keyIndex]?.textContent?.trim() ?? '';
+      const rightRaw = right.cells[keyIndex]?.textContent?.trim() ?? '';
+      if (type === 'text') return leftRaw.localeCompare(rightRaw, 'zh-CN') * state.direction;
+      const leftValue = alphaSortNumber(leftRaw);
+      const rightValue = alphaSortNumber(rightRaw);
+      if (leftValue == null || rightValue == null) {
+        if (leftValue == null && rightValue == null) return 0;
+        return leftValue == null ? 1 : -1;
+      }
+      return (leftValue - rightValue) * state.direction;
+    });
+    rows.forEach((row, index) => {
+      if (module === 'snapshot' && row.cells[0]) row.cells[0].textContent = String(index + 1);
+      body.appendChild(row);
+    });
+    const panel = table.closest('[data-alpha-panel]');
+    panel?.querySelectorAll('[data-alpha-sort-key]').forEach((header) => {
+      const active = header.dataset.alphaSortKey === state.key;
+      header.dataset.sortDirection = active ? (state.direction > 0 ? 'asc' : 'desc') : '';
+      header.setAttribute('aria-sort', active ? (state.direction > 0 ? 'ascending' : 'descending') : 'none');
+    });
+  };
+  const applySnapshotFilter = () => {
+    const table = document.querySelector('[data-alpha-deferred="snapshot"]');
+    const body = table?.querySelector('tbody');
+    if (!body) return;
+    body.querySelectorAll('tr').forEach((row) => {
+      const marketCap = alphaSortNumber(row.cells[4]?.textContent ?? '');
+      const hidden = snapshotFilterState.marketCapMin != null
+        && (marketCap == null || marketCap < snapshotFilterState.marketCapMin);
+      row.classList.toggle('alpha-filter-hidden', hidden);
+    });
+  };
   const loadAlphaModule = async (module) => {
     const target = document.querySelector(`[data-alpha-deferred="${module}"]`);
     const panel = target && target.closest('[data-alpha-panel]');
@@ -275,6 +341,11 @@
         if (module === 'snapshot') return `<tr${extra}><td>${index + 1}</td><td><strong>${esc(item.symbol)}</strong></td><td>${esc(item.name)}</td><td class="numeric" data-compact-value="${esc(item.volume_24h)}">${formatKm(item.volume_24h)}</td><td class="numeric" data-compact-value="${esc(item.market_cap)}">${formatKm(item.market_cap)}</td>${[1,2,3,4,5].map((d) => { const value = item[`activity_${d}d`]; const active = value != null && Number(value) >= 1; return `<td class="numeric${active ? ' alpha-active' : ''}" data-activity-value="${esc(value)}">${formatActivity(value)}</td>`; }).join('')}</tr>`;
         return `<tr${extra} data-consecutive-up-days="${item.consecutive_up_days}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${item.consecutive_up_days}</td><td class="numeric">${item.recent_five_up_days}</td>${changeCell(item.three_day_return)}${changeCell(item.five_day_return)}<td class="numeric">${item.kline_count}</td></tr>`;
       }).join('');
+      if (Object.prototype.hasOwnProperty.call(alphaSortKeys, module)) {
+        alphaDataLoaded[module] = true;
+        applyAlphaSort(module);
+        if (module === 'snapshot') applySnapshotFilter();
+      }
       const empty = panel.querySelector('.empty-state');
       if (empty) empty.remove();
       ensureAlphaToggle(panel, module, rows.length);
@@ -290,6 +361,30 @@
       }
     }
   };
+  const sortHeaders = document.querySelectorAll('[data-alpha-sort-key]');
+  const handleAlphaSort = async (header) => {
+    const module = header.closest('[data-alpha-panel]')?.dataset.alphaPanel;
+    if (!module || !alphaSortStates[module]) return;
+    const state = alphaSortStates[module];
+    const key = header.dataset.alphaSortKey;
+    if (state.key === key) state.direction *= -1;
+    else {
+      state.key = key;
+      state.direction = 1;
+    }
+    if (!alphaDataLoaded[module]) await loadAlphaModule(module);
+    applyAlphaSort(module);
+  };
+  sortHeaders.forEach((header) => {
+    header.addEventListener('click', () => handleAlphaSort(header));
+    header.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        handleAlphaSort(header);
+      }
+    });
+  });
+  applySnapshotFilter();
   // Refresh at :01 UTC and then hourly, after the worker's on-the-hour run.
   const refreshHourlyModules = () => Promise.all([
     loadAlphaModule('snapshot'),
@@ -307,11 +402,17 @@
   document.querySelectorAll('[data-alpha-tab]').forEach((tab) => tab.addEventListener('click', () => activateAlphaModule(tab.dataset.alphaTab)));
 
   activateAlphaModule('snapshot');
-  const bindAlphaFilter = (form) => form.addEventListener('submit', (event) => {
+  const bindAlphaFilter = (form) => form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const panel = form.closest('[data-alpha-panel]');
     const values = Object.fromEntries(new FormData(form).entries());
-    if (panel.dataset.alphaPanel === 'oi') {
+    if (panel.dataset.alphaPanel === 'snapshot') {
+      const raw = String(values.market_cap_min ?? '').trim();
+      const value = raw === '' ? null : Number(raw);
+      snapshotFilterState.marketCapMin = value == null ? null : Number.isFinite(value) && value >= 0 ? value * 1000 : 50000;
+      if (!alphaDataLoaded.snapshot) await loadAlphaModule('snapshot');
+      applySnapshotFilter();
+    } else if (panel.dataset.alphaPanel === 'oi') {
       const oiMin = values.oi_min === '' ? null : Number(values.oi_min) / 100;
       const priceMax = values.price_max === '' ? null : Number(values.price_max) / 100;
       panel.querySelectorAll('tbody tr[data-oi-change]').forEach((row) => {
