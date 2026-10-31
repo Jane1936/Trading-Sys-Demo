@@ -89,6 +89,10 @@
         <div><h2>最新市场快照</h2><span>按1天活跃度从高到低排列（周期成交量/当前市值）</span><small class="alpha-module-updated" data-alpha-updated="snapshot">本模块本轮数据更新时间：{{ module_updated_at.snapshot or '暂无' }}</small></div>
         <button type="button" class="btn btn-secondary alpha-load-all" data-alpha-load="snapshot">点击加载全部数据</button>
       </div>
+      <form class="alpha-filter" data-alpha-filter="snapshot">
+        <label>市值 ≥ <input type="number" name="market_cap_min" min="0" step="1" value="50" inputmode="decimal"> K</label>
+        <button class="btn btn-secondary" type="submit">筛选</button>
+      </form>
       <div class="table-wrap">
         <table class="alpha-table" data-alpha-deferred="snapshot">
           <thead><tr><th data-alpha-sort-key="rank" tabindex="0" aria-sort="none">#</th><th data-alpha-sort-key="symbol" tabindex="0" aria-sort="none">币种</th><th data-alpha-sort-key="name" tabindex="0" aria-sort="none">名称</th><th data-alpha-sort-key="volume" tabindex="0" aria-sort="none">24小时成交量</th><th data-alpha-sort-key="market_cap" tabindex="0" aria-sort="none">市值</th><th data-alpha-sort-key="activity_1d" tabindex="0" aria-sort="none">1天活跃度</th><th data-alpha-sort-key="activity_2d" tabindex="0" aria-sort="none">最近第2天活跃度</th><th data-alpha-sort-key="activity_3d" tabindex="0" aria-sort="none">最近第3天活跃度</th><th data-alpha-sort-key="activity_4d" tabindex="0" aria-sort="none">最近第4天活跃度</th><th data-alpha-sort-key="activity_5d" tabindex="0" aria-sort="none">最近第5天活跃度</th></tr></thead>
@@ -239,6 +243,7 @@
   };
   const alphaSortStates = Object.fromEntries(Object.keys(alphaSortKeys).map((module) => [module, {key: null, direction: 1}]));
   const alphaDataLoaded = {snapshot: false, trend: false, oi: false, funding: false};
+  const snapshotFilterState = {marketCapMin: 50000};
   const alphaSortNumber = (value) => {
     let raw = String(value ?? '').replace(/,/g, '').trim();
     if (raw === '' || raw === '—') return null;
@@ -281,6 +286,17 @@
       header.setAttribute('aria-sort', active ? (state.direction > 0 ? 'ascending' : 'descending') : 'none');
     });
   };
+  const applySnapshotFilter = () => {
+    const table = document.querySelector('[data-alpha-deferred="snapshot"]');
+    const body = table?.querySelector('tbody');
+    if (!body) return;
+    body.querySelectorAll('tr').forEach((row) => {
+      const marketCap = alphaSortNumber(row.cells[4]?.textContent ?? '');
+      const hidden = snapshotFilterState.marketCapMin != null
+        && (marketCap == null || marketCap < snapshotFilterState.marketCapMin);
+      row.classList.toggle('alpha-filter-hidden', hidden);
+    });
+  };
   const loadAlphaModule = async (module) => {
     const target = document.querySelector(`[data-alpha-deferred="${module}"]`);
     const panel = target && target.closest('[data-alpha-panel]');
@@ -306,6 +322,7 @@
       if (Object.prototype.hasOwnProperty.call(alphaSortKeys, module)) {
         alphaDataLoaded[module] = true;
         applyAlphaSort(module);
+        if (module === 'snapshot') applySnapshotFilter();
       }
       const empty = panel.querySelector('.empty-state');
       if (empty) empty.remove();
@@ -345,6 +362,7 @@
       }
     });
   });
+  applySnapshotFilter();
   // Refresh at :01 UTC and then hourly, after the worker's on-the-hour run.
   const refreshHourlyModules = () => Promise.all([
     loadAlphaModule('snapshot'),
@@ -362,11 +380,17 @@
   document.querySelectorAll('[data-alpha-tab]').forEach((tab) => tab.addEventListener('click', () => activateAlphaModule(tab.dataset.alphaTab)));
 
   activateAlphaModule('snapshot');
-  const bindAlphaFilter = (form) => form.addEventListener('submit', (event) => {
+  const bindAlphaFilter = (form) => form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const panel = form.closest('[data-alpha-panel]');
     const values = Object.fromEntries(new FormData(form).entries());
-    if (panel.dataset.alphaPanel === 'oi') {
+    if (panel.dataset.alphaPanel === 'snapshot') {
+      const raw = String(values.market_cap_min ?? '').trim();
+      const value = raw === '' ? null : Number(raw);
+      snapshotFilterState.marketCapMin = value == null ? null : Number.isFinite(value) && value >= 0 ? value * 1000 : 50000;
+      if (!alphaDataLoaded.snapshot) await loadAlphaModule('snapshot');
+      applySnapshotFilter();
+    } else if (panel.dataset.alphaPanel === 'oi') {
       const oiMin = values.oi_min === '' ? null : Number(values.oi_min) / 100;
       const priceMax = values.price_max === '' ? null : Number(values.price_max) / 100;
       panel.querySelectorAll('tbody tr[data-oi-change]').forEach((row) => {

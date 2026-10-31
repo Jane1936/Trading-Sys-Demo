@@ -76,6 +76,7 @@ body {
 .alpha-table th[data-alpha-sort-key][data-sort-direction="asc"]::after { content:'↑'; color:#0f766e; }
 .alpha-table th[data-alpha-sort-key][data-sort-direction="desc"]::after { content:'↓'; color:#0f766e; }
 .alpha-table th[data-alpha-sort-key]:focus-visible { outline:2px solid #0d9488; outline-offset:-2px; }
+.alpha-table tr.alpha-filter-hidden { display:none; }
 .alpha-table .numeric { text-align:right; font-variant-numeric:tabular-nums; font-weight:650; }
 .alpha-table .alpha-active { color:#047857; background:#d1fae5; font-weight:800; }
 .alpha-table .alpha-change { font-weight:800; }
