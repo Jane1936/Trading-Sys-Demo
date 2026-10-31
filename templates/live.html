@@ -544,7 +544,21 @@
         </form>
         <div class="table-wrap"><table><thead><tr><th>asset</th><th>balance</th><th>available_balance</th><th>cross_wallet_balance</th><th>cross_un_pnl</th><th>account_alias</th></tr></thead><tbody id="live-balance-rows"><tr><td class="empty" colspan="6">点击“查询账户余额”后显示实盘数据</td></tr></tbody></table></div>
         <div class="experiment-note">实盘自动交易与模拟盘使用同一轮“本轮可开仓symbol情况”，但订单通过 Binance 生产接口执行；初始资金预算为 100U。所有实盘交易、持仓快照、僵尸强平和错误仅写入 <code>real_trading_core.db</code>，不会读写模拟盘交易数据库。请在“功能开关”页面开启“实盘交易系统”后再自动下单。</div>
-        <div class="account-summary" aria-label="实盘实验组USDT净值"><div class="account-metric account-metric-highlight"><div class="account-metric-label">实盘实验组USDT净值</div><div id="live-experiment-equity" class="account-metric-value">{{ live_trading_equity }} U</div><div id="live-experiment-equity-updated" class="muted">{% if live_equity_last_recorded_at %}最近成功快照：{{ live_equity_last_recorded_at|fmt_ms_datetime }}{% else %}尚无账户快照{% endif %}</div></div><div class="account-metric"><div class="account-metric-label">近7天收益率</div><div id="live-experiment-seven-day-return" class="account-metric-value {{ 'pnl-positive' if live_seven_day_return is not none and live_seven_day_return > 0 else 'pnl-negative' if live_seven_day_return is not none and live_seven_day_return < 0 else 'pnl-zero' }}">{{ '%+.2f%%'|format(live_seven_day_return) if live_seven_day_return is not none else '-' }}</div></div></div>
+        <div class="account-summary" aria-label="实盘实验组USDT净值">
+          <div class="account-metric account-metric-highlight">
+            <div class="account-metric-label">实盘实验组USDT净值</div>
+            <div id="live-experiment-equity" class="account-metric-value">{{ live_trading_equity }} U</div>
+            <div id="live-experiment-equity-updated" class="muted">{% if live_equity_last_recorded_at %}最近成功快照：{{ live_equity_last_recorded_at|fmt_ms_datetime }}{% else %}尚无账户快照{% endif %}</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">近7天收益率</div>
+            <div id="live-experiment-seven-day-return" class="account-metric-value {{ 'pnl-positive' if live_seven_day_return is not none and live_seven_day_return > 0 else 'pnl-negative' if live_seven_day_return is not none and live_seven_day_return < 0 else 'pnl-zero' }}">{{ '%+.2f%%'|format(live_seven_day_return) if live_seven_day_return is not none else '-' }}</div>
+          </div>
+          <div class="account-metric">
+            <div class="account-metric-label">近15天收益率</div>
+            <div id="live-experiment-fifteen-day-return" class="account-metric-value {{ 'pnl-positive' if live_fifteen_day_return is not none and live_fifteen_day_return > 0 else 'pnl-negative' if live_fifteen_day_return is not none and live_fifteen_day_return < 0 else 'pnl-zero' }}">{{ '%+.2f%%'|format(live_fifteen_day_return) if live_fifteen_day_return is not none else '-' }}</div>
+          </div>
+        </div>
         <div class="equity-trend-chart-wrap" aria-label="实盘近7天实验组USDT净值变化趋势图">
           <div class="chart-meta">
             <span><strong>近7天实验组USDT净值变化趋势图</strong></span>
