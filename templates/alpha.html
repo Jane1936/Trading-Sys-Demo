@@ -91,7 +91,7 @@
       </div>
       <div class="table-wrap">
         <table class="alpha-table" data-alpha-deferred="snapshot">
-          <thead><tr><th>#</th><th>币种</th><th>名称</th><th>24小时成交量</th><th>市值</th><th>1天活跃度</th><th>最近第2天活跃度</th><th>最近第3天活跃度</th><th>最近第4天活跃度</th><th>最近第5天活跃度</th></tr></thead>
+          <thead><tr><th data-alpha-sort-key="rank" tabindex="0" aria-sort="none">#</th><th data-alpha-sort-key="symbol" tabindex="0" aria-sort="none">币种</th><th data-alpha-sort-key="name" tabindex="0" aria-sort="none">名称</th><th data-alpha-sort-key="volume" tabindex="0" aria-sort="none">24小时成交量</th><th data-alpha-sort-key="market_cap" tabindex="0" aria-sort="none">市值</th><th data-alpha-sort-key="activity_1d" tabindex="0" aria-sort="none">1天活跃度</th><th data-alpha-sort-key="activity_2d" tabindex="0" aria-sort="none">最近第2天活跃度</th><th data-alpha-sort-key="activity_3d" tabindex="0" aria-sort="none">最近第3天活跃度</th><th data-alpha-sort-key="activity_4d" tabindex="0" aria-sort="none">最近第4天活跃度</th><th data-alpha-sort-key="activity_5d" tabindex="0" aria-sort="none">最近第5天活跃度</th></tr></thead>
           <tbody>
           {% for token in tokens %}
             <tr class="{% if loop.index > 10 %}alpha-extra-row{% endif %}"{% if loop.index > 10 %} hidden{% endif %}>
@@ -231,6 +231,52 @@
       : number.toLocaleString('en-US', {maximumFractionDigits: 8});
     return `<td class="numeric">${text}</td>`;
   };
+  const snapshotSortState = {key: null, direction: 1};
+  let snapshotDataLoaded = false;
+  const snapshotSortKeys = ['rank', 'symbol', 'name', 'volume', 'market_cap', 'activity_1d', 'activity_2d', 'activity_3d', 'activity_4d', 'activity_5d'];
+  const snapshotSortNumber = (value) => {
+    const raw = String(value ?? '').replace(/,/g, '').trim();
+    if (raw === '' || raw === '—') return null;
+    const compact = raw.match(/^(-?\d+(?:\.\d+)?)([KM])$/i);
+    const number = compact
+      ? Number(compact[1]) * (compact[2].toUpperCase() === 'M' ? 1000000 : 1000)
+      : Number(raw);
+    return Number.isFinite(number) ? number : null;
+  };
+  const applySnapshotSort = () => {
+    const table = document.querySelector('[data-alpha-deferred="snapshot"]');
+    const body = table?.querySelector('tbody');
+    if (!body || !snapshotSortState.key) return;
+    const keyIndex = snapshotSortKeys.indexOf(snapshotSortState.key);
+    if (keyIndex < 0) return;
+    const type = snapshotSortState.key === 'symbol' || snapshotSortState.key === 'name' ? 'text' : 'number';
+    const rows = Array.from(body.querySelectorAll('tr'));
+    rows.sort((left, right) => {
+      const leftCell = left.cells[keyIndex];
+      const rightCell = right.cells[keyIndex];
+      const leftRaw = leftCell?.textContent?.trim() ?? '';
+      const rightRaw = rightCell?.textContent?.trim() ?? '';
+      if (type === 'text') {
+        return leftRaw.localeCompare(rightRaw, 'zh-CN') * snapshotSortState.direction;
+      }
+      const leftValue = snapshotSortNumber(leftRaw);
+      const rightValue = snapshotSortNumber(rightRaw);
+      if (leftValue == null || rightValue == null) {
+        if (leftValue == null && rightValue == null) return 0;
+        return leftValue == null ? 1 : -1;
+      }
+      return (leftValue - rightValue) * snapshotSortState.direction;
+    });
+    rows.forEach((row, index) => {
+      row.cells[0].textContent = String(index + 1);
+      body.appendChild(row);
+    });
+    document.querySelectorAll('[data-alpha-sort-key]').forEach((header) => {
+      const active = header.dataset.alphaSortKey === snapshotSortState.key;
+      header.dataset.sortDirection = active ? (snapshotSortState.direction > 0 ? 'asc' : 'desc') : '';
+      header.setAttribute('aria-sort', active ? (snapshotSortState.direction > 0 ? 'ascending' : 'descending') : 'none');
+    });
+  };
   const loadAlphaModule = async (module) => {
     const target = document.querySelector(`[data-alpha-deferred="${module}"]`);
     const panel = target && target.closest('[data-alpha-panel]');
@@ -253,6 +299,10 @@
         if (module === 'snapshot') return `<tr${extra}><td>${index + 1}</td><td><strong>${esc(item.symbol)}</strong></td><td>${esc(item.name)}</td><td class="numeric" data-compact-value="${esc(item.volume_24h)}">${formatKm(item.volume_24h)}</td><td class="numeric" data-compact-value="${esc(item.market_cap)}">${formatKm(item.market_cap)}</td>${[1,2,3,4,5].map((d) => { const value = item[`activity_${d}d`]; const active = value != null && Number(value) >= 1; return `<td class="numeric${active ? ' alpha-active' : ''}" data-activity-value="${esc(value)}">${formatActivity(value)}</td>`; }).join('')}</tr>`;
         return `<tr${extra} data-consecutive-up-days="${item.consecutive_up_days}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${item.consecutive_up_days}</td><td class="numeric">${item.recent_five_up_days}</td>${changeCell(item.three_day_return)}${changeCell(item.five_day_return)}<td class="numeric">${item.kline_count}</td></tr>`;
       }).join('');
+      if (module === 'snapshot') {
+        snapshotDataLoaded = true;
+        applySnapshotSort();
+      }
       const empty = panel.querySelector('.empty-state');
       if (empty) empty.remove();
       ensureAlphaToggle(panel, module, rows.length);
@@ -268,6 +318,26 @@
       }
     }
   };
+  const sortHeaders = document.querySelectorAll('[data-alpha-sort-key]');
+  const handleSnapshotSort = async (header) => {
+    const key = header.dataset.alphaSortKey;
+    if (snapshotSortState.key === key) snapshotSortState.direction *= -1;
+    else {
+      snapshotSortState.key = key;
+      snapshotSortState.direction = 1;
+    }
+    if (!snapshotDataLoaded) await loadAlphaModule('snapshot');
+    applySnapshotSort();
+  };
+  sortHeaders.forEach((header) => {
+    header.addEventListener('click', () => handleSnapshotSort(header));
+    header.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        handleSnapshotSort(header);
+      }
+    });
+  });
   // Refresh at :01 UTC and then hourly, after the worker's on-the-hour run.
   const refreshHourlyModules = () => Promise.all([
     loadAlphaModule('snapshot'),
