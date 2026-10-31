@@ -91,20 +91,20 @@
       </div>
       <div class="table-wrap">
         <table class="alpha-table" data-alpha-deferred="snapshot">
-          <thead><tr><th>#</th><th>币种</th><th>名称</th><th>网络</th><th>24小时成交量</th><th>市值</th><th>1天活跃度</th><th>最近第2天活跃度</th><th>最近第3天活跃度</th><th>最近第4天活跃度</th><th>最近第5天活跃度</th></tr></thead>
+          <thead><tr><th>#</th><th>币种</th><th>名称</th><th>24小时成交量</th><th>市值</th><th>1天活跃度</th><th>最近第2天活跃度</th><th>最近第3天活跃度</th><th>最近第4天活跃度</th><th>最近第5天活跃度</th></tr></thead>
           <tbody>
           {% for token in tokens %}
             <tr class="{% if loop.index > 10 %}alpha-extra-row{% endif %}"{% if loop.index > 10 %} hidden{% endif %}>
               {% set activity = token.activity_1d|default(token.activity|default(none)) %}
               <td>{{ loop.index }}</td>
               <td><strong>{{ token.symbol }}</strong></td>
-              <td>{{ token.name or '—' }}</td><td>{{ token.chain_id or '—' }}</td>
+              <td>{{ token.name or '—' }}</td>
               <td class="numeric" data-value="{{ token.volume_24h or '' }}" data-compact-value="{{ token.volume_24h or '' }}">{{ token.volume_24h|format_km }}</td>
               <td class="numeric" data-value="{{ token.market_cap or '' }}" data-compact-value="{{ token.market_cap or '' }}">{{ token.market_cap|format_km }}</td>
-              <td class="numeric{% if activity is not none and activity >= 1 %} alpha-active{% endif %}" data-value="{{ activity or '' }}">{{ activity or '—' }}</td>
+              <td class="numeric{% if activity is not none and activity >= 1 %} alpha-active{% endif %}" data-activity-value="{{ activity if activity is not none else '' }}">{% if activity is not none %}{{ '%.3f'|format(activity) }}{% else %}—{% endif %}</td>
               {% for days in range(2, 6) %}
                 {% set period_activity = token['activity_' ~ days ~ 'd']|default(none) %}
-                <td class="numeric{% if period_activity is not none and period_activity >= 1 %} alpha-active{% endif %}" data-value="{{ period_activity or '' }}">{{ period_activity or '—' }}</td>
+                <td class="numeric{% if period_activity is not none and period_activity >= 1 %} alpha-active{% endif %}" data-activity-value="{{ period_activity if period_activity is not none else '' }}">{% if period_activity is not none %}{{ '%.3f'|format(period_activity) }}{% else %}—{% endif %}</td>
               {% endfor %}
             </tr>
           {% endfor %}
@@ -199,11 +199,18 @@
     const suffix = scale === 1000000 ? 'M' : 'K';
     return `${(number / scale).toLocaleString('en-US', {maximumFractionDigits: 2, useGrouping: false})}${suffix}`;
   };
+  const formatActivity = (value) => {
+    const raw = String(value ?? '').trim();
+    if (raw === '') return '—';
+    const number = Number(raw);
+    return Number.isFinite(number) ? number.toFixed(3) : '—';
+  };
   document.querySelectorAll('.numeric[data-value]').forEach((cell) => {
     const value = Number(cell.dataset.value);
     if (Number.isFinite(value)) cell.textContent = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(value);
   });
   document.querySelectorAll('[data-compact-value]').forEach((cell) => { cell.textContent = formatKm(cell.dataset.compactValue); });
+  document.querySelectorAll('[data-activity-value]').forEach((cell) => { cell.textContent = formatActivity(cell.dataset.activityValue); });
   const activateAlphaModule = (name) => {
     document.querySelectorAll('[data-alpha-panel]').forEach((panel) => { panel.hidden = panel.dataset.alphaPanel !== name; });
     document.querySelectorAll('[data-alpha-tab]').forEach((tab) => { tab.classList.toggle('active', tab.dataset.alphaTab === name); tab.setAttribute('aria-selected', String(tab.dataset.alphaTab === name)); });
@@ -243,7 +250,7 @@
         const extra = index >= 10 ? ' class="alpha-deferred-extra-row" hidden' : '';
         if (module === 'oi') { const valueClass = item.oi_value != null && Number(item.oi_value) >= 5000000 ? ' alpha-active' : ''; return `<tr${extra} data-oi-change="${item.oi_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric" data-compact-value="${esc(item.open_interest)}">${formatKm(item.open_interest)}</td>${numberCell(item.close)}<td class="numeric${valueClass}" data-compact-value="${esc(item.oi_value)}">${formatKm(item.oi_value)}</td>${changeCell(item.oi_change)}${changeCell(item.price_change)}</tr>`; }
         if (module === 'funding') return `<tr${extra} data-funding-change="${item.funding_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td>${changeCell(item.funding_change)}${changeCell(item.price_change)}</tr>`;
-        if (module === 'snapshot') return `<tr${extra}><td>${index + 1}</td><td><strong>${esc(item.symbol)}</strong></td><td>${esc(item.name)}</td><td>${esc(item.chain_id)}</td><td class="numeric" data-compact-value="${esc(item.volume_24h)}">${formatKm(item.volume_24h)}</td><td class="numeric" data-compact-value="${esc(item.market_cap)}">${formatKm(item.market_cap)}</td>${[1,2,3,4,5].map((d) => { const value = item[`activity_${d}d`]; const active = value != null && Number(value) >= 1; return `<td class="numeric${active ? ' alpha-active' : ''}" data-value="${esc(value)}">${esc(value)}</td>`; }).join('')}</tr>`;
+        if (module === 'snapshot') return `<tr${extra}><td>${index + 1}</td><td><strong>${esc(item.symbol)}</strong></td><td>${esc(item.name)}</td><td class="numeric" data-compact-value="${esc(item.volume_24h)}">${formatKm(item.volume_24h)}</td><td class="numeric" data-compact-value="${esc(item.market_cap)}">${formatKm(item.market_cap)}</td>${[1,2,3,4,5].map((d) => { const value = item[`activity_${d}d`]; const active = value != null && Number(value) >= 1; return `<td class="numeric${active ? ' alpha-active' : ''}" data-activity-value="${esc(value)}">${formatActivity(value)}</td>`; }).join('')}</tr>`;
         return `<tr${extra} data-consecutive-up-days="${item.consecutive_up_days}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${item.consecutive_up_days}</td><td class="numeric">${item.recent_five_up_days}</td>${changeCell(item.three_day_return)}${changeCell(item.five_day_return)}<td class="numeric">${item.kline_count}</td></tr>`;
       }).join('');
       const empty = panel.querySelector('.empty-state');
