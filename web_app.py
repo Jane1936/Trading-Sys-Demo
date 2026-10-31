@@ -2928,5 +2928,22 @@ def fmt_ms_datetime(ts_ms: int) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+@app.template_filter("format_km")
+def format_km(value) -> str:
+    """Format Alpha amount metrics with K/M units for compact tables."""
+    if value is None or value == "":
+        return "—"
+    try:
+        number = float(str(value).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return str(value)
+    if not (number == number and abs(number) != float("inf")):
+        return "—"
+    scale, suffix = (1_000_000, "M") if abs(number) >= 1_000_000 else (1_000, "K")
+    scaled = number / scale
+    text = f"{scaled:.2f}".rstrip("0").rstrip(".")
+    return f"{text}{suffix}"
+
+
 if __name__ == "__main__":
     create_app().run(host="0.0.0.0", port=5000)
