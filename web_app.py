@@ -451,6 +451,10 @@ def load_simulation_context() -> dict:
     )
     positions = load_module("交易持仓快照", lambda: experiment.latest_position_snapshots(limit=100), [])
     equity_rows = load_module("交易权益曲线", lambda: _experiment_equity_trend_rows(since_ms), [])
+    fifteen_day_since_ms = since_ms - int(timedelta(days=8).total_seconds() * 1000)
+    fifteen_day_equity_rows = load_module(
+        "交易权益曲线（近15天）", lambda: _experiment_equity_trend_rows(fifteen_day_since_ms), []
+    )
     equity = _latest_trading_equity_usdt(equity_rows)
 
     holding = HoldingPositionScoringSystem(db_path=_trading_db_path())
@@ -486,7 +490,8 @@ def load_simulation_context() -> dict:
         "trading_used_margin_usdt": _trading_used_margin_text(positions),
         "trading_equity_usdt": equity,
         "trading_equity_trend_rows": equity_rows,
-        "trading_seven_day_return": _seven_day_equity_return(equity_rows),
+        "trading_seven_day_return": _equity_return(equity_rows),
+        "trading_fifteen_day_return": _equity_return(fifteen_day_equity_rows),
         "trading_open_increase_blocked": _trading_open_increase_blocked(equity, positions),
         "trading_error_records": load_module(
             "交易错误记录", lambda: experiment.recent_error_records(limit=100, since_ms=since_ms), []
@@ -547,6 +552,12 @@ def load_live_context() -> dict:
         lambda: _experiment_equity_trend_rows(since_ms, db_config.REAL_TRADING_CORE_DB_PATH),
         [],
     )
+    fifteen_day_since_ms = since_ms - int(timedelta(days=8).total_seconds() * 1000)
+    fifteen_day_equity_rows = load_module(
+        "实盘交易权益曲线（近15天）",
+        lambda: _experiment_equity_trend_rows(fifteen_day_since_ms, db_config.REAL_TRADING_CORE_DB_PATH),
+        [],
+    )
     initial_equity = load_module(
         "实盘初始净值", lambda: real_trading.config().initial_equity_usdt, DEFAULT_TRADING_EQUITY_USDT
     )
@@ -593,7 +604,8 @@ def load_live_context() -> dict:
         "live_zombie_records": load_module("实盘僵尸强平记录", lambda: real_trading.zombie_module().recent_records(limit=100, since_ms=since_ms), []),
         "live_equity_trend_rows": equity_rows,
         "live_trading_equity": equity,
-        "live_seven_day_return": _seven_day_equity_return(equity_rows),
+        "live_seven_day_return": _equity_return(equity_rows),
+        "live_fifteen_day_return": _equity_return(fifteen_day_equity_rows),
         "live_holding_stop_loss_round_ts": stop_round,
         "live_holding_stop_loss_checks": _sync_live_module_checks(stop_checks, positions),
         "live_holding_portfolio_risk": _sync_live_portfolio_risk(portfolio_risk, positions),
@@ -756,7 +768,12 @@ def _latest_trading_equity_usdt(equity_trend_rows: list[object]) -> object:
 
 
 def _seven_day_equity_return(equity_trend_rows: list[object]) -> Decimal | None:
-    """Calculate the return between the oldest and newest seven-day equity points."""
+    """Backward-compatible alias for callers that use the original helper name."""
+    return _equity_return(equity_trend_rows)
+
+
+def _equity_return(equity_trend_rows: list[object]) -> Decimal | None:
+    """Calculate the return between the oldest and newest points in a window."""
     if len(equity_trend_rows) < 2:
         return None
 

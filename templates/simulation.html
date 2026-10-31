@@ -1203,6 +1203,10 @@
             <div class="account-metric-label">近7天收益率</div>
             <div id="experiment-seven-day-return" class="account-metric-value {{ 'pnl-positive' if trading_seven_day_return is not none and trading_seven_day_return > 0 else 'pnl-negative' if trading_seven_day_return is not none and trading_seven_day_return < 0 else 'pnl-zero' }}">{{ '%+.2f%%'|format(trading_seven_day_return) if trading_seven_day_return is not none else '-' }}</div>
           </div>
+          <div class="account-metric">
+            <div class="account-metric-label">近15天收益率</div>
+            <div id="experiment-fifteen-day-return" class="account-metric-value {{ 'pnl-positive' if trading_fifteen_day_return is not none and trading_fifteen_day_return > 0 else 'pnl-negative' if trading_fifteen_day_return is not none and trading_fifteen_day_return < 0 else 'pnl-zero' }}">{{ '%+.2f%%'|format(trading_fifteen_day_return) if trading_fifteen_day_return is not none else '-' }}</div>
+          </div>
           <div class="muted">计算公式：当前USDT总余额 - 未投入实验组USDT额度（4000U）。USDT总初始资金5000U，第一组实验初始投入1000U；盈利后实验组净值可作为动态总保证金预算上限。</div>
         </div>
         <div class="equity-trend-chart-wrap" aria-label="近7天实验组USDT净值变化趋势图">
