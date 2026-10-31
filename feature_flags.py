@@ -99,13 +99,13 @@ FEATURE_FLAG_DEFINITIONS: tuple[FeatureFlagDefinition, ...] = (
     FeatureFlagDefinition(REAL_PARTIAL_TAKE_PROFIT, "实盘分批止盈", "控制实盘分批止盈的每分钟扫描及实盘减仓操作。"),
     FeatureFlagDefinition(REAL_TRAILING_REDUCTION, "实盘移动追踪减仓", "控制实盘移动追踪减仓判断、刷新及实盘减仓操作。"),
     FeatureFlagDefinition(REAL_DYNAMIC_PROFIT_PROTECTION, "实盘动态利润保护", "控制实盘动态利润保护的每分钟扫描及实盘平仓操作。"),
-    FeatureFlagDefinition(REAL_HARD_TAKE_PROFIT, "实盘硬止盈", "控制实盘硬止盈模块的每分钟扫描及实盘全部平仓操作。"),
+    FeatureFlagDefinition(REAL_HARD_TAKE_PROFIT, "实盘涨幅止盈", "控制实盘涨幅止盈模块的每分钟扫描及实盘全部平仓操作。"),
     FeatureFlagDefinition(REAL_TRAILING_STOP, "实盘移动追踪止盈", "控制实盘移动追踪止盈的每分钟扫描及实盘平仓操作。"),
     FeatureFlagDefinition(BREAK_EVEN_TAKE_PROFIT, "模拟盘保本止盈策略", "控制保本止盈的每分钟扫描及平仓操作。"),
     FeatureFlagDefinition(PARTIAL_TAKE_PROFIT, "模拟盘分批止盈规则", "控制分批止盈的每分钟扫描及减仓操作。"),
     FeatureFlagDefinition(TRAILING_REDUCTION, "模拟盘移动追踪减仓", "控制移动追踪减仓判断、刷新及减仓操作。"),
     FeatureFlagDefinition(DYNAMIC_PROFIT_PROTECTION, "模拟盘动态利润保护模块", "控制动态利润保护的每分钟扫描及平仓操作。"),
-    FeatureFlagDefinition(HARD_TAKE_PROFIT, "模拟盘硬止盈模块", "控制硬止盈模块的每分钟扫描及全部平仓操作。"),
+    FeatureFlagDefinition(HARD_TAKE_PROFIT, "模拟盘涨幅止盈模块", "控制涨幅止盈模块的每分钟扫描及全部平仓操作。"),
     FeatureFlagDefinition(MARGIN_COST_LIMIT, "总仓位成本限制", "控制模拟盘与实盘新开仓、加仓前的最大保证金成本限制。"),
 )
 

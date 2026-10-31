@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import dynamic_profit_protection as protection_module
 from dynamic_profit_protection import DynamicProfitProtection
 from trading_experiment import TradingExperiment
 
@@ -64,6 +65,53 @@ def _seed_db(db_path, close, high=20):
         conn.execute("CREATE TABLE klines_1m (symbol TEXT, open_time INTEGER, open REAL, high REAL, low REAL, close REAL, volume REAL, close_time INTEGER, PRIMARY KEY(symbol, open_time))")
         conn.execute("INSERT INTO klines_1m VALUES ('BANK', 1000, 10, ?, 9, ?, 100, 59999)", (high, close))
         conn.execute(f"INSERT INTO {TradingExperiment.TRADES_TABLE} (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt, required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity, notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation, take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at) VALUES ('BANK', 1, 'LONG', 'opened', 80, 5, '100', '20', '5000', '50', '10', '10', '100', '18', '8', '', 'tp-1', 'sl-1', '', '', 1, 1)")
+
+
+@pytest.mark.parametrize(
+    "is_live,high_enabled,rise,expected_triggered",
+    [
+        (True, False, 1.59, 1),
+        (True, False, 1.6, 1),
+        (True, False, 1.61, 0),
+        (True, True, 1.61, 1),
+        (False, False, 1.61, 1),
+        (True, True, 10.0, 0),
+    ],
+)
+def test_live_high_rise_opt_out_suspends_drawdown_protection(
+    tmp_path, monkeypatch, is_live, high_enabled, rise, expected_triggered
+):
+    db_path = str(tmp_path / "positions.db")
+    _seed_db(db_path, close=11.8, high=13)
+    monkeypatch.setattr(
+        protection_module.db_config, "REAL_TRADING_DB_PATH",
+        db_path if is_live else str(tmp_path / "other-live.db"),
+    )
+    monkeypatch.setattr(protection_module.db_config, "REAL_TRADING_CORE_DB_PATH", db_path)
+    monkeypatch.setattr(protection_module.db_config, "REAL_TRADING_INFO_DB_PATH", db_path)
+    settings = {
+        **protection_module.DEFAULT_SETTINGS,
+        "allusdt_24h_rise_threshold_percent": 1.6,
+        "high_live_enabled": high_enabled,
+        "high_simulation_enabled": high_enabled,
+    }
+    monkeypatch.setattr(protection_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(protection_module.allusdt_24h_ticker, "fetch_change_percent", lambda: 0.0)
+    account = FakeAccountManager(unrealized_profit="30")
+    tracker = DynamicProfitProtection(db_path=db_path, account_manager=account)
+    assert tracker.run_round()["triggered"] == 0
+
+    account.unrealized_profit = "18"
+    monkeypatch.setattr(protection_module.allusdt_24h_ticker, "fetch_change_percent", lambda: rise)
+    assert tracker.run_round()["triggered"] == expected_triggered
+    assert len(account.signed_posts) == expected_triggered
+
+    if is_live and not high_enabled and rise > 1.6:
+        # A later round below the threshold resumes protection without changing settings.
+        monkeypatch.setattr(protection_module.allusdt_24h_ticker, "fetch_change_percent", lambda: 1.5)
+        assert tracker.run_round()["triggered"] == 1
+        assert len(account.signed_posts) == 1
+    assert settings["enabled"] is True
 
 
 def test_run_round_does_not_reinitialize_tables_after_explicit_initialization(monkeypatch):

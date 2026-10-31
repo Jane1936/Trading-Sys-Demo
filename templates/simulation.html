@@ -28,7 +28,7 @@
           <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-break-even">保本止盈策略</button>
           <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-partial-take-profit">分批止盈规则</button>
           <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-trailing-reduction">移动追踪减仓模块</button>
-          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-hard-take-profit">硬止盈板块</button>
+          <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-hard-take-profit">涨幅止盈板块</button>
           <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-dynamic-profit-protection">动态利润保护板块</button>
           <button class="holding-module-tab" type="button" role="tab" aria-selected="false" data-holding-module-tab="holding-module-trailing-stop">移动追踪止盈规则</button>
         </div>
@@ -821,17 +821,17 @@
 
 
         <div id="holding-module-hard-take-profit" class="holding-module-panel" role="tabpanel">
-        <div class="critical-section sky-theme-section" aria-label="硬止盈1分钟扫描结果">
+        <div class="critical-section sky-theme-section" aria-label="涨幅止盈1分钟扫描结果">
           <div class="symbol-strip">
-            <div class="section-title-row"><strong>硬止盈模块：1分钟扫描结果</strong><button id="refresh-hard-take-profit" class="btn btn-primary btn-small" type="button">刷新</button><span id="hard-take-profit-refresh-status" class="muted">仅刷新本模块的最新信息</span></div>
-            <div id="hard-take-profit-round-note" class="muted">{% if hard_take_profit_round_ts %}最近判断轮次：{{ hard_take_profit_round_ts|fmt_ms_datetime }}。独立扫描全部已持仓 symbol；未变现盈利率达到当前配置 {{ hard_take_profit_settings.profit_ratio * 100 }}% 时，调用 reduceOnly MARKET 市价单全部平仓。{% else %}暂无硬止盈扫描结果。{% endif %}</div>
+            <div class="section-title-row"><strong>涨幅止盈模块：1分钟扫描结果</strong><button id="refresh-hard-take-profit" class="btn btn-primary btn-small" type="button">刷新</button><span id="hard-take-profit-refresh-status" class="muted">仅刷新本模块的最新信息</span></div>
+            <div id="hard-take-profit-round-note" class="muted">{% if hard_take_profit_round_ts %}最近判断轮次：{{ hard_take_profit_round_ts|fmt_ms_datetime }}。独立扫描全部已持仓 symbol；未变现盈利率达到当前配置 {{ hard_take_profit_settings.profit_ratio * 100 }}% 时，调用 reduceOnly MARKET 市价单全部平仓。{% else %}暂无涨幅止盈扫描结果。{% endif %}</div>
           </div>
           <div class="table-wrap"><table><thead><tr><th>checked_at</th><th>symbol</th><th>entry</th><th>position</th><th>未变现盈利</th><th>持仓名义价值</th><th>盈利率/阈值</th><th>触发</th><th>全部平仓单</th><th>reason</th></tr></thead><tbody id="hard-take-profit-checks-body">
-          {% for row in hard_take_profit_checks %}<tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td>{{ row.unrealized_pnl }}</td><td>{{ row.position_notional }}</td><td>{{ row.profit_ratio }} / {{ row.profit_threshold }}</td><td>{{ '是' if row.triggered else '否' }}</td><td>{{ row.close_quantity }} / {{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="10">暂无硬止盈扫描结果</td></tr>{% endfor %}
+          {% for row in hard_take_profit_checks %}<tr><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.entry_price }}</td><td>{{ row.position_amt }}</td><td>{{ row.unrealized_pnl }}</td><td>{{ row.position_notional }}</td><td>{{ row.profit_ratio }} / {{ row.profit_threshold }}</td><td>{{ '是' if row.triggered else '否' }}</td><td>{{ row.close_quantity }} / {{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="10">暂无涨幅止盈扫描结果</td></tr>{% endfor %}
           </tbody></table></div>
         </div>
-        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10"><div class="symbol-strip collapsible-header"><div><strong>硬止盈操作记录</strong><div class="muted">操作记录存储于 trading_info.db；默认展示最新 10 条。</div></div><button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button></div><div class="table-wrap"><table><thead><tr><th>操作时间</th><th>symbol</th><th>持仓数量</th><th>开仓价</th><th>未变现盈利</th><th>盈利率/阈值</th><th>平仓数量</th><th>订单ID / 状态</th><th>原因</th></tr></thead><tbody id="hard-take-profit-records-body">
-        {% for row in hard_take_profit_records %}<tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}"><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.position_amt }}</td><td>{{ row.entry_price }}</td><td>{{ row.unrealized_pnl }}</td><td>{{ row.profit_ratio }} / {{ row.profit_threshold }}</td><td>{{ row.close_quantity }}</td><td>{{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="9">暂无硬止盈操作记录</td></tr>{% endfor %}
+        <div class="collapsible-section is-collapsed" data-collapsible data-collapsed-limit="10"><div class="symbol-strip collapsible-header"><div><strong>涨幅止盈操作记录</strong><div class="muted">操作记录存储于 trading_info.db；默认展示最新 10 条。</div></div><button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button></div><div class="table-wrap"><table><thead><tr><th>操作时间</th><th>symbol</th><th>持仓数量</th><th>开仓价</th><th>未变现盈利</th><th>盈利率/阈值</th><th>平仓数量</th><th>订单ID / 状态</th><th>原因</th></tr></thead><tbody id="hard-take-profit-records-body">
+        {% for row in hard_take_profit_records %}<tr class="{% if loop.index > 10 %}collapsed-extra{% endif %}"><td>{{ row.checked_at|fmt_ms_datetime }}</td><td>{{ row.symbol }}</td><td>{{ row.position_amt }}</td><td>{{ row.entry_price }}</td><td>{{ row.unrealized_pnl }}</td><td>{{ row.profit_ratio }} / {{ row.profit_threshold }}</td><td>{{ row.close_quantity }}</td><td>{{ row.close_order_id or '-' }} / {{ row.close_status }}</td><td>{{ row.reason }}</td></tr>{% else %}<tr><td class="empty" colspan="9">暂无涨幅止盈操作记录</td></tr>{% endfor %}
         </tbody></table></div></div>
         </div>
 
@@ -1079,7 +1079,7 @@
         </div>
         <div id="filled-sell-orders-error" class="account-error"></div>
         <div class="tip">数据来自 Binance USDⓈ-M Futures <code>userTrades</code> 成交明细；同一 symbol、同一 order_id、同一方向的多笔成交会合并为一行；成交价格为按成交额/成交数量计算的均价。开仓评分来自本地“交易实验交易记录”中同一 symbol 在成交时间前最近一次 opened 记录的 total_score，可按评分档位筛选并计算对应胜率。</div>
-        <div class="tip"><strong>止盈/止损原因显示规则：</strong>SELL 成交优先匹配本地策略记录；自动化硬止盈及强平记录会优先使用 Binance order_id 匹配本地下单记录，无法使用 order_id 时再按 symbol、成交时间（±5分钟）和成交数量匹配。其他策略记录按 symbol、成交时间（±5分钟）和成交数量匹配，命中优先级依次为：自动化硬止盈（硬止盈操作记录）、减仓失败强平（重挂止损失败后强平记录）、僵尸强平（僵尸单强平操作记录）、结构止损（止损记录）、减仓（减仓操作记录）、移动追踪减仓（移动追踪减仓记录）、动态利润保护、移动追踪止盈、分批止盈；若没有匹配到策略记录，则按已实现盈亏判断：realized_pnl &gt; 0 显示“硬止盈”，否则显示“硬止损”。BUY 成交也会优先匹配减仓失败强平记录；否则查询“加仓操作记录”，命中则显示“加仓”，未命中则不显示原因。</div>
+        <div class="tip"><strong>止盈/止损原因显示规则：</strong>SELL 成交优先匹配本地策略记录；自动化涨幅止盈及强平记录会优先使用 Binance order_id 匹配本地下单记录，无法使用 order_id 时再按 symbol、成交时间（±5分钟）和成交数量匹配。其他策略记录按 symbol、成交时间（±5分钟）和成交数量匹配，命中优先级依次为：自动化涨幅止盈（涨幅止盈操作记录）、减仓失败强平（重挂止损失败后强平记录）、僵尸强平（僵尸单强平操作记录）、结构止损（止损记录）、减仓（减仓操作记录）、移动追踪减仓（移动追踪减仓记录）、动态利润保护、移动追踪止盈、分批止盈；若没有匹配到策略记录，则按已实现盈亏判断：realized_pnl &gt; 0 显示“硬止盈”，否则显示“硬止损”。BUY 成交也会优先匹配减仓失败强平记录；否则查询“加仓操作记录”，命中则显示“加仓”，未命中则不显示原因。</div>
         <div id="filled-orders-summary" class="filled-orders-summary" aria-label="已完成订单统计">
           <div class="account-metric">
             <div class="account-metric-label">已完成订单数量</div>
@@ -1203,6 +1203,10 @@
             <div class="account-metric-label">近7天收益率</div>
             <div id="experiment-seven-day-return" class="account-metric-value {{ 'pnl-positive' if trading_seven_day_return is not none and trading_seven_day_return > 0 else 'pnl-negative' if trading_seven_day_return is not none and trading_seven_day_return < 0 else 'pnl-zero' }}">{{ '%+.2f%%'|format(trading_seven_day_return) if trading_seven_day_return is not none else '-' }}</div>
           </div>
+          <div class="account-metric">
+            <div class="account-metric-label">近15天收益率</div>
+            <div id="experiment-fifteen-day-return" class="account-metric-value {{ 'pnl-positive' if trading_fifteen_day_return is not none and trading_fifteen_day_return > 0 else 'pnl-negative' if trading_fifteen_day_return is not none and trading_fifteen_day_return < 0 else 'pnl-zero' }}">{{ '%+.2f%%'|format(trading_fifteen_day_return) if trading_fifteen_day_return is not none else '-' }}</div>
+          </div>
           <div class="muted">计算公式：当前USDT总余额 - 未投入实验组USDT额度（4000U）。USDT总初始资金5000U，第一组实验初始投入1000U；盈利后实验组净值可作为动态总保证金预算上限。</div>
         </div>
         <div class="equity-trend-chart-wrap" aria-label="近7天实验组USDT净值变化趋势图">
@@ -1216,7 +1220,7 @@
           <div class="symbol-strip collapsible-header">
             <div>
               <div><strong>僵尸单强平操作记录</strong></div>
-              <div class="muted">只显示最近7天内记录；持仓时间一旦达到24小时，无论是否已有保本止盈保护，都会立即触发强平：先取消该 symbol 的所有止盈/止损挂单，再通过 reduceOnly 市价单将当前持仓全部平仓。</div>
+              <div class="muted">只显示最近7天内记录；持仓时间一旦达到24小时，无论是否已有保本止盈保护，都会立即触发强平；已触发保本止盈的仓位还会从保本触发时刻起按配置时长（默认48小时）强平：先取消该 symbol 的所有止盈/止损挂单，再通过 reduceOnly 市价单将当前持仓全部平仓。</div>
             </div>
             <button class="collapsible-toggle" type="button" aria-expanded="false">展开全部</button>
           </div>

@@ -135,6 +135,25 @@ function renderFeatureFlagRow(flag) {
   });
 })();
 
+(function initPriceGainTakeProfitSettingsForm() {
+  const form = document.getElementById('price-gain-take-profit-settings-form');
+  const message = document.getElementById('price-gain-take-profit-settings-message');
+  if (!form || !message) return;
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); if (!form.reportValidity()) return;
+    const button = form.querySelector('button[type="submit"]');
+    const payload = {simulation_profit_ratio: Number(document.getElementById('simulation-price-gain-ratio').value) / 100, live_profit_ratio: Number(document.getElementById('live-price-gain-ratio').value) / 100};
+    button.disabled = true; message.textContent = '正在保存涨幅止盈配置…'; message.classList.remove('error');
+    try {
+      const response = await fetch('/api/price-gain-take-profit-settings', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      message.textContent = `配置已保存：模拟盘 ${result.simulation_profit_ratio * 100}%、实盘 ${result.live_profit_ratio * 100}%。`;
+    } catch (err) { message.textContent = `涨幅止盈配置保存失败：${err.message || err}`; message.classList.add('error'); }
+    finally { button.disabled = false; }
+  });
+})();
+
 (function initHardTakeProfitSettingsForm() {
   const form = document.getElementById('hard-take-profit-settings-form');
   const message = document.getElementById('hard-take-profit-settings-message');
@@ -149,7 +168,7 @@ function renderFeatureFlagRow(flag) {
       const response = await fetch('/api/hard-take-profit-settings', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      message.textContent = `配置已保存：模拟盘 ${result.simulation_hard_take_profit_usdt}U，实盘 ${result.live_hard_take_profit_usdt}U。`;
+      message.textContent = `配置已保存：模拟盘${result.simulation_enabled ? '开启' : '关闭'}、实盘${result.live_enabled ? '开启' : '关闭'}；浮盈达档关闭：模拟盘${result.floating_profit_disable_simulation_min_r}R、实盘${result.floating_profit_disable_live_min_r}R。`;
     } catch (err) { message.textContent = `硬止盈配置保存失败：${err.message || err}`; message.classList.add('error'); }
     finally { button.disabled = false; }
   });
@@ -192,16 +211,18 @@ function renderFeatureFlagRow(flag) {
       live_enabled: document.getElementById('dynamic-profit-live-enabled').checked,
       high_simulation_enabled: document.getElementById('dynamic-profit-high-simulation-enabled').checked,
       high_live_enabled: document.getElementById('dynamic-profit-high-live-enabled').checked,
-      allusdt_24h_rise_threshold_percent: Number(document.getElementById('dynamic-profit-allusdt-rise-threshold').value),
-      allusdt_24h_disable_threshold_percent: Number(document.getElementById('dynamic-profit-allusdt-disable-threshold').value),
-      tier_2_min_r: Number(document.getElementById('dynamic-profit-tier-2-r').value),
-      tier_3_min_r: Number(document.getElementById('dynamic-profit-tier-3-r').value),
-      tier_4_min_r: Number(document.getElementById('dynamic-profit-tier-4-r').value),
-      tier_2_drawdown_ratio: Number(document.getElementById('dynamic-profit-tier-2-drawdown').value) / 100,
-      tier_3_drawdown_ratio: Number(document.getElementById('dynamic-profit-tier-3-drawdown').value) / 100,
-      tier_4_drawdown_ratio: Number(document.getElementById('dynamic-profit-tier-4-drawdown').value) / 100,
-      high_tier_2_min_r: Number(document.getElementById('dynamic-profit-high-tier-2-r').value), high_tier_3_min_r: Number(document.getElementById('dynamic-profit-high-tier-3-r').value), high_tier_4_min_r: Number(document.getElementById('dynamic-profit-high-tier-4-r').value),
-      high_tier_2_drawdown_ratio: Number(document.getElementById('dynamic-profit-high-tier-2-drawdown').value) / 100, high_tier_3_drawdown_ratio: Number(document.getElementById('dynamic-profit-high-tier-3-drawdown').value) / 100, high_tier_4_drawdown_ratio: Number(document.getElementById('dynamic-profit-high-tier-4-drawdown').value) / 100,
+      floating_profit_disable_simulation_enabled: document.getElementById('dynamic-profit-floating-simulation-enabled').checked,
+      floating_profit_disable_live_enabled: document.getElementById('dynamic-profit-floating-live-enabled').checked,
+      floating_profit_disable_simulation_min_r: Number(document.getElementById('dynamic-profit-floating-simulation-r').value),
+      floating_profit_disable_live_min_r: Number(document.getElementById('dynamic-profit-floating-live-r').value),
+      simulation_allusdt_24h_rise_threshold_percent: Number(document.getElementById('dynamic-profit-simulation-rise-threshold').value),
+      live_allusdt_24h_rise_threshold_percent: Number(document.getElementById('dynamic-profit-live-rise-threshold').value),
+      ...Object.fromEntries(['simulation','live'].flatMap(env => [2,3,4].map(n => [`${env}_tier_${n}_min_r`, Number(document.getElementById(`dynamic-profit-${env}-tier-${n}-r`).value)]).concat([2,3,4].map(n => [`${env}_tier_${n}_drawdown_ratio`, Number(document.getElementById(`dynamic-profit-${env}-tier-${n}-drawdown`).value) / 100])))),
+      ...Object.fromEntries(['simulation','live'].flatMap(env => [
+        [`${env}_allusdt_24h_disable_threshold_percent`, Number(document.getElementById(`dynamic-profit-${env}-disable-threshold`).value)],
+        ...[2,3,4].map(n => [`${env}_high_tier_${n}_min_r`, Number(document.getElementById(`dynamic-profit-${env}-high-tier-${n}-r`).value)]),
+        ...[2,3,4].map(n => [`${env}_high_tier_${n}_drawdown_ratio`, Number(document.getElementById(`dynamic-profit-${env}-high-tier-${n}-drawdown`).value) / 100]),
+      ])),
     };
     button.disabled = true;
     message.textContent = '正在保存动态利润保护配置…';
@@ -212,7 +233,7 @@ function renderFeatureFlagRow(flag) {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      message.textContent = `配置已保存：模拟盘${result.simulation_enabled ? '开启' : '关闭'}、实盘${result.live_enabled ? '开启' : '关闭'}；ALLUSDT涨幅超过${result.allusdt_24h_rise_threshold_percent}%时切换。(${result.tier_2_min_r}R, ${result.tier_3_min_r}R] 回撤≥${result.tier_2_drawdown_ratio * 100}%，(${result.tier_3_min_r}R, ${result.tier_4_min_r}R] 回撤≥${result.tier_3_drawdown_ratio * 100}%，${result.tier_4_min_r}R以上回撤≥${result.tier_4_drawdown_ratio * 100}%。`;
+      message.textContent = `配置已保存：模拟盘${result.simulation_enabled ? '开启' : '关闭'}、实盘${result.live_enabled ? '开启' : '关闭'}；浮盈达档关闭：模拟盘${result.floating_profit_disable_simulation_min_r}R、实盘${result.floating_profit_disable_live_min_r}R。`;
     } catch (err) {
       message.textContent = `动态利润保护配置保存失败：${err.message || err}`;
       message.classList.add('error');
@@ -232,8 +253,12 @@ function renderFeatureFlagRow(flag) {
       btc_siphon_threshold: Number(document.getElementById('market-filter-btc-threshold').value) / 100,
       market_crash_threshold: Number(document.getElementById('market-filter-crash-threshold').value) / 100,
       allusdt_24h_drop_threshold: Number(document.getElementById('market-filter-allusdt-24h-threshold').value) / 100,
-      allusdt_ema20_threshold: Number(document.getElementById('market-filter-ema20-threshold').value) / 100,
-      allusdt_24h_ema20_disable_threshold: Number(document.getElementById('market-filter-ema20-disable-threshold').value) / 100,
+      simulation_allusdt_ema20_enabled: document.getElementById('market-filter-simulation-ema20-enabled').checked,
+      live_allusdt_ema20_enabled: document.getElementById('market-filter-live-ema20-enabled').checked,
+      simulation_allusdt_ema20_threshold: Number(document.getElementById('market-filter-simulation-ema20-threshold').value) / 100,
+      live_allusdt_ema20_threshold: Number(document.getElementById('market-filter-live-ema20-threshold').value) / 100,
+      simulation_allusdt_24h_ema20_disable_threshold: Number(document.getElementById('market-filter-simulation-ema20-disable-threshold').value) / 100,
+      live_allusdt_24h_ema20_disable_threshold: Number(document.getElementById('market-filter-live-ema20-disable-threshold').value) / 100,
       block_duration_minutes: Number(document.getElementById('market-filter-block-minutes').value),
     };
     button.disabled = true;
@@ -245,7 +270,7 @@ function renderFeatureFlagRow(flag) {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      message.textContent = `配置已保存：EMA20条件 ${result.allusdt_ema20_threshold * 100}%，ALLUSDT 24h涨幅超过 ${result.allusdt_24h_ema20_disable_threshold * 100}% 时关闭 EMA20 条件。`;
+      message.textContent = `配置已保存：模拟盘 EMA20${result.simulation_allusdt_ema20_enabled ? '开启' : '关闭'}，实盘 EMA20${result.live_allusdt_ema20_enabled ? '开启' : '关闭'}。`;
     } catch (err) {
       message.textContent = `独立市场过滤配置保存失败：${err.message || err}`;
       message.classList.add('error');
@@ -407,9 +432,9 @@ function renderFeatureFlagRow(flag) {
     event.preventDefault(); if (!form.reportValidity()) return;
     const button = form.querySelector('button[type="submit"]'); button.disabled = true;
     try {
-      const response = await fetch('/api/zombie-force-liquidation-settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({holding_hours: Number(document.getElementById('zombie-force-liquidation-hours').value), allusdt_rise_threshold_percent: Number(document.getElementById('zombie-force-liquidation-threshold').value), high_rise_holding_hours: Number(document.getElementById('zombie-force-liquidation-high-hours').value)})});
+      const response = await fetch('/api/zombie-force-liquidation-settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({holding_hours: Number(document.getElementById('zombie-force-liquidation-hours').value), allusdt_rise_threshold_percent: Number(document.getElementById('zombie-force-liquidation-threshold').value), high_rise_holding_hours: Number(document.getElementById('zombie-force-liquidation-high-hours').value), break_even_holding_hours: Number(document.getElementById('zombie-force-liquidation-break-even-hours').value)})});
       const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      message.textContent = `配置已保存：持仓达到 ${result.holding_hours} 小时后全部平仓。`; message.classList.remove('error');
+      message.textContent = `配置已保存：普通持仓 ${result.holding_hours} 小时、触发保本止盈后 ${result.break_even_holding_hours} 小时强平。`; message.classList.remove('error');
     } catch (err) { message.textContent = `僵尸强平时间配置保存失败：${err.message || err}`; message.classList.add('error'); }
     finally { button.disabled = false; }
   });

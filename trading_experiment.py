@@ -161,9 +161,11 @@ class TradingExperiment:
         self.max_new_positions_per_round = max_new_positions_per_round
 
     def _connect(self) -> sqlite3.Connection:
-        conn = db_config.connect_sqlite(self.core_db_path, row_factory=sqlite3.Row)
-        db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
-        return conn
+        # Trading experiment tables all live in the routed core database.  Do
+        # not attach the large market/scoring databases to every transaction:
+        # an ATTACH keeps their access fences alive until this connection closes
+        # and unnecessarily prolongs recovery waits.
+        return db_config.connect_sqlite(self.core_db_path, row_factory=sqlite3.Row)
 
     def _error_connect(self) -> sqlite3.Connection:
         return db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)

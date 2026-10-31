@@ -190,33 +190,52 @@ class DynamicProfitProtection:
         positions = helper._fetch_and_store_positions()
         protection_settings = get_settings()
         # Each environment has its own base enable flag.  A high-rise market
-        # may additionally replace the base bands, but opting out of the high
-        # rise mode must fall back to that environment's base configuration.
+        # may replace the base bands. Live accounts that opt out of high-rise
+        # mode suspend protection above the switch threshold.
         try:
             rise = float(allusdt_24h_ticker.fetch_change_percent())
         except Exception:
             rise = None
         is_live = os.path.abspath(self.db_path) == os.path.abspath(db_config.REAL_TRADING_DB_PATH)
         base_enabled_key = "live_enabled" if is_live else "simulation_enabled"
+        rise_threshold_key = "live_allusdt_24h_rise_threshold_percent" if is_live else "simulation_allusdt_24h_rise_threshold_percent"
+        disable_threshold_key = "live_allusdt_24h_disable_threshold_percent" if is_live else "simulation_allusdt_24h_disable_threshold_percent"
         protection_settings = dict(protection_settings)
+        env = "live" if is_live else "simulation"
+        for n in (2, 3, 4):
+            protection_settings[f"tier_{n}_min_r"] = protection_settings[f"{env}_tier_{n}_min_r"]
+            protection_settings[f"tier_{n}_drawdown_ratio"] = protection_settings[f"{env}_tier_{n}_drawdown_ratio"]
+            protection_settings[f"high_tier_{n}_min_r"] = protection_settings[f"{env}_high_tier_{n}_min_r"]
+            protection_settings[f"high_tier_{n}_drawdown_ratio"] = protection_settings[f"{env}_high_tier_{n}_drawdown_ratio"]
         globally_enabled = bool(protection_settings["enabled"])
         base_enabled = globally_enabled and bool(protection_settings[base_enabled_key])
         protection_settings["enabled"] = base_enabled
-        if rise is not None and rise >= float(protection_settings["allusdt_24h_disable_threshold_percent"]):
+        if rise is not None and rise >= float(protection_settings[disable_threshold_key]):
             # Keep the module globally enabled so it can resume as the market cools,
             # but suspend drawdown protection while the extreme-rise threshold holds.
             protection_settings["enabled"] = False
-        elif rise is not None and rise > float(protection_settings["allusdt_24h_rise_threshold_percent"]):
+        elif rise is not None and rise > float(protection_settings[rise_threshold_key]):
             high_enabled_key = "high_live_enabled" if is_live else "high_simulation_enabled"
             high_enabled = bool(protection_settings[high_enabled_key])
-            protection_settings["enabled"] = globally_enabled and (high_enabled or base_enabled)
+            protection_settings["enabled"] = globally_enabled and (
+                high_enabled or (base_enabled and not is_live)
+            )
             # Replace the base R bands with the separately configured
-            # high-market bands only for the opted-in account.  If high-rise
-            # mode is disabled, retain the base bands and base enable state.
+            # high-market bands only for the opted-in account. Simulated
+            # accounts retain their base mode when high-rise mode is disabled.
             if high_enabled:
                 for n in (2, 3, 4):
                     protection_settings[f"tier_{n}_min_r"] = protection_settings[f"high_tier_{n}_min_r"]
                     protection_settings[f"tier_{n}_drawdown_ratio"] = protection_settings[f"high_tier_{n}_drawdown_ratio"]
+        # This safeguard is deliberately independent of the base/high-rise
+        # bands. Once the configured floating-profit level is reached, the
+        # drawdown protection is skipped for that account's scan.
+        protection_settings["floating_profit_disable_enabled"] = bool(
+            protection_settings["floating_profit_disable_live_enabled" if is_live else "floating_profit_disable_simulation_enabled"]
+        )
+        protection_settings["floating_profit_disable_min_r"] = float(
+            protection_settings["floating_profit_disable_live_min_r" if is_live else "floating_profit_disable_simulation_min_r"]
+        )
         now = int(time.time() * 1000)
         checked = eligible = triggered = 0
         active_positions = [
@@ -251,6 +270,7 @@ class DynamicProfitProtection:
         pnl = self._decimal_from(position.get("unRealizedProfit", position.get("unrealizedProfit")), Decimal("0"))
         cycle_total_pnl = pnl + realized_pnl_since_open if realized_pnl_since_open is not None else None
         r_multiple = cycle_total_pnl / r_value if cycle_total_pnl is not None and r_value > 0 else Decimal("0")
+        floating_r_multiple = pnl / r_value if r_value > 0 else Decimal("0")
         close_quantity = Decimal("0"); close_order_id = ""; close_status = "not_required"
         high = close = highest = drawdown = threshold = highest_cycle_pnl = highest_r_multiple = Decimal("0")
         highest_at = 0
@@ -264,6 +284,8 @@ class DynamicProfitProtection:
             try:
                 high, close = self._latest_1m_high_close_since(symbol, open_time)
                 highest, _ = self._highest_1m_high_since(symbol, open_time)
+                previous_highest_price, _ = self._previous_highest_since_open(symbol, open_trade_id, open_time)
+                highest = max(highest, previous_highest_price)
             except (RuntimeError, sqlite3.Error):
                 pass
             previous_highest, previous_highest_at = self._previous_highest_cycle_pnl(
@@ -281,6 +303,14 @@ class DynamicProfitProtection:
             current_tier, threshold = self._tier_and_threshold_for_reached_r_multiple(
                 highest_r_multiple, protection_settings
             )
+            highest_floating_pnl = max(pnl, (highest - entry_price) * amount)
+            highest_floating_r_multiple = highest_floating_pnl / r_value if r_value > 0 else Decimal("0")
+            floating_profit_disable_reached = bool(
+                protection_settings.get("floating_profit_disable_enabled", False)
+                and max(floating_r_multiple, highest_floating_r_multiple) >= Decimal(str(protection_settings.get("floating_profit_disable_min_r", 6)))
+            )
+            if floating_profit_disable_reached:
+                threshold = Decimal("0")
             eligible = eligible and cycle_total_pnl is not None and bool(protection_settings["enabled"]) and threshold > 0
             if amount <= 0:
                 reason = "short_position_not_supported_by_dynamic_profit_protection"
@@ -290,6 +320,9 @@ class DynamicProfitProtection:
                 eligible = False
             elif not protection_settings["enabled"]:
                 reason = "highest_cycle_pnl_tier_dynamic_protection_disabled"
+                eligible = False
+            elif floating_profit_disable_reached:
+                reason = "floating_profit_reached_threshold_dynamic_drawdown_protection_disabled"
                 eligible = False
             elif threshold <= 0:
                 reason = "highest_cycle_total_pnl_never_reached_dynamic_profit_protection_band"
