@@ -26,6 +26,23 @@ def test_live_balance_route_uses_live_manager(monkeypatch):
     assert response.get_json()["testnet"] is False
 
 
+def test_live_balance_route_returns_updated_equity_metrics(monkeypatch):
+    monkeypatch.setattr(web_app.BinanceAccountManager, "live", lambda: FakeLiveManager())
+    monkeypatch.setattr(
+        web_app,
+        "_live_equity_returns",
+        lambda: {"seven_day": -5.43, "fifteen_day": -19.87},
+    )
+
+    response = web_app.app.test_client().get("/api/live/account/balance")
+
+    assert response.status_code == 200
+    assert response.get_json()["equity_returns"] == {
+        "seven_day": -5.43,
+        "fifteen_day": -19.87,
+    }
+
+
 def test_live_transfer_route_uses_live_manager(monkeypatch):
     monkeypatch.setattr(web_app.BinanceAccountManager, "live", lambda: FakeLiveManager())
 

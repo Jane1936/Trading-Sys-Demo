@@ -85,6 +85,9 @@
           equityChart.setOption({ xAxis: { data: times }, series: [{ data: values }] });
         }
       }
+      const returns = payload.equity_returns || {};
+      updateEquityReturnMetric('live-experiment-seven-day-return', returns.seven_day);
+      updateEquityReturnMetric('live-experiment-fifteen-day-return', returns.fifteen_day);
       byId('live-balance-rows').innerHTML = balances.length ? balances.map(row => `<tr><td>${escapeHtml(row.asset)}</td><td>${escapeHtml(row.balance)}</td><td>${escapeHtml(row.available_balance)}</td><td>${escapeHtml(row.cross_wallet_balance)}</td><td>${escapeHtml(row.cross_un_pnl)}</td><td>${escapeHtml(row.account_alias)}</td></tr>`).join('') : '<tr><td class="empty" colspan="6">接口未返回余额数据</td></tr>';
     } catch (error) { showError('live-balance-error', 'live-balance-status', `实盘账户余额查询失败：${error.message}`); }
     finally { button.disabled = false; button.textContent = '查询账户余额'; }
@@ -138,6 +141,14 @@
   function pnlClass(value) {
     const numeric = Number(value) || 0;
     return numeric > 0 ? 'pnl-positive' : numeric < 0 ? 'pnl-negative' : 'pnl-zero';
+  }
+  function updateEquityReturnMetric(id, value) {
+    const element = byId(id);
+    if (!element) return;
+    const numeric = Number(value);
+    element.textContent = Number.isFinite(numeric) ? `${numeric >= 0 ? '+' : ''}${numeric.toFixed(2)}%` : '-';
+    element.classList.remove('pnl-positive', 'pnl-negative', 'pnl-zero');
+    element.classList.add(Number.isFinite(numeric) ? pnlClass(numeric) : 'pnl-zero');
   }
   function formatAmount(value) {
     const numeric = Number(value);

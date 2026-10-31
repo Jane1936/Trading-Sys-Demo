@@ -132,6 +132,33 @@ def _record_live_account_snapshot(payload: dict) -> dict:
         )
     return snapshot
 
+
+def _live_equity_returns() -> dict[str, float | None]:
+    """Return the current live-account returns after a balance snapshot."""
+    now_ms = int(time.time() * 1000)
+    seven_day_since_ms = now_ms - int(timedelta(days=7).total_seconds() * 1000)
+    fifteen_day_since_ms = now_ms - int(timedelta(days=15).total_seconds() * 1000)
+
+    def as_float(value: Decimal | None) -> float | None:
+        return float(value) if value is not None else None
+
+    return {
+        "seven_day": as_float(
+            _equity_return(
+                _experiment_equity_trend_rows(
+                    seven_day_since_ms, db_config.REAL_TRADING_CORE_DB_PATH
+                )
+            )
+        ),
+        "fifteen_day": as_float(
+            _equity_return(
+                _experiment_equity_trend_rows(
+                    fifteen_day_since_ms, db_config.REAL_TRADING_CORE_DB_PATH
+                )
+            )
+        ),
+    }
+
 DB_PATH = db_config.BASE_DB_PATH
 BASE_DB_PATH = db_config.BASE_DB_PATH
 CONFIG_DB_PATH = db_config.CONFIG_DB_PATH
@@ -1897,6 +1924,7 @@ def live_account_balance_api():
         payload = BinanceAccountManager.live().futures_balance()
         snapshot = _record_live_account_snapshot(payload)
         payload["equity_snapshot"] = snapshot
+        payload["equity_returns"] = _live_equity_returns()
         return jsonify(payload)
     except BinanceAccountConfigError as exc:
         return jsonify({"error": str(exc)}), 400
