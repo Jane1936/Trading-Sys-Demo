@@ -1771,7 +1771,7 @@ def _alpha_realtime_funding_batches() -> dict:
 
 
 def _alpha_funding_changes():
-    """Return four-hour funding-rate and one-hour price changes for Alpha futures."""
+    """Return one-hour funding-rate and one-hour price changes for Alpha futures."""
     observed_at, alpha_rows = alpha_observer.latest_snapshot(ALPHA_DB_PATH)
     symbols = {str(row["symbol"]).upper().removesuffix("USDT") for row in alpha_rows}
     if observed_at is None or not symbols:
@@ -1816,7 +1816,7 @@ def _alpha_funding_changes():
                                FROM alpha_hourly_market AS history
                                WHERE history.symbol = latest.symbol
                                  AND history.funding_rate IS NOT NULL
-                                 AND history.open_time <= latest.open_time - 14400000
+                                 AND history.open_time <= latest.open_time - 3600000
                                ORDER BY history.open_time DESC
                                LIMIT 1
                            ) AS previous_rate

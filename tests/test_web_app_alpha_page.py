@@ -274,7 +274,7 @@ def test_alpha_oi_changes_batches_symbols_and_caches_by_snapshot(tmp_path, monke
     assert web_app._alpha_oi_changes()[0]["oi_change"] == 0.5
 
 
-def test_alpha_funding_changes_use_four_hour_rate_and_one_hour_price(tmp_path, monkeypatch):
+def test_alpha_funding_changes_use_one_hour_rate_and_one_hour_price(tmp_path, monkeypatch):
     db_path = tmp_path / "alpha.db"
     now = int(time.time() * 1000) // 3_600_000 * 3_600_000
     hour = 3_600_000
@@ -287,13 +287,13 @@ def test_alpha_funding_changes_use_four_hour_rate_and_one_hour_price(tmp_path, m
         conn.executemany(
             "INSERT INTO alpha_hourly_market VALUES (?, ?, ?, ?, ?)",
             [
-                # The latest funding rate is compared with four hours ago,
-                # while the price is compared with the immediately prior hour.
+                # Both funding and price are compared with the immediately
+                # prior hourly observation.
                 ("AAA", now - 4 * hour, 10, 100, 0.01),
-                ("AAA", now - hour, 11, 110, 0.02),
-                ("AAA", now, 12, 120, 0.02),
+                ("AAA", now - hour, 11, 110, 0.015),
+                ("AAA", now, 12, 120, 0.03),
                 ("BBB", now - 4 * hour, 20, 200, 0.02),
-                ("BBB", now - hour, 19, 190, 0.01),
+                ("BBB", now - hour, 19, 190, 0.02),
                 ("BBB", now, 18, 180, 0.01),
             ],
         )
@@ -313,10 +313,9 @@ def test_alpha_funding_changes_use_four_hour_rate_and_one_hour_price(tmp_path, m
     ]
 
 
-def test_alpha_funding_change_requires_one_hour_price_history(tmp_path, monkeypatch):
+def test_alpha_funding_changes_use_history_at_or_before_one_hour_anchor(tmp_path, monkeypatch):
     db_path = tmp_path / "alpha.db"
     now = int(time.time() * 1000) // 3_600_000 * 3_600_000
-    hour = 3_600_000
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             "CREATE TABLE alpha_hourly_market "
@@ -325,7 +324,12 @@ def test_alpha_funding_change_requires_one_hour_price_history(tmp_path, monkeypa
         )
         conn.executemany(
             "INSERT INTO alpha_hourly_market VALUES (?, ?, ?, ?, ?)",
-            [("AAA", now, 11, 100, 0.02)],
+            [
+                # The nearest available row at or before the one-hour anchor
+                # is used when the exact hourly row is missing.
+                ("AAA", now - 2 * 3_600_000, 10, 100, 0.01),
+                ("AAA", now, 11, 110, 0.02),
+            ],
         )
     monkeypatch.setattr(web_app, "ALPHA_DB_PATH", str(db_path))
     monkeypatch.setattr(
@@ -336,7 +340,11 @@ def test_alpha_funding_change_requires_one_hour_price_history(tmp_path, monkeypa
     web_app._alpha_analytics_cache.clear()
 
     assert web_app._alpha_funding_changes() == [
-        {"symbol": "AAA", "funding_change": None, "price_change": None}
+        {
+            "symbol": "AAA",
+            "funding_change": 1.0,
+            "price_change": pytest.approx(0.1),
+        }
     ]
 
 

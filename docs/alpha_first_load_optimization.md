@@ -11,7 +11,7 @@
 1. `latest_snapshot` 读取 Alpha 数据库；
 2. `daily_trends`：逐 token 查询最近 30 根日线；
 3. `_alpha_oi_changes`：对每个 token 多次查询 OI、历史 OI 和 1h K 线；
-4. `_alpha_funding_changes`：对每个 token 查询 1h 资金费率和 1h K 线（资金费率变化仍与 4 小时前比较）；
+4. `_alpha_funding_changes`：对每个 token 查询 1h 资金费率和 1h K 线（资金费率变化与 1 小时前比较）；
 5. 最后才渲染包含四张表的完整 HTML。
 
 其中 OI 和 funding 都是典型的 N+1 查询；token 数量增加时，数据库往返次数近似线性增长。模板虽然只显示前 10 行，但后端仍计算并传输了完整结果，因此“折叠列表”不能降低首次响应时间。
