@@ -524,7 +524,7 @@
       <div class="header"><h2>历史评分记录</h2></div>
       <div class="tip">自定义时间区间后查询。时间按 UTC 处理；结果仅展示落在已配置评分档位内的 symbol，并按评分轮次倒序排列。</div>
       <div class="toolbar">
-        <form method="get" action="{{ url_for('scoring') }}" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;">
+        <form id="score-history-form" method="get" action="{{ url_for('scoring') }}" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;">
           <input type="hidden" name="active_tab" value="tab-score-history" />
           <label class="field">开始时间（UTC）
             <input type="datetime-local" name="score_history_start" value="{{ score_history_start }}" required />
@@ -538,16 +538,12 @@
           </div>
         </form>
       </div>
-      {% if score_history_error %}
-      <div class="score-ma20-warning" role="alert">{{ score_history_error }}</div>
-      {% endif %}
-      {% if score_history_loaded %}
-      <div class="tip">查询结果：{{ score_history_rows|length }} 条记录。</div>
-      {% endif %}
+      <div id="score-history-error" class="score-ma20-warning" role="alert" {% if not score_history_error %}hidden{% endif %}>{{ score_history_error }}</div>
+      <div id="score-history-result" class="tip" {% if not score_history_loaded %}hidden{% endif %}>查询结果：{{ score_history_rows|length }} 条记录。</div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>评分轮次</th><th>symbol</th><th>评分档位</th><th>总分</th></tr></thead>
-          <tbody>
+          <tbody id="score-history-body">
             {% for row in score_history_rows %}
             <tr>
               <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
