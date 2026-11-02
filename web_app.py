@@ -2655,6 +2655,72 @@ def load_scoring_context() -> dict:
     if requested_trend:
         active_tab = "tab-score-trend"
 
+    history_error = ""
+
+    def parse_history_ts(raw_value: str, field_name: str) -> int | None:
+        nonlocal history_error
+        value = (raw_value or "").strip()
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return int(parsed.astimezone(timezone.utc).timestamp() * 1000)
+        except ValueError:
+            history_error = f"{field_name}请输入有效的日期时间"
+            return None
+
+    history_start_value = request.args.get("score_history_start", default="", type=str).strip()
+    history_end_value = request.args.get("score_history_end", default="", type=str).strip()
+    history_start_ts = parse_history_ts(history_start_value, "开始时间")
+    history_end_ts = parse_history_ts(history_end_value, "结束时间")
+    should_load_history = bool(history_start_value or history_end_value)
+    history_rows = []
+    if should_load_history and history_start_ts is not None and history_end_ts is not None:
+        if history_start_ts > history_end_ts:
+            history_error = "开始时间不能晚于结束时间"
+        else:
+            history_rows = load_module(
+                "历史评分记录",
+                lambda: scoring_system.get_total_score_history(history_start_ts, history_end_ts),
+                [],
+            )
+    elif should_load_history and not (history_start_value and history_end_value):
+        history_error = "请同时填写开始时间和结束时间"
+
+    history_rows = [
+        {
+            "symbol": str(row["symbol"]),
+            "decision_round_ts": int(row["decision_round_ts"]),
+            "total_score": int(row["total_score"]),
+            "updated_at": int(row["updated_at"]),
+            "score_band": next(
+                (
+                    band["label"]
+                    for band in bands
+                    if band["lower"] <= int(row["total_score"]) <= band["upper"]
+                ),
+                "NA",
+            ),
+            "score_band_class": next(
+                (
+                    band["css_class"]
+                    for band in bands
+                    if band["lower"] <= int(row["total_score"]) <= band["upper"]
+                ),
+                "score-band-na",
+            ),
+        }
+        for row in history_rows
+        if any(
+            band["lower"] <= int(row["total_score"]) <= band["upper"]
+            for band in bands
+        )
+    ]
+    if history_start_value or history_end_value:
+        active_tab = "tab-score-history"
+
     context.update({
         "module_errors": module_errors, "active_tab": active_tab,
         "events": events, "limit": limit, "symbols": symbols, "selected_symbol": symbol,
@@ -2675,6 +2741,16 @@ def load_scoring_context() -> dict:
         "openable_symbol_settings": load_module("止损距离与总分映射", lambda: get_openable_symbol_settings(CONFIG_DB_PATH), {"tier_min_percent": 0, "tier_max_percent": {"A档": 0, "B档": 0, "C档": 0}}),
         "score_trend_symbols": trend_symbols, "score_trend_symbol": trend_symbol,
         "score_trend_rows": [], "open_block_notice": "",
+        "score_history_rows": history_rows,
+        "score_history_start": history_start_value,
+        "score_history_end": history_end_value,
+        "score_history_error": history_error,
+        "score_history_loaded": (
+            should_load_history
+            and history_start_ts is not None
+            and history_end_ts is not None
+            and history_start_ts <= history_end_ts
+        ),
     })
     return context
 

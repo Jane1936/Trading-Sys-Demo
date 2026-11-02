@@ -3324,3 +3324,29 @@ class ScoringSystem:
                 """,
                 (symbol, cutoff_ts),
             ).fetchall()
+
+    def get_total_score_history(
+        self,
+        start_ts: int | None = None,
+        end_ts: int | None = None,
+    ) -> list[sqlite3.Row]:
+        """Return persisted total-score rows within an optional time range."""
+        clauses: list[str] = []
+        params: list[int] = []
+        if start_ts is not None:
+            clauses.append("decision_round_ts >= ?")
+            params.append(int(start_ts))
+        if end_ts is not None:
+            clauses.append("decision_round_ts <= ?")
+            params.append(int(end_ts))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as conn:
+            return conn.execute(
+                f"""
+                SELECT symbol, decision_round_ts, total_score, updated_at
+                FROM symbol_total_scores
+                {where}
+                ORDER BY decision_round_ts DESC, total_score DESC, symbol ASC
+                """,
+                params,
+            ).fetchall()
