@@ -9,6 +9,7 @@
   <button class="tab-btn {{ 'active' if not active_tab or active_tab == 'tab-abnormal' else '' }}" data-tab="tab-abnormal">异常插针记录</button>
   <button class="tab-btn {{ 'active' if active_tab == 'tab-score' else '' }}" data-tab="tab-score">评分系统</button>
   <button class="tab-btn {{ 'active' if active_tab == 'tab-score-trend' else '' }}" data-tab="tab-score-trend">评分变化趋势</button>
+  <button class="tab-btn {{ 'active' if active_tab == 'tab-score-history' else '' }}" data-tab="tab-score-history">历史评分记录</button>
   <button class="tab-btn {{ 'active' if active_tab == 'tab-strategy' else '' }}" data-tab="tab-strategy">本轮交易策略</button>
 {% endblock %}
 
@@ -514,6 +515,51 @@
           <span>时间范围：最近3天。</span>
         </div>
         <div id="score-trend-chart"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-score-history" class="panel {{ 'active' if active_tab == 'tab-score-history' else '' }}">
+    <div class="card">
+      <div class="header"><h2>历史评分记录</h2></div>
+      <div class="tip">自定义时间区间后查询。时间按 UTC 处理；结果仅展示落在已配置评分档位内的 symbol，并按评分轮次倒序排列。</div>
+      <div class="toolbar">
+        <form method="get" action="{{ url_for('scoring') }}" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;">
+          <input type="hidden" name="active_tab" value="tab-score-history" />
+          <label class="field">开始时间（UTC）
+            <input type="datetime-local" name="score_history_start" value="{{ score_history_start }}" required />
+          </label>
+          <label class="field">结束时间（UTC）
+            <input type="datetime-local" name="score_history_end" value="{{ score_history_end }}" required />
+          </label>
+          <div class="actions">
+            <button class="btn btn-primary" type="submit">查询</button>
+            <a class="btn btn-secondary" href="{{ url_for('scoring', active_tab='tab-score-history') }}">重置</a>
+          </div>
+        </form>
+      </div>
+      {% if score_history_error %}
+      <div class="score-ma20-warning" role="alert">{{ score_history_error }}</div>
+      {% endif %}
+      {% if score_history_loaded %}
+      <div class="tip">查询结果：{{ score_history_rows|length }} 条记录。</div>
+      {% endif %}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>评分轮次</th><th>symbol</th><th>评分档位</th><th>总分</th></tr></thead>
+          <tbody>
+            {% for row in score_history_rows %}
+            <tr>
+              <td>{{ row.decision_round_ts|fmt_ms_datetime }}</td>
+              <td>{{ row.symbol }}</td>
+              <td><span class="score-band-badge {{ row.score_band_class }}">{{ row.score_band }}</span></td>
+              <td>{{ row.total_score }}</td>
+            </tr>
+            {% else %}
+            <tr><td class="empty" colspan="4">{% if score_history_loaded %}该时间区间内暂无有评分档位的 symbol{% else %}请选择开始和结束时间后点击“查询”{% endif %}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
   </section>
