@@ -274,64 +274,77 @@ def test_alpha_oi_changes_batches_symbols_and_caches_by_snapshot(tmp_path, monke
     assert web_app._alpha_oi_changes()[0]["oi_change"] == 0.5
 
 
-def test_alpha_funding_changes_batches_symbols(tmp_path, monkeypatch):
-    db_path = tmp_path / "market.db"
-    _create_market_tables(db_path)
+def test_alpha_funding_changes_use_one_hour_rate_and_one_hour_price(tmp_path, monkeypatch):
+    db_path = tmp_path / "alpha.db"
+    now = int(time.time() * 1000) // 3_600_000 * 3_600_000
     hour = 3_600_000
     with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE alpha_hourly_market "
+            "(symbol TEXT, open_time INTEGER, close REAL, open_interest REAL, "
+            "funding_rate REAL, PRIMARY KEY(symbol, open_time))"
+        )
         conn.executemany(
-            "INSERT INTO klines_1h VALUES (?, ?, ?, ?)",
+            "INSERT INTO alpha_hourly_market VALUES (?, ?, ?, ?, ?)",
             [
-                # Adjacent hourly rows intentionally have equal rates.  Funding
-                # rates commonly remain unchanged for several hours, so the
-                # comparison must use the four-hour anchor rather than rn=2.
-                ("AAA", 0, 10, 0.01),
-                ("AAA", 3 * hour, 10.5, 0.02),
-                ("AAA", 4 * hour, 11, 0.02),
-                ("BBB", 0, 20, 0.02),
-                ("BBB", 3 * hour, 19, 0.01),
-                ("BBB", 4 * hour, 18, 0.01),
+                # Both funding and price are compared with the immediately
+                # prior hourly observation.
+                ("AAA", now - 4 * hour, 10, 100, 0.01),
+                ("AAA", now - hour, 11, 110, 0.015),
+                ("AAA", now, 12, 120, 0.03),
+                ("BBB", now - 4 * hour, 20, 200, 0.02),
+                ("BBB", now - hour, 19, 190, 0.02),
+                ("BBB", now, 18, 180, 0.01),
             ],
         )
-        conn.executemany(
-            "INSERT INTO klines_4h VALUES (?, ?, ?, NULL)",
-            [("AAA", 1, 10), ("AAA", 2, 12), ("BBB", 1, 20), ("BBB", 2, 18)],
-        )
-    monkeypatch.setattr(web_app, "BASE_DB_PATH", str(db_path))
+    monkeypatch.setattr(web_app, "ALPHA_DB_PATH", str(db_path))
     monkeypatch.setattr(
         web_app.alpha_observer,
         "latest_snapshot",
-        lambda _path: (20, [{"symbol": "AAA"}, {"symbol": "BBB"}]),
+        lambda _path: (now, [{"symbol": "AAA"}, {"symbol": "BBB"}]),
     )
     web_app._alpha_analytics_cache.clear()
 
     rows = web_app._alpha_funding_changes()
 
     assert [(row["symbol"], row["funding_change"], row["price_change"]) for row in rows] == [
-        ("AAA", 1.0, pytest.approx(0.1)),
-        ("BBB", -0.5, pytest.approx(-0.1)),
+        ("AAA", 1.0, pytest.approx(12 / 11 - 1)),
+        ("BBB", -0.5, pytest.approx(18 / 19 - 1)),
     ]
 
 
-def test_alpha_funding_change_requires_four_hours_of_history(tmp_path, monkeypatch):
-    db_path = tmp_path / "market.db"
-    _create_market_tables(db_path)
-    hour = 3_600_000
+def test_alpha_funding_changes_use_history_at_or_before_one_hour_anchor(tmp_path, monkeypatch):
+    db_path = tmp_path / "alpha.db"
+    now = int(time.time() * 1000) // 3_600_000 * 3_600_000
     with sqlite3.connect(db_path) as conn:
-        conn.executemany(
-            "INSERT INTO klines_1h VALUES (?, ?, ?, ?)",
-            [("AAA", 2 * hour, 10, 0.01), ("AAA", 4 * hour, 11, 0.02)],
+        conn.execute(
+            "CREATE TABLE alpha_hourly_market "
+            "(symbol TEXT, open_time INTEGER, close REAL, open_interest REAL, "
+            "funding_rate REAL, PRIMARY KEY(symbol, open_time))"
         )
-    monkeypatch.setattr(web_app, "BASE_DB_PATH", str(db_path))
+        conn.executemany(
+            "INSERT INTO alpha_hourly_market VALUES (?, ?, ?, ?, ?)",
+            [
+                # The nearest available row at or before the one-hour anchor
+                # is used when the exact hourly row is missing.
+                ("AAA", now - 2 * 3_600_000, 10, 100, 0.01),
+                ("AAA", now, 11, 110, 0.02),
+            ],
+        )
+    monkeypatch.setattr(web_app, "ALPHA_DB_PATH", str(db_path))
     monkeypatch.setattr(
         web_app.alpha_observer,
         "latest_snapshot",
-        lambda _path: (21, [{"symbol": "AAA"}]),
+        lambda _path: (now, [{"symbol": "AAA"}]),
     )
     web_app._alpha_analytics_cache.clear()
 
     assert web_app._alpha_funding_changes() == [
-        {"symbol": "AAA", "funding_change": None, "price_change": None}
+        {
+            "symbol": "AAA",
+            "funding_change": 1.0,
+            "price_change": pytest.approx(0.1),
+        }
     ]
 
 
