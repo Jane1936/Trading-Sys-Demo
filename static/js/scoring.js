@@ -185,4 +185,74 @@ function updateScoreTrendChart(rawRows, symbolName) {
     }
   });
 })();
+
+(function initScoreHistoryAjax() {
+  const form = document.getElementById('score-history-form');
+  const start = form?.querySelector('[name="score_history_start"]');
+  const end = form?.querySelector('[name="score_history_end"]');
+  const body = document.getElementById('score-history-body');
+  const result = document.getElementById('score-history-result');
+  const error = document.getElementById('score-history-error');
+  if (!form || !start || !end || !body || !result || !error) return;
+
+  const formatUtc = (timestamp) => {
+    const date = new Date(timestamp);
+    const pad = (value) => String(value).padStart(2, '0');
+    return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())} UTC`;
+  };
+  const renderRows = (rows) => {
+    body.replaceChildren();
+    if (!rows.length) {
+      const row = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.className = 'empty';
+      cell.colSpan = 4;
+      cell.textContent = '该时间区间内暂无有评分档位的 symbol';
+      row.appendChild(cell);
+      body.appendChild(row);
+      return;
+    }
+    rows.forEach((item) => {
+      const row = document.createElement('tr');
+      [formatUtc(item.decision_round_ts), item.symbol].forEach((value) => {
+        const cell = document.createElement('td');
+        cell.textContent = value;
+        row.appendChild(cell);
+      });
+      const bandCell = document.createElement('td');
+      const badge = document.createElement('span');
+      badge.className = `score-band-badge ${item.score_band_class || 'score-band-na'}`;
+      badge.textContent = item.score_band;
+      bandCell.appendChild(badge);
+      row.appendChild(bandCell);
+      const scoreCell = document.createElement('td');
+      scoreCell.textContent = item.total_score;
+      row.appendChild(scoreCell);
+      body.appendChild(row);
+    });
+  };
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    error.hidden = true;
+    result.hidden = true;
+    try {
+      const query = new URLSearchParams({ start: start.value, end: end.value });
+      const response = await fetch(`/api/safety/score-history?${query.toString()}`, { headers: { 'Accept': 'application/json' } });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      renderRows(payload.rows || []);
+      result.textContent = `查询结果：${payload.count || 0} 条记录。`;
+      result.hidden = false;
+      const url = new URL(window.location.href);
+      url.searchParams.set('active_tab', 'tab-score-history');
+      url.searchParams.set('score_history_start', start.value);
+      url.searchParams.set('score_history_end', end.value);
+      window.history.replaceState({}, '', url.toString());
+    } catch (requestError) {
+      error.textContent = `查询失败：${requestError.message}`;
+      error.hidden = false;
+    }
+  });
+})();
 })();

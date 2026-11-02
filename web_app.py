@@ -1700,6 +1700,51 @@ def score_trend_api():
     )
 
 
+@app.get("/api/safety/score-history")
+def score_history_api():
+    """Return score-band rows for the history tab without reloading the page."""
+    start_value = request.args.get("start", default="", type=str).strip()
+    end_value = request.args.get("end", default="", type=str).strip()
+    if not start_value or not end_value:
+        return jsonify({"error": "开始时间和结束时间必须同时填写"}), 400
+    try:
+        start_dt = datetime.fromisoformat(start_value.replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(end_value.replace("Z", "+00:00"))
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=timezone.utc)
+        if end_dt.tzinfo is None:
+            end_dt = end_dt.replace(tzinfo=timezone.utc)
+        start_ts = int(start_dt.astimezone(timezone.utc).timestamp() * 1000)
+        end_ts = int(end_dt.astimezone(timezone.utc).timestamp() * 1000)
+    except ValueError:
+        return jsonify({"error": "请输入有效的日期时间"}), 400
+    if start_ts > end_ts:
+        return jsonify({"error": "开始时间不能晚于结束时间"}), 400
+
+    scoring = ScoringSystem(db_path=_scoring_db_path())
+    scoring.init_table()
+    bands, _, _, _ = _score_band_context()
+    rows = []
+    for row in scoring.get_total_score_history(start_ts, end_ts):
+        total_score = int(row["total_score"])
+        band = next(
+            (config for config in bands if config["lower"] <= total_score <= config["upper"]),
+            None,
+        )
+        if band is None:
+            continue
+        rows.append(
+            {
+                "symbol": str(row["symbol"]),
+                "decision_round_ts": int(row["decision_round_ts"]),
+                "total_score": total_score,
+                "score_band": band["label"],
+                "score_band_class": band["css_class"],
+            }
+        )
+    return jsonify({"count": len(rows), "rows": rows})
+
+
 @app.get("/api/account/balance")
 def account_balance_api():
     try:
