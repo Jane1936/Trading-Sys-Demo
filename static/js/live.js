@@ -18,7 +18,13 @@
       item.classList.toggle('active', selected);
       item.setAttribute('aria-selected', String(selected));
     });
-    panels.forEach(panel => panel.classList.toggle('active', panel.id === button.dataset[attribute]));
+    panels.forEach(panel => {
+      const selected = panel.id === button.dataset[attribute];
+      panel.classList.toggle('active', selected);
+      // Keep inactive panels out of the accessibility tree and the layout even
+      // if a stale stylesheet is cached by the browser.
+      panel.hidden = !selected;
+    });
   }
 
   const liveButtons = [...document.querySelectorAll('.bookmark-tab[data-live-tab]')];
@@ -70,6 +76,24 @@
       byId('live-usdt-available').textContent = usdt.available_balance || '-';
       byId('live-usdt-pnl').textContent = usdt.cross_un_pnl || '-';
       byId('live-balance-status').textContent = `Real 查询完成：${formatTime(payload.queried_at)}`;
+      const snapshot = payload.equity_snapshot;
+      if (snapshot) {
+        byId('live-experiment-equity').textContent = `${snapshot.account_balance_usdt} U`;
+        byId('live-experiment-equity-updated').textContent = `最近成功快照：${formatTime(snapshot.recorded_at)}（手动查询）`;
+        if (equityChart) {
+          const point = [Number(snapshot.recorded_at), Number(snapshot.account_balance_usdt)];
+          const option = equityChart.getOption();
+          const series = option.series?.[0];
+          const values = (series?.data || []).slice();
+          const times = (option.xAxis?.[0]?.data || []).slice();
+          values.push(point[1]);
+          times.push(new Date(point[0]).toISOString().slice(5, 16).replace('T', ' '));
+          equityChart.setOption({ xAxis: { data: times }, series: [{ data: values }] });
+        }
+      }
+      const returns = payload.equity_returns || {};
+      updateEquityReturnMetric('live-experiment-seven-day-return', returns.seven_day);
+      updateEquityReturnMetric('live-experiment-fifteen-day-return', returns.fifteen_day);
       byId('live-balance-rows').innerHTML = balances.length ? balances.map(row => `<tr><td>${escapeHtml(row.asset)}</td><td>${escapeHtml(row.balance)}</td><td>${escapeHtml(row.available_balance)}</td><td>${escapeHtml(row.cross_wallet_balance)}</td><td>${escapeHtml(row.cross_un_pnl)}</td><td>${escapeHtml(row.account_alias)}</td></tr>`).join('') : '<tr><td class="empty" colspan="6">接口未返回余额数据</td></tr>';
     } catch (error) { showError('live-balance-error', 'live-balance-status', `实盘账户余额查询失败：${error.message}`); }
     finally { button.disabled = false; button.textContent = '查询账户余额'; }
@@ -123,6 +147,14 @@
   function pnlClass(value) {
     const numeric = Number(value) || 0;
     return numeric > 0 ? 'pnl-positive' : numeric < 0 ? 'pnl-negative' : 'pnl-zero';
+  }
+  function updateEquityReturnMetric(id, value) {
+    const element = byId(id);
+    if (!element) return;
+    const numeric = Number(value);
+    element.textContent = Number.isFinite(numeric) ? `${numeric >= 0 ? '+' : ''}${numeric.toFixed(2)}%` : '-';
+    element.classList.remove('pnl-positive', 'pnl-negative', 'pnl-zero');
+    element.classList.add(Number.isFinite(numeric) ? pnlClass(numeric) : 'pnl-zero');
   }
   function formatAmount(value) {
     const numeric = Number(value);
@@ -252,7 +284,14 @@
       const [, key, type] = column;
       const value = row[key];
       if (type === 'time') return `<td>${formatTime(value)}</td>`;
-      if (type === 'bool') return `<td>${value ? '是' : '否'}</td>`;
+      if (type === 'bool') {
+        if (key === 'triggered' && row.reason === 'break_even_already_completed') {
+          return '<td><span class="status-badge status-pass">已完成保本</span></td>';
+        }
+        const triggered = key === 'triggered' || key.endsWith('_triggered');
+        const statusClass = triggered ? (value ? 'status-fail' : 'status-pass') : (value ? 'status-pass' : 'status-fail');
+        return `<td><span class="status-badge ${statusClass}">${value ? '是' : '否'}</span></td>`;
+      }
       return `<td>${escapeHtml(value === null || value === undefined || value === '' ? '-' : value)}</td>`;
     }).join('')}</tr>`).join('') : `<tr><td class="empty" colspan="${columns.length}">${emptyText}</td></tr>`;
   }

@@ -4,6 +4,7 @@ from market_filter_module import MarketFilterModule
 from market_filter_settings import get_settings, set_settings
 import allusdt_15m_ma20
 import collector
+import allusdt_hourly_ma20
 
 
 def _init_source_tables(conn):
@@ -252,3 +253,33 @@ def test_market_filter_does_not_apply_24h_rule_without_ticker_result(tmp_path):
 
     assert result.allusdt_24h_delta is None
     assert result.allusdt_24h_drop is False
+
+
+def test_market_filter_applies_ema20_condition_independently_to_simulation_and_live(tmp_path):
+    db_path = tmp_path / "klines.db"
+    settings_path = tmp_path / "config.db"
+    set_settings({
+        "btc_siphon_threshold": 0.005,
+        "market_crash_threshold": 0.03,
+        "simulation_allusdt_ema20_enabled": False,
+        "live_allusdt_ema20_enabled": True,
+        "live_allusdt_ema20_threshold": 0.0015,
+        "block_duration_minutes": 30,
+    }, str(settings_path))
+    module = MarketFilterModule(str(db_path), settings_db_path=str(settings_path))
+    with sqlite3.connect(db_path) as conn:
+        _init_source_tables(conn)
+        allusdt_hourly_ma20.init_db(conn)
+        _insert_rows(conn, allusdt_15m_ma20.KLINE_TABLE, [100] * 4)
+        _insert_rows(conn, collector.BTC_15M_TABLE, [100] * 4)
+        for index in range(3):
+            conn.execute(
+                f"INSERT INTO {allusdt_hourly_ma20.MA20_TABLE} (open_time, close_time, close, ma20, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (index * allusdt_hourly_ma20.INTERVAL_MS, index * allusdt_hourly_ma20.INTERVAL_MS + 1, 100, 100, 1),
+            )
+
+    result = module.run_round(decision_round_ts=900_000, evaluated_at=900_001)
+
+    assert result.simulation_allow_new_positions is True
+    assert result.live_allow_new_positions is False
+    assert result.allow_new_positions is True

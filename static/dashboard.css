@@ -71,6 +71,12 @@ body {
 .alpha-filter input { width:90px; margin:0 4px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; }
 .alpha-toggle { white-space:nowrap; }
 .alpha-table { min-width:760px; }
+.alpha-table th[data-alpha-sort-key] { cursor:pointer; user-select:none; }
+.alpha-table th[data-alpha-sort-key]::after { content:'↕'; margin-left:5px; color:#94a3b8; font-size:12px; }
+.alpha-table th[data-alpha-sort-key][data-sort-direction="asc"]::after { content:'↑'; color:#0f766e; }
+.alpha-table th[data-alpha-sort-key][data-sort-direction="desc"]::after { content:'↓'; color:#0f766e; }
+.alpha-table th[data-alpha-sort-key]:focus-visible { outline:2px solid #0d9488; outline-offset:-2px; }
+.alpha-table tr.alpha-filter-hidden { display:none; }
 .alpha-table .numeric { text-align:right; font-variant-numeric:tabular-nums; font-weight:650; }
 .alpha-table .alpha-active { color:#047857; background:#d1fae5; font-weight:800; }
 .alpha-table .alpha-change { font-weight:800; }
@@ -313,6 +319,7 @@ tbody tr:hover { background: #f8fdff; }
 .holding-module-tab:hover { transform:translateY(-1px); background:#dbeafe; }
 .holding-module-tab.active { background:linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%); border-color:#2563eb; color:#fff; box-shadow:0 8px 18px rgba(37, 99, 235, 0.22); }
 .holding-module-panel { display:none; padding-top:16px; }
+.holding-module-panel[hidden] { display:none !important; }
 .holding-module-panel.active { display:block; }
 .account-summary { display:flex; gap:12px; flex-wrap:wrap; padding:14px 20px; border-bottom:1px solid var(--line); background:#f8fdff; }
 .account-metric { min-width:180px; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:#fff; box-shadow:0 3px 12px rgba(14, 116, 144, 0.08); }

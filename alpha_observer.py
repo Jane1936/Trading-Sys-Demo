@@ -42,6 +42,17 @@ DAY_MS = 24 * 60 * 60 * 1000
 DAILY_SAMPLE_TOLERANCE_MS = 2 * 60 * 60 * 1000
 
 
+def is_excluded_token(symbol: Any = "", name: Any = "") -> bool:
+    """Return whether a token is outside the Alpha research universe."""
+    normalized_symbol = str(symbol or "").strip().casefold().removesuffix("usdt")
+    normalized_name = str(name or "").strip().casefold()
+    return (
+        normalized_symbol == "quq"
+        or normalized_name == "quq"
+        or "(ondo)" in normalized_name
+    )
+
+
 @dataclass(frozen=True)
 class AlphaObservation:
     symbol: str
@@ -99,6 +110,15 @@ def init_db(db_path: str = db_config.ALPHA_DB_PATH) -> None:
             symbol TEXT NOT NULL, open_time INTEGER NOT NULL, close REAL,
             open_interest REAL, funding_rate REAL, PRIMARY KEY(symbol, open_time))""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_alpha_hourly_market_time ON alpha_hourly_market(open_time)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS alpha_realtime_funding (
+            symbol TEXT NOT NULL,
+            observed_at INTEGER NOT NULL,
+            funding_rate REAL NOT NULL,
+            interval TEXT NOT NULL DEFAULT '1h',
+            payload_json TEXT,
+            PRIMARY KEY(symbol, observed_at)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_alpha_realtime_funding_time ON alpha_realtime_funding(observed_at)")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_alpha_snapshot_latest "
             "ON alpha_market_snapshots(observed_at DESC, symbol)"
@@ -117,9 +137,13 @@ def collect_daily_klines(db_path: str = db_config.ALPHA_DB_PATH, *, session=requ
             if isinstance(item, dict):
                 symbol = str(item.get("symbol") or "").strip()
                 alpha_id = str(item.get("alpha_id") or item.get("alphaId") or "").strip()
+                name = item.get("name")
             else:
                 symbol = str(item).strip().upper()
                 alpha_id = ""
+                name = ""
+            if is_excluded_token(symbol, name):
+                continue
             if not symbol:
                 continue
             # The Alpha endpoint requires the token-list ``alphaId`` rather
@@ -223,9 +247,10 @@ def daily_trends(db_path: str = db_config.ALPHA_DB_PATH, limit: int = 30) -> lis
         symbols = [
             r[0]
             for r in conn.execute(
-                "SELECT DISTINCT symbol FROM alpha_market_snapshots WHERE observed_at = ?",
+                "SELECT DISTINCT symbol, name FROM alpha_market_snapshots WHERE observed_at = ?",
                 (latest_snapshot_at,),
             )
+            if not is_excluded_token(r[0], r[1])
         ]
         result = []
         for symbol in symbols:
@@ -306,13 +331,16 @@ def collect_snapshot(
     rows = []
     for token in tokens:
         symbol = str(token.get("symbol") or token.get("ticker") or "").strip()
+        name = str(token.get("name") or "").strip()
         if not symbol:
+            continue
+        if is_excluded_token(symbol, name):
             continue
         rows.append(
             (
                 symbol,
                 str(token.get("alphaId") or token.get("alpha_id") or "").strip(),
-                str(token.get("name") or "").strip(),
+                name,
                 str(token.get("chainId") or token.get("chain_id") or ""),
                 str(token.get("contractAddress") or token.get("contract_address") or ""),
                 str(token.get("iconUrl") or token.get("icon_url") or ""),
@@ -407,6 +435,10 @@ def latest_snapshot(db_path: str = db_config.ALPHA_DB_PATH) -> tuple[int | None,
                ORDER BY symbol""",
             (latest,),
         ).fetchall()
+        latest_rows = [
+            row for row in latest_rows
+            if not is_excluded_token(row["symbol"], row["name"])
+        ]
         history = conn.execute(
             """SELECT symbol, chain_id, contract_address, volume_24h, market_cap, observed_at
                FROM alpha_market_snapshots

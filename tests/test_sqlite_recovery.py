@@ -473,6 +473,70 @@ def test_recovery_marker_blocks_business_connections(tmp_path):
             conn.execute("CREATE TABLE recovered (value INTEGER)")
 
 
+def test_scoring_process_drain_terminates_registered_child(monkeypatch):
+    class FakeProcess:
+        pid = 999991
+
+        def __init__(self):
+            self.alive = True
+            self.terminated = False
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout=None):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+            self.alive = False
+
+        def kill(self):
+            self.alive = False
+
+    process = FakeProcess()
+    worker_app.register_scoring_process(process)
+    drained = worker_app.drain_scoring_processes(timeout=0)
+
+    assert drained == [process.pid]
+    assert process.terminated
+    assert process.pid not in worker_app._active_scoring_processes
+
+
+def test_recovery_drains_scoring_process_before_exclusive_lock(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "scoring.db")
+    Path(db_path).write_bytes(b"not a sqlite database")
+    calls = []
+
+    monkeypatch.setattr(worker_app, "_database_initializers", lambda: {db_path: lambda: None})
+    monkeypatch.setattr(worker_app, "_database_schema_requirements", lambda: {})
+    monkeypatch.setattr(worker_app, "drain_scoring_processes", lambda: calls.append("drain") or [])
+
+    worker_app.check_worker_databases(source="test")
+
+    assert calls == ["drain"]
+
+
+def test_base_recovery_always_bootstraps_rule_windows(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "base_data.db")
+    Path(db_path).write_bytes(b"not a sqlite database")
+    bootstrap_calls = []
+
+    monkeypatch.setattr(db_config, "BASE_DB_PATH", db_path)
+    monkeypatch.setattr(worker_app, "_database_initializers", lambda: {db_path: lambda: None})
+    monkeypatch.setattr(worker_app, "_database_schema_requirements", lambda: {})
+    monkeypatch.setattr(
+        worker_app.collector,
+        "bootstrap_rule_windows",
+        lambda symbols=None: bootstrap_calls.append(symbols),
+    )
+    monkeypatch.setattr(worker_app.collector, "UNIVERSE", None)
+
+    worker_app.check_worker_databases(source="test")
+
+    assert bootstrap_calls == [None]
+
+
 def test_exclusive_recovery_waits_for_existing_connection_to_close(tmp_path):
     db_path = str(tmp_path / "scoring.db")
     conn = db_config.connect_sqlite(db_path)

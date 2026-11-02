@@ -1,3 +1,4 @@
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -68,7 +69,7 @@ class FakeDynamicOpenThresholdModule:
 class FakeTradingOwnedModule:
     seen_paths = []
 
-    def __init__(self, db_path):
+    def __init__(self, db_path, config=None):
         self.db_path = db_path
         self.seen_paths.append(db_path)
 
@@ -383,3 +384,27 @@ def test_scoring_worker_stuck_after_grace_is_cleared():
     assert terminate_after is None
     assert process.terminated
     assert process.exitcode == -15
+
+
+def test_scoring_worker_aborts_on_database_lock(monkeypatch, tmp_path):
+    calls = []
+
+    def fail_worker(**kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(app, "_run_scoring_round_worker", fail_worker)
+    monkeypatch.setattr(
+        app.db_config,
+        "close_scoped_connection",
+        lambda path: calls.append(path) or False,
+    )
+
+    app.run_scoring_round_worker(
+        db_path=str(tmp_path / "scoring.db"),
+        decision_round_ts=1,
+        symbols=[],
+        abnormal_symbols=[],
+        evaluated_at=1,
+    )
+
+    assert calls

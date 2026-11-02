@@ -54,6 +54,9 @@ OI_MAX_WORKERS = 4
 RECOVERY_KLINE_WORKERS = int(os.getenv("RECOVERY_KLINE_WORKERS", "6"))
 RECOVERY_OI_WORKERS = int(os.getenv("RECOVERY_OI_WORKERS", "3"))
 RECOVERY_BATCH_SIZE = int(os.getenv("RECOVERY_BATCH_SIZE", "25"))
+RULE8_WINDOW_SIZE = 97
+RULE8_INTERVAL_MS = 15 * 60_000
+RULE8_RECOVERY_RETRIES = int(os.getenv("RULE8_RECOVERY_RETRIES", "3"))
 
 DATA_DIR = db_config.DATA_DIR
 DB_PATH = db_config.BASE_DB_PATH
@@ -74,6 +77,7 @@ allusdt_15m_ma20_job_lock = threading.Lock()
 atr_15m_job_lock = threading.Lock()
 db_write_lock = threading.Lock()
 base_recovery_active = threading.Event()
+rule_window_recovery_lock = threading.Lock()
 rule_window_ready: dict[str, set[str]] = {"rule8": set(), "rule11": set()}
 last_funding_update_hour = None
 
@@ -1116,14 +1120,25 @@ def _fetch_recovery_15m(symbol):
     now_ms = int(time.time() * 1000)
     start = now_ms - 98 * 15 * 60_000
     params = {"symbol": f"{symbol}USDT", "interval": "15m", "startTime": start, "limit": 100}
-    try:
-        response = HTTP_SESSION.get(BASE_URL, params=params, timeout=(3, 15))
-        response.raise_for_status()
-        rows = response.json()
-        return symbol, [row for row in rows if int(row[6]) <= now_ms][-97:]
-    except Exception as exc:
-        print(f"⚠️ rule8 recovery fetch failed symbol={symbol}: {exc}")
-        return symbol, []
+    last_error = None
+    for attempt in range(1, max(1, RULE8_RECOVERY_RETRIES) + 1):
+        try:
+            response = HTTP_SESSION.get(BASE_URL, params=params, timeout=(3, 15))
+            response.raise_for_status()
+            rows = response.json()
+            closed = [row for row in rows if int(row[6]) <= now_ms][-RULE8_WINDOW_SIZE:]
+            if len(closed) >= RULE8_WINDOW_SIZE:
+                return symbol, closed
+            last_error = RuntimeError(f"only {len(closed)} closed candles returned")
+        except Exception as exc:
+            last_error = exc
+        if attempt < max(1, RULE8_RECOVERY_RETRIES):
+            time.sleep(0.5 * attempt)
+    print(
+        f"⚠️ rule8 recovery fetch failed symbol={symbol} "
+        f"attempts={max(1, RULE8_RECOVERY_RETRIES)} error={last_error}"
+    )
+    return symbol, []
 
 
 def _fetch_recovery_oi(symbol):
@@ -1131,13 +1146,13 @@ def _fetch_recovery_oi(symbol):
     try:
         response = HTTP_SESSION.get(
             OPEN_INTEREST_HISTORY_URL,
-            params={"symbol": f"{symbol}USDT", "period": OI_INTERVAL, "limit": 4},
+            params={"symbol": f"{symbol}USDT", "period": OI_INTERVAL, "limit": 240},
             timeout=(3, 15),
         )
         response.raise_for_status()
         rows = response.json()
         values = []
-        for row in rows[-4:]:
+        for row in rows[-240:]:
             timestamp = row.get("timestamp")
             oi = row.get("sumOpenInterest") or row.get("openInterest")
             if timestamp is not None and oi is not None:
@@ -1168,25 +1183,43 @@ def _save_recovery_batch(candles, oi_rows):
                 )
 
 
-def find_rule_window_gaps(symbols):
-    """Return only symbols whose persisted windows are below rule minima."""
+def find_rule_window_gaps(symbols, *, now_ms=None):
+    """Return symbols missing enough *recent* data for rules 8 and 11.
+
+    A count-only check can treat 97 stale candles as a healthy rule-8 window.
+    Require both the minimum count and a latest closed 15m candle at the
+    current expected boundary.
+    """
     symbols = sorted({str(s).upper() for s in symbols if s})
     if not symbols:
         return set(), set()
     placeholders = ",".join("?" for _ in symbols)
     with get_db_conn() as conn:
         kline_counts = conn.execute(
-            f"SELECT symbol, COUNT(*) FROM klines_15m WHERE symbol IN ({placeholders}) "
+            f"SELECT symbol, COUNT(*), MAX(open_time) FROM klines_15m WHERE symbol IN ({placeholders}) "
             "GROUP BY symbol", symbols
         ).fetchall()
         oi_counts = conn.execute(
             f"SELECT symbol, COUNT(*) FROM open_interest_1m WHERE symbol IN ({placeholders}) "
             "GROUP BY symbol", symbols
         ).fetchall()
-    kline_map = {str(row[0]).upper(): int(row[1]) for row in kline_counts}
+    current_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
+    expected_latest_open = (current_ms // RULE8_INTERVAL_MS - 1) * RULE8_INTERVAL_MS
+    kline_map = {
+        str(row[0]).upper(): (int(row[1]), int(row[2]) if row[2] is not None else None)
+        for row in kline_counts
+    }
     oi_map = {str(row[0]).upper(): int(row[1]) for row in oi_counts}
     return (
-        {symbol for symbol in symbols if kline_map.get(symbol, 0) < 97},
+        {
+            symbol
+            for symbol in symbols
+            if (
+                kline_map.get(symbol, (0, None))[0] < RULE8_WINDOW_SIZE
+                or kline_map.get(symbol, (0, None))[1] is None
+                or kline_map.get(symbol, (0, None))[1] < expected_latest_open
+            )
+        },
         {symbol for symbol in symbols if oi_map.get(symbol, 0) < 240},
     )
 
@@ -1195,17 +1228,22 @@ def recover_rule_windows(
     symbols=None, *, rule8_symbols=None, rule11_symbols=None, batch_size=None
 ):
     """Backfill missing rule 8/11 windows in bounded, protected batches."""
-    if rule8_symbols is None and rule11_symbols is None:
-        rule8_symbols, rule11_symbols = find_rule_window_gaps(symbols or ())
-    rule8_symbols = {str(s).upper() for s in (rule8_symbols or ()) if s}
-    rule11_symbols = {str(s).upper() for s in (rule11_symbols or ()) if s}
-    symbols = sorted(rule8_symbols | rule11_symbols)
-    batch_size = max(1, int(batch_size or RECOVERY_BATCH_SIZE))
-    if not symbols:
-        print("✅ rule window bootstrap: all rule 8/11 windows are ready")
-        return
-    base_recovery_active.set()
+    if not rule_window_recovery_lock.acquire(blocking=False):
+        print("⏸️ rule window recovery already active; skipping overlapping run")
+        return {"skipped": True, "rule8_recovered": 0, "rule8_failed": 0}
     try:
+        if rule8_symbols is None and rule11_symbols is None:
+            rule8_symbols, rule11_symbols = find_rule_window_gaps(symbols or ())
+        rule8_symbols = {str(s).upper() for s in (rule8_symbols or ()) if s}
+        rule11_symbols = {str(s).upper() for s in (rule11_symbols or ()) if s}
+        symbols = sorted(rule8_symbols | rule11_symbols)
+        batch_size = max(1, int(batch_size or RECOVERY_BATCH_SIZE))
+        if not symbols:
+            print("✅ rule window bootstrap: all rule 8/11 windows are ready")
+            return {"skipped": False, "rule8_recovered": 0, "rule8_failed": 0}
+        base_recovery_active.set()
+        recovered_rule8 = set()
+        failed_rule8 = set()
         for offset in range(0, len(symbols), batch_size):
             batch = symbols[offset:offset + batch_size]
             candles, oi_rows = {}, []
@@ -1214,9 +1252,12 @@ def recover_rule_windows(
             if kline_batch:
                 with ThreadPoolExecutor(max_workers=RECOVERY_KLINE_WORKERS) as executor:
                     for symbol, rows in executor.map(_fetch_recovery_15m, kline_batch):
-                        if len(rows) >= 97:
+                        if len(rows) >= RULE8_WINDOW_SIZE:
                             candles[symbol] = rows
+                            recovered_rule8.add(symbol)
                             rule_window_ready["rule8"].add(symbol)
+                        else:
+                            failed_rule8.add(symbol)
             if oi_batch:
                 with ThreadPoolExecutor(max_workers=RECOVERY_OI_WORKERS) as executor:
                     for symbol, rows in executor.map(_fetch_recovery_oi, oi_batch):
@@ -1226,29 +1267,45 @@ def recover_rule_windows(
             _save_recovery_batch(candles, oi_rows)
             print(f"✅ rule window recovery batch offset={offset} size={len(batch)} "
                   f"rule8={len(candles)} rule11={len({r[0] for r in oi_rows})}")
+        if failed_rule8:
+            print(
+                f"⚠️ rule8 recovery incomplete failed={len(failed_rule8)} "
+                f"symbols={','.join(sorted(failed_rule8)[:20])}"
+            )
+        return {
+            "skipped": False,
+            "rule8_recovered": len(recovered_rule8),
+            "rule8_failed": len(failed_rule8),
+        }
     finally:
         base_recovery_active.clear()
+        rule_window_recovery_lock.release()
 
 
 def is_base_recovery_active() -> bool:
     return base_recovery_active.is_set()
 
 
-def bootstrap_rule_windows(symbols):
-    """Startup-only bootstrap that leaves already complete symbols untouched."""
+def bootstrap_rule_windows(symbols=None):
+    """Bootstrap stale rule windows, resolving the universe when necessary."""
     try:
+        if not symbols:
+            symbols = UNIVERSE or build_universe()
+        if not symbols:
+            raise RuntimeError("cannot bootstrap rule windows without a universe")
         rule8_symbols, rule11_symbols = find_rule_window_gaps(symbols)
         print(
             f"🧩 rule window bootstrap: rule8_missing={len(rule8_symbols)} "
             f"rule11_missing={len(rule11_symbols)}"
         )
-        recover_rule_windows(
+        return recover_rule_windows(
             rule8_symbols=rule8_symbols,
             rule11_symbols=rule11_symbols,
         )
     except Exception as exc:
         _handle_runtime_database_error(exc)
         print(f"⚠️ rule window bootstrap failed: {exc}")
+        return {"skipped": False, "rule8_recovered": 0, "rule8_failed": len(symbols or ())}
 
 
 def calculate_atr14_from_15m_rows(rows):

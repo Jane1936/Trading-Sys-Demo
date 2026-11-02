@@ -48,8 +48,8 @@
   })).sort((a, b) => b.min - a.min);
 function buildScoreTrendOption(rawRows, symbolName) {
   const hasRows = rawRows.length > 0;
-  const labels = rawRows.map(r => new Date(r[0]).toISOString().slice(5, 16).replace('T', ' '));
-  const values = rawRows.map(r => r[1]);
+  const labels = rawRows.map(r => new Date(r.decision_round_ts).toISOString().slice(5, 16).replace('T', ' '));
+  const values = rawRows.map(r => r.total_score);
   const bandMarkAreas = SCORE_BANDS.map((band) => ([
     {
       yAxis: band.min,
@@ -91,7 +91,12 @@ function buildScoreTrendOption(rawRows, symbolName) {
       formatter: function (params) {
         const p = params[0];
         const row = rawRows[p.dataIndex];
-        return `${new Date(row[0]).toISOString().replace('T', ' ').slice(0, 19)} UTC<br/>总分：${row[1]}`;
+        const ruleDetails = Array.from({ length: 18 }, (_, index) => {
+          const ruleId = index + 1;
+          const value = row[`rule${ruleId}_score`];
+          return `规则${ruleId}：${value ?? '-'}`;
+        });
+        return `${new Date(row.decision_round_ts).toISOString().replace('T', ' ').slice(0, 19)} UTC<br/>总分：${row.total_score}<br/>${ruleDetails.join('<br/>')}`;
       }
     },
     xAxis: { type: 'category', data: labels, boundaryGap: false },
@@ -172,7 +177,7 @@ function updateScoreTrendChart(rawRows, symbolName) {
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
-      const rows = (payload.rows || []).map(row => [row.decision_round_ts, row.total_score]);
+      const rows = payload.rows || [];
       updateScoreTrendChart(rows, payload.symbol || symbolName);
       setScoreTrendStatus(payload.symbol || symbolName, payload.count || rows.length, false);
       const url = new URL(window.location.href);

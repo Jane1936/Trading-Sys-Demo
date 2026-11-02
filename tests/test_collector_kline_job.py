@@ -119,3 +119,73 @@ def test_save_open_interest_round_uses_one_transaction(tmp_path, monkeypatch):
 
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM open_interest_1m").fetchone()[0] == 2
+
+
+def test_rule8_gap_detection_rejects_stale_97_candles(tmp_path, monkeypatch):
+    import sqlite3
+
+    db_path = tmp_path / "base_data.db"
+    monkeypatch.setattr(collector, "DB_PATH", str(db_path))
+    monkeypatch.setattr(collector, "DATA_DIR", str(tmp_path))
+    collector.init_db()
+    interval = collector.RULE8_INTERVAL_MS
+    now_ms = 200 * interval
+    stale_latest = 190 * interval
+    rows = [
+        ("BTC", stale_latest - i * interval, 1, 2, 0.5, 1, 1, stale_latest - i * interval + interval - 1)
+        for i in range(collector.RULE8_WINDOW_SIZE)
+    ]
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            "INSERT INTO klines_15m "
+            "(symbol, open_time, open, high, low, close, volume, close_time) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+
+    rule8_missing, _ = collector.find_rule_window_gaps(["BTC"], now_ms=now_ms)
+
+    assert rule8_missing == {"BTC"}
+
+
+def test_rule8_gap_detection_accepts_recent_complete_window(tmp_path, monkeypatch):
+    import sqlite3
+
+    db_path = tmp_path / "base_data.db"
+    monkeypatch.setattr(collector, "DB_PATH", str(db_path))
+    monkeypatch.setattr(collector, "DATA_DIR", str(tmp_path))
+    collector.init_db()
+    interval = collector.RULE8_INTERVAL_MS
+    now_ms = 200 * interval
+    latest = (now_ms // interval - 1) * interval
+    rows = [
+        ("BTC", latest - i * interval, 1, 2, 0.5, 1, 1, latest - i * interval + interval - 1)
+        for i in range(collector.RULE8_WINDOW_SIZE)
+    ]
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            "INSERT INTO klines_15m "
+            "(symbol, open_time, open, high, low, close, volume, close_time) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+
+    rule8_missing, _ = collector.find_rule_window_gaps(["BTC"], now_ms=now_ms)
+
+    assert rule8_missing == set()
+
+
+def test_bootstrap_rule_windows_resolves_universe_when_cache_is_empty(monkeypatch):
+    calls = []
+    monkeypatch.setattr(collector, "UNIVERSE", None)
+    monkeypatch.setattr(collector, "build_universe", lambda: ["BTC"])
+    monkeypatch.setattr(collector, "find_rule_window_gaps", lambda symbols: (set(), set()))
+    monkeypatch.setattr(
+        collector,
+        "recover_rule_windows",
+        lambda **kwargs: calls.append(kwargs) or {"rule8_recovered": 0, "rule8_failed": 0},
+    )
+
+    collector.bootstrap_rule_windows()
+
+    assert calls == [{"rule8_symbols": set(), "rule11_symbols": set()}]
