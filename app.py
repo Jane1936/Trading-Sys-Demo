@@ -291,10 +291,12 @@ def _database_schema_requirements() -> dict[str, dict[str, set[str]]]:
     holding = HoldingPositionScoringSystem(db_path=db_config.TRADING_DB_PATH)
     return {
         db_config.BASE_DB_PATH: {
-            "klines_1m": {"symbol", "open_time", "close"},
             "ma20_indicators": {"symbol"},
             "ema_indicators": {"symbol"},
             "macd_indicators": {"symbol"},
+        },
+        db_config.BASE_DATA_CORE_DB_PATH: {
+            "klines_1m": {"symbol", "open_time", "close"},
         },
         db_config.CONFIG_DB_PATH: {
             "feature_flags": {"key", "enabled"},
