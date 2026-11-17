@@ -455,8 +455,7 @@ def connect_base_data(*, row_factory=None, timeout: int = 30, wal: bool = True):
     table name for aggregated candles in the base database.
     """
     conn = connect_sqlite(BASE_DB_PATH, timeout=timeout, row_factory=row_factory, wal=wal)
-    ensure_parent_dir(BASE_DATA_CORE_DB_PATH)
-    conn.execute("ATTACH DATABASE ? AS core", (BASE_DATA_CORE_DB_PATH,))
+    attach_databases(conn, [("core", BASE_DATA_CORE_DB_PATH)])
     return conn
 
 

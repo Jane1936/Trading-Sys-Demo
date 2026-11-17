@@ -109,7 +109,7 @@ def table_name(interval):
 
 def get_db_conn():
     conn = db_config.connect_sqlite(DB_PATH)
-    conn.execute("ATTACH DATABASE ? AS core", (db_config.BASE_DATA_CORE_DB_PATH,))
+    db_config.attach_databases(conn, [("core", db_config.BASE_DATA_CORE_DB_PATH)])
     return conn
 
 
@@ -213,10 +213,6 @@ def init_core_db(db_path: str | None = None):
                 close_time INTEGER NOT NULL, funding_rate REAL,
                 PRIMARY KEY (symbol, open_time))""")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_klines_1m_symbol_time ON klines_1m(symbol, open_time)")
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_open_interest_1m_symbol_time "
-                "ON open_interest_1m(symbol, snapshot_time)"
-            )
 
 
 
