@@ -16,6 +16,12 @@ from typing import Iterable
 
 DATA_DIR = os.getenv("DATA_DIR", "data")
 BASE_DB_PATH = os.getenv("BASE_DB_PATH", os.getenv("DB_PATH", f"{DATA_DIR}/base_data.db"))
+# High-frequency 1m candles are stored separately because they grow much faster
+# than aggregated candles and otherwise create unnecessary contention on the
+# base database.  Keep this independently configurable for deployments/tests.
+BASE_DATA_CORE_DB_PATH = os.getenv(
+    "BASE_DATA_CORE_DB_PATH", f"{DATA_DIR}/base_data_core.db"
+)
 CONFIG_DB_PATH = os.getenv("CONFIG_DB_PATH", f"{DATA_DIR}/config.db")
 SCORING_DB_PATH = os.getenv("SCORING_DB_PATH", f"{DATA_DIR}/scoring.db")
 TRADING_DB_PATH = os.getenv("TRADING_DB_PATH", f"{DATA_DIR}/trading.db")
@@ -34,6 +40,7 @@ SCHEMA_LOCK_TIMEOUT_SECONDS = float(os.getenv("SCHEMA_LOCK_TIMEOUT_SECONDS", "30
 
 DB_LABELS = {
     "基础数据库": BASE_DB_PATH,
+    "1分钟K线数据库": BASE_DATA_CORE_DB_PATH,
     "配置数据库": CONFIG_DB_PATH,
     "评分系统数据库": SCORING_DB_PATH,
     "交易数据库": TRADING_DB_PATH,
@@ -257,7 +264,7 @@ def sqlite_connection_scope(
 def sqlite_connection_scopes(*db_paths: str, row_factory=None, wal: bool = True):
     """Open reusable SQLite round scopes for multiple database files.
 
-    This is a convenience wrapper for code paths that read/write both
+    This is a convenience wrapper for core paths that read/write both
     ``trading.db`` and ``trading_core.db`` in one logical round.  Duplicate
     paths are de-duplicated so custom/test deployments where the core path
     routes back to the trading DB still open one physical connection.
@@ -337,7 +344,7 @@ class sqlite_schema_lock:
     """Cross-process guard for SQLite schema migrations.
 
     SQLite serializes writers, but concurrent process startup can still race on
-    check-then-ALTER migration code.  This file lock ensures only one process
+    check-then-ALTER migration core.  This file lock ensures only one process
     performs DDL for a database at a time, preventing duplicate-column failures
     and avoiding interrupted competing schema writes.
     """
@@ -439,6 +446,18 @@ def connect_sqlite(
     except Exception:
         conn.close()
         raise
+
+
+def connect_base_data(*, row_factory=None, timeout: int = 30, wal: bool = True):
+    """Open the base database and attach the isolated 1m candle database.
+
+    New core should use ``core.klines_1m`` for 1m candles and the unqualified
+    table name for aggregated candles in the base database.
+    """
+    conn = connect_sqlite(BASE_DB_PATH, timeout=timeout, row_factory=row_factory, wal=wal)
+    ensure_parent_dir(BASE_DATA_CORE_DB_PATH)
+    conn.execute("ATTACH DATABASE ? AS core", (BASE_DATA_CORE_DB_PATH,))
+    return conn
 
 
 def _acquire_database_access(db_path: str) -> sqlite_access_lock:

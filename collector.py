@@ -108,7 +108,9 @@ def table_name(interval):
 
 
 def get_db_conn():
-    return db_config.connect_sqlite(DB_PATH)
+    conn = db_config.connect_sqlite(DB_PATH)
+    conn.execute("ATTACH DATABASE ? AS core", (db_config.BASE_DATA_CORE_DB_PATH,))
+    return conn
 
 
 # ================= SQLite 初始化 =================
@@ -287,7 +289,7 @@ def fetch_btc_interval_klines(interval, start_time=None, limit=BTC_5M_LIMIT):
             if isinstance(data, dict):
                 print(
                     f"⚠️ BTC {interval} API error "
-                    f"code={data.get('code')} msg={data.get('msg')}"
+                    f"core={data.get('core')} msg={data.get('msg')}"
                 )
                 return []
             return data
@@ -583,7 +585,7 @@ def fetch_klines(symbol, start_time=None, limit=LIMIT):
 
             if isinstance(data, dict):
                 print(
-                    f"⚠️ {symbol}: API error code={data.get('code')} msg={data.get('msg')}"
+                    f"⚠️ {symbol}: API error core={data.get('core')} msg={data.get('msg')}"
                 )
                 return []
 
@@ -924,7 +926,7 @@ def aggregate_symbol(
             source_rows = conn.execute(
                 f"""
                 SELECT open_time, open, high, low, close, volume
-                FROM {table_name(BASE_INTERVAL)}
+                FROM core.klines_1m
                 WHERE symbol = ?
                   AND open_time >= ?
                   AND open_time < ?
@@ -1075,7 +1077,7 @@ def save_kline_round(fetched_by_symbol, funding_rates=None):
                 ]
                 before = conn.total_changes
                 conn.executemany(
-                    f"INSERT OR IGNORE INTO {table_name(BASE_INTERVAL)} "
+                    f"INSERT OR IGNORE INTO core.klines_1m "
                     "(symbol, open_time, open, high, low, close, volume, close_time) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
