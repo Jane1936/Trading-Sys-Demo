@@ -156,6 +156,8 @@ def _init_db_schema():
             init_atr_15m_table(conn)
 
             for interval in ALL_INTERVALS:
+                if interval == BASE_INTERVAL:
+                    continue
                 tbl = table_name(interval)
                 conn.execute(
                     f"""
@@ -195,6 +197,22 @@ def _init_db_schema():
                 )
                 """
             )
+
+
+def init_core_db(db_path: str | None = None):
+    """Initialize the isolated 1m candle database."""
+    path = db_path or db_config.BASE_DATA_CORE_DB_PATH
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    ensure_sqlite_database_usable(path)
+    with db_config.sqlite_schema_lock(path):
+        with db_config.connect_sqlite(path) as conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS klines_1m (
+                symbol TEXT NOT NULL, open_time INTEGER NOT NULL,
+                open REAL NOT NULL, high REAL NOT NULL, low REAL NOT NULL,
+                close REAL NOT NULL, volume REAL NOT NULL,
+                close_time INTEGER NOT NULL, funding_rate REAL,
+                PRIMARY KEY (symbol, open_time))""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_klines_1m_symbol_time ON klines_1m(symbol, open_time)")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_open_interest_1m_symbol_time "
                 "ON open_interest_1m(symbol, snapshot_time)"
