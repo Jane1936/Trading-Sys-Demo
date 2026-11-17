@@ -219,10 +219,6 @@ def _initialize_base_database() -> None:
     init_macd_table(db_path=db_config.BASE_DB_PATH)
 
 
-def _initialize_base_data_core_database() -> None:
-    collector.init_core_db(db_config.BASE_DATA_CORE_DB_PATH)
-
-
 def _initialize_config_database() -> None:
     """Create config tables and import values left in the legacy base DB."""
     initialize_config_database()
@@ -231,7 +227,6 @@ def _initialize_config_database() -> None:
 def _database_initializers() -> dict[str, Callable[[], None]]:
     return {
         db_config.BASE_DB_PATH: _initialize_base_database,
-        db_config.BASE_DATA_CORE_DB_PATH: _initialize_base_data_core_database,
         db_config.CONFIG_DB_PATH: _initialize_config_database,
         db_config.SCORING_DB_PATH: lambda: (
             PreSafetyModule(db_path=db_config.SCORING_DB_PATH).init_table(),
@@ -291,12 +286,10 @@ def _database_schema_requirements() -> dict[str, dict[str, set[str]]]:
     holding = HoldingPositionScoringSystem(db_path=db_config.TRADING_DB_PATH)
     return {
         db_config.BASE_DB_PATH: {
+            "klines_1m": {"symbol", "open_time", "close"},
             "ma20_indicators": {"symbol"},
             "ema_indicators": {"symbol"},
             "macd_indicators": {"symbol"},
-        },
-        db_config.BASE_DATA_CORE_DB_PATH: {
-            "klines_1m": {"symbol", "open_time", "close"},
         },
         db_config.CONFIG_DB_PATH: {
             "feature_flags": {"key", "enabled"},

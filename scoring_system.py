@@ -434,7 +434,7 @@ class ScoringSystem:
 
     def _connect(self) -> sqlite3.Connection:
         conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
-        db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("core", db_config.BASE_DATA_CORE_DB_PATH)])
+        db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH)])
         return conn
 
     def _connect_reader(self) -> sqlite3.Connection:
@@ -1390,7 +1390,7 @@ class ScoringSystem:
             close_row = conn.execute(
                 """
                 SELECT close
-                FROM core.klines_1m
+                FROM klines_1m
                 WHERE symbol = ?
                 ORDER BY open_time DESC
                 LIMIT 1
@@ -1443,7 +1443,7 @@ class ScoringSystem:
             close_row = conn.execute(
                 """
                 SELECT close
-                FROM core.klines_1m
+                FROM klines_1m
                 WHERE symbol = ?
                 ORDER BY open_time DESC
                 LIMIT 1
@@ -1830,7 +1830,7 @@ class ScoringSystem:
     def _save_1m_close_gt_60m_open_with_oi_60m_score(self, symbol: str, decision_round_ts: int, updated_at: int) -> None:
         with self._round_connection() as conn:
             k_rows = conn.execute("""
-                SELECT open, close FROM core.klines_1m WHERE symbol = ? ORDER BY open_time DESC LIMIT 60
+                SELECT open, close FROM klines_1m WHERE symbol = ? ORDER BY open_time DESC LIMIT 60
             """, (symbol,)).fetchall()
             oi_latest = conn.execute(
                 "SELECT snapshot_time, open_interest FROM open_interest_1m WHERE symbol = ? ORDER BY snapshot_time DESC LIMIT 1",
@@ -2703,7 +2703,7 @@ class ScoringSystem:
             close_1m_row = conn.execute(
                 """
                 SELECT close
-                FROM core.klines_1m
+                FROM klines_1m
                 WHERE symbol = ?
                 ORDER BY open_time DESC
                 LIMIT 1

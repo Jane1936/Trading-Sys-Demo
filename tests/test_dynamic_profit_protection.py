@@ -61,12 +61,9 @@ class FailingOnceAccountManager(FakeAccountManager):
 def _seed_db(db_path, close, high=20):
     TradingExperiment(db_path=db_path, account_manager=FakeAccountManager()).init_tables()
     DynamicProfitProtection(db_path=db_path, account_manager=FakeAccountManager()).init_tables()
-    core_path = f"{db_path}.core.db"
-    protection_module.db_config.BASE_DATA_CORE_DB_PATH = core_path
-    with sqlite3.connect(core_path) as core:
-        core.execute("CREATE TABLE klines_1m (symbol TEXT, open_time INTEGER, open REAL, high REAL, low REAL, close REAL, volume REAL, close_time INTEGER, PRIMARY KEY(symbol, open_time))")
-        core.execute("INSERT INTO klines_1m VALUES ('BANK', 1000, 10, ?, 9, ?, 100, 59999)", (high, close))
     with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE klines_1m (symbol TEXT, open_time INTEGER, open REAL, high REAL, low REAL, close REAL, volume REAL, close_time INTEGER, PRIMARY KEY(symbol, open_time))")
+        conn.execute("INSERT INTO klines_1m VALUES ('BANK', 1000, 10, ?, 9, ?, 100, 59999)", (high, close))
         conn.execute(f"INSERT INTO {TradingExperiment.TRADES_TABLE} (symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt, required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity, notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation, take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at) VALUES ('BANK', 1, 'LONG', 'opened', 80, 5, '100', '20', '5000', '50', '10', '10', '100', '18', '8', '', 'tp-1', 'sl-1', '', '', 1, 1)")
 
 
@@ -343,7 +340,6 @@ def test_dynamic_profit_protection_resets_highest_for_latest_open_trade_even_if_
                 "(symbol, decision_round_ts, side, status, total_score, leverage, allocated_usdt, required_margin_usdt, account_equity_usdt, max_loss_usdt, entry_price, quantity, notional_usdt, take_profit_price, stop_loss_price, stop_loss_calculation, take_profit_order_id, stop_loss_order_id, reason, raw_response, created_at, updated_at) "
                 "VALUES ('BANK', 2, 'LONG', 'opened', 80, 5, '100', '20', '5000', '50', '10', '10', '100', '18', '8', '', 'tp-2', 'sl-2', '', '', 2000, 2000)"
             )
-        with sqlite3.connect(f"{db_path}.core.db") as conn:
             conn.execute("INSERT INTO klines_1m VALUES ('BANK', 2000, 10, 13, 9, 12, 100, 61999)")
 
         tracker.run_round()
@@ -371,7 +367,7 @@ def test_dynamic_profit_protection_records_first_time_of_equal_cycle_pnl_high():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = str(Path(tmp) / "k.db")
         _seed_db(db_path, close=12, high=13)
-        with sqlite3.connect(f"{db_path}.core.db") as conn:
+        with sqlite3.connect(db_path) as conn:
             conn.execute("INSERT INTO klines_1m VALUES ('BANK', 2000, 12, 13, 11, 12, 100, 61999)")
 
         tracker = DynamicProfitProtection(db_path=db_path, account_manager=FakeAccountManager(unrealized_profit="20"))
