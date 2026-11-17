@@ -74,7 +74,7 @@ class TrailingStopTracker:
 
     def _connect(self) -> sqlite3.Connection:
         conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
-        db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
+        db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("core", db_config.BASE_DATA_CORE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
         return conn
 
     def _core_connect(self) -> sqlite3.Connection:
@@ -399,7 +399,7 @@ class TrailingStopTracker:
     def _latest_1m_high_close(self, symbol: str) -> tuple[Decimal, Decimal]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT high, close FROM klines_1m WHERE symbol = ? ORDER BY open_time DESC LIMIT 1",
+                "SELECT high, close FROM core.klines_1m WHERE symbol = ? ORDER BY open_time DESC LIMIT 1",
                 (symbol,),
             ).fetchone()
         if row is None:
@@ -456,7 +456,7 @@ class TrailingStopTracker:
 
     def _highest_1m_high_since(self, symbol: str, since_ms: int) -> Decimal:
         with self._connect() as conn:
-            row = conn.execute("SELECT MAX(high) AS high FROM klines_1m WHERE symbol = ? AND open_time >= ?", (symbol, int(since_ms))).fetchone()
+            row = conn.execute("SELECT MAX(high) AS high FROM core.klines_1m WHERE symbol = ? AND open_time >= ?", (symbol, int(since_ms))).fetchone()
         return self._decimal_from(row["high"], Decimal("0")) if row else Decimal("0")
 
     def _latest_open_trade_created_at(self, symbol: str) -> int:
