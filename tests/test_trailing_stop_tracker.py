@@ -109,7 +109,10 @@ def test_run_round_without_initialization_fails_and_does_not_create_tables(tmp_p
 def _insert_1m_kline(db_path, high, open_time, close=12):
     import sqlite3
 
-    with sqlite3.connect(db_path) as conn:
+    core_path = f"{db_path}.core.db"
+    import db_config
+    db_config.BASE_DATA_CORE_DB_PATH = core_path
+    with sqlite3.connect(core_path) as conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS klines_1m (
