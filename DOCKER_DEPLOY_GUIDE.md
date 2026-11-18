@@ -74,6 +74,7 @@ WEB_BIND_IP=100.x.y.z
 
 ```bash
 BASE_DB_PATH=data/base_data.db
+BASE_DATA_CORE_DB_PATH=data/base_data_core.db
 SCORING_DB_PATH=data/scoring.db
 TRADING_DB_PATH=data/trading.db
 MARKET_DB_PATH=data/market.db
