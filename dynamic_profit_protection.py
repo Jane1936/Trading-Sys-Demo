@@ -69,7 +69,7 @@ class DynamicProfitProtection:
 
     def _connect(self) -> sqlite3.Connection:
         conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
-        db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
+        db_config.attach_databases(conn, [("base", db_config.BASE_DB_PATH), ("core", db_config.BASE_DATA_CORE_DB_PATH), ("scoring", db_config.SCORING_DB_PATH), ("market", db_config.MARKET_DB_PATH)])
         return conn
 
     def _core_connect(self) -> sqlite3.Connection:
@@ -427,7 +427,7 @@ class DynamicProfitProtection:
 
     def _latest_1m_high_close_since(self, symbol: str, opened_at: int) -> tuple[Decimal, Decimal]:
         with self._connect() as conn:
-            row = conn.execute("SELECT high, close FROM klines_1m WHERE symbol = ? AND open_time >= ? ORDER BY open_time DESC LIMIT 1", (symbol, int(opened_at))).fetchone()
+            row = conn.execute("SELECT high, close FROM core.klines_1m WHERE symbol = ? AND open_time >= ? ORDER BY open_time DESC LIMIT 1", (symbol, int(opened_at))).fetchone()
         if row is None:
             raise RuntimeError("missing_1m_kline")
         high = self._decimal_from(row["high"], Decimal("0")); close = self._decimal_from(row["close"], Decimal("0"))
@@ -456,7 +456,7 @@ class DynamicProfitProtection:
             return Decimal("0"), 0
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT high, open_time FROM klines_1m "
+                "SELECT high, open_time FROM core.klines_1m "
                 "WHERE symbol = ? AND open_time >= ? "
                 "ORDER BY CAST(high AS REAL) DESC, open_time ASC LIMIT 1",
                 (symbol, int(since_ms)),
