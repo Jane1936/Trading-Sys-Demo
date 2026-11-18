@@ -54,6 +54,7 @@ from market_filter_module import MarketFilterModule
 import allusdt_24h_ticker
 import alpha_observer
 import alpha_funding_collector
+import alpha_borrow_interest
 from weak_market_profit_adjustment import WeakMarketProfitAdjustmentModule
 from add_position_permission_module import AddPositionPermissionModule
 from dynamic_open_threshold import DynamicOpenThresholdModule
@@ -223,6 +224,11 @@ def _initialize_base_data_core_database() -> None:
     collector.init_core_db(db_config.BASE_DATA_CORE_DB_PATH)
 
 
+def _initialize_alpha_database() -> None:
+    alpha_observer.init_db()
+    alpha_borrow_interest.init_db()
+
+
 def _initialize_config_database() -> None:
     """Create config tables and import values left in the legacy base DB."""
     initialize_config_database()
@@ -244,7 +250,7 @@ def _database_initializers() -> dict[str, Callable[[], None]]:
             MarketFilterModule(db_path=db_config.MARKET_DB_PATH).init_table(),
             AddPositionPermissionModule(db_path=db_config.MARKET_DB_PATH).init_table(),
         ),
-        db_config.ALPHA_DB_PATH: alpha_observer.init_db,
+        db_config.ALPHA_DB_PATH: _initialize_alpha_database,
         db_config.TRADING_DB_PATH: lambda: (
             TradingExperiment(db_path=db_config.TRADING_DB_PATH).init_error_tables(),
             HoldingPositionScoringSystem(db_path=db_config.TRADING_DB_PATH).init_tables(),
@@ -1914,6 +1920,22 @@ def start_processor_task(symbols: List[str]) -> None:
     )
 
 
+def start_alpha_borrow_interest_task() -> None:
+    scheduler = collector.BlockingScheduler()
+
+    def _job():
+        try:
+            count = alpha_borrow_interest.collect_once()
+            print(f"💰 Alpha VIP 0 borrowing rates collected symbols={count}", flush=True)
+        except Exception as exc:
+            recover_after_worker_error(exc)
+            print(f"⚠️ Alpha borrowing-rate collection failed: {exc}", flush=True)
+
+    _job()
+    scheduler.add_job(_job, "cron", minute=0, second=15, timezone="UTC", max_instances=1, coalesce=True)
+    scheduler.start()
+
+
 def start_alpha_realtime_funding_task() -> None:
     """Run real-time 1h funding collection in its own Alpha worker thread."""
     scheduler = collector.BlockingScheduler()
@@ -1984,6 +2006,7 @@ if __name__ == "__main__":
     # partially initialized schema. Recovery uses the same verification before
     # removing its access fence.
     initialize_worker_databases()
+    threading.Thread(target=start_alpha_borrow_interest_task, daemon=True).start()
     # Alpha is deliberately started before the universe refresh.  Universe
     # construction performs a remote Binance request and can fail at startup;
     # that must not prevent the independent Alpha observer from being created.
