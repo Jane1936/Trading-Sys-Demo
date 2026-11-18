@@ -442,8 +442,12 @@ class ScoringSystem:
         return db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
 
     def _connect_writer(self) -> sqlite3.Connection:
-        """Open a scoring-only writer; round snapshots remove the need to ATTACH base."""
-        return db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
+        """Open the scoring writer with the 1m core database attached."""
+        conn = db_config.connect_sqlite(self.db_path, row_factory=sqlite3.Row)
+        db_config.attach_databases(
+            conn, [("core", db_config.BASE_DATA_CORE_DB_PATH)]
+        )
+        return conn
 
     @contextmanager
     def _round_connection(self):
@@ -470,14 +474,18 @@ class ScoringSystem:
         with db_config.connect_sqlite(
             db_config.BASE_DB_PATH, row_factory=sqlite3.Row, wal=False
         ) as conn:
+            db_config.attach_databases(
+                conn, [("core", db_config.BASE_DATA_CORE_DB_PATH)]
+            )
             conn.execute("PRAGMA query_only=ON")
             conn.execute("BEGIN")
             for table, (order_column, limit) in specs.items():
                 rows: list[sqlite3.Row] = []
                 for symbol in symbols:
+                    source_table = "core.klines_1m" if table == "klines_1m" else table
                     rows.extend(
                         conn.execute(
-                            f"SELECT * FROM {table} WHERE symbol = ? "
+                            f"SELECT * FROM {source_table} WHERE symbol = ? "
                             f"ORDER BY {order_column} DESC LIMIT ?",
                             (symbol, limit),
                         ).fetchall()
