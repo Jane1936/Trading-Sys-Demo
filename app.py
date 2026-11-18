@@ -1932,7 +1932,7 @@ def start_alpha_borrow_interest_task() -> None:
             print(f"⚠️ Alpha borrowing-rate collection failed: {exc}", flush=True)
 
     _job()
-    scheduler.add_job(_job, "cron", minute=2, second=0, timezone="UTC", max_instances=1, coalesce=True)
+    scheduler.add_job(_job, "cron", minute=0, second=15, timezone="UTC", max_instances=1, coalesce=True)
     scheduler.start()
 
 
