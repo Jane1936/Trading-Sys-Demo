@@ -16,6 +16,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+import db_config
+
 API_URL = os.getenv(
     "BINANCE_REALTIME_FUNDING_URL",
     "https://www.binance.com/bapi/futures/v1/public/future/common/get-funding-info",
@@ -23,7 +25,7 @@ API_URL = os.getenv(
 PREMIUM_INDEX_URL = os.getenv(
     "BINANCE_PREMIUM_INDEX_URL", "https://fapi.binance.com/fapi/v1/premiumIndex"
 )
-DB_PATH = os.getenv("ALPHA_DB_PATH", "data/alpha.db")
+DB_PATH = os.getenv("ALPHA_DB_PATH", db_config.ALPHA_DB_PATH)
 LOG = logging.getLogger("alpha_funding_collector")
 
 
@@ -105,8 +107,7 @@ def init_db(conn: sqlite3.Connection) -> None:
 def save_rates(rates: Iterable[dict[str, Any]], db_path: str = DB_PATH, observed_at: int | None = None) -> int:
     import json
     observed_at = int(observed_at if observed_at is not None else time.time() * 1000)
-    os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
-    with sqlite3.connect(db_path, timeout=30) as conn:
+    with db_config.connect_sqlite(db_path, timeout=30) as conn:
         init_db(conn)
         values = [(r["symbol"], observed_at, r["funding_rate"], "1h", json.dumps(r.get("raw", {}), ensure_ascii=False)) for r in rates]
         conn.executemany("INSERT OR REPLACE INTO alpha_realtime_funding(symbol, observed_at, funding_rate, interval, payload_json) VALUES (?, ?, ?, ?, ?)", values)
