@@ -35,13 +35,16 @@ def parse_rates(payload):
     for group in data:
         if not isinstance(group, dict):
             raise ValueError('Invalid borrowing-rate record')
-        if str(group.get('vipLevel')) != '0':
-            continue
-        records = group.get('specs', [group])
+        asset_name = str(group.get('assetName') or group.get('asset') or group.get('coin') or '').strip().upper()
+        records = group.get('specs')
+        if records is None:
+            records = [group]
         if not isinstance(records, list):
             raise ValueError('Invalid borrowing-rate specs')
         for row in records:
-            symbol = str(row.get('assetName') or row.get('asset') or row.get('coin') or '').strip().upper()
+            if not isinstance(row, dict) or str(row.get('vipLevel')) != '0':
+                continue
+            symbol = str(row.get('assetName') or row.get('asset') or row.get('coin') or asset_name).strip().upper()
             value = row.get('dailyInterestRate')
             if not symbol or value is None:
                 raise ValueError('Missing asset or dailyInterestRate in VIP 0 response')
