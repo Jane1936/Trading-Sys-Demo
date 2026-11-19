@@ -20,8 +20,11 @@ def init_db(db_path=None):
             symbol TEXT NOT NULL, vip_level INTEGER NOT NULL,
             observed_at INTEGER NOT NULL, fetched_at INTEGER NOT NULL,
             daily_interest_rate TEXT NOT NULL, source_url TEXT NOT NULL,
-            payload_json TEXT NOT NULL,
+            annual_interest_rate TEXT NOT NULL DEFAULT '', payload_json TEXT NOT NULL,
             PRIMARY KEY(symbol, vip_level, observed_at))''')
+        columns = {row[1] for row in conn.execute(f'PRAGMA table_info({TABLE})')}
+        if 'annual_interest_rate' not in columns:
+            conn.execute(f"ALTER TABLE {TABLE} ADD COLUMN annual_interest_rate TEXT NOT NULL DEFAULT ''")
         conn.execute(f'CREATE INDEX IF NOT EXISTS idx_{TABLE}_time ON {TABLE}(observed_at)')
 
 
@@ -70,10 +73,15 @@ def collect_once(db_path=None, *, session=requests, observed_at=None):
     path = db_path or db_config.ALPHA_DB_PATH
     init_db(path)
     with db_config.connect_sqlite(path) as conn:
-        conn.executemany(f'''INSERT INTO {TABLE} VALUES (?, 0, ?, ?, ?, ?, ?)
+        conn.executemany(f'''INSERT INTO {TABLE}
+            (symbol, vip_level, observed_at, fetched_at, daily_interest_rate,
+             source_url, annual_interest_rate, payload_json)
+            VALUES (?, 0, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(symbol, vip_level, observed_at) DO UPDATE SET
             fetched_at=excluded.fetched_at, daily_interest_rate=excluded.daily_interest_rate,
+            annual_interest_rate=excluded.annual_interest_rate,
             payload_json=excluded.payload_json''',
-            [(symbol, bucket, fetched_at, rate, SOURCE_URL, json.dumps(raw, ensure_ascii=False))
+            [(symbol, bucket, fetched_at, rate, SOURCE_URL,
+              str(Decimal(rate) * Decimal('365')), json.dumps(raw, ensure_ascii=False))
              for symbol, (rate, raw) in rates.items()])
     return len(rates)
