@@ -176,6 +176,7 @@
     </section>
     <section class="panel alpha-panel" hidden data-alpha-panel="borrow">
       <div class="panel-title alpha-panel-title"><div><h2>借币率</h2><span>普通用户（VIP 0）最新一轮借贷利率（数据源：alpha.db）</span><small class="alpha-module-updated" data-alpha-updated="borrow">本模块本轮数据更新时间：暂无</small></div><button type="button" class="btn btn-secondary alpha-load-all" data-alpha-load="borrow">点击加载全部数据</button></div>
+      <form class="alpha-filter" data-alpha-filter="borrow"><label>年利率 ≥ <input type="number" name="borrow_annual_min" min="0" step="0.1" value="90" placeholder="90">%</label><button class="btn btn-secondary" type="submit">筛选</button></form>
       <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="borrow"><thead><tr><th data-alpha-sort-key="symbol" tabindex="0" aria-sort="none">币种</th><th data-alpha-sort-key="daily_interest_rate" tabindex="0" aria-sort="none">日利率</th><th data-alpha-sort-key="annual_interest_rate" tabindex="0" aria-sort="none">年利率</th><th data-alpha-sort-key="observed_at" tabindex="0" aria-sort="none">采集时间（UTC）</th></tr></thead><tbody></tbody></table></div><p class="empty-state">请点击加载全部数据按钮</p>
     </section>
   {% endif %}
@@ -344,7 +345,7 @@
         const extra = index >= 10 ? ' class="alpha-deferred-extra-row" hidden' : '';
         if (module === 'oi') { const valueClass = item.oi_value != null && Number(item.oi_value) >= 5000000 ? ' alpha-active' : ''; return `<tr${extra} data-oi-change="${item.oi_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric" data-compact-value="${esc(item.open_interest)}">${formatKm(item.open_interest)}</td>${numberCell(item.close)}<td class="numeric${valueClass}" data-compact-value="${esc(item.oi_value)}">${formatKm(item.oi_value)}</td>${changeCell(item.oi_change)}${changeCell(item.price_change)}</tr>`; }
         if (module === 'funding') return `<tr${extra} data-funding-change="${item.funding_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td>${changeCell(item.funding_change)}${changeCell(item.price_change)}</tr>`;
-        if (module === 'borrow') return `<tr${extra}><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${(Number(item.daily_interest_rate) * 100).toFixed(6)}%</td><td class="numeric">${(Number(item.annual_interest_rate) * 100).toFixed(4)}%</td><td>${new Date(Number(item.observed_at)).toISOString().replace('T', ' ').replace('.000Z', ' UTC')}</td></tr>`;
+        if (module === 'borrow') return `<tr${extra} data-borrow-annual="${item.annual_interest_rate ?? ''}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${(Number(item.daily_interest_rate) * 100).toFixed(6)}%</td><td class="numeric">${(Number(item.annual_interest_rate) * 100).toFixed(4)}%</td><td>${new Date(Number(item.observed_at)).toISOString().replace('T', ' ').replace('.000Z', ' UTC')}</td></tr>`;
         if (module === 'snapshot') return `<tr${extra}><td>${index + 1}</td><td><strong>${esc(item.symbol)}</strong></td><td>${esc(item.name)}</td><td class="numeric" data-compact-value="${esc(item.volume_24h)}">${formatKm(item.volume_24h)}</td><td class="numeric" data-compact-value="${esc(item.market_cap)}">${formatKm(item.market_cap)}</td>${[1,2,3,4,5].map((d) => { const value = item[`activity_${d}d`]; const active = value != null && Number(value) >= 1; return `<td class="numeric${active ? ' alpha-active' : ''}" data-activity-value="${esc(value)}">${formatActivity(value)}</td>`; }).join('')}</tr>`;
         return `<tr${extra} data-consecutive-up-days="${item.consecutive_up_days}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${item.consecutive_up_days}</td><td class="numeric">${item.recent_five_up_days}</td>${changeCell(item.three_day_return)}${changeCell(item.five_day_return)}<td class="numeric">${item.kline_count}</td></tr>`;
       }).join('');
@@ -438,6 +439,13 @@
         const matchesFunding = fundingMin === null || (Number.isFinite(funding) && funding >= fundingMin);
         const matchesPrice = priceMax === null || (Number.isFinite(price) && Math.abs(price) <= priceMax);
         row.hidden = !(matchesFunding && matchesPrice);
+      });
+    } else if (panel.dataset.alphaPanel === 'borrow') {
+      const minimum = values.borrow_annual_min === '' ? 90 : Number(values.borrow_annual_min);
+      const threshold = Number.isFinite(minimum) && minimum >= 0 ? minimum / 100 : 0.9;
+      panel.querySelectorAll('tbody tr[data-borrow-annual]').forEach((row) => {
+        const annual = Number(row.dataset.borrowAnnual);
+        row.hidden = !(Number.isFinite(annual) && annual >= threshold);
       });
     } else if (panel.dataset.alphaPanel === 'trend') {
       const minimum = Number(values.consecutive_up_days_min || 0);
