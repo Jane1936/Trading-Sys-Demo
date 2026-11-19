@@ -36,8 +36,8 @@ def test_hourly_upsert_and_preserve_history(tmp_path):
     for timestamp in (3600001, 3600100, 7200000):
         assert borrow.collect_once(path, session=Session(), observed_at=timestamp) == 1
     with sqlite3.connect(path) as conn:
-        assert conn.execute(f'SELECT symbol, vip_level, observed_at, daily_interest_rate FROM {borrow.TABLE} ORDER BY observed_at').fetchall() == [
-            ('BTC', 0, 3600000, '0.00012345'), ('BTC', 0, 7200000, '0.00012345')]
+        assert conn.execute(f'SELECT symbol, vip_level, observed_at, daily_interest_rate, annual_interest_rate FROM {borrow.TABLE} ORDER BY observed_at').fetchall() == [
+            ('BTC', 0, 3600000, '0.00012345', '0.04505925'), ('BTC', 0, 7200000, '0.00012345', '0.04505925')]
 
 
 def test_no_vip_zero_is_not_silently_saved():
