@@ -6,8 +6,9 @@ import alpha_borrow_interest as borrow
 
 def payload(rate='0.00012345'):
     return {'code': '000000', 'data': [
-        {'vipLevel': 1, 'asset': 'BTC', 'dailyInterestRate': '1'},
-        {'vipLevel': 0, 'asset': 'BTC', 'dailyInterestRate': rate}]}
+        {'assetName': 'BTC', 'specs': [
+            {'vipLevel': 1, 'dailyInterestRate': '1'},
+            {'vipLevel': 0, 'dailyInterestRate': rate}]}]}
 
 
 def test_only_regular_user_rates():
