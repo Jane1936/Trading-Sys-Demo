@@ -1613,6 +1613,10 @@ def alpha_market_data():
             data = _alpha_oi_changes()
         elif module == "funding":
             data = _alpha_funding_changes()
+        elif module == "borrow":
+            with db_config.connect_sqlite(ALPHA_DB_PATH, row_factory=sqlite3.Row) as conn:
+                latest = conn.execute("SELECT MAX(observed_at) FROM alpha_borrow_interest_rates").fetchone()[0]
+                data = [] if latest is None else [dict(row) for row in conn.execute("SELECT symbol, daily_interest_rate, annual_interest_rate, observed_at, vip_level FROM alpha_borrow_interest_rates WHERE observed_at = ? ORDER BY symbol", (latest,)).fetchall()]
         elif module == "trend":
             data = alpha_observer.daily_trends(ALPHA_DB_PATH)
         elif module == "snapshot":
@@ -1634,6 +1638,7 @@ def alpha_market_status():
         return jsonify({
             "oi": _alpha_module_updated_at("oi"),
             "funding": _alpha_module_updated_at("funding"),
+            "borrow": _alpha_module_updated_at("borrow"),
         })
     except Exception as exc:
         app.logger.exception("Alpha status check failed")
@@ -1651,6 +1656,8 @@ def _alpha_module_updated_at(module):
             row = conn.execute("SELECT MAX(open_time) AS ts FROM alpha_hourly_market WHERE open_interest IS NOT NULL").fetchone()
         elif module == "funding":
             row = conn.execute("SELECT MAX(open_time) AS ts FROM alpha_hourly_market WHERE funding_rate IS NOT NULL").fetchone()
+        elif module == "borrow":
+            row = conn.execute("SELECT MAX(observed_at) AS ts FROM alpha_borrow_interest_rates").fetchone()
         elif module == "trend":
             # Trend candles live in the Alpha database, not base_data.db.
             with db_config.connect_sqlite(ALPHA_DB_PATH, row_factory=sqlite3.Row) as alpha_conn:

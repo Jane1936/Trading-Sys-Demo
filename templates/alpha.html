@@ -105,6 +105,7 @@
       <button type="button" class="alpha-module-tab" data-alpha-tab="trend"><span>持续趋势</span><small>连续上涨</small></button>
       <button type="button" class="alpha-module-tab" data-alpha-tab="oi"><span>OI异动</span><small>持仓变化</small></button>
       <button type="button" class="alpha-module-tab" data-alpha-tab="funding"><span>资金费率</span><small>费率变化</small></button>
+      <button type="button" class="alpha-module-tab" data-alpha-tab="borrow"><span>借币率</span><small>VIP 0 利率</small></button>
     </nav>
     <section class="panel alpha-panel active" hidden>
       <div class="panel-title alpha-panel-title">
@@ -172,6 +173,10 @@
       <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="funding"><thead><tr><th data-alpha-sort-key="symbol" tabindex="0" aria-sort="none">币种</th><th data-alpha-sort-key="funding_change" tabindex="0" aria-sort="none">资金费率涨跌幅</th><th data-alpha-sort-key="price_change" tabindex="0" aria-sort="none">1小时价格涨跌幅</th></tr></thead><tbody>
       {% for item in funding_changes %}<tr data-funding-change="{{ item.funding_change if item.funding_change is not none else '' }}" data-price-change="{{ item.price_change if item.price_change is not none else '' }}"{% if loop.index > 10 %} class="alpha-funding-extra-row" hidden{% endif %}><td><strong>{{ item.symbol }}</strong></td><td class="numeric alpha-change{% if item.funding_change is not none %} {{ 'alpha-change-positive' if item.funding_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.funding_change is not none %}{{ '%+.2f'|format(item.funding_change * 100) }}%{% else %}—{% endif %}</td><td class="numeric alpha-change{% if item.price_change is not none %} {{ 'alpha-change-positive' if item.price_change >= 0 else 'alpha-change-negative' }}{% endif %}">{% if item.price_change is not none %}{{ '%+.2f'|format(item.price_change * 100) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
       </tbody></table></div>{% if not funding_changes %}<p class="empty-state">请点击加载全部数据按钮</p>{% endif %}
+    </section>
+    <section class="panel alpha-panel" hidden data-alpha-panel="borrow">
+      <div class="panel-title alpha-panel-title"><div><h2>借币率</h2><span>普通用户（VIP 0）最新一轮借贷利率（数据源：alpha.db）</span><small class="alpha-module-updated" data-alpha-updated="borrow">本模块本轮数据更新时间：暂无</small></div><button type="button" class="btn btn-secondary alpha-load-all" data-alpha-load="borrow">点击加载全部数据</button></div>
+      <div class="table-wrap"><table class="alpha-table" data-alpha-deferred="borrow"><thead><tr><th data-alpha-sort-key="symbol" tabindex="0" aria-sort="none">币种</th><th data-alpha-sort-key="daily_interest_rate" tabindex="0" aria-sort="none">日利率</th><th data-alpha-sort-key="annual_interest_rate" tabindex="0" aria-sort="none">年利率</th><th data-alpha-sort-key="observed_at" tabindex="0" aria-sort="none">采集时间（UTC）</th></tr></thead><tbody></tbody></table></div><p class="empty-state">请点击加载全部数据按钮</p>
     </section>
   {% endif %}
 {% endblock %}
@@ -262,9 +267,10 @@
     trend: ['symbol', 'consecutive_up_days', 'recent_five_up_days', 'three_day_return', 'five_day_return', 'kline_count'],
     oi: ['symbol', 'open_interest', 'close', 'oi_value', 'oi_change', 'price_change'],
     funding: ['symbol', 'funding_change', 'price_change'],
+    borrow: ['symbol', 'daily_interest_rate', 'annual_interest_rate', 'observed_at'],
   };
   const alphaSortStates = Object.fromEntries(Object.keys(alphaSortKeys).map((module) => [module, {key: null, direction: 1}]));
-  const alphaDataLoaded = {snapshot: false, trend: false, oi: false, funding: false};
+  const alphaDataLoaded = {snapshot: false, trend: false, oi: false, funding: false, borrow: false};
   const snapshotFilterState = {marketCapMin: 50000};
   const alphaSortNumber = (value) => {
     let raw = String(value ?? '').replace(/,/g, '').trim();
@@ -338,6 +344,7 @@
         const extra = index >= 10 ? ' class="alpha-deferred-extra-row" hidden' : '';
         if (module === 'oi') { const valueClass = item.oi_value != null && Number(item.oi_value) >= 5000000 ? ' alpha-active' : ''; return `<tr${extra} data-oi-change="${item.oi_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric" data-compact-value="${esc(item.open_interest)}">${formatKm(item.open_interest)}</td>${numberCell(item.close)}<td class="numeric${valueClass}" data-compact-value="${esc(item.oi_value)}">${formatKm(item.oi_value)}</td>${changeCell(item.oi_change)}${changeCell(item.price_change)}</tr>`; }
         if (module === 'funding') return `<tr${extra} data-funding-change="${item.funding_change ?? ''}" data-price-change="${item.price_change ?? ''}"><td><strong>${esc(item.symbol)}</strong></td>${changeCell(item.funding_change)}${changeCell(item.price_change)}</tr>`;
+        if (module === 'borrow') return `<tr${extra}><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${(Number(item.daily_interest_rate) * 100).toFixed(6)}%</td><td class="numeric">${(Number(item.annual_interest_rate) * 100).toFixed(4)}%</td><td>${new Date(Number(item.observed_at)).toISOString().replace('T', ' ').replace('.000Z', ' UTC')}</td></tr>`;
         if (module === 'snapshot') return `<tr${extra}><td>${index + 1}</td><td><strong>${esc(item.symbol)}</strong></td><td>${esc(item.name)}</td><td class="numeric" data-compact-value="${esc(item.volume_24h)}">${formatKm(item.volume_24h)}</td><td class="numeric" data-compact-value="${esc(item.market_cap)}">${formatKm(item.market_cap)}</td>${[1,2,3,4,5].map((d) => { const value = item[`activity_${d}d`]; const active = value != null && Number(value) >= 1; return `<td class="numeric${active ? ' alpha-active' : ''}" data-activity-value="${esc(value)}">${formatActivity(value)}</td>`; }).join('')}</tr>`;
         return `<tr${extra} data-consecutive-up-days="${item.consecutive_up_days}"><td><strong>${esc(item.symbol)}</strong></td><td class="numeric">${item.consecutive_up_days}</td><td class="numeric">${item.recent_five_up_days}</td>${changeCell(item.three_day_return)}${changeCell(item.five_day_return)}<td class="numeric">${item.kline_count}</td></tr>`;
       }).join('');
